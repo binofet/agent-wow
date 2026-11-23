@@ -877,6 +877,62 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             progress = [value["brainProgress"] for value in self.statuses if isinstance(value.get("brainProgress"), dict)]
             self.assertEqual(progress[-1]["outcome"], "completed")
 
+    @contextlib.contextmanager
+    def ordinary_party_rpc(self):
+        from test_direct_tools import PartyInviteToolTests
+        native = PartyInviteToolTests.PartyRPC()
+        native.sid = native.party_sid = self.rpc.core
+        native.guid = self.rpc.guid
+        original = self.rpc.call
+        def call(method, params, **kwargs):
+            if method == 'session.describe' or method.startswith('buddy-party.'):
+                return native.call(method, params, **kwargs)
+            return original(method, params, **kwargs)
+        runtime = direct_tools.load_helper(Path(__file__).with_name('task-runtime'), 'invite_brain_store')
+        helper = direct_tools.DirectTools._helper
+        def load(tools, name):
+            return runtime if name == 'task_runtime' else helper(tools, name)
+        with patch.object(self.rpc, 'call', side_effect=call), patch.object(direct_tools.DirectTools, '_helper', load):
+            yield native
+
+    def test_ordinary_owner_without_workspace_invites_through_actual_brain_and_native_contract(self):
+        with self.ordinary_party_rpc() as native, self.rig([
+                chat(('invite', 'party_invite', dict(name='Joel'))), spoken()], developer=False) as (loop, brain, state, http):
+            self.assertFalse(state['development']['enabled'])
+            self.assertEqual(loop.generate_reply([], state), REPLY)
+            self.assertEqual(native.writes, [('buddy-party.invite', dict(name='Joel'))])
+            names = {row['function']['name'] for row in http.requests[0]['body']['tools']}
+            self.assertIn('party_invite', names)
+            self.assertFalse(names & {'workspace_read','workspace_write','policy_show','policy_apply','policy_input',
+                                     'spell_inspect','gm_execute','gm_task_start','gm_inspect'})
+            returned = json.loads(http.requests[1]['body']['messages'][-1]['content'])['result']
+            self.assertTrue(returned['transportWritten'])
+            self.assertFalse(returned['gameEffectClaimed'])
+            self.assertFalse(native.party['group']['inGroup'])
+            self.assertTrue(brain.last_development_result['mutationToolEntered'])
+            self.assertEqual(brain.last_development_result['selfGuid'], '4')
+            self.assertFalse(self.rpc.commands)
+
+    def test_unknown_invite_survives_brain_endpoint_and_name_case_change_without_developer_authority(self):
+        with self.ordinary_party_rpc() as native:
+            native.fail_mutation = True
+            with self.rig([chat(('lost', 'party_invite', dict(name='Joel')))], developer=False) as (loop, brain, state, _):
+                with self.assertRaisesRegex(converse.ConversationError, 'tool_outcome_unknown'):
+                    loop.generate_reply([], state)
+                receipt = brain.last_failure_receipt['tools'][-1]['unknownReceipt']
+                self.assertEqual(receipt['name'], 'Joel')
+                self.assertEqual(receipt['sessionId'], self.rpc.core)
+                self.assertFalse(receipt['replayAllowed'])
+            original = {str(path):path.read_bytes() for path in (self.state/'party-invites').rglob('state.json')}
+            native.fail_mutation = False
+            with self.rig([chat(('new-provider-call', 'party_invite', dict(name='joel')))], developer=False) as (loop, brain, state, _):
+                brain.model = brain.client.model = 'different-local-model'
+                with self.assertRaisesRegex(converse.ConversationError, 'tool_outcome_unknown'):
+                    loop.generate_reply([], state)
+            self.assertEqual(native.writes, [('buddy-party.invite', dict(name='Joel'))])
+            self.assertEqual(len(list((self.state/'api-conversations').glob('*.json'))), 2)
+            for path, body in original.items(): self.assertEqual(Path(path).read_bytes(), body)
+
     def test_invalid_final_schema_retains_failed_api_receipt_without_fallback(self):
         with self.rig([chat(("invalid-final", "final_reply", dict(text="Incomplete reply")))]) as (loop, brain, state, http):
             with self.assertRaisesRegex(converse.ConversationError, "invalid_tool_call"):
@@ -1006,7 +1062,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                 "Current observations and control state JSON:\n", 1)[1])
             self.assertIs(prepared["current_request"]["repair_requests_allowed"], False)
             tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
-            self.assertEqual(set(tools), {"context_read"})
+            self.assertEqual(set(tools), {"context_read", "chat_read", "session_catalog", "read_observation", "party_invite"})
             self.assertNotIn("final_reply", tools)
             self.assertFalse(brain.model_selection()["codexInvoked"])
 
@@ -1025,6 +1081,9 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             user_rows = [row for row in http.requests[0]["body"]["messages"] if row["role"] == "user"]
             self.assertEqual(user_rows, [dict(role="user", content="Mira, hello")])
             self.assertNotIn("Got it.", json.dumps(user_rows))
+            tools = {row['function']['name'] for row in http.requests[0]['body']['tools']}
+            self.assertIn('party_invite', tools)
+            self.assertFalse(tools & {'workspace_write','policy_apply','policy_show','gm_execute'})
             self.assertEqual(self.rpc.replies[-1]["text"], REPLY["text"])
             self.assertFalse(self.rpc.commands)
             status = json.loads((self.state / "status.json").read_text())

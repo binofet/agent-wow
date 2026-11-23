@@ -1270,5 +1270,247 @@ class DirectToolTests(unittest.TestCase):
         self.assertEqual(self.rpc.writes, [])
 
 
+class PartyInviteToolTests(unittest.TestCase):
+    """Ordinary invitation transport through the advertised native contract; no game client."""
+    class PartyRPC(RPC):
+        def __init__(self):
+            super().__init__('4')
+            self.effect='unspecified';self.installed=True;self.contract_edit=None
+            self.party_sid=self.sid
+            self.party=dict(sessionId=self.sid,revision='7',group=dict(known=True,inGroup=False))
+            self.invite_reply=dict(transportWritten=True)
+
+        def catalog(self):
+            catalog=super().catalog()
+            prefix='buddy-party::warcraftbuddy.party.v1.'
+            source=(ROOT/'modules/buddy-party/party.proto').read_text()
+            # Same maintained-proto convention as the existing legacy Chat fixture.
+            for name in ('InviteRequest','ActionResponse','StateResponse','PendingInvite','Group','Member',
+                         'CommandResult','RaidTargetState','RaidTarget'):
+                body=re.search(r'message '+name+r' \{(.*?)\n\}',source,re.S).group(1)
+                fields=[]
+                for repeated,kind,field,number in re.findall(r'(repeated\s+)?(\w+)\s+(\w+)\s*=\s*(\d+)\s*;',body):
+                    scalar=kind in ('string','bool','uint64','uint32')
+                    fields.append(dict(name=re.sub(r'_([a-z])',lambda m:m[1].upper(),field),number=int(number),
+                        kind=kind if scalar else 'enum' if kind=='InvitationDecision' else 'message',
+                        type=kind if scalar else prefix+kind,repeated=bool(repeated),map=False,optional=False,required=False))
+                catalog['messages'][prefix+name]=dict(protobufName='warcraftbuddy.party.v1.'+name,syntax='proto3',fields=fields)
+            catalog['messages']['google.protobuf.Empty']=dict(protobufName='google.protobuf.Empty',syntax='proto3',fields=[])
+            catalog['methods'].append(dict(name='buddy-party.state',module='buddy-party',
+                path='/warcraftbuddy.party.v1.BuddyParty/State',effect='read',
+                inputType='google.protobuf.Empty',outputType=prefix+'StateResponse'))
+            if self.installed:
+                catalog['methods'].append(dict(name='buddy-party.invite',module='buddy-party',
+                    path='/warcraftbuddy.party.v1.BuddyParty/Invite',effect=self.effect,
+                    inputType=prefix+'InviteRequest',outputType=prefix+'ActionResponse'))
+            if self.contract_edit:self.contract_edit(catalog)
+            return catalog
+
+        def call(self,method,params,**kwargs):
+            if method=='session.describe':return super().call(method,params,**kwargs)
+            self.calls.append((method,copy.deepcopy(params)))
+            if method=='buddy-party.state':
+                result=dict(copy.deepcopy(self.party),sessionId=self.party_sid)
+            elif method=='buddy-party.invite':
+                self.writes.append((method,copy.deepcopy(params)))
+                if self.fail_mutation:raise TimeoutError('entered invite write; response lost')
+                result=copy.deepcopy(self.invite_reply)
+            else:raise AssertionError('Invitation must not query position, use GM or dispatch other actions: '+method)
+            if self.hook:self.hook(method)
+            return result
+
+    def setUp(self):
+        folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup)
+        self.root=Path(folder.name).resolve();self.rpc=self.PartyRPC()
+        self.runtime=load_helper(ROOT/'dev/task-runtime','party_test_runtime')
+        self.owner=True;self.cancelled=False
+        self.tools=self.make_tools()
+
+    def make_tools(self, **kwargs):
+        return DirectTools(self.rpc,self.rpc.sid,self.rpc.guid,None,self.root,
+            allowed=lambda:False,gm_allowed=lambda:False,owner_allowed=lambda:self.owner,
+            cancelled=lambda:self.cancelled,request_id=kwargs.pop('request_id','owner-invite-request'),
+            helpers={'task_runtime':self.runtime},**kwargs)
+
+    def invite(self,name='Joel'):
+        return self.tools.dispatch('party_invite',dict(name=name))
+
+    def test_owner_without_workspace_or_gm_gets_exact_advertised_invite_tool(self):
+        schemas={row['function']['name']:row['function'] for row in self.tools.tool_schemas()}
+        invite=schemas['party_invite']['parameters']
+        self.assertEqual(invite['required'],['name'])
+        self.assertEqual(set(invite['properties']),{'name'})
+        self.assertFalse({'workspace_read','workspace_write','policy_show','policy_input','policy_apply',
+                          'spell_inspect','gm_execute','gm_task_start'} & schemas.keys())
+        self.owner=False
+        self.assertNotIn('party_invite',{row['function']['name'] for row in self.tools.tool_schemas()})
+        self.assertEqual(self.rpc.writes,[])
+
+    def test_legacy_typed_and_declared_mutation_routes_send_exact_name_only(self):
+        for effect,name in (('unspecified','Joel'),('mutation','Élia'),('mutation','李明')):
+            self.rpc=self.PartyRPC();self.rpc.effect=effect;self.tools=self.make_tools()
+            with self.subTest(effect=effect,name=name):
+                reply=self.invite(name)
+                self.assertTrue(reply['ok'],reply)
+                self.assertEqual(self.rpc.writes,[('buddy-party.invite',dict(name=name))])
+                self.assertEqual(reply['result']['name'],name)
+                self.assertIs(reply['result']['transportWritten'],True)
+                self.assertEqual(reply['result']['completion'],'transport_written; server_result_and_membership_unverified')
+                self.assertFalse(reply['result']['gameEffectClaimed'])
+                self.assertTrue(any(m=='buddy-party.state' for m,_ in self.rpc.calls))
+                self.assertTrue(all(m in ('session.describe','buddy-party.state','buddy-party.invite') for m,_ in self.rpc.calls))
+
+    def test_invalid_names_and_arbitrary_fields_never_reach_native_invite(self):
+        for name in ('','J','J'*13,'Joel-Realm','Joel Realm','Joel\n','.groupsummon','Jo\x00el','🙂🙂',None,1,True):
+            with self.subTest(name=name):self.assertFalse(self.invite(name)['ok'])
+        for fields in (dict(name='Joel',sessionId=self.rpc.sid),dict(name='Joel',command='.gear repair Joel')):
+            self.assertFalse(self.tools.dispatch('party_invite',fields)['ok'])
+        self.assertEqual(self.rpc.writes,[])
+        self.assertFalse(any(m=='buddy-party.invite' for m,_ in self.rpc.calls))
+
+    def test_missing_denied_and_spoofed_contracts_are_known_zero_writes(self):
+        prefix='buddy-party::warcraftbuddy.party.v1.'
+        def invite(c):return next(row for row in c['methods'] if row['name']=='buddy-party.invite')
+        changes=[lambda r:setattr(r,'installed',False),lambda r:setattr(r,'effect','read'),
+                 lambda r:setattr(r,'effect','query'),
+                 lambda r:setattr(r,'contract_edit',lambda c:invite(c).update(module='buddy-chat')),
+                 lambda r:setattr(r,'contract_edit',lambda c:invite(c).update(path='/foreign.Service/Invite')),
+                 lambda r:setattr(r,'contract_edit',lambda c:c['messages'][prefix+'InviteRequest']['fields'][0].update(number=2)),
+                 lambda r:setattr(r,'contract_edit',lambda c:c['messages'][prefix+'ActionResponse']['fields'][0].update(kind='string',type='string'))]
+        for index,change in enumerate(changes):
+            self.rpc=self.PartyRPC();change(self.rpc);self.tools=self.make_tools()
+            with self.subTest(contract=index):self.assertFalse(self.invite()['ok'])
+            self.assertEqual(self.rpc.writes,[])
+            self.assertFalse(any(m=='buddy-party.invite' for m,_ in self.rpc.calls))
+
+    def test_owner_cancel_body_and_party_replacement_before_entry_make_zero_writes(self):
+        for kind in ('owner','cancel','core','guid','party','late_owner','late_cancel','late_core','late_guid','late_route'):
+            self.rpc=self.PartyRPC();self.owner=True;self.cancelled=False;self.tools=self.make_tools()
+            if kind=='owner':self.owner=False
+            elif kind=='cancel':self.cancelled=True
+            elif kind=='core':self.rpc.sid='aw-replaced'
+            elif kind=='guid':self.rpc.guid='5'
+            elif kind=='party':self.rpc.party_sid='aw-foreign'
+            else:
+                def replaced(method):
+                    if method!='buddy-party.state':return
+                    if kind=='late_owner':self.owner=False
+                    elif kind=='late_cancel':self.cancelled=True
+                    elif kind=='late_core':self.rpc.sid='aw-replaced'
+                    elif kind=='late_guid':self.rpc.guid='5'
+                    elif kind=='late_route':self.rpc.installed=False
+                self.rpc.hook=replaced
+            with self.subTest(change=kind):self.assertFalse(self.invite()['ok'])
+            self.assertEqual(self.rpc.writes,[])
+            self.assertFalse(any(m=='buddy-party.invite' for m,_ in self.rpc.calls))
+
+    def test_lost_response_and_post_entry_binding_loss_keep_unknown_without_retry(self):
+        for kind in ('lost','malformed','core','party'):
+            self.rpc=self.PartyRPC();self.owner=True;self.tools=self.make_tools(receipt_root=self.root/kind)
+            if kind=='lost':self.rpc.fail_mutation=True
+            elif kind=='malformed':self.rpc.invite_reply=dict(transportWritten='yes')
+            else:
+                def changed(method):
+                    if method!='buddy-party.invite':return
+                    if kind=='core':self.rpc.sid='aw-replaced'
+                    elif kind=='party':self.rpc.party_sid='aw-foreign'
+                self.rpc.hook=changed
+            with self.subTest(change=kind),self.assertRaises(ToolOutcomeUnknown) as caught:self.invite()
+            receipt=caught.exception.receipt
+            self.assertEqual(receipt['name'],'Joel')
+            self.assertEqual(receipt['sessionId'],'aw-123');self.assertEqual(receipt['characterGuid'],'4')
+            self.assertFalse(receipt['replayAllowed'])
+            self.rpc.hook=None;self.rpc.sid='aw-123';self.rpc.party_sid='aw-123';self.owner=True
+            self.rpc.fail_mutation=False;self.rpc.invite_reply=dict(transportWritten=True)
+            again=self.invite()
+            self.assertFalse(again['ok'],again)
+            self.assertEqual(self.rpc.writes,[('buddy-party.invite',dict(name='Joel'))])
+
+    def test_unknown_target_custody_survives_fresh_request_and_case_alias(self):
+        receipt_root=self.root/'shared-receipts'
+        self.tools=self.make_tools(receipt_root=receipt_root)
+        self.rpc.fail_mutation=True
+        with self.assertRaises(ToolOutcomeUnknown) as first:self.invite('Joel')
+        self.assertFalse(first.exception.receipt['replayAllowed'])
+        self.assertEqual(self.rpc.writes,[('buddy-party.invite',dict(name='Joel'))])
+        self.rpc.fail_mutation=False
+        # A different API conversation/provider creates a fresh dispatcher and host request ID.
+        # The same body and case-folded target still retain the first entered write.
+        fresh=self.make_tools(receipt_root=receipt_root,request_id='another-provider-owner-request')
+        with self.assertRaises(ToolOutcomeUnknown) as retained:
+            fresh.dispatch('party_invite',dict(name='joel'))
+        self.assertFalse(retained.exception.receipt['replayAllowed'])
+        self.assertEqual(retained.exception.receipt['stateDir'],first.exception.receipt['stateDir'])
+        self.assertEqual(retained.exception.receipt['sessionId'],'aw-123')
+        self.assertEqual(retained.exception.receipt['characterGuid'],'4')
+        self.assertEqual(self.rpc.writes,[('buddy-party.invite',dict(name='Joel'))])
+
+    def test_owner_interrupt_after_ack_settles_durable_transport_without_reinvite(self):
+        receipt_root=self.root/'interrupted-receipts'
+        self.tools=self.make_tools(receipt_root=receipt_root)
+        def interrupt(method):
+            if method=='buddy-party.invite':
+                self.cancelled=True;self.owner=False
+        self.rpc.hook=interrupt
+        reply=self.invite()
+        self.assertTrue(reply['ok'],reply)
+        self.assertTrue(reply['result']['transportWritten'])
+        self.assertFalse(reply['result']['gameEffectClaimed'])
+        self.assertIsNone(self.tools.unknown_receipt)
+        receipts=list((receipt_root/'party-invites').glob('*/*/state.json'))
+        self.assertEqual(len(receipts),1)
+        stored=json.loads(receipts[0].read_text())
+        self.assertEqual(stored['result'],reply['result'])
+        self.assertNotIn('knownNotDispatched',stored)
+        self.rpc.hook=None;self.cancelled=False;self.owner=True
+        fresh=self.make_tools(receipt_root=receipt_root)
+        historical=fresh.dispatch('party_invite',dict(name='joel'))
+        self.assertTrue(historical['ok'],historical)
+        self.assertTrue(historical['result']['historicalReceipt'])
+        self.assertTrue(historical['result']['transportWritten'])
+        self.assertEqual(self.rpc.writes,[('buddy-party.invite',dict(name='Joel'))])
+
+    def test_packet_ack_is_not_server_acceptance_and_membership_requires_its_own_observation(self):
+        reply=self.invite()
+        self.assertTrue(reply['ok'],reply);self.assertTrue(reply['result']['transportWritten'])
+        self.assertFalse(reply['result']['gameEffectClaimed'])
+        self.assertFalse(self.rpc.party['group']['inGroup'])
+        self.assertIn('server_result_and_membership_unverified',reply['result']['completion'])
+        self.rpc.party['group']=dict(known=True,inGroup=True,groupGuid='222',members=[
+            dict(guid='4',name='Mira',self=True,online=True),dict(guid='3',name='Joel',online=True)])
+        observed=self.tools.dispatch('read_observation',dict(method='buddy-party.state',params={}))
+        self.assertTrue(observed['ok'],observed)
+        self.assertTrue(observed['result']['group']['inGroup'])
+        self.assertEqual(observed['result']['group']['members'][1]['guid'],'3')
+        self.assertFalse(reply['result']['gameEffectClaimed']) # Later group data never rewrites the transport receipt.
+        self.assertEqual(len(self.rpc.writes),1)
+
+    def test_real_transport_retains_unknown_invite_across_client_and_tool_recreation(self):
+        from direct_model import DirectModel, ModelError
+        from test_direct_model import FakeHTTP, chat
+        final=dict(choices=[dict(finish_reason='stop',message=dict(role='assistant',content='The invitation outcome is still unknown.'))])
+        self.rpc.fail_mutation=True
+        with FakeHTTP([chat(('invite-entered','party_invite',dict(name='Joel'))),final,
+                       chat(('new-call-id','party_invite',dict(name='Joel')))]) as server:
+            path=self.root/'api-conversation.json';key='aw-123:4:chat:WHISPER:3'
+            def run(client,tools,request):
+                return client.generate('Synthetic owner invitation; never invent acceptance.',
+                    [dict(role='user',content='Invite Joel.')],None,tools.tool_schemas(),tools.dispatch,
+                    natural=True,transcript_path=path,conversation_key=key,request_id=request)
+            with self.assertRaisesRegex(ModelError,'tool_outcome_unknown'):
+                run(DirectModel('local','fixture',server.base+'/v1'),self.tools,'first-owner')
+            self.assertEqual(len(self.rpc.writes),1)
+            self.rpc.fail_mutation=False;fresh=self.make_tools()
+            client=DirectModel('local','fixture',server.base+'/v1')
+            run(client,fresh,'second-owner')
+            tool=next(row for row in server.requests[1]['body']['messages'] if row['role']=='tool')
+            retained=json.loads(tool['content'])
+            self.assertTrue(retained['outcomeUnknown']);self.assertFalse(retained['replayAllowed'])
+            self.assertEqual(retained['receipt']['name'],'Joel')
+            self.assertEqual(retained['receipt']['sessionId'],'aw-123')
+            with self.assertRaisesRegex(ModelError,'tool_outcome_unknown'):run(client,fresh,'third-owner')
+            self.assertEqual(self.rpc.writes,[('buddy-party.invite',dict(name='Joel'))])
+
+
 if __name__ == '__main__':
     unittest.main()
