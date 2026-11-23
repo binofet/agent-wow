@@ -25,4 +25,5 @@ packets:
 
 script_api:
   state: {effect: read}
+  invite: {effect: mutation, description: Send an explicit normal party invitation; transport write does not prove acceptance or membership}
   refresh_raid_targets: {effect: query, description: Request the actual server raid target list without assigning icons}

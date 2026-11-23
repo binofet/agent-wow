@@ -273,7 +273,8 @@ class DirectTools:
     def __init__(self, rpc, session_id, self_guid, workspace, root, *,
                  allowed=lambda: False, cancelled=lambda: False, request_id=None,
                  helpers=None, runner=None, max_bytes=8 * 1024 * 1024, execution_ms=1000, context=None,
-                 gm_allowed=lambda: False, chat_session_id=None, chat_cursor=None):
+                 gm_allowed=lambda: False, chat_session_id=None, chat_cursor=None,
+                 owner_allowed=lambda: False, receipt_root=None):
         require(isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", session_id),
                 "explicit_session_required")
         require(str(self_guid).isdigit() and 0 < int(self_guid) < 2**48, "explicit_actor_required")
@@ -285,8 +286,11 @@ class DirectTools:
         self.rpc, self.session_id, self.self_guid = rpc, session_id, str(self_guid)
         self.chat_session_id = chat_session_id
         self.chat_cursor = chat_cursor if chat_cursor is not None else "0"
-        self.workspace, self.root = Path(workspace).absolute(), Path(root).absolute()
+        self.workspace = Path(workspace).absolute() if workspace is not None else None
+        self.root = Path(root).absolute()
+        self.receipt_root = Path(receipt_root).absolute() if receipt_root is not None else self.root / 'data/converse'
         self.allowed, self.cancelled, self.request_id = allowed, cancelled, request_id
+        self.owner_allowed = owner_allowed
         self.gm_allowed = gm_allowed
         self.helpers, self.runner = dict(helpers or {}), runner or subprocess.run
         self.max_bytes, self.execution_ms = max_bytes, execution_ms
@@ -311,6 +315,11 @@ class DirectTools:
         self._authorise()
         require(self.self_guid == "87" and self.gm_allowed() is True,
                 "current_owner_gm_authority_required")
+
+    def _authorise_owner(self):
+        require(not self.cancelled(), "request_cancelled_before_dispatch")
+        require(self.owner_allowed() is True, "current_owner_authority_required")
+        require(self.unknown_receipt is None, "unconfirmed_tool_requires_observation_not_retry")
 
     @staticmethod
     def _valid_chat_cursor(value):
@@ -434,7 +443,7 @@ class DirectTools:
 
     def _helper(self, name):
         if name not in self.helpers:
-            filename = {"self-edit": "self-edit", "gm_tasks": "gm_tasks.py"}.get(name)
+            filename = {"self-edit": "self-edit", "gm_tasks": "gm_tasks.py", "task_runtime": "task-runtime"}.get(name)
             require(filename is not None, "maintained_helper_required")
             self.helpers[name] = load_helper(self.root / "dev" / filename,
                                              "direct_" + name.replace("-", "_"))
@@ -444,6 +453,7 @@ class DirectTools:
         return Path(self.helpers.get("policy_binary", self.root / "data/bin/luapolicy"))
 
     def _path(self, value):
+        require(self.workspace is not None, "owned_workspace_required")
         require(isinstance(value, str) and 0 < len(value) <= 512 and "\\" not in value,
                 "relative_workspace_path_required")
         path = PurePosixPath(value)
@@ -608,6 +618,93 @@ class DirectTools:
         except Exception as error:
             self._unknown("policy_input", dict(valueSHA256=sha(value)), error)
         return dict(result=result, deliveryOnly=True, gameEffectClaimed=False)
+
+    def _party_invite_binding(self):
+        catalog = self._catalog()
+        methods = self._methods(catalog)
+        prefix = 'buddy-party::warcraftbuddy.party.v1.'
+        method = methods.get('buddy-party.invite', {})
+        require(method.get('module') == 'buddy-party' and
+                method.get('path') == '/warcraftbuddy.party.v1.BuddyParty/Invite' and
+                method.get('inputType') == prefix+'InviteRequest' and
+                method.get('outputType') == prefix+'ActionResponse' and
+                method.get('effect') in ('unspecified', 'mutation'), 'canonical_party_invite_contract_required')
+        for name, field, kind in (('InviteRequest','name','string'),('ActionResponse','transportWritten','bool')):
+            shape = catalog.get('messages', {}).get(prefix+name, {})
+            fields = shape.get('fields', [])
+            require(shape.get('protobufName') == 'warcraftbuddy.party.v1.'+name and shape.get('syntax') == 'proto3'
+                and len(fields) == 1 and fields[0].get('name') == field and fields[0].get('number') == 1
+                and fields[0].get('kind') == kind and fields[0].get('type') == kind
+                and not any(fields[0].get(key) for key in ('repeated','map','required','optional','oneof')),
+                'canonical_party_invite_schema_required')
+        state = methods.get('buddy-party.state', {})
+        require(state.get('module') == 'buddy-party' and state.get('effect') == 'read' and
+                state.get('path') == '/warcraftbuddy.party.v1.BuddyParty/State', 'canonical_party_state_required')
+        party = self.rpc.call('buddy-party.state', {})
+        require(isinstance(party, dict) and party.get('sessionId') == self.session_id, 'party_body_changed')
+        after = self._catalog()
+        require(after['revision'] == catalog['revision'] and
+                self._methods(after).get('buddy-party.invite') == method, 'catalog_changed_during_invite_binding')
+        return after['revision']
+
+    def _party_invite(self, args, operation_id):
+        self._authorise_owner()
+        name = args.get('name')
+        require(isinstance(name,str) and 2 <= len(name) <= 12 and name.isalpha() and len(name.encode()) <= 48,
+                'local_character_name_required')
+        require(isinstance(self.request_id,str) and 0 < len(self.request_id) <= 512, 'host_request_identity_required')
+        require(operation_id is None or isinstance(operation_id,str) and
+                re.fullmatch(r'[A-Za-z0-9._:-]{1,512}',operation_id), 'host_operation_identity_required')
+        revision = self._party_invite_binding()
+        runtime = self._helper('task_runtime')
+        identity = dict(sessionId=self.session_id, guid=self.self_guid, rpcUrl=self.rpc.url)
+        target = self.receipt_root / 'party-invites' / sha(packed([self.session_id,self.self_guid,name.casefold()]))
+        operation = target / sha(packed([self.request_id, operation_id]))
+        # Reuse the maintained task Store's private lock/fsync/receipt mechanics.
+        # The target lock also fences case aliases and reconstructed API clients.
+        with runtime.Store(target):
+            for folder in sorted(target.iterdir()):
+                if folder.name == 'lock': continue
+                require(re.fullmatch(r'[a-f0-9]{64}',folder.name) is not None and folder.is_dir(),
+                        'invite_receipt_directory_invalid')
+                with runtime.Store(folder) as previous:
+                    prior = previous.load()
+                if prior is None: continue
+                require(prior.get('identity') == identity and prior.get('nameKey') == name.casefold(),
+                        'invite_receipt_identity_changed')
+                if prior.get('knownNotDispatched') is True: continue
+                if prior.get('result') is not None:
+                    if folder == operation or prior.get('requestId') == self.request_id:
+                        return dict(prior['result'], historicalReceipt=True)
+                    continue
+                self._unknown('party_invite',dict(name=name,stateDir=str(folder)),
+                              ToolError('retained_party_invite_outcome_unconfirmed'))
+            with runtime.Store(operation) as store:
+                record = dict(identity=identity,name=name,nameKey=name.casefold(),requestId=self.request_id,
+                              operationId=operation_id,attempted=True)
+                store.save(record)
+                entered = False
+                result = None
+                try:
+                    require(self._party_invite_binding() == revision, 'catalog_changed_before_invite')
+                    self._authorise_owner()  # After durable reservation and all fresh binding reads.
+                    entered = True
+                    result = self.rpc.call('buddy-party.invite',dict(name=name))
+                    require(isinstance(result,dict) and result.get('transportWritten') is True,
+                            'invite_transport_unconfirmed')
+                    require(self._party_invite_binding() == revision, 'catalog_changed_after_invite')
+                    result = dict(name=name,sessionId=self.session_id,characterGuid=self.self_guid,
+                        transportWritten=True,completion='transport_written; server_result_and_membership_unverified',
+                        gameEffectClaimed=False)
+                    store.save(dict(record,result=result))
+                except Exception as error:
+                    if entered:
+                        details = dict(name=name,stateDir=str(operation))
+                        if isinstance(result,dict) and result.get('transportWritten') is True: details['transportWritten']=True
+                        self._unknown('party_invite',details,error)
+                    store.save(dict(record,knownNotDispatched=True))
+                    raise
+                return result
 
     def _evaluate(self, args):
         self._authorise()
@@ -1042,7 +1139,16 @@ class DirectTools:
             ("spell_inspect", "Exact spell_id returns complete raw learned mechanics. spell_id=0 lists the book with bounded JSON path/offset/limit paging; classification is not cast availability.", {"spell_id": {"type": "integer", "minimum": 0}, **paging}, []),
             ("workspace_read", "Read owned Lua/JSON text and full SHA256; literal find/start_line locates a section. Large windows page content by character offset/limit; nextOffset continues without losing a long source line.", {"path": string, "start_line": {"type": "integer", "minimum": 1}, "max_lines": {"type": "integer", "minimum": 1, "maximum": 1000}, "find": string, "offset": paging["offset"], "limit": paging["limit"]}, ["path"]),
         ]
-        if self.allowed() is True:
+        if self.workspace is None:
+            specs = [row for row in specs if row[0] not in ('policy_show','spell_inspect','workspace_read')]
+        if self.owner_allowed() is True:
+            specs.append(('party_invite', 'Send one normal party invitation to the explicitly supplied local character name. '
+                'No GM privilege, position, selection, workspace or Lua edit is required. Exact installed native route/schema '
+                'is checked, including legacy unspecified metadata; no generic mutation RPC is exposed. A transport ACK '
+                'does not prove server acceptance or group membership: read buddy-party.state for actual later evidence. '
+                'Do not retry a pending/unconfirmed invite; its durable receipt survives requests and model changes.',
+                {'name':dict(type='string',minLength=2,maxLength=12)}, ['name']))
+        if self.workspace is not None and self.allowed() is True:
             specs += [
                 ("workspace_write", "Write an owned Lua/JSON file with exact old SHA256 CAS; empty hash requires a nonexistent file.", {"path": string, "content": string, "expected_sha256": string}, ["path", "content", "expected_sha256"]),
                 ("workspace_patch", "Apply exact literal replacements to owned Lua/JSON under old-file SHA256 CAS. Each old text must occur exactly once.", {"path": string, "expected_sha256": string, "edits": {"type": "array", "items": {"type": "object", "properties": {"old": string, "new": string}, "required": ["old", "new"], "additionalProperties": False}}}, ["path", "expected_sha256", "edits"]),
@@ -1055,7 +1161,7 @@ class DirectTools:
                           ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),
                           ("gm_task_resume", "Resume only gm_current_task's same stored goal/invocation and receipts. Runner started is not a GM effect; no new task or replay of uncertain actions.", {"task_id": string}, ["task_id"]),
                           ("gm_execute", "Send one native dot command through this exact GM session. Optional select_guid binds the observed server target GUID; zero clears UI selection. Local visibility/resolution is reported separately because command families resolve selected units differently. A command is sent only when that target GUID is actually observed at the final packet boundary. If selection was written but not observed, no command is queued: inspect facts before a fresh tool invocation. Each actual tool call has its own host operation identity; exact-operation receipt/unknown is never replayed. Equivalent same-request effects also retain their original receipt until substantive observed context changes; a new tool call alone is not retry authority. Returns a fresh Chat baseline/window within the same writer, with explicit no-reply/cursor loss/read failure; SYSTEM text is temporal evidence, never target/effect proof. Active task writers still block competing commands; realm permissions apply. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]
-        if self.self_guid == "87":
+        if self.workspace is not None and self.self_guid == "87":
             specs += [("gm_inspect", "Default: readable compact facts for EVERY configured client: own life/pose, exact Actions position provenance, group, fixed owner and visible configured/observed-party player witnesses. Unknown and false remain distinct; witnesses are scoped to their observer, not proof of a cleared area. Bulk NPCs/nested fields have explicit omitted counts/rawPath. Nonempty JSON path reads the FULL original raw tree; rawPath on each witness gives its original index. Raw pages use offset/limit; default compact output is bounded separately. No caller URL, game write or task.", paging, []),
                       ("gm_current_task", "Discover only this GM session's maintained active writer-owned task and actual retained status. No caller path, new task or execution. Page large observations/memory with JSON path/offset/limit.", paging, []),
                       ("gm_task_status", "Read this body's retained direct task or exact gm_current_task ID; no arbitrary task path or execution. JSON path/offset/limit expand and page large observations or memory.", {"task_id": string, **paging}, ["task_id"])]
@@ -1163,6 +1269,8 @@ class DirectTools:
                 result = self._policy_apply(args)
             elif name == "policy_input":
                 result = self._policy_input(args)
+            elif name == 'party_invite':
+                result = self._party_invite(args, operation_id)
             elif name.startswith("gm_task_") or name in ("gm_current_task", "gm_execute", "gm_inspect"):
                 result = self._gm(name, args, operation_id)
                 if name == "gm_inspect" and args.get("path",[])==[] and type(args.get("offset",0)) is int and args.get("offset",0)==0 and type(args.get("limit",20)) is int and args.get("limit",20)==20:
