@@ -2,6 +2,8 @@
 -- immutable offer, current body/visit, deadline, one vote and server receipt.
 -- Joel's assigned disenchanter is the verified Mira body GUID4. This role is
 -- authored Lua intent; the observed self GUID still binds every offer/vote.
+-- Keep the legacy deadline knob name for authored policies. It controls when
+-- incomplete facts fall back; it is not an explicit preference to pass.
 local M = {tuning = {future_levels = 3, pass_below_ms = 1500, disenchanter_guid = "4"}}
 local observation, sequence, proposed
 local state = {reservations = {}}
@@ -178,7 +180,10 @@ function M.decide(frame,gear)
             local choice
             if result=="useful" and bit(o.offeredMask,1) then choice="need"
             elseif result=="not_useful" and view.selfGuid==M.tuning.disenchanter_guid and bit(o.offeredMask,3) then choice="disenchant"
-            elseif (result=="not_useful" or millis(o.remainingMs)<=M.tuning.pass_below_ms) and bit(o.offeredMask,0) then choice="pass" end
+            elseif result~="unknown" or millis(o.remainingMs)<=M.tuning.pass_below_ms then
+                if bit(o.offeredMask,2) then choice="greed"
+                elseif bit(o.offeredMask,0) then choice="pass" end
+            end
             if choice then
                 local action={capability="loot_roll",sessionId=view.sessionId,selfGuid=view.selfGuid,visitId=view.visitId,
                     rollGuid=o.rollGuid,offerRevision=o.revision,choice=choice,lootSlot=o.lootSlot or 0,
@@ -209,7 +214,7 @@ function M.import_state(checkpoint)
     if saved.sessionId~=nil and (type(saved.sessionId)~="string" or #saved.sessionId<1 or #saved.sessionId>128 or not decimal(saved.selfGuid)) then return false end
     local count=0
     for k,v in pairs(saved.reservations) do
-        if type(k)~="string" or #k<5 or #k>62 or (v~="need" and v~="pass" and v~="disenchant") then return false end
+        if type(k)~="string" or #k<5 or #k>62 or (v~="need" and v~="greed" and v~="pass" and v~="disenchant") then return false end
         count=count+1
     end
     if count>256 or count>0 and not saved.sessionId then return false end
