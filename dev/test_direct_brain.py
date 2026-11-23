@@ -414,14 +414,34 @@ class DirectBrainIntegrationTests(unittest.TestCase):
         self.assertIn(reference, brain.gm_instructions)  # Legacy path retains its existing instructions.
         captured = []
         def capture(payload, *_):
-            captured.append(payload)
+            captured.append(copy.deepcopy(payload))
+            if len(captured)==1:
+                return chat(('gm-api','context_read',dict(path=['development','gmTasks','instructions'],limit=4096)),
+                    ('history','context_read',dict(path=['conversationHistory'])))
             return dict(choices=[dict(finish_reason="stop", message=dict(role="assistant", content="Understood."))])
+        metadata=converse.gm_tasks.tools(self.workspace,'87','http://127.0.0.1:8090/rpc')
+        metadata.update(instructions="FORCED OLD TASK LIFECYCLE",currentTaskId="retained-task")
+        state=dict(character=dict(guid="87"),current_request=dict(source="owner",senderGuid="3"),
+            gm_controls_available=True,development=dict(gmTasks=metadata))
+        original=copy.deepcopy(state);history=[dict(text="Retain the complete requested outcome and existing receipts.")]
         with patch.object(brain.client, "_http", side_effect=capture):
-            brain.generate([dict(text="What GM tools can you use?")], dict(character=dict(guid="87"),
-                current_request=dict(source="owner", senderGuid="3"), gm_controls_available=True,
-                development=dict(gmTasks=dict(instructions="FORCED OLD TASK LIFECYCLE", currentTaskId="retained-task"))))
+            brain.generate(history,state)
         system = captured[0]["messages"][0]["content"]
+        initial=json.loads(system.split('Current observations and control state JSON:\n',1)[1])['development']['gmTasks']
+        lazy={row['tool_call_id']:json.loads(row['content'])['result']
+            for row in captured[1]['messages'] if row.get('role')=='tool'}
+        self.assertEqual(lazy['gm-api']['value'],initial['instructions'])
+        self.assertEqual(lazy['history']['rows'][0]['value'],history[0])
+        self.assertEqual(initial['directTools']['start'],'gm_task_start(goal)')
+        self.assertEqual(initial['directTools']['execute'],'gm_execute(command, select_guid?)')
+        self.assertIn('no new Lua, workspace file, transport-config read or CLI invocation',initial['instructions'])
+        self.assertIn('a task is not mandatory',initial['instructions'])
+        self.assertEqual(initial['cliReference']['transportConfig'],metadata['transportConfig'])
+        self.assertEqual(initial['cliReference']['start'],metadata['start'])
+        self.assertNotIn('transportConfig',initial);self.assertNotIn('start',initial)
+        self.assertEqual(state,original)
         self.assertIn(reference, system)
+        self.assertEqual(system.count(reference),1)
         self.assertIn("retained-task", system)
         self.assertNotIn("FORCED OLD TASK LIFECYCLE", system)
         self.assertNotIn("first read gm_current_task", system)
