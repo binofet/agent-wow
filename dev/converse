@@ -2664,7 +2664,10 @@ class DirectBrain(AgentBrain):
             "and validate mechanics. Tools enforce current body, permission and action-specific limits. "
             "Reply with ordinary assistant text; use the advertised tools for requested actions.")
         if character_name.casefold() == "lotharen":
-            self.persona += " You are Joel's authenticated rank 2 GM character, GUID 87; the realm validates command permissions."
+            self.persona += (" You are Joel's authenticated rank 2 GM character, GUID 87; the realm validates command permissions. "
+                "For an authorized GM request, choose and invoke native GM commands yourself from the actual goal, "
+                "current observations and command reference. These GM actions do not require writing Lua, a Codex operator "
+                "or an ordered task; accepted Lua still owns ordinary companion gameplay and persistent behavior.")
         self.developer_persona = self.persona
 
     def model_selection(self):
@@ -2760,17 +2763,21 @@ class DirectBrain(AgentBrain):
                 "policy", "holdPolicy", "transportConfig", "stateRoot", "start", "run", "bindings",
                 "source", "execute", "select", "inspect", "status", "cancel", "resume") if key in gm_context}
             gm_context["instructions"] = (
-                "Use the advertised structured tools directly. gm_task_start(goal) runs the EXISTING ordered Lua "
-                "recovery/regroup task; provide the current observed original members and either a destination pose "
-                "or player anchor. Existing tasks require no new Lua, workspace file, transport-config read or CLI invocation. "
-                "gm_execute(command, select_guid?) sends an individual native command. Choose the tool suited to the "
-                "request; a task is not mandatory for every GM action. gm_inspect reads current client facts; "
+                "Choose native GM commands from the actual owner's goal and current facts, and invoke the advertised "
+                "gm_execute(command, select_guid?) tool directly. It is not necessary to create a task, write Lua, read a "
+                "transport file or ask an operator to issue these commands. Optional select_guid is only for an intentional "
+                "UI-selection change; explicit named commands use their own realm handlers. In particular, .groupsummon "
+                "moves the named player's group TO the GM's CURRENT location, not to the named player; preserve the "
+                "goal's distinction between destination anchor and people to move. gm_inspect reads client facts, whose "
+                "read time does not refresh their server pose ages or establish an instance copy. "
+                "gm_task_start(goal) remains an OPTIONAL existing ordered Lua recovery/regroup convenience; it requires "
+                "the current observed original members and a destination pose or player anchor. "
                 "gm_current_task, gm_task_status, gm_task_resume and gm_task_cancel inspect or continue retained work. "
                 "Tools already bind the current session and transport; cliReference is optional operator reference, "
                 "not workspace input. Tool contracts, current observations and the full command reference are already "
                 "supplied; inspect needed missing facts or unfamiliar realm syntax. Preserve uncertain receipts and verify "
                 "effects separately from helper start or packet ACK. These mappings grant no additional authority.")
-            gm_context["directTools"] = dict(start="gm_task_start(goal)", execute="gm_execute(command, select_guid?)",
+            gm_context["directTools"] = dict(execute="gm_execute(command, select_guid?)", start="gm_task_start(goal)",
                 inspect="gm_inspect()", current="gm_current_task()", status="gm_task_status(task_id)",
                 resume="gm_task_resume(task_id)", cancel="gm_task_cancel(task_id)")
         reference=gm_reference_context(self.gm_reference) if allow_gm and self.gm_reference else None
