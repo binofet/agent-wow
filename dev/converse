@@ -2780,7 +2780,9 @@ without observations. Keep final action NONE after performing a tool action.
         self._generation["stage"] = "api_request"
         try:
             system = ((self.developer_persona if developer else self.persona)
-                      + (("\nWhen advertised, gm_execute sends one native command; final_reply.gm_command "
+                      + (self.gm_instructions if allow_gm else "")
+                      + (("\nDirect API tool mapping (takes precedence over CLI examples above): "
+                          "When advertised, gm_execute sends one native command; final_reply.gm_command "
                           "also permits one command before any mutation tool has entered. "
                           "The realm decides command permissions. "
                           "Only the supplied function tools exist: CLI argv in development.gmTasks "

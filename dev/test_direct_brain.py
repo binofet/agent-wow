@@ -127,6 +127,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                     brain = converse.DirectBrain(self.state, developer_workspace=self.workspace,
                         character_name="Lotharen", character_class="paladin", model="fixture-requested-model",
                         provider="local", base_url="http://127.0.0.1:1/v1")
+                    brain.gm_instructions += '\nExisting local realm command reference fixture.'
                     self.assertTrue(brain.development_enabled(state))
                     requests = []
                     def capture(payload, *_):
@@ -137,6 +138,11 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                 names = {row["function"]["name"] for row in requests[0]["tools"]}
                 self.assertTrue({"policy_apply", "workspace_write", "policy_input", "gm_task_status", "gm_current_task"} <= names)
                 self.assertEqual({"gm_task_start", "gm_task_cancel", "gm_task_resume", "gm_execute"} <= names, expected)
+                prompt = requests[0]['messages'][0]['content']
+                self.assertEqual('Existing local realm command reference fixture.' in prompt, expected)
+                if expected:
+                    self.assertLess(prompt.index('Existing local realm command reference fixture.'),
+                                    prompt.index('Direct API tool mapping'))
                 self.assertFalse(rpc.commands or rpc.replies)
 
     def test_new_gm_mutation_tools_cannot_append_a_second_final_command(self):
