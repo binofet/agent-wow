@@ -240,6 +240,15 @@ class GMCommandEvidenceTests(unittest.TestCase):
         self.assertIs(caught.exception.receipt['commandTransportWritten'],False)
         self.assertFalse(self.rpc.commands)
 
+    def test_selection_final_prewrite_refusal_is_known_no_packet(self):
+        def refused():raise ValueError('owner cancelled before selection dispatch')
+        result=self.gm.execute_command(self.rpc,{},'.gps Joel',self.host,select_guid='3',
+            expected_session=self.rpc.sid,final_authorise=refused)
+        self.assertIs(result['selectionTransportWritten'],False)
+        self.assertIs(result['commandTransportWritten'],False)
+        self.assertEqual(result['completion'],'selection_not_dispatched')
+        self.assertFalse(self.rpc.packets)
+
     def test_foreign_native_body_after_known_write_retains_written_fact_and_halts(self):
         self.rpc.post_failure='body'
         with self.assertRaises(direct_tools.ToolOutcomeUnknown) as caught:self.execute()

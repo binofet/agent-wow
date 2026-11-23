@@ -233,6 +233,9 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
             if not out['selection']['selectionMatches']:
                 try:transport.select(select_guid,sid)
                 except Exception as error:
+                    if getattr(error,'packet_dispatched',None) is False:
+                        out.update(completion='selection_not_dispatched',selectionError=str(error))
+                        return out
                     out.update(selectionTransportWritten=None,transportWritten=None,selectionOutcomeUnknown=True)
                     error.gm_receipt=out
                     raise
