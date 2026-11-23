@@ -7,6 +7,7 @@ import importlib.machinery
 import importlib.util
 import io
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -204,7 +205,9 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             self.assertEqual(instances[-1].context["gm_observation_primer"],primer)
             self.assertEqual(instances[-1].chat_cursor,"261")
             self.assertEqual(state,original)
-            self.assertEqual(messages[0]["content"].count(brain.gm_reference),1)
+            self.assertNotIn(brain.gm_reference,messages[0]["content"])
+            self.assertEqual(instances[-1].context['gmReference']['raw'],brain.gm_reference)
+            self.assertEqual(prepared['gmReference']['sha256'],hashlib.sha256(brain.gm_reference.encode()).hexdigest())
             self.assertFalse(any(peer.commands or peer.replies for peer in clients.values()))
             self.assertTrue(all(method in ("session.describe","buddy-actions.status","buddy-world.snapshot","buddy-party.state")
                                 for peer in clients.values() for method,_ in peer.calls))
@@ -300,15 +303,48 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             "\nPUBLIC SOURCE FILE MANIFEST\n", 1)[0]
         self.assertEqual(hashlib.sha256(catalog.encode()).hexdigest(),
             "43204986573bd7c99ada6e92d499be5b8b05a481b2be3d5763ebef4002d94581")
-        rpc, state = self.gm_guide_fixture(); captured = []
-        with patch.object(converse, "ROOT", self.workspace), patch.object(converse, "RPC", return_value=rpc):
+        expected_headers=list(re.finditer(r'^={72}\n(\.[^\r\n]+)\n',catalog,re.M))
+        expected_names=[match[1] for match in expected_headers]
+        offset=expected_names.index('.groupsummon')
+        expected_entry=catalog[expected_headers[offset].start():expected_headers[offset+1].start()]
+        rpc, state = self.gm_guide_fixture();state['unconfirmed']=dict(actionId='retained',replayAllowed=False)
+        original=copy.deepcopy(state);history=[dict(text='Keep the requested goal and every uncertain receipt.')]
+        instances=[];actual_tools=direct_tools.DirectTools
+        class CapturedTools(actual_tools):
+            def __init__(self,*args,**kwargs):super().__init__(*args,**kwargs);instances.append(self)
+        reads=chat(('entry','context_read',dict(path=['gmReference','commands','.groupsummon'],limit=20)),
+            ('raw','context_read',dict(path=['gmReference','raw'],limit=4096)),
+            ('history','context_read',dict(path=['conversationHistory'])))
+        with FakeHTTP([reads,spoken()]) as http,patch.object(converse, "ROOT", self.workspace), \
+                patch.object(converse, "RPC", return_value=rpc),patch.object(direct_tools,'DirectTools',CapturedTools):
             brain = converse.DirectBrain(self.state, character_name="Lotharen", character_class="paladin",
-                developer_workspace=self.workspace, model="fixture-model", provider="local", base_url="http://127.0.0.1:1/v1")
-            def fake(payload, *_):
-                captured.append(copy.deepcopy(payload)); return spoken()
-            with patch.object(brain.client, "_http", side_effect=fake): brain.generate([dict(text="Use your native tools.")], state)
+                developer_workspace=self.workspace, model="fixture-model", provider="local", base_url=http.base)
+            brain.generate(history,state)
+            captured=[row['body'] for row in http.requests]
         system = captured[0]["messages"][0]["content"]
-        self.assertEqual(brain.gm_reference, reference); self.assertEqual(system.count(reference), 1)
+        self.assertEqual(brain.gm_reference, reference);self.assertNotIn(reference,system)
+        view=converse.gm_reference_context(reference)
+        self.assertEqual(list(view['captured']['commands']),expected_names)
+        self.assertEqual(len(expected_names),739)
+        eager_names=system.split('COMPLETE COMMAND NAME INDEX (739)\n',1)[1].split('\n\nThe full exact reference',1)[0].splitlines()
+        self.assertEqual(eager_names,expected_names)
+        for index,header in enumerate(expected_headers):
+            end=expected_headers[index+1].start() if index+1<len(expected_headers) else len(catalog)
+            self.assertEqual(view['captured']['commands'][header[1]]['text'],catalog[header.start():end])
+        results={row['tool_call_id']:json.loads(row['content'])['result'] for row in captured[1]['messages'] if row.get('role')=='tool'}
+        entry={row['key']:row['value'] for row in results['entry']['rows']}
+        self.assertEqual(entry['text'],expected_entry);self.assertEqual(entry['sourcePin'],'b8c2e189651d262ab94d6f012b1a9d38591a091b')
+        self.assertIn('Published default minimum security:',entry['text']);self.assertIn('Native signature:',entry['text'])
+        self.assertEqual(results['raw']['value'],reference[:4096])
+        self.assertEqual(results['history']['rows'][0]['value'],history[0])
+        full=instances[-1].context['gmReference']
+        self.assertEqual(full['raw'].encode(),Path(__file__).with_name('lotharen-gm-commands.txt').read_bytes())
+        self.assertEqual(full['sha256'],hashlib.sha256(full['raw'].encode()).hexdigest())
+        self.assertIn('PUBLIC SOURCE FILE MANIFEST',full['manifest'])
+        prepared=json.loads(system.split('Current observations and control state JSON:\n',1)[1])
+        self.assertEqual(prepared['unconfirmed'],state['unconfirmed']);self.assertEqual(state,original)
+        old_eager=copy.deepcopy(captured[0]);old_eager['messages'][0]['content']=system.replace(view['eager'],reference)
+        self.assertLess(len(json.dumps(captured[0]).encode()),len(json.dumps(old_eager).encode())-300000)
         self.assertGreater(len(reference.encode()), 343804)
         for fact in (".groupsummon Arlen has produced actual arrivals", "Individual .summon attempts",
                      "GM self", "no target name/GUID", "newInstance is false", ".pinfo <online name>",
@@ -320,6 +356,15 @@ class DirectBrainIntegrationTests(unittest.TestCase):
         self.assertEqual(tools["gm_execute"]["parameters"]["properties"]["command"]["type"], "string")
         self.assertNotIn("final_reply", tools); self.assertEqual(captured[0]["tool_choice"], "auto")
         self.assertFalse(rpc.commands or rpc.replies)
+
+    def test_unrecognized_reference_format_preserves_full_eager_text(self):
+        reference=Path(__file__).with_name('lotharen-gm-commands.txt').read_text()
+        for value in ('Private custom reference, unchanged.', reference.replace('739 distinct paths','740 distinct paths'),
+                reference+'\nPrivate extra guidance.',reference.replace('FULL COMMAND HELP AND SOURCE SIGNATURES\n','')):
+            with self.subTest(bytes=len(value)):
+                view=converse.gm_reference_context(value)
+                self.assertEqual(view['eager'],value);self.assertEqual(view['captured']['raw'],value)
+                self.assertEqual(view['metadata']['format'],'custom_full_eager')
 
     def test_synthetic_recovery_keeps_history_feedback_and_partial_effects_without_host_replay(self):
         # Scripted API responses prove presentation/tool-history wiring, not real model planning or realm effects.
@@ -417,7 +462,8 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             captured.append(copy.deepcopy(payload))
             if len(captured)==1:
                 return chat(('gm-api','context_read',dict(path=['development','gmTasks','instructions'],limit=4096)),
-                    ('history','context_read',dict(path=['conversationHistory'])))
+                    ('history','context_read',dict(path=['conversationHistory'])),
+                    ('reference','context_read',dict(path=['gmReference','raw'],limit=4096)))
             return dict(choices=[dict(finish_reason="stop", message=dict(role="assistant", content="Understood."))])
         metadata=converse.gm_tasks.tools(self.workspace,'87','http://127.0.0.1:8090/rpc')
         metadata.update(instructions="FORCED OLD TASK LIFECYCLE",currentTaskId="retained-task")
@@ -432,6 +478,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             for row in captured[1]['messages'] if row.get('role')=='tool'}
         self.assertEqual(lazy['gm-api']['value'],initial['instructions'])
         self.assertEqual(lazy['history']['rows'][0]['value'],history[0])
+        self.assertEqual(lazy['reference']['value'],reference)
         self.assertEqual(initial['directTools']['start'],'gm_task_start(goal)')
         self.assertEqual(initial['directTools']['execute'],'gm_execute(command, select_guid?)')
         self.assertIn('no new Lua, workspace file, transport-config read or CLI invocation',initial['instructions'])
