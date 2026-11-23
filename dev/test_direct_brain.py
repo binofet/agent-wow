@@ -484,9 +484,11 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             self.assertFalse(self.rpc.commands)
             self.assertIn("No repair was queued", self.rpc.replies[-1]["text"])
             request = http.requests[0]["body"]
-            self.assertIn('"repair_requests_allowed": false', request["messages"][1]["content"])
+            prepared = json.loads(request["messages"][1]["content"].split(
+                "Current observations and control state JSON:\n", 1)[1].split("\nConversation JSON:\n", 1)[0])
+            self.assertIs(prepared["current_request"]["repair_requests_allowed"], False)
             tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
-            self.assertEqual(set(tools), {"final_reply"})
+            self.assertEqual(set(tools), {"final_reply", "context_read"})
             self.assertNotIn("REPAIR_CONTROLLER", tools["final_reply"]["parameters"]["properties"]["action"]["enum"])
             self.assertFalse(brain.model_selection()["codexInvoked"])
 
