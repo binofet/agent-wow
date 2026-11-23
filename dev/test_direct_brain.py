@@ -114,6 +114,88 @@ class PublicRPC:
 
 
 class DirectBrainIntegrationTests(unittest.TestCase):
+    def gm_guide_fixture(self):
+        rpc = PublicRPC(); rpc.guid = rpc.catalog_guid = "87"
+        state = dict(character=dict(guid="87"), gm_controls_available=True,
+            development=dict(enabled=True, directDevelopment=True, workspace=str(self.workspace),
+                rpcUrl=rpc.url, sessionId=rpc.core, selfGuid="87", ownerGuid="3"),
+            current_request=dict(source="owner", senderGuid="3", channel="WHISPER", conversationScope="WHISPER"))
+        return rpc, state
+
+    def test_loaded_gm_guide_preserves_full_catalog_and_native_tool_contract(self):
+        reference = Path(__file__).with_name("lotharen-gm-commands.txt").read_text()
+        catalog = reference.split("FULL COMMAND HELP AND SOURCE SIGNATURES\n", 1)[1].split(
+            "\nPUBLIC SOURCE FILE MANIFEST\n", 1)[0]
+        self.assertEqual(hashlib.sha256(catalog.encode()).hexdigest(),
+            "43204986573bd7c99ada6e92d499be5b8b05a481b2be3d5763ebef4002d94581")
+        rpc, state = self.gm_guide_fixture(); captured = []
+        with patch.object(converse, "ROOT", self.workspace), patch.object(converse, "RPC", return_value=rpc):
+            brain = converse.DirectBrain(self.state, character_name="Lotharen", character_class="paladin",
+                developer_workspace=self.workspace, model="fixture-model", provider="local", base_url="http://127.0.0.1:1/v1")
+            def fake(payload, *_):
+                captured.append(copy.deepcopy(payload)); return spoken()
+            with patch.object(brain.client, "_http", side_effect=fake): brain.generate([dict(text="Use your native tools.")], state)
+        system = captured[0]["messages"][0]["content"]
+        self.assertEqual(brain.gm_reference, reference); self.assertEqual(system.count(reference), 1)
+        self.assertGreater(len(reference.encode()), 343804)
+        for fact in (".groupsummon Arlen has produced actual arrivals", "Individual .summon attempts",
+                     "GM self", "no target name/GUID", "newInstance is false", ".pinfo <online name>",
+                     ".group join <existingGroupMember> Lotharen", "Keep the old messages and every entered action/unknown receipt"):
+            self.assertIn(fact, system)
+        tools = {r["function"]["name"]: r["function"] for r in captured[0]["tools"]}
+        self.assertTrue({"gm_execute", "gm_inspect", "chat_read"} <= tools.keys())
+        self.assertEqual(tools["gm_execute"]["parameters"]["required"], ["command"])
+        self.assertEqual(tools["gm_execute"]["parameters"]["properties"]["command"]["type"], "string")
+        self.assertNotIn("final_reply", tools); self.assertEqual(captured[0]["tool_choice"], "auto")
+        self.assertFalse(rpc.commands or rpc.replies)
+
+    def test_synthetic_recovery_keeps_history_feedback_and_partial_effects_without_host_replay(self):
+        # Scripted API responses prove presentation/tool-history wiring, not real model planning or realm effects.
+        old = "An older cheat sheet said to individually .summon each member after joining the group."
+        goal = "Regroup our party and revive anyone who is actually dead."
+        status = "What was confirmed? Do not issue new commands."
+        partial = "The group command was written. Arlen is visible; Joel's arrival and life remain unknown."
+        responses = [spoken("I will use current facts and the corrected guide."),
+            chat(("help", "gm_execute", dict(command=".help groupsummon"))),
+            chat(("feedback", "chat_read", dict(after_sequence="10", limit=20))),
+            chat(("gather", "gm_execute", dict(command=".groupsummon Arlen"))),
+            chat(("observe", "gm_inspect", {})), spoken(partial), spoken("Only partial arrival is confirmed; no new command issued.")]
+        rpc, state = self.gm_guide_fixture(); entered = []
+        state["party"] = dict(known=True, inGroup=True, leaderGuid="87", members=[dict(guid=str(g), online=True) for g in (1,3,4,5,87)])
+        def gm(tools, name, args, operation_id=None):
+            if name == "gm_execute":
+                tools._authorise_gm(); entered.append(args["command"])
+                return dict(transportWritten=True, completion="effect_not_yet_verified", gameEffectClaimed=False)
+            self.assertEqual(name, "gm_inspect")
+            return dict(gameEffectClaimed=False, clients=[dict(guid="87", identityMatches=True, group=state["party"],
+                observations=dict(world=dict(nearbyPlayers=[dict(guid="1", present=True, aliveKnown=True, alive=True)],
+                    owner=dict(guid="3", present=False, aliveKnown=False, positionKnown=False)),
+                    actions=dict(position=dict(known=True, mapKnown=True)), party=dict(group=state["party"])))])
+        def feedback(tools, args):
+            self.assertEqual(args, dict(after_sequence="10", limit=20))
+            return dict(sessionId=rpc.chat, latestSequence="11", nextSequence="11", messages=[dict(
+                sequence="11", channel="CHANNEL_UNSPECIFIED", senderGuid="0", text="Syntax: .groupsummon [playername]")])
+        with FakeHTTP(responses) as http, patch.object(converse, "ROOT", self.workspace), patch.object(converse, "RPC", return_value=rpc), \
+                patch.object(direct_tools.DirectTools, "_gm", autospec=True, side_effect=gm), \
+                patch.object(direct_tools.DirectTools, "_chat_read", autospec=True, side_effect=feedback):
+            brain = converse.DirectBrain(self.state, developer_workspace=self.workspace, character_name="Lotharen",
+                character_class="paladin", model="fixture-model", provider="local", base_url=http.base)
+            loop = converse.Conversation(rpc, brain, character_name="Lotharen", character_class="paladin", character_guid=87)
+            loop.initialized, loop.session_id, loop.cursor = True, rpc.chat, 1
+            for text in (old, goal, status):
+                state["current_request"]["messages"] = [dict(text=text)]; reply = loop.generate_reply([], state)
+                if text == goal: self.assertEqual(reply["text"], partial)
+            final = http.requests[-1]["body"]["messages"]
+            self.assertEqual([m["content"] for m in final if m["role"] == "user"], [old,goal,status])
+            self.assertEqual(entered, [".help groupsummon", ".groupsummon Arlen"]); self.assertEqual(len(http.requests), 7)
+            rows = [json.loads(m["content"])["result"] for m in final if m["role"] == "tool"]
+            self.assertEqual(len(rows), 4); self.assertEqual(rows[0]["completion"], "effect_not_yet_verified")
+            self.assertEqual(rows[1]["messages"][0]["channel"], "CHANNEL_UNSPECIFIED")
+            self.assertFalse(rows[-1]["clients"][0]["observations"]["world"]["owner"]["aliveKnown"])
+            self.assertEqual(sum(m["role"] == "system" for m in final), 1)
+            self.assertIn("Later source-verified or actually observed corrections", final[0]["content"])
+            self.assertFalse(rpc.commands or rpc.replies)
+
     def test_live_gm_facade_separates_owner_gm_tools_from_verified_peer_development(self):
         for source, gm_available, expected in (("owner", True, True), ("party_agent", True, False),
                                                ("owner", False, False)):

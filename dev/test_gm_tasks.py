@@ -60,7 +60,13 @@ class TestGMTaskTransport(unittest.TestCase):
 
 class TestDirectGMCommands(unittest.TestCase):
  def rpc(self):
-  return types.SimpleNamespace(call=lambda method,params: {'sessionId':'aw-123','selfGuid':'87'})
+  rpc=types.SimpleNamespace(target=0)
+  def read(method,params):
+   if method=='buddy-world.snapshot':return dict(self=dict(guid='87',present=True,mapKnown=True,mapId=349,
+    targetKnown=True,targetGuid=str(rpc.target)),nearbyCreatures=[dict(guid='17379391034147995791',present=True,mapKnown=True,mapId=349)])
+   return {'sessionId':'aw-123','selfGuid':'87'}
+  rpc.call=read
+  return rpc
  def test_selected_command_holds_one_body_writer(self):
   with tempfile.TemporaryDirectory() as folder:
    cfg={'writerRoot':str(Path(folder).resolve())};rpc=self.rpc();events=[]
@@ -68,6 +74,7 @@ class TestDirectGMCommands(unittest.TestCase):
     def __init__(self,*args):pass
     def select(self,guid,sid):
      events.append(('select',guid,sid))
+     rpc.target=int(guid)  # A subsequent World read now observes the exact selection.
      with self_test.assertRaises(gm.runtime.Error):
       gm.execute_command(rpc,cfg,'.appear Joel',expected_session=sid)
     def gm(self,command,sid):events.append(('command',command,sid))
@@ -82,14 +89,19 @@ class TestDirectGMCommands(unittest.TestCase):
     gm.execute_command(self.rpc(),{'writerRoot':str(Path(folder).resolve())},'.modify hp 2349',select_guid='3',expected_session='aw-old')
    transport.assert_not_called()
  def test_body_replacement_after_selection_does_not_send_command(self):
-  calls=0
+  replaced=False
   def read(method,params):
-   nonlocal calls
-   if method=='buddy-actions.status':calls+=1
-   return {'sessionId':'aw-new' if calls>=3 else 'aw-123','selfGuid':'87'}
-  with tempfile.TemporaryDirectory() as folder,patch.object(gm.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stdout=b'grpc-status: 0\r\n')) as run:
-   with self.assertRaisesRegex(ValueError,'body changed'):
-    gm.execute_command(types.SimpleNamespace(call=read),{'writerRoot':str(Path(folder).resolve())},'.damage 4000',select_guid='99',expected_session='aw-123')
+   if method=='buddy-world.snapshot':return dict(self=dict(guid='87',present=True,mapKnown=True,mapId=349,targetKnown=True),
+    nearbyCreatures=[dict(guid='99',present=True,mapKnown=True,mapId=349)])
+   return {'sessionId':'aw-new' if replaced else 'aw-123','selfGuid':'87'}
+  def sent(*args,**kwargs):
+   nonlocal replaced
+   replaced=True
+   return types.SimpleNamespace(returncode=0,stdout=b'grpc-status: 0\r\n')
+  with tempfile.TemporaryDirectory() as folder,patch.object(gm.subprocess,'run',side_effect=sent) as run:
+   result=gm.execute_command(types.SimpleNamespace(call=read),{'writerRoot':str(Path(folder).resolve())},'.damage 4000',select_guid='99',expected_session='aw-123')
+   self.assertTrue(result['selectionTransportWritten']);self.assertFalse(result['commandTransportWritten'])
+   self.assertIn('evidence_unavailable',result['completion'])
    self.assertEqual(run.call_count,1)
  def test_existing_ordered_task_keeps_its_writer(self):
   with tempfile.TemporaryDirectory() as folder,patch.object(gm,'SessionTransport') as transport:
@@ -194,7 +206,9 @@ class TestGMTaskHost(unittest.TestCase):
     blocked=self.evaluate_unobserved_transport(frame,[]if change=='revoke'else['3'])
     self.assertEqual(blocked['error'],'unobserved_transport_not_admitted:Joel');self.assertNotIn('action',blocked)
  def host(self,path,transport=None,bridge=None):
-  return gm.Host(Store(path),Mock(),transport or Mock(),bridge or Mock(),{'id':'test','members':[]},Path(path)/'policy.lua',Path(path)/'hold.lua')
+  h=gm.Host(Store(path),Mock(),transport or Mock(),bridge or Mock(),{'id':'test','members':[]},Path(path)/'policy.lua',Path(path)/'hold.lua')
+  h.admission=Mock(return_value=None) # These existing executor fixtures isolate post-admission custody.
+  return h
  def test_reservation_persisted_before_write_and_not_replayed(self):
   with tempfile.TemporaryDirectory() as folder:
    h=self.host(folder);action={'id':'test:1','kind':'gm_command','command':'.revive Joel'}
@@ -254,7 +268,7 @@ class TestGMTaskHost(unittest.TestCase):
     if refusal=='foreign_writer':
      with writer:gm.claim_writer(writer,root/'other-task')
      writer_before=(writer.folder/'state.json').read_bytes()
-    with patch.object(gm,'task_rpc',return_value=rpc),patch.object(gm,'SessionTransport'),patch.object(gm,'task_bridge'),patch.object(gm.Host,'run') as run:
+    with patch.object(gm,'task_rpc',return_value=rpc),patch.object(gm,'SessionTransport'),patch.object(gm,'task_bridge'),patch.object(gm.Host,'admission',return_value=None),patch.object(gm.Host,'run') as run:
      with self.assertRaisesRegex(ValueError,{'changed_goal':'explicit task goal','changed_body':'another GM body','foreign_writer':'already owns'}[refusal]):
       gm.main(['run','--state-dir',str(state),'--goal',str(goal_path),'--transport',str(transport),'--rpc-url','http://127.0.0.1:8090/rpc'])
     run.assert_not_called()
