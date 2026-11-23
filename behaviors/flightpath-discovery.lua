@@ -140,7 +140,7 @@ local function call_query(context,frame,mode)
     frame.stage="observe"
     return tasks.await(context,"waiting_for_flightpath_observation")
 end
-local function handler(context,frame)
+local function handler(context,frame,parent_owned)
     local valid,body,visit=bound(context,frame)
     if valid==false then
         if not frame.aborted then frame.aborted=true;finish(context,frame,"body_or_visit_changed") end
@@ -154,7 +154,14 @@ local function handler(context,frame)
         if d>M.tuning.interaction_yards then return tasks.await(context,"waiting_in_flightmaster_range") end
         if (context.observations.flightpath.operation or {}).pending==true then return tasks.await(context,"waiting_for_native_flightpath_operation") end
         frame.sessionId,frame.selfGuid,frame.visitId,frame.npcGuid=body.sessionId,body.selfGuid,visit,npc.guid
-        frame.stage="acquire"
+        frame.stage=parent_owned and "status" or "acquire"
+    end
+    if parent_owned and not frame.waiting and frame.stage~="observe" then
+        local token=(context.state.goal.params or {}).explorationToken
+        if type(token)~="string" or token=="" or #token>128 or a.interactionOwner~="exploration" then
+            return tasks.await(context,"waiting_for_parent_exploration_custody")
+        end
+        frame.token=token
     end
     if frame.stage=="acquire" then
         if not frame.waiting and not quiet(context) then return tasks.await(context,"waiting_for_quiet_flightpath_body") end
@@ -168,7 +175,7 @@ local function handler(context,frame)
         frame.token=reply.token;frame.stage=frame.resume or "status";frame.resume=nil
     end
     if frame.stage=="status" or frame.stage=="learn" or frame.stage=="menu" then
-        if not frame.waiting and a.interactionOwner~="exploration" then
+        if not parent_owned and not frame.waiting and a.interactionOwner~="exploration" then
             if (a.interactionOwner or "")=="" then frame.token=nil;frame.resume=frame.stage;frame.stage="acquire" end
             return tasks.await(context,"flightpath_custody_unavailable")
         end
@@ -183,6 +190,7 @@ local function handler(context,frame)
         return tasks.await(context,"flightpath_receipt_observed")
     end
     if frame.stage=="release" then
+        if parent_owned then tasks.pop(context,{status=frame.result});return end
         if frame.waiting and frame.waiting.method~="buddy-actions.release_interaction" then return tasks.await(context,"waiting_for_original_flightpath_call") end
         if frame.token and (a.interactionOwner=="exploration" or frame.waiting) then
             local reply,out=tasks.call(context,frame,"buddy-actions.release_interaction",{owner="exploration",token=frame.token},"releasing_flightpath_custody")
@@ -195,7 +203,7 @@ local function handler(context,frame)
     end
     return tasks.await(context,frame.stage=="cleanup_unknown" and "flightpath_cleanup_unconfirmed" or "flightpath_custody_unconfirmed")
 end
-function M.decide(state)
+local function decide(state,parent_owned)
     local memory=state.memory or {}
     local frame=(memory.stack or {})[#(memory.stack or {})]
     local pending=state.pending or {}
@@ -215,6 +223,10 @@ function M.decide(state)
         end
         return {memory=memory,phase="blocked_on_ambiguous_call",done=false}
     end
-    return tasks.run(state,{flightpath_discovery=handler},"flightpath_discovery")
+    return tasks.run(state,{flightpath_discovery=function(context,frame) return handler(context,frame,parent_owned) end},"flightpath_discovery")
 end
+function M.decide(state) return decide(state,false) end
+-- The parent supplies current finite custody and owns its cleanup. This mode
+-- never acquires, renews, releases or changes movement/follow intent.
+function M.decide_with_parent(state) return decide(state,true) end
 return M
