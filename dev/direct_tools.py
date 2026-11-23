@@ -42,6 +42,7 @@ def sha(value):
 
 READ_PAGE_BYTES = 12 * 1024
 _PAGE_BYTES = READ_PAGE_BYTES - 1024  # Reserve the outer tool/identity envelope.
+GM_INSPECT_BYTES = 128 * 1024  # Compact all-client facts; explicit raw pages retain the 12 KiB bound.
 
 GM_COMMAND_REFERENCE = (
     "Public command syntax: .go xyz <x> <y> <z> [mapId] [orientation] teleports this GM; "
@@ -133,6 +134,66 @@ def _page(value, path=None, offset=0, limit=20, *, metadata=None, force_keys=())
                     nextOffset=total, truncated=False, omitted=0)
     require(len(packed(dict(ok=True, result=page))) <= _PAGE_BYTES, "projection_metadata_exceeds_page_bound")
     return page
+
+
+def _gm_inspect_view(observed):
+    """Keep identity-scoped player facts readable, with explicit raw paths."""
+    clients = observed.get("clients", [])
+    identities = {"3", *[str(row.get("guid")) for row in clients]}
+    for row in clients:
+        for member in (row.get("group") or {}).get("members", []):
+            if member.get("guid") is not None: identities.add(str(member["guid"]))
+
+    def omitted(value, path):
+        return dict(omitted=True, type=_kind(value), count=len(value), rawPath=path)
+
+    def person(value, path):
+        if not isinstance(value, dict): return copy.deepcopy(value)
+        compact = {key:copy.deepcopy(item) for key,item in value.items() if not isinstance(item, (dict,list))}
+        # PlayerState uses non-optional proto3 scalars. Omitted known values
+        # are wire defaults; unknown facts remain unknown, independently of HP.
+        compact["alive"] = value.get("alive",False) if value.get("aliveKnown") is True else None
+        for known, keys in (("mapKnown", ("mapId",)), ("positionKnown", ("x","y","z","orientation"))):
+            for key in keys: compact.setdefault(key, 0 if value.get(known) is True else None)
+        nested = {key:omitted(item,path+[key]) for key,item in value.items() if isinstance(item,(dict,list))}
+        compact["rawPath"] = path
+        if nested: compact["omittedFields"] = nested
+        return compact
+
+    rows = []
+    for index, row in enumerate(clients):
+        path = ["clients", str(index)]
+        facts = row.get("observations", {})
+        world = facts.get("world", {})
+        world_path = path+["observations", "world"]
+        selected, excluded = [], []
+        for number, player in enumerate(world.get("nearbyPlayers", [])):
+            if str(player.get("guid")) in identities:
+                selected.append(person(player,world_path+["nearbyPlayers",str(number)]))
+            else: excluded.append(number)
+        view = {key:copy.deepcopy(row[key]) for key in ("guid", "name", "rpcUrl", "identityMatches", "errors",
+            "self", "group", "partySessionId") if key in row}
+        view["rawPath"] = path
+        view["rawSelf"] = person(row.get("rawSelf", {}), path+["rawSelf"])
+        visible = {key:person(world[key],world_path+[key]) for key in ("self","owner") if key in world}
+        visible["nearbyPlayers"] = selected
+        visible.update({key:copy.deepcopy(item) for key,item in world.items()
+                        if key not in ("self","owner","nearbyPlayers") and not isinstance(item,(dict,list,str))})
+        if "visitRevision" in world: visible["visitRevision"] = world["visitRevision"]
+        hidden = {key:omitted(item,world_path+[key]) for key,item in world.items()
+                  if key not in ("self","owner","nearbyPlayers","visitRevision") and isinstance(item,(dict,list,str))}
+        if excluded:
+            hidden["otherNearbyPlayers"] = dict(omitted=True,count=len(excluded),
+                rawPath=world_path+["nearbyPlayers"],rawIndices=excluded)
+        if hidden: visible["omittedFields"] = hidden
+        view["observations"] = dict(world=visible,
+            actions=copy.deepcopy(facts.get("actions", {})), party=copy.deepcopy(facts.get("party", {})))
+        rows.append(view)
+    return dict(observedAtUnixMs=observed.get("observedAtUnixMs"), clients=rows, gameEffectClaimed=False,
+        presentation=dict(kind="compact_identity_scoped_observations", byteLimit=GM_INSPECT_BYTES,
+            witnessScope="fixed owner, configured clients, and GUIDs in observed party rosters; membership knownness is unchanged",
+            scalarDefaults="Known PlayerState omitted alive/map/pose scalars use proto3 false/zero; unknown alive or omitted unknown map/pose is null. Exact raw values remain at rawPath.",
+            rawAccess="gm_inspect(path=<nonempty rawPath or field path>, offset=0, limit=20). All explicit paths address the original unprojected tree."))
 
 
 def context_page(context, path=None, offset=0, limit=20):
@@ -778,7 +839,7 @@ class DirectTools:
                           ("gm_task_resume", "Resume only gm_current_task's same stored goal/invocation and receipts. Runner started is not a GM effect; no new task or replay of uncertain actions.", {"task_id": string}, ["task_id"]),
                           ("gm_execute", "Send one native dot command through this exact GM session. Optional select_guid binds the observed server target GUID; zero clears UI selection. Local visibility/resolution is reported separately because command families resolve selected units differently. A command is sent only when that target GUID is actually observed at the final packet boundary. If selection was written but not observed, no command is queued: inspect facts before a fresh tool invocation. Each actual tool call has its own host operation identity; exact-operation receipt/unknown is never replayed. Returns a fresh Chat baseline/window within the same writer, with explicit no-reply/cursor loss/read failure; SYSTEM text is temporal evidence, never target/effect proof. Active task writers still block competing commands; realm permissions apply. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]
         if self.self_guid == "87":
-            specs += [("gm_inspect", "Read fresh configured public GM/companion clients in parallel: their own life, pose, session and group, including offscreen companions. No caller URL, game write or task. JSON path/offset/limit pages large facts.", paging, []),
+            specs += [("gm_inspect", "Default: readable compact facts for EVERY configured client: own life/pose, exact Actions position provenance, group, fixed owner and visible configured/observed-party player witnesses. Unknown and false remain distinct; witnesses are scoped to their observer, not proof of a cleared area. Bulk NPCs/nested fields have explicit omitted counts/rawPath. Nonempty JSON path reads the FULL original raw tree; rawPath on each witness gives its original index. Raw pages use offset/limit; default compact output is bounded separately. No caller URL, game write or task.", paging, []),
                       ("gm_current_task", "Discover only this GM session's maintained active writer-owned task and actual retained status. No caller path, new task or execution. Page large observations/memory with JSON path/offset/limit.", paging, []),
                       ("gm_task_status", "Read this body's retained direct task or exact gm_current_task ID; no arbitrary task path or execution. JSON path/offset/limit expand and page large observations or memory.", {"task_id": string, **paging}, ["task_id"])]
         return [context_tool_schema(), *[{"type": "function", "function": {"name": name, "description": description,
@@ -887,13 +948,16 @@ class DirectTools:
                 result = self._policy_input(args)
             elif name.startswith("gm_task_") or name in ("gm_current_task", "gm_execute", "gm_inspect"):
                 result = self._gm(name, args, operation_id)
-                if name in ("gm_task_status", "gm_current_task", "gm_inspect"):
+                if name == "gm_inspect" and args.get("path",[])==[] and type(args.get("offset",0)) is int and args.get("offset",0)==0 and type(args.get("limit",20)) is int and args.get("limit",20)==20:
+                    result = _gm_inspect_view(result)
+                elif name in ("gm_task_status", "gm_current_task", "gm_inspect"):
                     result = self._project(result, args)
             else:
                 raise ToolError("tool_not_implemented")
             require(len(packed(result)) <= self.max_bytes, "tool_result_size_bound")
             if name in ("context_read", "chat_read", "session_catalog", "read_observation", "policy_show", "workspace_read", "spell_inspect", "gm_task_status", "gm_current_task", "gm_inspect"):
-                require(len(packed(dict(ok=True, result=result))) <= READ_PAGE_BYTES, "read_page_size_bound")
+                bound = GM_INSPECT_BYTES if name=="gm_inspect" and result.get("presentation",{}).get("kind")=="compact_identity_scoped_observations" else READ_PAGE_BYTES
+                require(len(packed(dict(ok=True, result=result))) <= bound, "read_page_size_bound")
             self.last_receipt = dict(tool=name, sessionId=self.session_id, characterGuid=self.self_guid,
                                      outcome="completed", gameEffectClaimed=False)
             return dict(ok=True, result=result)

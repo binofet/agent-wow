@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from direct_tools import DirectTools, ToolOutcomeUnknown, load_helper, context_page, context_tool_schema, packed, READ_PAGE_BYTES
+from direct_tools import DirectTools, ToolOutcomeUnknown, load_helper, context_page, context_tool_schema, packed, READ_PAGE_BYTES, GM_INSPECT_BYTES
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -703,6 +703,85 @@ class DirectToolTests(unittest.TestCase):
         self.assertEqual(len(calls),6)
         self.assertFalse(self.rpc.writes)
         self.assertLessEqual(len(packed(observed)),READ_PAGE_BYTES)
+
+    def test_large_gm_inspection_default_keeps_all_client_and_player_facts_readable(self):
+        tools=self.gm_tools(mock.Mock())
+        configured=[dict(guid=guid,name=name,rpc_url='http://127.0.0.1:'+port+'/rpc')
+            for guid,name,port in [('1','Arlen','8086'),('4','Mira','8084'),('5','Rook','8085'),('8','Nixwick','8088')]]
+        by_url={row['rpc_url']:row['guid'] for row in configured}
+        by_url[self.rpc.url]='87'
+        source={}
+        for guid in ('87','1','4','5','8'):
+            own=dict(guid=guid,present=True,mapKnown=True,mapId=349,positionKnown=True,x=int(guid),y=2,z=3,
+                positionRevision='server-'+guid,observationAgeMs='11',positionAgeMs='9',
+                aliveKnown=guid!='4',healthKnown=guid!='4',health=1 if guid=='8' else 500,maxHealth=1000)
+            if guid!='8':own['alive']=True  # Known-dead Nix's false is omitted by ProtoJSON.
+            owner=dict(guid='3',present=True,mapKnown=True,mapId=349,positionKnown=True,x=72,y=73,z=74,
+                aliveKnown=guid=='87',positionRevision='joel-'+guid,observationAgeMs='17')
+            nearby=[dict(guid='9000',name='Unrelated player',present=True,mapKnown=True,mapId=349),
+                dict(guid='4',present=True,mapKnown=True,mapId=349,x=4,y=5,z=6,aliveKnown=False,observationAgeMs='21'),
+                dict(guid='5',present=True,mapKnown=True,positionKnown=True,aliveKnown=True),
+                dict(guid='42',present=True,mapKnown=True,mapId=349,x=42,y=2,z=3,aliveKnown=True,alive=True)]
+            source[guid]=dict(world=dict(self=own,owner=owner,nearbyPlayers=nearby,visitRevision='visit-'+guid,
+                nearbyCreatures=[dict(guid=str(10000+i),name='NPC-'+str(i)+'x'*700,present=True,
+                    mapKnown=True,mapId=349) for i in range(400)]),
+                actions=dict(sessionId='aw-'+guid,selfGuid=guid,position=dict(known=True,mapKnown=True,mapId=349,
+                    x=int(guid)+.5,y=2,z=3,estimated=True,inferred=True,revision='client-'+guid)),
+                party=dict(sessionId='aw-'+guid,group=dict(known=guid!='4',inGroup=True,groupGuid='777',
+                    leaderGuid='1',members=[dict(guid=g,name='member-'+g,online=True) for g in ('1','3','4','5','42')])))
+        class PublicClient:
+            def __init__(self,guid):self.guid=guid
+            def call(self,method,params,**kwargs):
+                key={'buddy-world.snapshot':'world','buddy-actions.status':'actions','buddy-party.state':'party'}[method]
+                return copy.deepcopy(source[self.guid][key])
+        with mock.patch.object(self.gm,'bindings',return_value=configured), \
+                mock.patch.object(self.gm,'task_rpc',side_effect=lambda url:PublicClient(by_url[url])):
+            for args in ({},{'path':[]}):
+                default=tools.dispatch('gm_inspect',args)
+                self.assertTrue(default['ok'],default)
+                self.assertLessEqual(len(packed(default)),GM_INSPECT_BYTES)
+                self.assertLess(len(packed(default)),len(packed(source))//20)
+                view=default['result']
+                self.assertEqual(view['presentation']['kind'],'compact_identity_scoped_observations')
+                self.assertNotIn('rows',view)
+                rows={row['guid']:row for row in view['clients']}
+                self.assertEqual(set(rows),{'87','1','4','5','8'})
+                self.assertIs(rows['8']['self']['alive'],False)
+                self.assertIs(rows['4']['self']['aliveKnown'],False)
+                self.assertIsNone(rows['4']['self']['alive'])
+                self.assertIs(rows['4']['group']['known'],False)
+                for guid,row in rows.items():
+                    self.assertTrue(row['identityMatches'])
+                    self.assertEqual(row['partySessionId'],'aw-'+guid)
+                    facts=row['observations']
+                    self.assertTrue(facts['actions']['position']['estimated'])
+                    self.assertTrue(facts['actions']['position']['inferred'])
+                    self.assertEqual(facts['actions']['position']['revision'],'client-'+guid)
+                    self.assertEqual(facts['world']['self']['positionRevision'],'server-'+guid)
+                    self.assertEqual(facts['world']['owner']['guid'],'3')
+                    self.assertEqual(facts['world']['owner']['x'],72)
+                    self.assertIs(facts['world']['owner']['aliveKnown'],guid=='87')
+                    self.assertIs(facts['world']['owner']['alive'],False if guid=='87' else None)
+                    self.assertEqual([player['guid'] for player in facts['world']['nearbyPlayers']],['4','5','42'])
+                    self.assertIsNone(facts['world']['nearbyPlayers'][0]['alive'])
+                    dead=facts['world']['nearbyPlayers'][1]
+                    self.assertIs(dead['alive'],False)
+                    self.assertEqual([dead[key] for key in ('mapId','x','y','z','orientation')],[0,0,0,0,0])
+                    self.assertEqual(facts['world']['omittedFields']['nearbyCreatures']['count'],400)
+                    self.assertEqual(facts['world']['omittedFields']['otherNearbyPlayers']['count'],1)
+                witness=rows['87']['observations']['world']['nearbyPlayers'][0]
+                exact=tools.dispatch('gm_inspect',dict(path=witness['rawPath']+['guid']))
+                self.assertEqual(exact['result']['value'],'4')
+                original_dead=tools.dispatch('gm_inspect',dict(path=witness['rawPath'][:-1]+['2']))
+                raw_keys={row['key'] for row in original_dead['result']['rows']}
+                self.assertEqual(raw_keys,{'guid','present','mapKnown','positionKnown','aliveKnown'})
+                npc_path=rows['87']['observations']['world']['omittedFields']['nearbyCreatures']['rawPath']
+                raw=tools.dispatch('gm_inspect',dict(path=npc_path+['399','name'],limit=4096))
+                self.assertEqual(raw['result']['value'],source['87']['world']['nearbyCreatures'][399]['name'])
+                self.assertLessEqual(len(packed(raw)),READ_PAGE_BYTES)
+                stranger=tools.dispatch('gm_inspect',dict(path=['clients','0','observations','world','nearbyPlayers','0','name']))
+                self.assertEqual(stranger['result']['value'],'Unrelated player')
+        self.assertFalse(self.rpc.writes)
 
     def test_current_task_cancel_writes_only_existing_cancel_marker_without_reset(self):
         tools = self.gm_tools(mock.Mock())
