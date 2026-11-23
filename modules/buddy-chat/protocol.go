@@ -81,13 +81,16 @@ func encodeChat(request *chatv1.SendRequest) ([]byte, error) {
 // uint32 flags, uint64 receiver, uint32 text length INCLUDING NUL, text, uint8 tag.
 // Monster, channel, addon, and other layouts are intentionally ignored.
 // decodeGMChat separately normalizes the GM-only sender-name prefix.
+// CHAT_MSG_SYSTEM is wire type 0, represented by CHANNEL_UNSPECIFIED in the
+// existing API. It is server-system data with sender GUID 0, never owner or
+// peer authority. SendSysMessage uses LANG_UNIVERSAL (0) and this same layout.
 func decodeChat(payload []byte) (*chatv1.Message, error) {
 	if len(payload) == 0 {
 		return nil, errors.New("missing chat type")
 	}
 	channel := chatv1.Channel(payload[0])
 	switch channel {
-	case chatv1.Channel_SAY, chatv1.Channel_PARTY, chatv1.Channel_WHISPER, chatv1.Channel_WHISPER_INFORM, chatv1.Channel_PARTY_LEADER:
+	case chatv1.Channel_CHANNEL_UNSPECIFIED, chatv1.Channel_SAY, chatv1.Channel_PARTY, chatv1.Channel_WHISPER, chatv1.Channel_WHISPER_INFORM, chatv1.Channel_PARTY_LEADER:
 	default:
 		return nil, errUnsupportedChat
 	}
@@ -96,7 +99,11 @@ func decodeChat(payload []byte) (*chatv1.Message, error) {
 	}
 	language := int32(binary.LittleEndian.Uint32(payload[1:5]))
 	sender := binary.LittleEndian.Uint64(payload[5:13])
-	if language == -1 || sender == 0 || sender>>48 != 0 {
+	if channel == chatv1.Channel_CHANNEL_UNSPECIFIED {
+		if language != 0 || sender != 0 {
+			return nil, errUnsupportedChat
+		}
+	} else if language == -1 || sender == 0 || sender>>48 != 0 {
 		return nil, errUnsupportedChat
 	}
 	length := binary.LittleEndian.Uint32(payload[25:29])
