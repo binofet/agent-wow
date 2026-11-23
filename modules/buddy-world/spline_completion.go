@@ -40,12 +40,16 @@ type splinePhysicalKey struct {
 }
 
 type splineCompletionState struct {
-	revision          uint64
-	request           *worldv1.CompleteSplineRequest
-	operation         *worldv1.SplineCompletionOperation
-	consumed          map[splinePhysicalKey]bool
-	retirementBlocked bool
-	retirementRequest *worldv1.RetireSplineCompletionRequest
+	revision                   uint64
+	request                    *worldv1.CompleteSplineRequest
+	operation                  *worldv1.SplineCompletionOperation
+	consumed                   map[splinePhysicalKey]bool
+	retirementBlocked          bool
+	retirementRequest          *worldv1.RetireSplineCompletionRequest
+	transferRequest            *worldv1.AdoptSplineTransferRequest
+	transferAdoption           *worldv1.SplineTransferAdoption
+	transferPredecessor        *worldv1.SplineCompletionOperation
+	transferPredecessorRequest *worldv1.CompleteSplineRequest
 }
 
 // ConfigureSession attaches the authenticated callback before serving RPCs.
@@ -194,7 +198,25 @@ func (s *Service) completionSnapshotLocked() *worldv1.SplineCompletionObservatio
 		r.RetirementAvailable = s.splineRetirementFactsFailureLocked() == ""
 		r.RetirementCurrent = r.Operation.Retired && r.RetirementAvailable
 	}
+	if s.completion.transferAdoption != nil {
+		r.TransferAdoption = proto.Clone(s.completion.transferAdoption).(*worldv1.SplineTransferAdoption)
+		r.TransferAdoptionCurrent = s.splineTransferAdoptionCurrentLocked(s.now())
+	}
 	return r
+}
+
+// A historical RPC result belongs to its own reservation. It must not borrow
+// the current slot's identity or live retirement/adoption projections.
+func completionBoundObservation(op *worldv1.SplineCompletionOperation) *worldv1.SplineCompletionObservation {
+	return &worldv1.SplineCompletionObservation{SelfGuid: op.SelfGuid, VisitRevision: op.VisitRevision, Revision: op.Revision, Operation: proto.Clone(op).(*worldv1.SplineCompletionOperation)}
+}
+
+func (s *Service) completionResultLocked(op *worldv1.SplineCompletionOperation) *worldv1.SplineCompletionObservation {
+	p := s.state.players[0]
+	if s.completion.operation != op || p.guid != op.SelfGuid || !p.present || !p.mapKnown || s.state.visitRevision != op.VisitRevision {
+		return completionBoundObservation(op)
+	}
+	return s.completionSnapshotLocked()
 }
 
 func completionKey(scope *modv1.TransportScope) splinePhysicalKey {
@@ -215,14 +237,31 @@ func (s *Service) CompleteSpline(ctx context.Context, req *worldv1.CompleteSplin
 	req = proto.Clone(req).(*worldv1.CompleteSplineRequest)
 	s.mu.Lock()
 	c := &s.completion
+	if c.transferPredecessorRequest != nil && proto.Equal(c.transferPredecessorRequest, req) {
+		r := completionBoundObservation(c.transferPredecessor)
+		s.mu.Unlock()
+		return r, nil
+	}
 	if c.request != nil && proto.Equal(c.request, req) {
-		r := s.completionSnapshotLocked()
+		r := s.completionResultLocked(c.operation)
 		s.mu.Unlock()
 		return r, nil
 	}
 	if req.ExpectedRevision != c.revision || c.operation.GetPending() {
 		s.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "completion CAS is stale or an attempt remains uncertain")
+	}
+	if c.revision == ^uint64(0) {
+		s.mu.Unlock()
+		return nil, status.Error(codes.ResourceExhausted, "completion revision exhausted")
+	}
+	if c.operation != nil && !c.operation.Retired && (c.operation.TransportWritten || c.operation.TransportUnknown) && c.operation.VisitRevision != req.VisitRevision {
+		s.mu.Unlock()
+		return nil, status.Error(codes.FailedPrecondition, "unretired prior-visit completion requires explicit transfer adoption")
+	}
+	if c.operation == nil && c.transferAdoption != nil && !s.splineTransferAdoptionCurrentLocked(s.now()) {
+		s.mu.Unlock()
+		return nil, status.Error(codes.FailedPrecondition, "adopted unused completion slot no longer has its exact qualified source")
 	}
 	if s.session == nil || !s.completionBindingLocked(req, s.now()) || splineRemaining(s.motion.header, s.now()) != 0 || c.consumed[completionKey(req.TransportScope)] {
 		s.mu.Unlock()
@@ -238,10 +277,10 @@ func (s *Service) CompleteSpline(ctx context.Context, req *worldv1.CompleteSplin
 
 	clock, clockErr := session.GetClock(ctx, &emptypb.Empty{})
 	s.mu.Lock()
-	if clockErr != nil || clock == nil || !s.completionBindingLocked(req, s.now()) {
+	if clockErr != nil || clock == nil || c.operation != op || !s.completionBindingLocked(req, s.now()) {
 		op.Pending, op.Phase = false, "not_dispatched"
 		op.Error = "clock unavailable or current spline authority changed before dispatch"
-		r := s.completionSnapshotLocked()
+		r := s.completionResultLocked(op)
 		s.mu.Unlock()
 		return r, nil
 	}
@@ -250,7 +289,7 @@ func (s *Service) CompleteSpline(ctx context.Context, req *worldv1.CompleteSplin
 	wire, err := movementinfo.Encode(image)
 	if err != nil {
 		op.Pending, op.Phase, op.Error = false, "not_dispatched", "received movement image cannot be encoded"
-		r := s.completionSnapshotLocked()
+		r := s.completionResultLocked(op)
 		s.mu.Unlock()
 		return r, nil
 	}
@@ -271,12 +310,14 @@ func (s *Service) CompleteSpline(ctx context.Context, req *worldv1.CompleteSplin
 	case sendErr == nil:
 		op.Pending, op.TransportWritten, op.Phase = false, true, "transport_written"
 	case modcb.PacketWasNotDispatched(sendErr):
-		delete(c.consumed, key)
+		if c.operation == op {
+			delete(c.consumed, key)
+		}
 		op.Pending, op.Phase, op.Error = false, "not_dispatched", "core refused current transport scope before dispatch"
 	default:
 		op.TransportUnknown, op.Phase, op.Error = true, "transport_unknown", "completion transport outcome is unknown"
 	}
-	return s.completionSnapshotLocked(), nil
+	return s.completionResultLocked(op), nil
 }
 
 func appendCompletionGUID(b []byte, guid uint64) []byte {

@@ -37,11 +37,7 @@ func sameFlightpathSource(a, b *modv1.TransportScope) bool {
 }
 
 func (s *Service) flightpathAcceptedCurrentLocked(revision uint64) bool {
-	a := s.flightpathActivation.operation
-	return a != nil && !s.closed && a.Revision == revision && revision == s.flightpathActivation.revision && a.Pending &&
-		a.SessionId == s.sessionID && a.SelfGuid == s.selfGUID && s.encounterVisit.bound && a.VisitId == s.encounterVisit.revision &&
-		a.Phase == "accepted_unsettled" && a.ReplyKnown && a.ReplyCode == 0 && a.ActivationAccepted &&
-		(a.TransportWritten || a.TransportUnknown) && flightpathScopeBound(a.AcceptanceScope, s.selfGUID, s.encounterVisit.mapID)
+	return s.flightpathAcceptedOriginalLocked(revision) && s.flightpathSegmentCurrentLocked()
 }
 
 // This checks World observations only. RetirementCurrent is a separate current
@@ -51,7 +47,7 @@ func (s *Service) flightpathRetiredWorldReasonLocked(activation, completion uint
 	if !s.flightpathAcceptedCurrentLocked(activation) || w == nil || w.Self == nil || !s.matchesCurrentEncounterVisitLocked(w) {
 		return "flightpath_arrival_activation_or_body_changed"
 	}
-	a, c, raw, authority := s.flightpathActivation.operation, w.SplineCompletion, w.SelfMovementFacts, w.SelfMotionAuthority
+	c, raw, authority := w.SplineCompletion, w.SelfMovementFacts, w.SelfMotionAuthority
 	if c == nil || !c.RetirementCurrent || c.Revision != completion || completion == 0 || c.SelfGuid != s.selfGUID ||
 		c.VisitRevision != w.VisitRevision || c.Operation == nil || !c.Operation.Retired || c.Operation.Pending ||
 		c.Operation.RetirementRevision != completion || c.Operation.Revision == 0 || c.Operation.Revision >= completion ||
@@ -63,8 +59,7 @@ func (s *Service) flightpathRetiredWorldReasonLocked(activation, completion uint
 		op.RetiredMovementRevision <= op.MovementRevision || op.RetiredUnitFlagsRevision == 0 ||
 		op.TransportScope == nil || op.TransportScope.SplineId != op.SplineId ||
 		op.TransportScope.SplineSourceRevision > op.TransportScope.MotionRevision ||
-		!sameFlightpathVisit(op.TransportScope, a.AcceptanceScope) ||
-		op.TransportScope.SplineSourceRevision <= a.AcceptanceScope.MotionRevision ||
+		!s.flightpathBookingSourceLocked(op.TransportScope) ||
 		!sameFlightpathSource(op.TransportScope, op.RetirementScope) ||
 		op.RetirementScope.MotionRevision <= op.TransportScope.MotionRevision {
 		return "flightpath_arrival_completion_does_not_follow_this_acceptance"
@@ -95,9 +90,8 @@ func (s *Service) flightpathArrivalReplyScopeLocked(op *actionsv1.FlightpathOper
 		op.CompletionRevision == 0 || (!op.TransportWritten && !op.TransportUnknown) {
 		return false
 	}
-	a := s.flightpathActivation.operation
 	return sameFlightpathSource(scope, op.TransportScope) && scope.MotionRevision >= op.TransportScope.MotionRevision &&
-		sameFlightpathVisit(scope, a.AcceptanceScope) && scope.MotionRevision > a.AcceptanceScope.MotionRevision
+		s.flightpathBookingSourceLocked(scope)
 }
 
 // SettleFlightpath retires the exact accepted booking only after an actual

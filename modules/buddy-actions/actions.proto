@@ -1172,6 +1172,8 @@ message FlightpathObservationResponse {
   FlightpathActivationOperation activation = 8;
   // The booking's original menu remains immutable during an arrival query.
   FlightpathOperation activation_menu = 9;
+  // Exact metadata-call custody; not a booking/transport/arrival receipt.
+  FlightpathTransferAttempt transfer_attempt = 10;
 }
 
 // One normal direct-hop activation selected by Lua. The actual menu identifies
@@ -1227,6 +1229,41 @@ message FlightpathActivationOperation {
   // Captured only from the accepted server reply0 packet. A pre-send clock or
   // snapshot is not a causal activation boundary. Missing scope stays unknown.
   agentwow.module.v1.TransportScope acceptance_scope = 24;
+  // Current segment may advance; all original acceptance/departure fields stay
+  // unchanged. A transfer witness is neither booking causality nor arrival.
+  FlightpathCurrentSegment current_segment = 25;
+}
+
+message FlightpathCurrentSegment {
+  uint64 visit_id = 1;
+  agentwow.module.v1.TransportScope source_scope = 2;
+  uint64 world_adoption_revision = 3;
+  // Adopted arrival queries require fresh parent-owned visit-bound idle custody.
+  bool parent_lease_required = 4;
+  uint64 world_transfer_revision = 5;
+  uint64 core_transfer_revision = 6;
+}
+
+message AdoptFlightpathTransferRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint64 activation_revision = 4;
+  uint64 world_transfer_revision = 5;
+  uint64 expected_completion_revision = 6;
+  uint64 authority_revision = 7;
+  uint64 movement_revision = 8;
+  uint64 spline_revision = 9;
+  uint64 unit_flags_revision = 10;
+  agentwow.module.v1.TransportScope transport_scope = 11;
+  uint64 core_transfer_revision = 12;
+}
+
+message FlightpathTransferAttempt {
+  AdoptFlightpathTransferRequest request = 1;
+  string phase = 2;
+  bool world_invoked = 3;
+  string error = 4;
 }
 
 message SettleFlightpathRequest {
@@ -1305,6 +1342,7 @@ service BuddyActions {
   rpc QueryFlightpath(FlightpathQueryRequest) returns (FlightpathObservationResponse);
   rpc ActivateFlightpath(FlightpathActivationRequest) returns (FlightpathObservationResponse);
   rpc SettleFlightpath(SettleFlightpathRequest) returns (FlightpathObservationResponse);
+  rpc AdoptFlightpathTransfer(AdoptFlightpathTransferRequest) returns (FlightpathObservationResponse);
   rpc SelectTarget(SelectTargetRequest) returns (SelectTargetResponse);
   rpc ApproachTarget(ApproachTargetRequest) returns (State);
   rpc MoveBody(BodyMovementRequest) returns (State);

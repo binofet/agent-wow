@@ -55,8 +55,9 @@ func TestFlightpathActivationPublishedContractsPreserveCurrentAPIs(t *testing.T)
 	for alias, name := range map[string]string{
 		"activate_flightpath": "ActivateFlightpath", "query_flightpath": "QueryFlightpath",
 		"flightpath_observation": "FlightpathObservation", "flightpath_reference": "FlightpathReference",
-		"settle_flightpath": "SettleFlightpath",
-		"cast_spell":        "CastSpell", "cancel_spell": "CancelSpell", "break_control": "BreakControl",
+		"settle_flightpath":         "SettleFlightpath",
+		"adopt_flightpath_transfer": "AdoptFlightpathTransfer",
+		"cast_spell":                "CastSpell", "cancel_spell": "CancelSpell", "break_control": "BreakControl",
 	} {
 		method, ok := actions.RPC(alias)
 		if !ok || method.Path() != "/warcraftbuddy.actions.v1.BuddyActions/"+name || api.Services().ByName("BuddyActions").Methods().ByName(method.Descriptor().Name()) == nil {

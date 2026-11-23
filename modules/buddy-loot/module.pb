@@ -77,7 +77,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-‡˜
+“ 
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -285,14 +285,16 @@ unit_flags (R	unitFlags.
 authority_revision (RauthorityRevision+
 movement_revision (RmovementRevision.
 unit_flags_revision (RunitFlagsRevisionK
-transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"°
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"É
 SplineCompletionObservation
 	self_guid (RselfGuid%
 visit_revision (RvisitRevision
 revision (RrevisionO
 	operation (21.warcraftbuddy.world.v1.SplineCompletionOperationR	operation-
 retirement_current (RretirementCurrent1
-retirement_available (RretirementAvailable"•	
+retirement_available (RretirementAvailable[
+transfer_adoption (2..warcraftbuddy.world.v1.SplineTransferAdoptionRtransferAdoption:
+transfer_adoption_current (RtransferAdoptionCurrent"•	
 WorldTransferObservation
 revision (Rrevision
 known (Rknown
@@ -315,7 +317,25 @@ unit_flags (R	unitFlags.
 current_unit_flags_known (RcurrentUnitFlagsKnown,
 current_unit_flags (RcurrentUnitFlags#
 arrival_known (RarrivalKnown6
-booking_causality_known (RbookingCausalityKnown"Ž
+booking_causality_known (RbookingCausalityKnown"ò
+AdoptSplineTransferRequest
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision+
+expected_revision (RexpectedRevision+
+transfer_revision (RtransferRevision4
+core_transfer_revision (RcoreTransferRevision-
+authority_revision (RauthorityRevision+
+movement_revision (RmovementRevision'
+spline_revision (RsplineRevision.
+unit_flags_revision	 (RunitFlagsRevisionK
+transport_scope
+ (2".agentwow.module.v1.TransportScopeRtransportScope"û
+SplineTransferAdoption
+revision (Rrevision
+	self_guid (RselfGuid.
+from_visit_revision (RfromVisitRevision*
+to_visit_revision (RtoVisitRevisionL
+transfer (20.warcraftbuddy.world.v1.WorldTransferObservationRtransfer"Ž
 EquipmentSlotState
 slot (Rslot
 
@@ -640,10 +660,11 @@ session_id (	R	sessionId
 next_sequence (RnextSequence
 has_more (RhasMore;
 events (2#.warcraftbuddy.world.v1.CombatEventRevents:
-gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2ø
+gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2ø
 
 BuddyWorld„
-RetireSplineCompletion5.warcraftbuddy.world.v1.RetireSplineCompletionRequest3.warcraftbuddy.world.v1.SplineCompletionObservationt
+RetireSplineCompletion5.warcraftbuddy.world.v1.RetireSplineCompletionRequest3.warcraftbuddy.world.v1.SplineCompletionObservation~
+AdoptSplineTransfer2.warcraftbuddy.world.v1.AdoptSplineTransferRequest3.warcraftbuddy.world.v1.SplineCompletionObservationt
 CompleteSpline-.warcraftbuddy.world.v1.CompleteSplineRequest3.warcraftbuddy.world.v1.SplineCompletionObservationi
 CombatEvents+.warcraftbuddy.world.v1.CombatEventsRequest,.warcraftbuddy.world.v1.CombatEventsResponse]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponse^
@@ -740,7 +761,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-Íó
+’ÿ
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -2025,7 +2046,7 @@ knownNodes
 error (	Rerror/
 activation_revision (RactivationRevision/
 completion_revision (RcompletionRevisionK
-transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"â
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"Â
 FlightpathObservationResponse
 
 session_id (	R	sessionId
@@ -2039,7 +2060,9 @@ visitBoundK
 
 activation (27.warcraftbuddy.actions.v1.FlightpathActivationOperationR
 activationV
-activation_menu	 (2-.warcraftbuddy.actions.v1.FlightpathOperationRactivationMenu"Ö
+activation_menu	 (2-.warcraftbuddy.actions.v1.FlightpathOperationRactivationMenu^
+transfer_attempt
+ (23.warcraftbuddy.actions.v1.FlightpathTransferAttemptRtransferAttempt"Ö
 FlightpathActivationRequest
 
 session_id (	R	sessionId
@@ -2055,7 +2078,7 @@ sourceNode)
 expected_copper_revision
  (RexpectedCopperRevision'
 expected_copper (RexpectedCopper.
-accept_unknown_fare (RacceptUnknownFare"¹
+accept_unknown_fare (RacceptUnknownFare"–
 FlightpathActivationOperation
 revision (Rrevision
 
@@ -2085,7 +2108,35 @@ reply_code (R	replyCode/
 live_route_known (RliveRouteKnown0
 flight_started_known (RflightStartedKnown#
 arrival_known (RarrivalKnownM
-acceptance_scope (2".agentwow.module.v1.TransportScopeRacceptanceScope"Ð
+acceptance_scope (2".agentwow.module.v1.TransportScopeRacceptanceScope[
+current_segment (22.warcraftbuddy.actions.v1.FlightpathCurrentSegmentRcurrentSegment"Ö
+FlightpathCurrentSegment
+visit_id (RvisitIdE
+source_scope (2".agentwow.module.v1.TransportScopeRsourceScope6
+world_adoption_revision (RworldAdoptionRevision2
+parent_lease_required (RparentLeaseRequired6
+world_transfer_revision (RworldTransferRevision4
+core_transfer_revision (RcoreTransferRevision"Ú
+AdoptFlightpathTransferRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId/
+activation_revision (RactivationRevision6
+world_transfer_revision (RworldTransferRevision@
+expected_completion_revision (RexpectedCompletionRevision-
+authority_revision (RauthorityRevision+
+movement_revision (RmovementRevision'
+spline_revision	 (RsplineRevision.
+unit_flags_revision
+ (RunitFlagsRevisionK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope4
+core_transfer_revision (RcoreTransferRevision"À
+FlightpathTransferAttemptR
+request (28.warcraftbuddy.actions.v1.AdoptFlightpathTransferRequestRrequest
+phase (	Rphase#
+world_invoked (RworldInvoked
+error (	Rerror"Ð
 SettleFlightpathRequest
 
 session_id (	R	sessionId
@@ -2152,7 +2203,7 @@ node_found (R	nodeFoundE
 outgoing_paths (21.warcraftbuddy.actions.v1.FlightpathReferencePathRoutgoingPathsE
 info (21.warcraftbuddy.actions.v1.FlightpathReferenceInfoRinfo&
 live_fare_known (RliveFareKnown(
-live_route_known (RliveRouteKnown2Ó.
+live_route_known (RliveRouteKnown2â/
 BuddyActionsj
 TalentState,.warcraftbuddy.actions.v1.TalentStateRequest-.warcraftbuddy.actions.v1.TalentStateResponsej
 LearnTalent,.warcraftbuddy.actions.v1.LearnTalentRequest-.warcraftbuddy.actions.v1.TalentStateResponseX
@@ -2162,7 +2213,8 @@ node_found (R	nodeFoundE
 FlightpathObservation.google.protobuf.Empty7.warcraftbuddy.actions.v1.FlightpathObservationResponse|
 QueryFlightpath0.warcraftbuddy.actions.v1.FlightpathQueryRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponse„
 ActivateFlightpath5.warcraftbuddy.actions.v1.FlightpathActivationRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponse~
-SettleFlightpath1.warcraftbuddy.actions.v1.SettleFlightpathRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponsem
+SettleFlightpath1.warcraftbuddy.actions.v1.SettleFlightpathRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponseŒ
+AdoptFlightpathTransfer8.warcraftbuddy.actions.v1.AdoptFlightpathTransferRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponsem
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ
 MoveBody-.warcraftbuddy.actions.v1.BodyMovementRequest.warcraftbuddy.actions.v1.State`

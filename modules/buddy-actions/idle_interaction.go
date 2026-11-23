@@ -90,6 +90,17 @@ func (s *Service) AcquireIdleInteraction(ctx context.Context, request *actionsv1
 	if reason := s.idleInteractionGuardLocked(r, now); reason != "" {
 		return nil, status.Error(codes.FailedPrecondition, reason)
 	}
+	if s.flightpathActivation.operation.GetPending() {
+		// A transferred booking stays pending until actual arrival settlement.
+		// Only the parent may obtain new current-visit custody after a qualified
+		// actual ground state; this path never carries or clears an old token.
+		if !s.adoptedFlightpathIdleCandidateLocked(r) || safeQuestCharacter(w, r.SelfGuid) != "" ||
+			!w.Self.HealthKnown || w.Self.Health == 0 || w.Self.MaxHealth == 0 || w.Self.Health > w.Self.MaxHealth ||
+			w.Self.MovementFlags&0xff != 0 || !channelstate.Idle(w.Self) ||
+			s.flightpathRetiredWorldReasonLocked(s.flightpathActivation.revision, w.GetSplineCompletion().GetRevision(), w) != "" {
+			return nil, status.Error(codes.FailedPrecondition, "adopted flight requires exact current retired ground proof before idle custody")
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
@@ -127,7 +138,7 @@ func (s *Service) idleInteractionGuardLocked(r *actionsv1.IdleInteractionRequest
 		s.state.Practicing || s.fargodeep.active || s.recovery.state.Active || s.recovery.token != "" ||
 		s.targetMovementExecuting || s.targetMovement.view.TargetGuid != 0 && s.targetMovement.view.VisitId == r.VisitId && now.Before(s.targetMovement.until) || s.followGoalExecuting != nil ||
 		s.movementOwner.owner != "" && now.Before(s.movementOwner.until) ||
-		s.flightpath.operation.GetPending() || s.flightpathActivation.operation.GetPending() {
+		s.flightpath.operation.GetPending() || s.flightpathActivation.operation.GetPending() && !s.adoptedFlightpathIdleCandidateLocked(r) {
 		return "body action or foreign custody must already be idle"
 	}
 	if op := s.supportOp; op != nil {
@@ -140,6 +151,11 @@ func (s *Service) idleInteractionGuardLocked(r *actionsv1.IdleInteractionRequest
 		return "previous buff cast is unsettled"
 	}
 	return ""
+}
+
+func (s *Service) adoptedFlightpathIdleCandidateLocked(r *actionsv1.IdleInteractionRequest) bool {
+	return r.Owner == "exploration" && s.flightpathActivation.operation.GetCurrentSegment() != nil &&
+		s.flightpathAcceptedCurrentLocked(s.flightpathActivation.revision)
 }
 
 // Return a detached observation without stateLocked's expiry/reconciliation
