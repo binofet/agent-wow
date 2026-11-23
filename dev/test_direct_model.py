@@ -89,7 +89,7 @@ class DirectModelTests(unittest.TestCase):
                 lambda *_:dict(exactObservedFact='original tool result'), natural=True,
                 transcript_path=path, conversation_key='aw-1:87:chat-1:WHISPER:3', request_id='owner-1')
             self.assertEqual(first,dict(text='I see your exact state.', emote='NONE', action='NONE'))
-            recreated = DirectModel('local','another-local-model',server.base+'/v1')
+            recreated = DirectModel('local','fixture',server.base+'/v1')
             recreated.generate('Fresh current facts', [dict(role='user', content='And now?')], SCHEMA, TOOLS,
                 lambda *_: self.fail('Old tools must never be replayed'), natural=True,
                 transcript_path=path, conversation_key='aw-1:87:chat-1:WHISPER:3', request_id='owner-2')
@@ -165,6 +165,27 @@ class DirectModelTests(unittest.TestCase):
             self.assertEqual(result['text'],'I have the prior result.')
             rows=server.requests[1]['body']['messages']
             self.assertEqual(json.loads(next(row['content'] for row in rows if row['role']=='tool')),dict(actualResult='retained'))
+
+    def test_interrupted_declared_read_can_refresh_after_listener_restart(self):
+        final=dict(choices=[dict(finish_reason='stop',message=dict(role='assistant',content='Fresh observation received.'))])
+        with tempfile.TemporaryDirectory() as directory, FakeHTTP([
+                chat(('first-read','observe',dict(what='self'))),
+                chat(('fresh-read','observe',dict(what='self'))),final]) as server:
+            path=Path(directory)/'conversation.json'
+            old=DirectModel('local','fixture',server.base+'/v1')
+            calls=[]
+            def interrupted_read(*_): calls.append('old');raise TimeoutError('read response lost')
+            with self.assertRaisesRegex(ModelError,'tool_outcome_unknown'):
+                self.generate(old,interrupted_read,natural=True,transcript_path=path,conversation_key='owner',
+                              request_id='old',read_only_tools={'observe'})
+            new=DirectModel('local','fixture',server.base+'/v1')
+            def fresh_read(*_): calls.append('fresh');return dict(observedAt='new-observation')
+            result=self.generate(new,fresh_read,natural=True,transcript_path=path,conversation_key='owner',
+                                 request_id='new',read_only_tools={'observe'})
+            self.assertEqual(result['text'],'Fresh observation received.')
+            self.assertEqual(calls,['old','fresh'])
+            self.assertFalse(json.loads(path.read_text())['unknown'])
+            self.assertIn('new-observation',server.requests[-1]['body']['messages'][-1]['content'])
 
     def test_claude_and_gemini_natural_text_use_native_auto_tool_choices(self):
         examples=[('claude',dict(stop_reason='end_turn',content=[dict(type='text',text='Hello naturally.')]),'/v1'),

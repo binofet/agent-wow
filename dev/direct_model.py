@@ -93,6 +93,9 @@ class _Transcript:
             with os.fdopen(fd, "wb") as output:
                 output.write(raw); output.flush(); os.fsync(output.fileno())
             os.replace(name, self.path)
+            directory = os.open(self.path.parent, os.O_RDONLY)
+            try: os.fsync(directory)
+            finally: os.close(directory)
         finally:
             if os.path.exists(name): os.unlink(name)
 
@@ -406,7 +409,7 @@ class DirectModel:
                        and (part.get("type")=="text" if self.provider=="claude" else part.get("thought") is not True))
 
     def _generate_natural(self, system, messages, reply_schema, tools, dispatch, *, cancelled,
-                          request_id, progress, transcript_path, conversation_key, assistant_text):
+                          request_id, progress, transcript_path, conversation_key, assistant_text, read_only_tools):
         identifier = request_id or uuid.uuid4().hex
         self.last_receipt = dict(requestId=identifier, execution="direct_api", provider=self.provider,
             requestedModel=self.model, baseURL=self.base_url, outcome="in_progress", httpRequests=0,
@@ -422,6 +425,10 @@ class DirectModel:
             if not isinstance(conversation_key, str) or not 0 < len(conversation_key) <= 4096:
                 raise ModelError("conversation_identity_required")
             functions = {}
+            if read_only_tools is None: read_only_tools = frozenset()
+            if not isinstance(read_only_tools, (list, tuple, set, frozenset)) or not all(isinstance(name, str) for name in read_only_tools):
+                raise ModelError("invalid_read_only_tool_declaration")
+            read_only_tools = frozenset(read_only_tools)
             for row in copy.deepcopy(tools):
                 function = row.get("function") if isinstance(row, dict) and row.get("type")=="function" else None
                 if (not isinstance(function, dict) or not isinstance(function.get("name"), str)
@@ -442,7 +449,7 @@ class DirectModel:
                     raise ModelError("invalid_message")
                 incoming.append(dict(role="model" if message["role"]=="assistant" else "user", parts=[dict(text=message["content"])])
                     if self.provider=="gemini" else dict(role=message["role"], content=message["content"]))
-            binding = json.dumps([self.provider, conversation_key], separators=(",", ":"))
+            binding = json.dumps([self.provider, self.model, self.base_url, conversation_key], separators=(",", ":"))
             with _Transcript(transcript_path, binding, self.max_request_bytes*8, self._conversations) as journal:
                 state = journal.state
                 conversation = state["messages"]
@@ -457,7 +464,7 @@ class DirectModel:
                         if result is None:
                             result = dict(ok=False, outcomeUnknown=row["phase"]=="entered", replayAllowed=False,
                                           reason="interrupted_tool_exchange" if row["phase"]=="entered" else "not_dispatched")
-                        if isinstance(result, dict) and result.get("outcomeUnknown") is True:
+                        if isinstance(result, dict) and result.get("outcomeUnknown") is True and not row.get("readOnly", False):
                             state["unknown"][call["fingerprint"]] = copy.deepcopy(result)
                         recovered.append((call, result))
                     self._append_results(conversation, None, recovered, append_native=False)
@@ -506,7 +513,7 @@ class DirectModel:
                         self.last_receipt["outcome"] = "completed"
                         return copy.deepcopy(calls[0]["arguments"])
                     conversation.append(native)
-                    state["pending"] = dict(calls=[dict(call=call, phase="not_entered") for call in calls])
+                    state["pending"] = dict(calls=[dict(call=call, phase="not_entered", readOnly=call["name"] in read_only_tools) for call in calls])
                     journal.save()
                     text = self._text(native)
                     if text and assistant_text is not None:
@@ -537,7 +544,8 @@ class DirectModel:
                             except BaseException as error:
                                 row["result"] = dict(ok=False, outcomeUnknown=True, replayAllowed=False,
                                     reason="tool_outcome_unknown", receipt=copy.deepcopy(getattr(error, "receipt", {})))
-                                state["unknown"][fingerprint] = copy.deepcopy(row["result"])
+                                if not row["readOnly"]:
+                                    state["unknown"][fingerprint] = copy.deepcopy(row["result"])
                                 journal.save()
                                 raise ModelError("tool_outcome_unknown") from error
                         row["phase"], row["result"] = "returned", copy.deepcopy(returned)
@@ -559,11 +567,11 @@ class DirectModel:
             raise ModelError(reason, self.last_receipt) from error
 
     def generate(self, system, messages, reply_schema, tools, dispatch, *, cancelled=None, request_id=None, progress=None,
-                 natural=False, transcript_path=None, conversation_key=None, assistant_text=None):
+                 natural=False, transcript_path=None, conversation_key=None, assistant_text=None, read_only_tools=None):
         if natural:
             return self._generate_natural(system, messages, reply_schema, tools, dispatch, cancelled=cancelled,
                 request_id=request_id, progress=progress, transcript_path=transcript_path, conversation_key=conversation_key,
-                assistant_text=assistant_text)
+                assistant_text=assistant_text, read_only_tools=read_only_tools)
         identifier = request_id or uuid.uuid4().hex
         self.last_receipt = dict(requestId=identifier,execution="direct_api",provider=self.provider,
             requestedModel=self.model,baseURL=self.base_url,outcome="in_progress",httpRequests=0,
