@@ -161,6 +161,17 @@ class DirectToolTests(unittest.TestCase):
             self.assertFalse(tools.dispatch('read_observation',dict(method='buddy-trade.state',params={}))['ok'])
         self.assertFalse(self.rpc.writes)
 
+    def test_gm_command_reference_is_present_without_any_private_reference_file(self):
+        tools = self.gm_tools(mock.Mock())
+        self.assertFalse((self.host/'dev/lotharen-gm-commands.txt').exists())
+        description = next(row['function']['description'] for row in tools.tool_schemas()
+                           if row['function']['name']=='gm_execute')
+        for form in ('.go xyz <x> <y> <z> [mapId] [orientation]', '.appear <playerName>',
+                     '.summon <playerName>', '.gps <playerName>', 'selected unit takes precedence',
+                     'atomic select_guid', '.help <command>', 'chat_read', 'BEFORE'):
+            self.assertIn(form,description)
+        self.assertFalse(self.rpc.writes)
+
     def test_typed_chat_reader_rejects_spoofed_route_signature_effect_and_identity(self):
         original = self.legacy_poll_catalog()
         prefix = 'buddy-chat::warcraftbuddy.chat.v1.'

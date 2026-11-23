@@ -43,6 +43,16 @@ def sha(value):
 READ_PAGE_BYTES = 12 * 1024
 _PAGE_BYTES = READ_PAGE_BYTES - 1024  # Reserve the outer tool/identity envelope.
 
+GM_COMMAND_REFERENCE = (
+    "Public command syntax: .go xyz <x> <y> <z> [mapId] [orientation] teleports this GM; "
+    ".appear <playerName> moves this GM to that player; .summon <playerName> moves that player to this GM. "
+    "Realm security, group and instance admission still apply; these forms do not promise universal rank-2 permission. "
+    ".gps <playerName> queries an online player globally, but a selected unit takes precedence: use the existing "
+    "atomic select_guid for an intended known GUID, then verify the feedback target and instance. "
+    "For an unfamiliar command, use .help <command> and chat_read to inspect its syntax and requirements BEFORE "
+    "a physical attempt. These are mechanical forms, not an action sequence; verify effects separately."
+)
+
 
 def _kind(value):
     if value is None: return "null"
@@ -744,7 +754,7 @@ class DirectTools:
                 specs += [("gm_task_start", "Start the whole commissioned GM recovery/regroup using the existing ordered Lua task. Goal uses current observed roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": obj}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),
                           ("gm_task_resume", "Resume only gm_current_task's same stored goal/invocation and receipts. Runner started is not a GM effect; no new task or replay of uncertain actions.", {"task_id": string}, ["task_id"]),
-                          ("gm_execute", "Send one native dot command through this exact GM session, optionally with an exact observed selection GUID. The realm decides permissions. The existing active task writer blocks competing commands. Inspect public observations afterward; transport is not effect.", {"command": string, "select_guid": string}, ["command"])]
+                          ("gm_execute", "Send one native dot command through this exact GM session, optionally with an exact observed selection GUID. The realm decides permissions. The existing active task writer blocks competing commands. Inspect public observations afterward; transport is not effect. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]
         if self.self_guid == "87":
             specs += [("gm_inspect", "Read fresh configured public GM/companion clients in parallel: their own life, pose, session and group, including offscreen companions. No caller URL, game write or task. JSON path/offset/limit pages large facts.", paging, []),
                       ("gm_current_task", "Discover only this GM session's maintained active writer-owned task and actual retained status. No caller path, new task or execution. Page large observations/memory with JSON path/offset/limit.", paging, []),
