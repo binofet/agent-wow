@@ -494,6 +494,35 @@ class DirectToolTests(unittest.TestCase):
         runner.assert_not_called()
         self.assertFalse(self.rpc.writes)
 
+    def test_gm_inspect_reads_only_configured_clients_with_real_helper_and_identity(self):
+        tools = self.gm_tools(mock.Mock())
+        self.gm_allowed = False  # Read-only evidence is not GM mutation authority.
+        calls=[]
+        class PublicClient:
+            def __init__(self, guid): self.guid=guid
+            def call(self, method, params, **kwargs):
+                calls.append((self.guid,method))
+                if method=='buddy-actions.status':return dict(sessionId='aw-'+self.guid,selfGuid=self.guid)
+                if method=='buddy-party.state':return dict(sessionId='aw-'+self.guid,group=dict(leaderGuid='1'))
+                if method=='buddy-world.snapshot':return dict(self=dict(guid=self.guid,present=True,
+                    aliveKnown=True,healthKnown=True,health=1,maxHealth=3000))
+                raise AssertionError('No mutation allowed')
+        configured=[dict(guid='4',name='Mira',rpc_url='http://127.0.0.1:8087/rpc-companion')]
+        with mock.patch.object(self.gm,'bindings',return_value=configured), \
+                mock.patch.object(self.gm,'task_rpc',side_effect=lambda url:PublicClient('87' if url==self.rpc.url else '4')):
+            observed=tools.dispatch('gm_inspect',{})
+            self.assertTrue(observed['ok'],observed)
+            rows=observed['result']['clients']
+            self.assertEqual([row['guid'] for row in rows],['87','4'])
+            self.assertTrue(all(row['identityMatches'] for row in rows))
+            self.assertTrue(all(row['self']['alive'] is False for row in rows))
+            self.assertEqual(rows[1]['partySessionId'],'aw-4')
+            self.assertEqual(rows[1]['group'],dict(leaderGuid='1'))
+            self.assertFalse(tools.dispatch('gm_inspect',dict(rpc_url='http://other/rpc'))['ok'])
+        self.assertEqual(len(calls),6)
+        self.assertFalse(self.rpc.writes)
+        self.assertLessEqual(len(packed(observed)),READ_PAGE_BYTES)
+
     def test_current_task_cancel_writes_only_existing_cancel_marker_without_reset(self):
         tools = self.gm_tools(mock.Mock())
         task_id, folder, _ = self.current_gm_task(tools)
