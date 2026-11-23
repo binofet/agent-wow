@@ -188,13 +188,9 @@ func TestTradeConsentMalformedOrIncompleteFactsWait(t *testing.T) {
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
-			fixtureRuntime := tradeConsentFixtureRuntime
-			if name == "duplicate_slots" || name == "extra_item_fact" || name == "keyed_items" || name == "partner_slot_7" || name == "unknown_acceptance" {
-				// Keep the observed instrumented semantic case separate from
-				// its unchanged real default-5ms CLI proof below.
-				fixtureRuntime = disposalArmorSemanticRuntime
-			}
-			r := fixtureRuntime(t, source)
+			// This matrix tests malformed-fact semantics under instrumentation.
+			// Each exact frame still requires the real default-5ms CLI proof.
+			r := disposalArmorSemanticRuntime(t, source)
 			frame := tradeConsentFrame()
 			edit(frame)
 			tradeConsentResult(t, r, source, frame, "wait")
