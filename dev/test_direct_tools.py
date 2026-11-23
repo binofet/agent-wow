@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 import subprocess
 import stat
+import struct
 import tempfile
 import unittest
 from unittest import mock
@@ -65,7 +66,9 @@ class RPC:
                           spellbookRevision="7", spells=[dict(spellId=987654, genericCastSupported=True,
                           classificationReason="automatic_selection_unclassified", metadataKnown=False)])
         elif method == "buddy-world.snapshot":
-            result = dict(self=dict(guid=self.guid, aliveKnown=True, alive=True))
+            result = dict(self=dict(guid=self.guid,present=True,mapKnown=True,mapId=349,targetKnown=True,
+                                   targetGuid=str(getattr(self,'target',0)),aliveKnown=True,alive=True),
+                          owner=dict(guid='3',present=True,mapKnown=True,mapId=349))
         elif method in ("session.reload_policy", "session.send_event"):
             self.writes.append((method, copy.deepcopy(params)))
             if method == "session.reload_policy":
@@ -167,8 +170,8 @@ class DirectToolTests(unittest.TestCase):
         description = next(row['function']['description'] for row in tools.tool_schemas()
                            if row['function']['name']=='gm_execute')
         for form in ('.go xyz <x> <y> <z> [mapId] [orientation]', '.appear <playerName>',
-                     '.summon <playerName>', '.gps <playerName>', 'selected unit takes precedence',
-                     'atomic select_guid', '.help <command>', 'chat_read', 'BEFORE'):
+                     '.summon <playerName>', '.gps <playerName>', 'otherwise the GM self',
+                     'no target name/GUID', '.help <command>', 'chat_read', 'BEFORE'):
             self.assertIn(form,description)
         self.assertFalse(self.rpc.writes)
 
@@ -776,7 +779,11 @@ class DirectToolTests(unittest.TestCase):
             return original(method, params, **kwargs)
         self.rpc.call = call
         reply = subprocess.CompletedProcess([], 0, b'grpc-status: 0\r\n', b'')
-        with mock.patch.object(self.gm.subprocess, 'run', return_value=reply) as packet:
+        def send(*args,**kwargs):
+            if kwargs.get('input',b'')[5:8] == b'\x08\xbd\x02':
+                self.rpc.target=struct.unpack('<Q',kwargs['input'][-8:])[0]
+            return reply
+        with mock.patch.object(self.gm.subprocess, 'run', side_effect=send) as packet:
             result = tools.dispatch('gm_execute', dict(command='.modify hp 100', select_guid='3'))
             self.assertTrue(result['ok'], result)
             self.assertEqual(result['result']['sessionId'], self.rpc.sid)

@@ -159,14 +159,46 @@ def claim_writer(store,state_dir=None):
     return data
 
 
-def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expected_session=None,before_send=None):
+def selection_evidence(rpc,sid,requested=None):
+    actions=rpc.call('buddy-actions.status',{});world=rpc.call('buddy-world.snapshot',{})
+    own=world.get('self',{})
+    if actions.get('sessionId')!=sid or str(actions.get('selfGuid'))!='87' or str(own.get('guid'))!='87' or own.get('present') is not True:
+        raise ValueError('current authenticated GM world/body required for selection evidence')
+    rows=[own,world.get('owner',{}),*world.get('nearbyPlayers',[]),*world.get('nearbyCreatures',[]),
+        world.get('requestedCreature',{}),world.get('ownerTarget',{}),*world.get('requestedCreatures',[]),
+        *world.get('questGivers',[]),*world.get('trainerCreatures',[]),*world.get('lootableCorpses',[]),
+        world.get('ownCorpse',{}),*world.get('playerCorpses',[])]
+    local={str(row.get('guid')):row for row in rows if row.get('present') is True and row.get('mapKnown') is True
+        and own.get('mapKnown') is True and row.get('mapId',0)==own.get('mapId',0)}
+    known=own.get('targetKnown') is True
+    selected=str(own.get('targetGuid',0)) if known else None
+    target=None if requested is None else str(requested)
+    return dict(sessionId=sid,selfGuid='87',worldVisitRevision=world.get('visitRevision'),
+        observedTargetKnown=known,observedTargetGuid=selected,requestedGuid=target,
+        requestedLocallyPresent=target=='0' or target in local if target is not None else None,
+        selectionMatches=known and selected==target if target is not None else None,
+        locallyResolvedSelectedGuid=selected if selected in local else None,
+        unresolvedSelectionMayUseSelf=True,realmCommandTargetKnown=False,
+        rawSelf=own,actionsPosition=actions.get('position'))
+
+
+def _feedback_cursor(value):
+    cursor=str(value.get('latestSequence',0))
+    if not re.fullmatch(r'0|[1-9][0-9]{0,19}',cursor) or int(cursor)>=2**64:
+        raise ValueError('valid Chat.Poll latestSequence required')
+    if value.get('messages') and 'latestSequence' not in value:
+        raise ValueError('nonempty Chat.Poll lacks latestSequence')
+    return cursor
+
+
+def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expected_session=None,before_send=None,feedback_reader=None):
     if command is not None and (not isinstance(command,str) or
             re.fullmatch(r'\.[A-Za-z][ -~]{0,253}',command) is None or command!=command.rstrip()):
         raise ValueError('one native GM command required')
     if select_guid is not None:
         text=str(select_guid)
-        if not re.fullmatch(r'[1-9][0-9]{0,19}',text) or int(text)>2**64-1:
-            raise ValueError('exact nonzero target GUID required')
+        if not re.fullmatch(r'0|[1-9][0-9]{0,19}',text) or int(text)>2**64-1:
+            raise ValueError('exact target GUID or zero clear-selection required')
         select_guid=text
     if command is None and select_guid is None:raise ValueError('selection or command required')
     live=rpc.call('buddy-actions.status',{});sid=live.get('sessionId')
@@ -175,10 +207,73 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
     with task_store(writer_folder(root,sid,config).absolute()) as owner:
         claim_writer(owner)
         transport=SessionTransport(rpc,config) if before_send is None else SessionTransport(rpc,config,before_send=before_send)
-        if select_guid is not None:transport.select(select_guid,sid)
-        if command is not None:transport.gm(command,sid)
-    return dict(sessionId=sid,selectedGuid=select_guid,command=command,
-        transportWritten=True,completion='effect_not_yet_verified')
+        out=dict(sessionId=sid,selectedGuid=select_guid,command=command,transportWritten=False,
+            selectionTransportWritten=False,commandTransportWritten=False,gameEffectClaimed=False)
+        try:out['selection']=selection_evidence(rpc,sid,select_guid)
+        except Exception as error:
+            if select_guid is not None:raise
+            out['selection']=dict(available=False,error=str(error),realmCommandTargetKnown=False)
+        if select_guid is not None:
+            if not out['selection']['requestedLocallyPresent']:
+                out['completion']='requested_selection_not_locally_observed; no command was sent'
+                return out
+            if not out['selection']['selectionMatches']:
+                try:transport.select(select_guid,sid)
+                except Exception as error:
+                    out.update(selectionTransportWritten=None,transportWritten=None,selectionOutcomeUnknown=True)
+                    error.gm_receipt=out
+                    raise
+                out.update(transportWritten=True,selectionTransportWritten=True)
+                try:out['selection']=selection_evidence(rpc,sid,select_guid)
+                except Exception as error:
+                    out.update(completion='selection_written_evidence_unavailable; no command was sent or queued',selectionEvidenceError=str(error))
+                    return out
+            if not out['selection']['selectionMatches'] or not out['selection']['requestedLocallyPresent']:
+                out['completion']='selection_written_not_observed; no command was sent or queued'
+                return out
+        if command is None:
+            out['completion']='selection_observed' if out['selection'].get('selectionMatches') else 'selection_not_observed'
+            return out
+        # Same writer reservation spans baseline, command write and feedback.
+        # The realm has no command ID in SYSTEM text: this is temporal evidence.
+        baseline=None
+        out['feedback']=dict(status='unavailable',correlation='temporal_only',commandSuccessKnown=False,
+            targetIdentityKnown=False,messages=[],systemMessages=[])
+        if feedback_reader is not None:
+            try:
+                view=feedback_reader(dict(after_sequence='0',limit=1))
+                baseline=_feedback_cursor(view)
+                out['feedback'].update(chatSessionId=view['sessionId'],afterSequence=baseline,status='no_reply_yet')
+            except Exception as error:out['feedback']['error']=str(error)
+        if select_guid is not None:
+            try:out['selection']=selection_evidence(rpc,sid,select_guid)
+            except Exception as error:
+                out.update(completion='selection_evidence_unavailable; no command was sent or queued',selectionEvidenceError=str(error))
+                return out
+            if not out['selection']['selectionMatches'] or not out['selection']['requestedLocallyPresent']:
+                out['completion']='selection_changed_before_command; no command was sent or queued'
+                return out
+        try:transport.gm(command,sid)
+        except Exception as error:
+            out.update(commandTransportWritten=None,commandOutcomeUnknown=True)
+            error.gm_receipt=out
+            raise
+        out.update(transportWritten=True,commandTransportWritten=True,completion='effect_not_yet_verified')
+        if feedback_reader is not None and baseline is not None:
+            try:
+                view=feedback_reader(dict(after_sequence=baseline,limit=256))
+                if view.get('sessionId')!=out['feedback']['chatSessionId']:raise ValueError('chat session changed after command write')
+                messages=view.get('messages',[])
+                if not isinstance(messages,list) or any(not isinstance(row,dict) or not str(row.get('sequence','')).isdigit()
+                    or not int(baseline)<int(row['sequence'])<=int(_feedback_cursor(view)) for row in messages):
+                    raise ValueError('feedback cursor/window mismatch after command write')
+                system=[row for row in messages if row.get('channel',0) in (0,'CHANNEL_UNSPECIFIED')
+                    and str(row.get('senderGuid',0))=='0' and row.get('language',0)==0 and not row.get('self',False)]
+                out['feedback'].update(status='cursor_lost' if view.get('cursorLost') else 'observed' if system else 'no_reply_yet',
+                    latestSequence=_feedback_cursor(view),nextSequence=str(view.get('nextSequence',baseline)),
+                    cursorLost=view.get('cursorLost',False),messages=messages,systemMessages=system)
+            except Exception as error:out['feedback'].update(status='unavailable_after_written',error=str(error))
+    return out
 
 
 def single_command(rpc,config,command,root=ROOT):

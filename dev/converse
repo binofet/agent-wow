@@ -2740,7 +2740,7 @@ class DirectBrain(AgentBrain):
             publish()  # Retain an entered/unknown operation before the callback.
             try:
                 if tools is not None:
-                    result = tools.dispatch(name, arguments)
+                    result = tools.dispatch(name, arguments, operation_id=identity)
                 elif name == "context_read":
                     try:
                         result = dict(ok=True, result=context_page(full_context, **arguments))

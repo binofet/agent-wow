@@ -47,8 +47,10 @@ GM_COMMAND_REFERENCE = (
     "Public command syntax: .go xyz <x> <y> <z> [mapId] [orientation] teleports this GM; "
     ".appear <playerName> moves this GM to that player; .summon <playerName> moves that player to this GM. "
     "Realm security, group and instance admission still apply; these forms do not promise universal rank-2 permission. "
-    ".gps <playerName> queries an online player globally, but a selected unit takes precedence: use the existing "
-    "atomic select_guid for an intended known GUID, then verify the feedback target and instance. "
+    "Pinned .gps <playerName> behavior uses a selected locally resolvable unit, otherwise the GM self; a name argument "
+    "does not establish remote target identity. Zero/offscreen selection also falls back to self. GPS SYSTEM "
+    "position text contains no target name/GUID. Use observed local selection evidence and independent facts; "
+    "never attribute the GM's coordinates to the requested remote player. "
     "For an unfamiliar command, use .help <command> and chat_read to inspect its syntax and requirements BEFORE "
     "a physical attempt. These are mechanical forms, not an action sequence; verify effects separately."
 )
@@ -573,24 +575,28 @@ class DirectTools:
         require(current is not None and current[0] == task_id, "current_writer_gm_task_required")
         return current[1], current[2]
 
-    def _gm_execute(self, gm, args):
+    def _gm_execute(self, gm, args, operation_id=None):
         self._authorise_gm()
         command = args.get("command")
         require(isinstance(command, str) and re.fullmatch(r"\.[A-Za-z][ -~]{0,253}", command)
                 and command == command.rstrip() and "|" not in command, "one_native_gm_command_required")
         selected = args.get("select_guid")
-        require(selected is None or isinstance(selected, str) and re.fullmatch(r"[1-9][0-9]{0,19}", selected)
-                and int(selected) < 2**64, "exact_nonzero_selection_guid_required")
+        require(selected is None or isinstance(selected, str) and re.fullmatch(r"0|[1-9][0-9]{0,19}", selected)
+                and int(selected) < 2**64, "exact_selection_guid_required")
         require(isinstance(self.request_id, str) and 0 < len(self.request_id) <= 512,
                 "host_request_identity_required")
         config = self._gm_config()
         digest = sha(packed(dict(command=command, selectGuid=selected)))
-        key = sha(packed([self.session_id, self.request_id, digest]))
+        require(operation_id is None or isinstance(operation_id,str) and re.fullmatch(r"[A-Za-z0-9._:-]{1,512}",operation_id),
+                "host_operation_identity_required")
+        key = sha(packed([self.session_id, operation_id])) if operation_id is not None else sha(packed([self.session_id, self.request_id, digest]))
         folder = self.root / "data/converse/lotharen/gm-commands" / key
         with gm.task_store(folder) as store:
             prior = store.load()
             if prior is not None:
                 self._gm_identity(prior)
+                require(prior.get("commandSHA256",prior.get("result",{}).get("commandSHA256")) == digest,
+                        "gm_operation_arguments_changed")
                 if prior.get("result") is not None:
                     return dict(prior["result"], historicalReceipt=True)
                 if prior.get("knownNotDispatched") is not True:
@@ -602,27 +608,31 @@ class DirectTools:
                 self._catalog()
                 self._authorise_gm()
                 store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url),
-                    commandSHA256=digest, selectedGuid=selected, reserved=True))
+                    commandSHA256=digest, selectedGuid=selected, operationId=operation_id, reserved=True))
                 self._catalog()
                 self._authorise_gm()
                 entered = True
             try:
                 result = gm.execute_command(self.rpc, config, command, self.root,
-                    select_guid=selected, expected_session=self.session_id, before_send=before_send)
+                    select_guid=selected, expected_session=self.session_id, before_send=before_send,
+                    feedback_reader=self._chat_read)
                 self._catalog()
-                result = dict(result, commandSHA256=digest, gameEffectClaimed=False)
+                result = dict(result, operationId=operation_id, commandSHA256=digest, gameEffectClaimed=False)
                 store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url), result=result))
             except Exception as error:
                 if entered:
+                    transport = getattr(error,"gm_receipt",{})
+                    details = {key:transport[key] for key in ("selectionTransportWritten","commandTransportWritten",
+                        "selectionOutcomeUnknown","commandOutcomeUnknown") if key in transport}
                     self._unknown("gm_execute", dict(stateDir=str(folder), commandSHA256=digest,
-                        selectedGuid=selected), error)
+                        selectedGuid=selected,operationId=operation_id,**details), error)
                 if store.load() is not None:
                     store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url),
                         commandSHA256=digest, selectedGuid=selected, knownNotDispatched=True))
                 raise
             return result
 
-    def _gm(self, name, args):
+    def _gm(self, name, args, operation_id=None):
         require(self.self_guid == "87", "authenticated_gm_actor_required")
         if name not in ("gm_task_status", "gm_current_task", "gm_inspect"):
             self._authorise_gm()
@@ -636,12 +646,12 @@ class DirectTools:
                 rows.append(dict(guid=row["guid"], name=row["name"], rpcUrl=row["rpcUrl"],
                     identityMatches=row.get("identityMatches", False), errors=row.get("errors", []),
                     self=gm.normalized(facts.get("world", {}).get("self", {}), actions),
-                    rawSelf=facts.get("world", {}).get("self", {}), group=party.get("group"),
+                    rawSelf=facts.get("world", {}).get("self", {}), observations=facts, group=party.get("group"),
                     partySessionId=party.get("sessionId")))
             self._catalog()
             return dict(observedAtUnixMs=observed["observedAtUnixMs"], clients=rows, gameEffectClaimed=False)
         if name == "gm_execute":
-            return self._gm_execute(gm, args)
+            return self._gm_execute(gm, args, operation_id)
         if name == "gm_current_task":
             current = self._current_gm_task(gm)
             self._catalog()
@@ -754,7 +764,7 @@ class DirectTools:
                 specs += [("gm_task_start", "Start the whole commissioned GM recovery/regroup using the existing ordered Lua task. Goal uses current observed roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": obj}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),
                           ("gm_task_resume", "Resume only gm_current_task's same stored goal/invocation and receipts. Runner started is not a GM effect; no new task or replay of uncertain actions.", {"task_id": string}, ["task_id"]),
-                          ("gm_execute", "Send one native dot command through this exact GM session, optionally with an exact observed selection GUID. The realm decides permissions. The existing active task writer blocks competing commands. Inspect public observations afterward; transport is not effect. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]
+                          ("gm_execute", "Send one native dot command through this exact GM session. Optional select_guid must be locally observed; zero clears UI selection. A command is sent only when that selection is actually observed. If selection was written but not observed, no command is queued: inspect facts before a fresh tool invocation. Each actual tool call has its own host operation identity; exact-operation receipt/unknown is never replayed. Returns a fresh Chat baseline/window within the same writer, with explicit no-reply/cursor loss/read failure; SYSTEM text is temporal evidence, never target/effect proof. Active task writers still block competing commands; realm permissions apply. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]
         if self.self_guid == "87":
             specs += [("gm_inspect", "Read fresh configured public GM/companion clients in parallel: their own life, pose, session and group, including offscreen companions. No caller URL, game write or task. JSON path/offset/limit pages large facts.", paging, []),
                       ("gm_current_task", "Discover only this GM session's maintained active writer-owned task and actual retained status. No caller path, new task or execution. Page large observations/memory with JSON path/offset/limit.", paging, []),
@@ -764,7 +774,7 @@ class DirectTools:
                                 "required": required, "additionalProperties": False}}}
                 for name, description, properties, required in specs]]
 
-    def dispatch(self, name, args):
+    def dispatch(self, name, args, *, operation_id=None):
         self.last_receipt = None
         try:
             require(isinstance(args, dict) and len(packed(args)) <= self.max_bytes,
@@ -864,7 +874,7 @@ class DirectTools:
             elif name == "policy_input":
                 result = self._policy_input(args)
             elif name.startswith("gm_task_") or name in ("gm_current_task", "gm_execute", "gm_inspect"):
-                result = self._gm(name, args)
+                result = self._gm(name, args, operation_id)
                 if name in ("gm_task_status", "gm_current_task", "gm_inspect"):
                     result = self._project(result, args)
             else:
