@@ -207,6 +207,25 @@ class GMCommandEvidenceTests(unittest.TestCase):
         for invalid in (261,'-1','01',str(2**64)):
             with self.assertRaises(direct_tools.ToolError):self.make_tools(chat_cursor=invalid)
 
+    def test_future_or_malformed_poll_cursors_cannot_poison_the_fresh_default(self):
+        self.tools=self.make_tools(chat_cursor='10')
+        future=self.tools.dispatch('chat_read',dict(after_sequence=str(2**64-1)))
+        self.assertTrue(future['ok'],future);self.assertEqual(future['result']['messages'],[])
+        self.assertEqual(self.tools.chat_cursor,'10')
+        self.rpc.messages.append(dict(sequence='11',text='Fresh after future read'))
+        fresh=self.tools.dispatch('chat_read',{})
+        self.assertEqual([row['text'] for row in fresh['result']['messages']],['Fresh after future read'])
+        def malformed(method,value):
+            if method=='buddy-chat.poll':value['nextSequence']='999'
+        self.rpc.on_read=malformed
+        invalid=self.tools.dispatch('chat_read',dict(after_sequence='0'))
+        self.assertFalse(invalid['ok'],invalid);self.assertEqual(self.tools.chat_cursor,'11')
+        self.rpc.on_read=None
+        self.rpc.messages.append(dict(sequence='12',text='Fresh after malformed read'))
+        final=self.tools.dispatch('chat_read',{})
+        self.assertEqual([row['text'] for row in final['result']['messages']],['Fresh after malformed read'])
+        self.assertFalse(self.rpc.packets);self.assertFalse(self.rpc.commands)
+
     def test_offscreen_selection_is_not_banned_but_gps_self_fallback_remains_unproven(self):
         result=self.execute(selected='1')
         self.assertTrue(result['ok'],result);row=result['result']

@@ -53,7 +53,8 @@ class RPC:
         if method == "session.describe":
             result = self.catalog()
         elif method == "buddy-chat.poll":
-            result = dict(sessionId=self.chat_sid, messages=[dict(text="Actual system feedback", channel="SYSTEM")])
+            result = dict(sessionId=self.chat_sid, messages=[dict(sequence="10",text="Actual system feedback", channel="CHANNEL_UNSPECIFIED")],
+                          nextSequence="10",latestSequence="10",oldestSequence="10")
         elif method == "session.policy_source":
             result = dict(sessionId=self.sid, characterGuid=self.guid, revision=checksum(self.source),
                           source=self.source, sourceLimitBytes=8 * 1024 * 1024)

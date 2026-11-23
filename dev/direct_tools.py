@@ -402,11 +402,19 @@ class DirectTools:
         require(isinstance(value, dict) and value.get("sessionId") == self.chat_session_id,
                 "read_result_chat_body_changed")
         require(isinstance(value.get("messages", []), list) and len(packed(value)) <= self.max_bytes, "chat_result_size_bound")
-        next_cursor=value.get("nextSequence",cursor)
-        require(self._valid_chat_cursor(next_cursor) and int(next_cursor)>=int(cursor), "valid_chat_next_cursor_required")
+        next_cursor,latest=value.get("nextSequence","0"),value.get("latestSequence","0")
+        rows=value.get("messages",[])
+        require(self._valid_chat_cursor(next_cursor) and self._valid_chat_cursor(latest), "valid_chat_response_cursors_required")
+        sequences=[row.get("sequence") if isinstance(row,dict) else None for row in rows]
+        require(all(self._valid_chat_cursor(sequence) for sequence in sequences), "valid_chat_message_sequence_required")
+        numbers=[int(sequence) for sequence in sequences]
+        require(all(int(cursor)<number<=int(latest) for number in numbers) and
+                all(left<right for left,right in zip(numbers,numbers[1:])) and
+                next_cursor==(sequences[-1] if sequences else cursor), "valid_chat_feedback_window_required")
+        # Poll may echo an explicitly requested future cursor with no rows.
+        # It has consumed no current feedback and cannot advance the default.
+        if int(cursor)>int(latest):return copy.deepcopy(value)
         if latest_baseline:
-            latest=value.get("latestSequence","0")
-            require(self._valid_chat_cursor(latest) and int(latest)>=int(next_cursor), "valid_chat_latest_cursor_required")
             next_cursor=latest
         self.chat_cursor=str(max(int(self.chat_cursor),int(next_cursor)))
         return copy.deepcopy(value)
