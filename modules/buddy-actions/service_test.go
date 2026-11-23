@@ -37,6 +37,9 @@ type fakeSession struct {
 	lookupCreatures                   map[uint64]*worldv1.CreatureState
 	lookups                           []uint64
 	failSend, failClock, failSnapshot bool
+	failSendOpcode                    uint32
+	ownMovementReport                 *modv1.WorldPacket
+	onOwnMovementReport               func(*modv1.WorldPacket)
 	failMovementObservation           bool
 	movementObservations              []*worldv1.ClientMovementRequest
 }
@@ -44,13 +47,17 @@ type fakeSession struct {
 func (f *fakeSession) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.validateSyntheticPortalScope(r); err != nil {
+		return nil, err
+	}
 	f.packets = append(f.packets, proto.Clone(r).(*modv1.SendPacketRequest))
-	if f.failSend {
+	if f.failSend && (f.failSendOpcode == 0 || r.Opcode == f.failSendOpcode) {
 		return nil, errors.New("ambiguous transport failure")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	f.retainSyntheticOwnMovementReport(r)
 	return &emptypb.Empty{}, nil
 }
 func (f *fakeSession) GetClock(ctx context.Context, _ *emptypb.Empty, _ ...grpc.CallOption) (*modv1.ClockResponse, error) {
@@ -68,6 +75,9 @@ func (f *fakeSession) GetClock(ctx context.Context, _ *emptypb.Empty, _ ...grpc.
 func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, _ ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if r.Module == "session" && r.Method == "own_movement_report" {
+		return f.readSyntheticOwnMovementReport(ctx, r)
+	}
 	if r.Module == "buddy-world" && r.Method == "observe_client_movement" && r.Request.MessageIs(&worldv1.ClientMovementRequest{}) {
 		request := &worldv1.ClientMovementRequest{}
 		if err := r.Request.UnmarshalTo(request); err != nil {

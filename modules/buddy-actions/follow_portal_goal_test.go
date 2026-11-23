@@ -320,6 +320,7 @@ func TestPortalCatchupUnknownTriggerCannotReplayAfterGoalExpiry(t *testing.T) {
 	if _, err := s.SetPortalCatchup(ctx, req); err != nil {
 		t.Fatal(err)
 	}
+	f.failSendOpcode = opcode.CMSGAreatrigger
 	f.failSend = true
 	s.Tick(context.Background())
 	if countPackets(f, opcode.CMSGAreatrigger) != 1 || !s.followPortal.notified {

@@ -529,7 +529,9 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 			s.followGoal = followFormationGoal{}
 			s.followRevision++
 			s.followNav.Reset()
-			s.followPortal = dungeonPortalFollow{}
+			if !s.followPortal.notified {
+				s.followPortal = dungeonPortalFollow{}
+			}
 		}
 		s.state.Following = true
 		s.followUntil = s.now().Add(lease)
@@ -544,7 +546,9 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		s.followGoal = followFormationGoal{}
 		s.followRevision++
 		s.followNav.Reset()
-		s.followPortal = dungeonPortalFollow{}
+		if !s.followPortal.notified {
+			s.followPortal = dungeonPortalFollow{}
+		}
 		s.swimFollow = swimFollowRoute{}
 		s.swimTrail = swimTrail{}
 		if s.explicitStopLocked(ctx) {
@@ -806,7 +810,7 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 
 // Keep the typed pre-transport refusal available to exact operations. A plain
 // RPC error cannot prove that a packet did not reach the game transport.
-func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byte) error {
+func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byte, scopes ...*modv1.TransportScope) error {
 	if s.session == nil {
 		s.state.Reason = "session_unavailable"
 		return errors.New("session unavailable")
@@ -820,7 +824,11 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 	}
 	s.transportSequence++
 	s.lastTransportError = nil
-	if _, err := s.session.SendPacket(sendCtx, &modv1.SendPacketRequest{Opcode: op, Payload: payload}); err != nil {
+	request := &modv1.SendPacketRequest{Opcode: op, Payload: payload}
+	if len(scopes) != 0 && scopes[0] != nil {
+		request.TransportScope = proto.Clone(scopes[0]).(*modv1.TransportScope)
+	}
+	if _, err := s.session.SendPacket(sendCtx, request); err != nil {
 		s.lastTransportError = err
 		s.state.LastTransportFailure = &actionsv1.TransportFailure{Sequence: s.transportSequence, Opcode: op, Error: err.Error(), OutcomeUnknown: !modcb.PacketWasNotDispatched(err)}
 		s.state.Reason = "transport_error_outcome_unconfirmed"
@@ -1000,6 +1008,12 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		at := len(packedGUID(s.selfGUID))
 		flags := binary.LittleEndian.Uint32(payload[at:]) | w.Self.MovementFlags&ghostWaterWalking
 		binary.LittleEndian.PutUint32(payload[at:], flags)
+	}
+	// A portal entry may owe a fresh normal STOP even while already idle. Its
+	// immutable proposal must survive the clock and World callbacks above.
+	if guard, ok := ctx.Value(portalStopGuardKey{}).(portalStopGuard); ok && !guard(w, p) {
+		s.state.Reason = "follow_instance_source_changed_before_stop"
+		return false
 	}
 	before := s.transportSequence
 	if !s.sendLocked(ctx, op, payload) {

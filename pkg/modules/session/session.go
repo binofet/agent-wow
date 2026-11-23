@@ -17,4 +17,7 @@ type Session struct {
 	// hosts leave these nil; a scoped call must never fall back to SendPacket.
 	SendScopedPacket func(context.Context, uint32, []byte, *modv1.TransportScope) error
 	TransportScope   func() *modv1.TransportScope
+	// OwnMovementReport returns the exact known written normal-movement packet
+	// only while its original scope remains current. It is not a server pose.
+	OwnMovementReport func() *modv1.WorldPacket
 }

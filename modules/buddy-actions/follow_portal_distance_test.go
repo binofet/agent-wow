@@ -23,6 +23,8 @@ func portalDistanceFixture(t *testing.T, offset position) (*Service, *fakeSessio
 	self.x, self.y, self.z = self.x+offset.x, self.y+offset.y, self.z+offset.z
 	putAtPortal(f.world.Self, portal.source, self)
 	putAtPortal(f.world.Owner, portal.source, portal.center)
+	f.world.VisitRevision = 1
+	s.encounterVisit = encounterVisit{revision: 1, mapID: portal.source, bound: true}
 	toggle(t, s, true)
 	if !s.refreshPositionLocked(f.world) {
 		t.Fatal("fixture could not bind its actual source pose")
@@ -158,7 +160,7 @@ func TestPortalDistanceFinalTriggerRejectsPoseChangedAfterLuaDecision(t *testing
 	s.Tick(context.Background())
 	if !injected || readyReads != 2 || f.world.Self.PositionRevision != positionRevision ||
 		distance(playerPosition(f.world.Self), s.followPortal.portal.center) >= s.followPortal.portal.radius ||
-		countPackets(f, opcode.CMSGAreatrigger) != 0 || s.followPortal.notified || len(f.packets) != 0 {
+		countPackets(f, opcode.CMSGAreatrigger) != 0 || s.followPortal.notified || countPackets(f, opcode.MSGMoveStop) != 1 || len(f.packets) != 1 {
 		t.Fatal("an earlier Lua pose authorized entry after the final observation changed", injected, readyReads, s.followPortal, f.packets)
 	}
 }
