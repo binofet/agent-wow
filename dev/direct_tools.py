@@ -48,6 +48,13 @@ GM_INSPECT_BYTES = 128 * 1024  # Compact all-client facts; explicit raw pages re
 GM_COMMAND_REFERENCE = (
     "Public command syntax: .go xyz <x> <y> <z> [mapId] [orientation] teleports this GM; "
     ".appear <playerName> moves this GM to that player; .summon <playerName> moves that player to this GM. "
+    "Literal named-location examples: .teleport Maraudon moves this GM; .teleport name Joel Maraudon "
+    "addresses the named player. Published #location and #playername are placeholders: substitute names, "
+    "do not send the # prefix. Prefer the exact observed location NAME over an unverified numeric ID; "
+    "a Chat message sequence is not a teleport ID. The explicit-name .teleport name form needs no "
+    "select_guid or local player visibility; the realm resolves the name. The observed-target GUID "
+    "fence applies only when optional select_guid is provided. A gm_task_start admission failure does "
+    "not remove broad gm_execute access, and a straight named teleport does not require an ordered task. "
     "Realm security, group and instance admission still apply; these forms do not promise universal rank-2 permission. "
     "Pinned .gps <playerName> behavior uses a selected locally resolvable unit, otherwise the GM self; a name argument "
     "does not establish remote target identity. Zero/offscreen selection also falls back to self. GPS SYSTEM "
