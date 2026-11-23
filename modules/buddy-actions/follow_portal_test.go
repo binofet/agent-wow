@@ -28,6 +28,7 @@ func TestFollowDungeonPortalUsesOrdinaryEntryAfterOwnerDisappears(t *testing.T) 
 			putAtPortal(f.world.Self, portal.source, start)
 			putAtPortal(f.world.Owner, portal.source, portal.center)
 			s.encounterVisit.mapID = portal.source
+			seedSyntheticPortalWorldScope(f, 9)
 			toggle(t, s, true)
 			s.Tick(ctx)
 			f.world.Owner.Present, f.world.Owner.MapKnown, f.world.Owner.PositionKnown = false, false, false
@@ -67,6 +68,7 @@ func TestFollowDungeonPortalCatchesUpThroughVerifiedBend(t *testing.T) {
 	putAtPortal(f.world.Self, portal.source, start)
 	putAtPortal(f.world.Owner, portal.source, portal.center)
 	s.encounterVisit.mapID = portal.source
+	seedSyntheticPortalWorldScope(f, 9)
 	s.navDataDir = "fixture"
 	bend := position{x: start.x + 6, y: start.y + 8, z: start.z}
 	s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
@@ -158,6 +160,7 @@ func TestFollowDungeonPortalDoesNotEnterWithoutCurrentAuthority(t *testing.T) {
 			putAtPortal(f.world.Self, portal.source, portal.center)
 			putAtPortal(f.world.Owner, portal.source, portal.center)
 			s.encounterVisit.mapID = portal.source
+			seedSyntheticPortalWorldScope(f, 9)
 			toggle(t, s, true)
 			s.Tick(ctx)
 			f.world.Owner.Present = false

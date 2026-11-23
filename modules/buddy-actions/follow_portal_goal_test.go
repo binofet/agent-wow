@@ -40,6 +40,7 @@ func portalGoalFixture(t *testing.T) (*Service, *fakeSession, *actionsv1.PortalC
 	putAtPortal(f.world.Self, portal.source, start)
 	putAtPortal(f.world.Owner, portal.source, portal.center)
 	activateEncounterWriter(t, s, f)
+	seedSyntheticPortalWorldScope(f, 9)
 	toggle(t, s, true)
 	if !s.refreshPositionLocked(f.world) {
 		t.Fatal("fixture could not observe its current pose")

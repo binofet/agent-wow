@@ -25,6 +25,7 @@ func portalDistanceFixture(t *testing.T, offset position) (*Service, *fakeSessio
 	putAtPortal(f.world.Owner, portal.source, portal.center)
 	f.world.VisitRevision = 1
 	s.encounterVisit = encounterVisit{revision: 1, mapID: portal.source, bound: true}
+	seedSyntheticPortalWorldScope(f, 9)
 	toggle(t, s, true)
 	if !s.refreshPositionLocked(f.world) {
 		t.Fatal("fixture could not bind its actual source pose")

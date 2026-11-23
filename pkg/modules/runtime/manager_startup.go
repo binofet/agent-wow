@@ -130,8 +130,8 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 		if scope == nil || m.session.SendScopedPacket == nil {
 			return modcb.PacketNotDispatchedError("transport scope is unsupported by this host")
 		}
-		if _, supplied := modcb.IncomingPolicySpell(ctx); supplied {
-			return modcb.PacketNotDispatchedError("scoped completion cannot claim a spell dispatch")
+		if token, supplied := modcb.IncomingPolicySpell(ctx); supplied {
+			return m.writePolicyInstanceEntryScoped(ctx, token, sessionID, module, opcode, payload, scope)
 		}
 		origin := modsession.WriteOrigin{SessionID: sessionID, Module: module, Writer: "module"}
 		return m.session.SendScopedPacket(modsession.WithWriteOrigin(ctx, origin), opcode, append([]byte(nil), payload...), proto.Clone(scope).(*modv1.TransportScope))

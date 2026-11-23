@@ -39,6 +39,7 @@ func boxPortalEntryFixture(t *testing.T, inside bool) (*Service, *fakeSession, f
 	putAtPortal(f.world.Owner, portal.source, portal.center)
 	f.world.Owner.Health = f.world.Owner.MaxHealth
 	s.encounterVisit.mapID = portal.source
+	seedSyntheticPortalWorldScope(f, 9)
 	s.navDataDir = "/synthetic-qualified-route"
 	host := newFollowPolicySession(t, s, f)
 	s.UseHostFollowPolicy()
@@ -208,6 +209,20 @@ func TestNormalPortalIdleEstimateNeedsItsCurrentPriorWrittenSource(t *testing.T)
 	s.Tick(context.Background())
 	if len(f.packets) != 0 || s.followPortal.notified || s.state.MotionUnconfirmed {
 		t.Fatal("an unsupported idle estimate was refreshed by a new STOP clock", s.stateLocked(), f.packets)
+	}
+}
+
+func TestNormalPortalInferredWorldRebaseCannotBecomeRawStopAuthority(t *testing.T) {
+	s, f, _, _, _ := boxPortalEntryFixture(t, true)
+	f.world.Self.PositionInferred = true
+	f.world.Self.PositionRevision++
+	s.refreshPositionLocked(f.world)
+	if s.posEstimated {
+		t.Fatal("fixture did not exercise the legacy inferred-to-controller rebase")
+	}
+	s.Tick(context.Background())
+	if len(f.packets) != 0 || s.followPortal.notified || s.state.MotionUnconfirmed {
+		t.Fatal("inferred World endpoint bootstrapped a new reported STOP pose", s.stateLocked(), f.packets)
 	}
 }
 

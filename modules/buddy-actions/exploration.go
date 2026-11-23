@@ -7,7 +7,9 @@ import (
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/harvestguard"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -16,9 +18,24 @@ func (s *Service) ownsExploration(token string) bool {
 	return !s.closed && s.state.InteractionOwner == "exploration" && subtle.ConstantTimeCompare([]byte(token), []byte(s.interactionToken)) == 1
 }
 
+// Idle-only leases remain bound to the body/visit which admitted them. Legacy
+// acquisition has no such binding and keeps its existing behavior.
+func (s *Service) explorationIdleBindingCurrentLocked(token string, w *worldv1.SnapshotResponse) bool {
+	b := s.idleInteraction
+	if b.sessionID == "" && b.selfGUID == 0 && b.visit == 0 && b.token == "" {
+		return true
+	}
+	return b.sessionID == s.sessionID && b.selfGUID == s.selfGUID && b.visit != 0 && b.token == token &&
+		s.encounterVisit.bound && s.encounterVisit.revision == b.visit &&
+		(w == nil || s.matchesCurrentEncounterVisitLocked(w) && w.VisitRevision == b.visit)
+}
+
 func (s *Service) explorationContextLocked(ctx context.Context, token string, mapID uint32) string {
 	if !s.ownsExploration(token) || s.interactionUntil.Sub(s.now()) < time.Second {
 		return "exploration_lease_changed_or_expiring"
+	}
+	if !s.explorationIdleBindingCurrentLocked(token, nil) {
+		return "exploration_idle_body_or_visit_changed"
 	}
 	if s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.autoTarget != 0 || s.state.AutoAttacking {
 		return "exploration_motion_or_spell_unconfirmed"
@@ -56,6 +73,9 @@ func (s *Service) explorationContextLocked(ctx context.Context, token string, ma
 	if !w.Self.SpeedsKnown || math.IsNaN(float64(w.Self.RunSpeed)) || math.Abs(float64(w.Self.RunSpeed)-7) > .01 {
 		return "exploration_normal_run_speed_required"
 	}
+	if !s.explorationIdleBindingCurrentLocked(token, w) {
+		return "exploration_idle_body_or_visit_changed"
+	}
 	return ""
 }
 
@@ -63,6 +83,7 @@ func (s *Service) explorationContextLocked(ctx context.Context, token string, ma
 // an assertion that a remembered NPC exists there. Only the complete verified
 // route is used; no caller path, raw packets, teleport or direct fallback exists.
 func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (result *actionsv1.State, err error) {
+	ctx = modcb.ForwardPolicySpell(ctx)
 	if r == nil || r.Token == "" || len(r.Token) > 128 || !finite(position{x: r.X, y: r.Y, z: r.Z}) {
 		return nil, status.Error(codes.InvalidArgument, "exploration token and finite destination are required")
 	}
@@ -90,11 +111,11 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 	s.state.Reason = phase
 	s.mu.Unlock()
 	defer func() {
-		stop, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+		stop, cancel := context.WithTimeout(context.WithoutCancel(ctx), 750*time.Millisecond)
 		defer cancel()
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if s.ownsExploration(token) {
+		if s.ownsExploration(token) && s.explorationIdleBindingCurrentLocked(token, nil) {
 			if s.state.InteractionHarvest {
 				s.stopHarvestMovementLocked(stop)
 			} else {

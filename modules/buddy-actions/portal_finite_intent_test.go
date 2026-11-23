@@ -53,6 +53,7 @@ func newFinitePortalIntentFixture(t *testing.T, far bool) *finitePortalIntentFix
 	}
 	s.formation.runtime = runtime
 	activateEncounterWriter(t, s, f)
+	seedSyntheticPortalWorldScope(f, 9)
 	x := &finitePortalIntentFixture{s: s, f: f, ctx: encounterHostContext(testEncounterKey, 1), advance: advance, portal: portal}
 	x.admitFormation(t)
 	s.Tick(context.Background())

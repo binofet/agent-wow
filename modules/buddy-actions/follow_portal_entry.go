@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -12,20 +13,67 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type portalStopGuardKey struct{}
 type portalStopGuard func(*worldv1.SnapshotResponse, position) bool
+type portalStopAdmission struct {
+	guard portalStopGuard
+	scope *modv1.TransportScope
+}
 
-type portalEntryProposal struct {
-	intent                      portalIntent
+// A physical entry proposal contains no owner location or gameplay decision.
+// Each caller supplies its own immutable intent/custody admission predicate.
+type areaTriggerProposal struct {
+	sessionID                   string
+	self, visit                 uint64
 	pose, rawPose               position
 	mapID                       uint32
 	clientRevision, rawRevision uint64
+	worldScope                  *modv1.TransportScope
+}
+
+// World and Core count visits independently. This is an actual parsed packet
+// envelope tagged with World's own visit; spline-authority Known is irrelevant
+// to ordinary ground movement. Never turn a later report into this mapping.
+func portalObservedWorldScope(w *worldv1.SnapshotResponse, self uint64) *modv1.TransportScope {
+	a, p := w.GetSelfMotionAuthority(), w.GetSelf()
+	scope := a.GetTransportScope()
+	if self == 0 || w.GetVisitRevision() == 0 || a.GetSelfGuid() != self || a.GetVisitRevision() != w.GetVisitRevision() ||
+		p.GetGuid() != self || !p.GetPresent() || !p.GetMapKnown() || scope == nil || scope.ConnectionId == "" ||
+		scope.SelfGuid != self || !scope.VisitBound || scope.VisitRevision == 0 || scope.MotionRevision == 0 || scope.MapId != p.MapId {
+		return nil
+	}
+	return scope
+}
+
+func clonePortalScope(scope *modv1.TransportScope) *modv1.TransportScope {
+	if scope == nil {
+		return nil
+	}
+	return proto.Clone(scope).(*modv1.TransportScope)
+}
+
+func samePortalCoreVisit(a, b *modv1.TransportScope) bool {
+	return a != nil && b != nil && a.ConnectionId != "" && a.ConnectionId == b.ConnectionId && a.SelfGuid != 0 &&
+		a.SelfGuid == b.SelfGuid && a.VisitBound && b.VisitBound && a.VisitRevision != 0 && a.VisitRevision == b.VisitRevision && a.MapId == b.MapId
+}
+
+func areaTriggerWorldCurrent(p areaTriggerProposal, w *worldv1.SnapshotResponse) bool {
+	current := portalObservedWorldScope(w, p.self)
+	return samePortalCoreVisit(p.worldScope, current) && current.MotionRevision >= p.worldScope.MotionRevision
+}
+
+func areaTriggerReportWorldMatches(p areaTriggerProposal, w *worldv1.SnapshotResponse, report *modv1.WorldPacket) bool {
+	current, scope := portalObservedWorldScope(w, p.self), report.GetTransportScope()
+	return samePortalCoreVisit(p.worldScope, scope) && samePortalCoreVisit(current, scope) &&
+		p.worldScope.MotionRevision <= scope.MotionRevision && current.MotionRevision <= scope.MotionRevision
 }
 
 // This last admission is pure: all clock/World/policy callbacks have returned.
-// In particular, checking a finite lease must not call s.now after comparing it.
 func (s *Service) portalIntentCurrentAtLocked(intent portalIntent, w *worldv1.SnapshotResponse, now time.Time) bool {
 	host := s.hostEncounterKey != "" && !s.closed && s.encounterVisit.bound && s.hostEncounterVisit != 0 &&
 		s.hostEncounterVisit == s.encounterVisit.revision && now.Before(s.hostEncounterUntil)
@@ -43,46 +91,56 @@ func (s *Service) portalIntentCurrentAtLocked(intent portalIntent, w *worldv1.Sn
 		g.visit == w.GetVisitRevision() && g.follow == s.followRevision && g.witness == s.followPortal.witness && now.Before(g.until)
 }
 
-func (s *Service) portalEntryCurrentLocked(ctx context.Context, p portalEntryProposal, w *worldv1.SnapshotResponse, revision uint64, now time.Time) bool {
+func (s *Service) areaTriggerProposalLocked(w *worldv1.SnapshotResponse) areaTriggerProposal {
+	return areaTriggerProposal{sessionID: s.sessionID, self: s.selfGUID, visit: w.GetVisitRevision(),
+		pose: s.pos, rawPose: playerPosition(w.GetSelf()), mapID: s.posMap, clientRevision: s.posRevision,
+		rawRevision: s.positionRevision, worldScope: clonePortalScope(portalObservedWorldScope(w, s.selfGUID))}
+}
+
+func (s *Service) areaTriggerPoseCurrentLocked(ctx context.Context, p areaTriggerProposal, w *worldv1.SnapshotResponse, revision uint64, now time.Time) bool {
 	self := w.GetSelf()
-	return ctx.Err() == nil && p.intent.visit != 0 && s.matchesCurrentEncounterVisitLocked(w) && s.portalIntentCurrentAtLocked(p.intent, w, now) &&
-		!s.bodyMoving && !s.clientControlLost && !s.clientControlRestoring && !s.state.MotionUnconfirmed &&
+	return ctx.Err() == nil && !s.closed && p.sessionID == s.sessionID && p.self == s.selfGUID && p.visit != 0 &&
+		w.GetVisitRevision() == p.visit && s.matchesCurrentEncounterVisitLocked(w) && areaTriggerWorldCurrent(p, w) &&
+		safeQuestCharacter(w, p.self) == "" && !s.bodyMoving && !s.clientControlLost && !s.clientControlRestoring && !s.state.MotionUnconfirmed &&
 		!s.state.AutoAttackUnconfirmed && !s.state.AutoAttackRequested && !s.state.AutoAttacking && !s.state.CastPending &&
-		!now.Before(s.castUntil) && s.state.InteractionOwner == "" && !s.state.Traveling && !s.state.Practicing &&
+		!now.Before(s.castUntil) && !s.state.Traveling && !s.state.Practicing &&
 		s.movementOwner.owner == "" && !(s.targetMovement.view.TargetGuid != 0 && now.Before(s.targetMovement.until)) &&
 		self.GetChannelSpellKnown() && self.GetChannelObjectKnown() && self.GetChannelSpellId() == 0 && self.GetChannelObjectGuid() == 0 &&
 		s.posKnown && finite(s.pos) && s.pos == p.pose && s.posRevision == revision && s.posMap == p.mapID &&
-		s.positionRevision == p.rawRevision && self.GetPositionRevision() == p.rawRevision &&
-		playerPosition(self) == p.rawPose && s.followPortal.portal.contains(p.mapID, p.pose, .03)
+		s.positionRevision == p.rawRevision && self.GetPositionRevision() == p.rawRevision && playerPosition(self) == p.rawPose
 }
 
-// An ID-only area-trigger packet has no pose. Bind it instead to an exact
-// successful normal STOP written by this Core connection, then let Core check
-// that immutable scope immediately at its owner-loop transport boundary.
-func (s *Service) enterWitnessedPortalLocked(ctx context.Context, w *worldv1.SnapshotResponse, intent portalIntent) {
-	p := portalEntryProposal{intent: intent, pose: s.pos, rawPose: playerPosition(w.GetSelf()), mapID: s.posMap,
-		clientRevision: s.posRevision, rawRevision: s.positionRevision}
-	if p.clientRevision == ^uint64(0) || !s.portalEntryCurrentLocked(ctx, p, w, p.clientRevision, s.now()) {
-		s.state.Reason = "follow_instance_source_changed"
-		return
+type areaTriggerAdmission func(*worldv1.SnapshotResponse, uint64, time.Time) bool
+
+// The shared physical path writes only the normal scoped STOP and returns its
+// current exact report. It does not choose an entrance or send its trigger.
+// A refusal here means no AREA_TRIGGER was sent; an earlier STOP can still have
+// a written or unknown outcome, retained by the normal movement bookkeeping.
+func (s *Service) prepareAreaTriggerLocked(ctx context.Context, w *worldv1.SnapshotResponse, p areaTriggerProposal, current areaTriggerAdmission, qualify func(*worldv1.SnapshotResponse) bool) (*modv1.WorldPacket, error) {
+	refuse := func(reason string) (*modv1.WorldPacket, error) {
+		s.state.Reason = reason
+		return nil, errors.New(reason)
 	}
-	if s.posEstimated && !s.state.Moving {
-		// A clock cannot freshen an old estimate. Its last successful own
-		// packet must still be Core's current report before another STOP can
-		// use that controller position. Incoming supersession makes it unknown.
-		previous, err := modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
-		if err != nil || !portalMovementReportMatches(previous, s.selfGUID, p.mapID, p.pose, false) {
-			s.state.Reason = "follow_instance_movement_report_unavailable"
-			return
+	if p.clientRevision == ^uint64(0) || !current(w, p.clientRevision, s.now()) {
+		return refuse("follow_instance_source_changed")
+	}
+	stopScope := clonePortalScope(p.worldScope)
+	needsPriorPose := s.posEstimated && !s.state.Moving || w.GetSelf().GetPositionInferred()
+	previous, reportErr := modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
+	if reportErr == nil {
+		if !areaTriggerReportWorldMatches(p, w, previous) || needsPriorPose &&
+			!portalMovementReportMatches(previous, s.selfGUID, p.mapID, p.pose, false) {
+			return refuse("follow_instance_movement_report_unavailable")
 		}
+		stopScope = clonePortalScope(previous.TransportScope)
+	} else if status.Code(reportErr) != codes.FailedPrecondition || needsPriorPose {
+		return refuse("follow_instance_movement_report_unavailable")
 	}
-	guard := portalStopGuard(func(current *worldv1.SnapshotResponse, stop position) bool {
+	guard := portalStopGuard(func(w *worldv1.SnapshotResponse, stop position) bool {
 		now := s.now()
-		return stop == p.pose && s.portalEntryCurrentLocked(ctx, p, current, p.clientRevision, now)
+		return stop == p.pose && current(w, p.clientRevision, now)
 	})
-	stopCtx := context.WithValue(ctx, portalStopGuardKey{}, guard)
-	// stopLocked deliberately does nothing when idle. A fresh actual report is
-	// required here even in that case; use the same normal encoder/executor.
+	stopCtx := context.WithValue(ctx, portalStopGuardKey{}, portalStopAdmission{guard: guard, scope: stopScope})
 	stopped := false
 	if s.state.Moving {
 		stopped = s.stopLocked(stopCtx)
@@ -90,37 +148,48 @@ func (s *Service) enterWitnessedPortalLocked(ctx context.Context, w *worldv1.Sna
 		stopped = s.movementLocked(stopCtx, opcode.MSGMoveStop, p.pose, false)
 	}
 	if !stopped {
-		return
+		return refuse("follow_instance_stop_unavailable: " + s.state.Reason)
 	}
 	revision := p.clientRevision + 1
 	fresh, err := s.snapshot(ctx)
-	if err != nil || !s.portalEntryCurrentLocked(ctx, p, fresh, revision, s.now()) {
-		s.state.Reason = "follow_instance_source_changed"
-		return
+	if err != nil || !current(fresh, revision, s.now()) {
+		return refuse("follow_instance_source_changed")
 	}
-	policy := s.portalPolicyLocked(fresh, s.now())
-	if !policy.Valid || !policy.Eligible || !policy.Ready {
-		s.state.Reason = "follow_instance_policy_changed"
-		return
+	if qualify != nil && !qualify(fresh) {
+		return refuse("follow_instance_policy_changed")
 	}
 	report, err := modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
 	if err != nil || !portalStopReportMatches(report, s.selfGUID, p.mapID, p.pose) {
-		s.state.Reason = "follow_instance_movement_report_unavailable"
-		return
+		return refuse("follow_instance_movement_report_unavailable")
 	}
 	latest, err := s.snapshot(ctx)
-	now := s.now() // Last local callback; only pure comparisons follow.
-	if err != nil || !s.portalEntryCurrentLocked(ctx, p, latest, revision, now) || s.state.Moving {
-		s.state.Reason = "follow_instance_source_changed"
+	now := s.now() // Last local callback; only pure admission follows.
+	if err != nil || !current(latest, revision, now) || !areaTriggerReportWorldMatches(p, latest, report) || s.state.Moving {
+		return refuse("follow_instance_source_changed")
+	}
+	return report, nil
+}
+
+// Automatic following supplies its actual owner witness and Lua eligibility;
+// explicit destination intent uses the same physical executor without either.
+func (s *Service) enterWitnessedPortalLocked(ctx context.Context, w *worldv1.SnapshotResponse, intent portalIntent) {
+	p := s.areaTriggerProposalLocked(w)
+	current := areaTriggerAdmission(func(w *worldv1.SnapshotResponse, revision uint64, now time.Time) bool {
+		return s.areaTriggerPoseCurrentLocked(ctx, p, w, revision, now) && s.portalIntentCurrentAtLocked(intent, w, now) &&
+			samePortalCoreVisit(p.worldScope, s.followPortal.sourceScope) && p.worldScope.MotionRevision >= s.followPortal.sourceScope.MotionRevision &&
+			s.state.InteractionOwner == "" && !s.areaTrigger.operation.GetPending() && s.followPortal.portal.contains(p.mapID, p.pose, .03)
+	})
+	qualify := func(w *worldv1.SnapshotResponse) bool {
+		policy := s.portalPolicyLocked(w, s.now())
+		return policy.Valid && policy.Eligible && policy.Ready
+	}
+	report, err := s.prepareAreaTriggerLocked(ctx, w, p, current, qualify)
+	if err != nil {
 		return
 	}
-	s.followPortal.notified = true // The outcome may be unknown; never replay.
+	s.followPortal.notified = true
 	err = s.sendPacketLocked(ctx, opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, s.followPortal.portal.trigger), report.TransportScope)
 	if modcb.PacketWasNotDispatched(err) {
-		// Core can reject a superseded scope before transport. Its typed
-		// zero-write receipt is retained in LastTransportFailure; a fresh
-		// report and current Lua intent may qualify a later explicit entry.
-		// Plain errors retain the tombstone because their outcome is unknown.
 		s.followPortal.notified = false
 		s.state.Reason = "follow_instance_trigger_not_dispatched"
 	} else if err == nil {

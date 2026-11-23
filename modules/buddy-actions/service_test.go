@@ -39,6 +39,7 @@ type fakeSession struct {
 	failSend, failClock, failSnapshot bool
 	failSendOpcode                    uint32
 	ownMovementReport                 *modv1.WorldPacket
+	portalCoreScope                   *modv1.TransportScope
 	onOwnMovementReport               func(*modv1.WorldPacket)
 	failMovementObservation           bool
 	movementObservations              []*worldv1.ClientMovementRequest

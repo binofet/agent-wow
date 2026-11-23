@@ -185,6 +185,7 @@ type Service struct {
 	lastTransportError                   error
 	flightpath                           flightpathTracker
 	flightpathActivation                 flightpathActivationTracker
+	areaTrigger                          areaTriggerTracker
 }
 
 func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
@@ -1011,12 +1012,16 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	}
 	// A portal entry may owe a fresh normal STOP even while already idle. Its
 	// immutable proposal must survive the clock and World callbacks above.
-	if guard, ok := ctx.Value(portalStopGuardKey{}).(portalStopGuard); ok && !guard(w, p) {
-		s.state.Reason = "follow_instance_source_changed_before_stop"
-		return false
+	var scopes []*modv1.TransportScope
+	if admission, ok := ctx.Value(portalStopGuardKey{}).(portalStopAdmission); ok {
+		if moving || op != opcode.MSGMoveStop || admission.scope == nil || admission.guard == nil || !admission.guard(w, p) {
+			s.state.Reason = "follow_instance_source_changed_before_stop"
+			return false
+		}
+		scopes = []*modv1.TransportScope{admission.scope}
 	}
 	before := s.transportSequence
-	if !s.sendLocked(ctx, op, payload) {
+	if s.sendPacketLocked(ctx, op, payload, scopes...) != nil {
 		if failure := s.state.LastTransportFailure; failure != nil && failure.Sequence > before && !failure.OutcomeUnknown {
 			s.state.Reason = "movement_not_dispatched"
 			return false

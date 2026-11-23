@@ -2,6 +2,7 @@
 -- movement ownership; this module owns the task's conditions and lifecycle.
 local M = {tuning={lease_ms=3000,renew_below_ms=1500,response_yards=10,anchor_yards=2}}
 local state = {retired={}}
+local instance_entry = encounter_instance_entry
 local function number(n) return type(n)=="number" and n==n and n>-math.huge and n<math.huge end
 local function id(s) return type(s)=="string" and #s>0 and #s<=80 end
 local function guid(s)
@@ -38,8 +39,9 @@ function M.on_event(event)
         state.observed={sessionId=o.sessionId,selfGuid=o.selfGuid,visitId=o.visitId,mapId=o.mapId}
     end
     local task=state.current
+    if task and task.kind=="enter_instance" and instance_entry then instance_entry.on_event(task,event) end
     local receipt=event.receipt
-    if task and task.operation and receipt then
+    if task and task.kind~="enter_instance" and task.operation and receipt then
         local p=receipt.payload or {}
         local op=task.operation
         if p.capability=="movement_owner" and p.owner==op.owner and p.mode==op.mode then
@@ -68,9 +70,11 @@ function M.on_event(event)
         if state.next and (v.id==nil or v.id==state.next.id) then
             state.retired[state.next.id]="canceled";state.next=nil
         end
-    elseif v.task=="wait_for_pull" then
-        local next_task=request(v)
-        if not next_task then state.inputError="invalid_wait_for_pull_intent"
+    elseif v.task=="wait_for_pull" or v.task=="enter_instance" then
+        local next_task
+        if v.task=="enter_instance" then next_task=instance_entry and instance_entry.request(v,state.observed)
+        else next_task=request(v) end
+        if not next_task then state.inputError="invalid_"..v.task.."_intent"
         elseif not state.retired[next_task.id] and (not task or task.id~=next_task.id) then
             if task then finish(task,"superseded") end
             if state.next then state.retired[state.next.id]="superseded_before_start" end
@@ -106,6 +110,12 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act)
     if not state.current and state.next then state.current,state.next=state.next,nil end
     local task=state.current
     if not task then return {status=state.inputError and {phase=state.inputError} or state.last} end
+    if task.kind=="enter_instance" then
+        local view=instance_entry and instance_entry.step(task,obs,frame,sequence,in_combat,can_act)
+        if not view then return {status={phase="instance_entry_handler_unavailable"},hold=true,task=task} end
+        if view.done then pop(task) end
+        return view
+    end
     local players=obs.players or {}
     local self=players[obs.selfGuid]
     local bound=task.sessionId and task or task.requested
@@ -187,6 +197,9 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act)
 end
 
 function M.commit(view,chosen)
+    if view and view.task and view.task.kind=="enter_instance" and instance_entry then
+        instance_entry.commit(view.task,chosen);return
+    end
     if view and view.task and chosen and chosen.capability=="movement_owner" then
         view.task.operation={mode=chosen.mode,owner=chosen.owner}
     end
@@ -197,6 +210,12 @@ end
 function M.allow(view,obs,proposed)
     if not proposed or not view or not view.hold then return true end
     local cap=proposed.capability
+    if view.task and view.task.kind=="enter_instance" then
+        if view.action==proposed then return true end
+        -- Entry owns voluntary travel only; current defense and healing retain
+        -- their ordinary scheduler and native custody checks.
+        return cap~="approach_target" and cap~="move_body" or false
+    end
     if cap=="movement_owner" or cap=="heal" or cap=="cleanse" or cap=="cast_self" or cap=="resurrect" or cap=="interrupt" or
        cap=="melee_stop" or cap=="stop_movement" then return true end
     local task=view.task
@@ -231,7 +250,7 @@ function M.import_state(checkpoint)
     if type(checkpoint)~="table" or checkpoint.version~=1 or type(checkpoint.data)~="table" or
        type(checkpoint.data.retired)~="table" then return false end
     for _,task in pairs({checkpoint.data.current,checkpoint.data.next}) do
-        if type(task)~="table" or not id(task.id) or task.kind~="wait_for_pull" or
+        if type(task)~="table" or not id(task.id) or (task.kind~="wait_for_pull" and (not instance_entry or not instance_entry.validate(task))) or
            task.token~=nil and (type(task.token)~="string" or #task.token==0) or
            task.deadline~=nil and (not number(task.deadline) or task.deadline<0) then return false end
     end

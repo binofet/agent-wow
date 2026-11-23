@@ -7,6 +7,7 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/areatriggerreference"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 )
 
 type dungeonPortal struct {
@@ -54,6 +55,7 @@ type dungeonPortalFollow struct {
 	sourceSession         string
 	sourceSelf            uint64
 	sourceVisit           uint64
+	sourceScope           *modv1.TransportScope
 	followRevision        uint64
 	ownerPoseRevision     uint64
 	witness               uint64
@@ -103,6 +105,7 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 	}
 	ground := playerPosition(owner)
 	if portal, found := witnessedPortal(owner.MapId, ground); found {
+		sourceScope := clonePortalScope(portalObservedWorldScope(w, s.selfGUID))
 		catchingUp, valid := s.portalSightingPolicyLocked(w, now)
 		if !valid || !s.legacyPortalIntentLocked(s.now()) && !s.currentFollowFormationGoalLocked(s.followGoal, w) {
 			s.portalGoal = portalCatchupGoal{}
@@ -111,7 +114,7 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 		witness := f.witness
 		if witness == 0 || f.portal.trigger != portal.trigger || f.sourceVisit != w.VisitRevision ||
 			f.followRevision != s.followRevision || f.ownerPoseRevision != owner.PositionRevision ||
-			f.ground != ground || f.catchingUp != catchingUp || !f.lostAt.IsZero() || f.notified {
+			f.ground != ground || f.catchingUp != catchingUp || !f.lostAt.IsZero() || f.notified || !samePortalCoreVisit(f.sourceScope, sourceScope) {
 			s.portalWitnessRevision++
 			witness = s.portalWitnessRevision
 			s.portalGoal = portalCatchupGoal{}
@@ -123,6 +126,7 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 			catchingUp:    catchingUp,
 			sourceSession: s.sessionID, sourceSelf: s.selfGUID,
 			sourceVisit: w.VisitRevision, followRevision: s.followRevision, ownerPoseRevision: owner.PositionRevision, witness: witness,
+			sourceScope: clonePortalScope(sourceScope),
 		}
 		return
 	}
@@ -140,6 +144,7 @@ func (s *Service) portalSourceWitnessCurrentLocked(w *worldv1.SnapshotResponse) 
 	return !s.closed && !s.independent && f.sourceSession == s.sessionID && f.sourceSelf == s.selfGUID &&
 		f.sourceVisit == w.GetVisitRevision() && f.followRevision == s.followRevision &&
 		(f.sourceVisit == 0 || s.matchesCurrentEncounterVisitLocked(w)) &&
+		samePortalCoreVisit(f.sourceScope, portalObservedWorldScope(w, s.selfGUID)) &&
 		f.portal.trigger != 0 &&
 		owner != nil && owner.Guid == ownerGUID && !owner.Present &&
 		(!owner.MapKnown || owner.MapId == f.portal.source || owner.MapId == f.portal.destination) &&
@@ -203,6 +208,10 @@ func (s *Service) portalCatchUpTarget(ctx context.Context, ground position, cand
 // Disappearance at the portal is a cue to try the normal transfer once. The
 // realm decides eligibility and which copy this party is allowed to enter.
 func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.SnapshotResponse, now time.Time) bool {
+	if s.areaTrigger.operation.GetPending() {
+		s.state.Reason = "area_trigger_waiting_for_destination_observation"
+		return true
+	}
 	f := &s.followPortal
 	if f.portal.trigger == 0 {
 		return false
