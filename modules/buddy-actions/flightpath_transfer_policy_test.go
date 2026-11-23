@@ -336,7 +336,7 @@ func TestFlightpathTransferPolicyLostNotInvokedResolvesAndRequiresExplicitFreshR
 	}
 	// New actual same-source MI supplies distinct retry evidence. Tuning still
 	// defaults to waiting until the parent explicitly edits the existing key.
-	info, err := movementinfo.Encode(movementinfo.Info{Time: 333})
+	info, err := movementinfo.Encode(movementinfo.Info{Flags: 0x08000000, Time: 333})
 	if err != nil {
 		t.Fatal(err)
 	}
