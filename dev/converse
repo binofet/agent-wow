@@ -77,6 +77,8 @@ PICK_LOCK_ORDER = re.compile(
 NUMERIC_ARGS = ("quest_id", "item_entry", "gold_copper")
 LEGACY_EMOTES = {"WAVE": 101, "BOW": 17, "CHEER": 21}
 DEVELOPMENT_PEERS = {1:"Arlen", 4:"Mira", 5:"Rook", 8:"Nixwick", 87:"Lotharen"}
+DEVELOPMENT_REPLY_PREFIX = "[dev-reply] "
+DEVELOPMENT_REPLY_BODY_BYTES = 240 - len(DEVELOPMENT_REPLY_PREFIX.encode("utf-8"))
 
 
 def supported_emotes(state):
@@ -4618,6 +4620,7 @@ class Conversation:
         if not isinstance(messages, list) or len(messages) > 256:
             raise ConversationError("Chat poll messages are invalid")
         selected = []
+        development_replies = []
         previous = self.cursor
         for message in messages:
             if not isinstance(message, dict):
@@ -4649,10 +4652,16 @@ class Conversation:
                 selected.append({"speaker": self.player_name, "channel": channel, "text": text, "sender_guid": str(sender),
                     "sequence":sequence,"receiverGuid":message.get('receiverGuid','0')})
             elif (channel == "WHISPER" and sender in DEVELOPMENT_PEERS
-                  and self.session_id and result.get("sessionId") == self.session_id
-                  and getattr(self.brain, "developer_workspace", None) is not None):
+                  and self.session_id and result.get("sessionId") == self.session_id):
                 # The current server chat packet binds this known developer's
                 # GUID. A development DM grants no owner gameplay controls.
+                if text.startswith(DEVELOPMENT_REPLY_PREFIX):
+                    body = text[len(DEVELOPMENT_REPLY_PREFIX):].encode("utf-8")[:DEVELOPMENT_REPLY_BODY_BYTES].decode("utf-8", errors="ignore").rstrip()
+                    development_replies.append(dict(speaker=DEVELOPMENT_PEERS[sender], channel=channel,
+                        text=body, sender_guid=str(sender), sequence=sequence, development_reply=True))
+                    continue
+                if getattr(self.brain, "developer_workspace", None) is None:
+                    continue
                 selected.append({"speaker": DEVELOPMENT_PEERS[sender], "channel": channel,
                     "text": text, "sender_guid": str(sender), "development_whisper": True})
             elif (sender in self.party_agents and channel in ("PARTY", "PARTY_LEADER")
@@ -4661,6 +4670,16 @@ class Conversation:
                 selected.append({"speaker": self.party_agents[sender], "channel": channel, "text": text, "sender_guid": str(sender)})
         # Advance before model/RPC work: ambiguous writes must not cause retries.
         self.cursor = next_sequence
+        for entry in development_replies:
+            key = "DEVELOPMENT:" + entry["sender_guid"]
+            self.history.setdefault(key, []).append(entry)
+            self.history[key] = self.history[key][-20:]
+            self.status(event="development_peer_reply", developmentPeerReply=dict(
+                senderGuid=entry['sender_guid'], sequence=entry['sequence'], text=entry['text'],
+                chatSessionId=self.session_id), cursor=self.cursor)
+        if development_replies and not selected:
+            self.status(phase="listening", cursor=self.cursor)
+            return
         if not selected:
             if not self.refresh_controls():return
             self.poll_shared_quest()
@@ -4870,7 +4889,13 @@ class Conversation:
             return False
 
     def send_reply(self, reply, channel, target_guid=None, history_key=None):
-        params = {"channel": channel, "language": "COMMON", "text": reply["text"]}
+        development_reply = (channel == "WHISPER" and target_guid != self.player_guid
+            and target_guid in DEVELOPMENT_PEERS and history_key == "DEVELOPMENT:" + str(target_guid))
+        text = reply["text"]
+        if development_reply:
+            text = text.encode("utf-8")[:DEVELOPMENT_REPLY_BODY_BYTES].decode("utf-8", errors="ignore").rstrip()
+        params = {"channel": channel, "language": "COMMON",
+                  "text": DEVELOPMENT_REPLY_PREFIX + text if development_reply else text}
         if channel == "WHISPER":
             params["recipient"] = DEVELOPMENT_PEERS.get(target_guid, self.player_name) if target_guid != self.player_guid else self.player_name
         result = self.rpc.call("buddy-chat.send", params)
@@ -4878,7 +4903,8 @@ class Conversation:
             raise ConversationError("Chat transport did not acknowledge the write")
         self.replies += 1
         history_key = history_key or channel
-        self.history.setdefault(history_key, []).append({"speaker": self.character_name, "channel": channel, "text": reply["text"]})
+        self.history.setdefault(history_key, []).append(dict(speaker=self.character_name, channel=channel,
+            text=text, **({"development_reply": True} if development_reply else {})))
         self.history[history_key] = self.history[history_key][-20:]
         self.status(phase="listening", replies=self.replies, cursor=self.cursor)
         if reply["emote"] != "NONE":
