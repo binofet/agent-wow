@@ -443,9 +443,245 @@ class DirectToolTests(unittest.TestCase):
         self.rpc = RPC('87')
         return DirectTools(self.rpc, self.rpc.sid, '87', self.workspace, self.host,
             allowed=lambda: self.allowed, gm_allowed=lambda: self.gm_allowed,
+            cancelled=lambda: self.cancelled,
             request_id='actual-owner:seq9', runner=runner,
             helpers={'gm_tasks': self.gm, 'policy_binary': '/fixed/luapolicy',
                      'gm_bindings': lambda: [dict(guid='4', rpc_url='http://127.0.0.1:8087/rpc')]})
+
+    def current_gm_task(self, tools):
+        task_id = 'joel-to-lotharen-7223c707038a16f3'
+        folder = self.host/'data/converse/lotharen/gm-tasks'/task_id/'task'
+        with self.gm.task_store(folder) as store:
+            store.save(dict(version=1, goal=dict(id=task_id, members=[]), phase='waiting_effect',
+                identity=dict(sessionId=self.rpc.sid, guid='87', rpcUrl=self.rpc.url),
+                memory=dict(waiting=dict(id='original-command', outcome='unknown')),
+                reservations={'original-command': dict(outcome='written')},
+                holds={'4': dict(heldRevision='original-hold', restored=False)}))
+            store.write('invocation.json', json.dumps(dict(rpcUrl=self.rpc.url,
+                goal=str(folder.parent/'goal.json'), transport=str(folder/'transport.json'),
+                policy=str(folder/'scoped-policy.lua'), policyBinary='/fixed/luapolicy')).encode())
+        config = self.host/'data/converse/lotharen/gm-transport.json'
+        config.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        config.write_text('{}')
+        writer = self.gm.writer_folder(self.host, self.rpc.sid, {})
+        with self.gm.task_store(writer) as store:
+            store.save(dict(active=True, stateDir=str(folder), pid=123))
+        return task_id, folder, writer
+
+    def test_current_nested_task_discovery_status_and_resume_use_actual_retained_helper(self):
+        runner = mock.Mock(side_effect=AssertionError('Existing tasks do not create another CLI task'))
+        tools = self.gm_tools(runner)
+        task_id, folder, _ = self.current_gm_task(tools)
+        before = self.gm.task_store(folder).load()
+        discovered = tools.dispatch('gm_current_task', {})
+        self.assertTrue(discovered['ok'], discovered)
+        self.assertEqual(discovered['result']['taskId'], task_id)
+        self.assertEqual(discovered['result']['result']['memory'], before['memory'])
+        status = tools.dispatch('gm_task_status', dict(task_id=task_id))
+        self.assertEqual(status['result']['result']['heldMembers'][0]['heldRevision'], 'original-hold')
+        with mock.patch.object(self.gm, 'launch_task', return_value=dict(started=True, completion='not_yet_observed')) as launch:
+            resumed = tools.dispatch('gm_task_resume', dict(task_id=task_id))
+        self.assertTrue(resumed['ok'], resumed)
+        self.assertTrue(resumed['result']['result']['started'])
+        self.assertFalse(resumed['result']['gameEffectClaimed'])
+        self.assertEqual(launch.call_args.args[0].folder, folder)
+        self.assertEqual(launch.call_args.args[1]['policy'], str(folder/'scoped-policy.lua'))
+        self.assertEqual(self.gm.task_store(folder).load(), before)
+        blocked = tools.dispatch('gm_task_start', dict(goal=dict(members=[])))
+        self.assertFalse(blocked['ok'], blocked)
+        self.assertIn(task_id, blocked['error']['error'])
+        self.assertIn('gm_current_task', blocked['error']['error'])
+        runner.assert_not_called()
+        self.assertFalse(self.rpc.writes)
+
+    def test_current_task_cancel_writes_only_existing_cancel_marker_without_reset(self):
+        tools = self.gm_tools(mock.Mock())
+        task_id, folder, _ = self.current_gm_task(tools)
+        before = self.gm.task_store(folder).load()
+        with mock.patch.object(self.gm, 'launch_task', return_value=dict(started=True)) as launch:
+            cancelled = tools.dispatch('gm_task_cancel', dict(task_id=task_id))
+        self.assertTrue(cancelled['ok'], cancelled)
+        self.assertTrue(cancelled['result']['result']['cancelRequested'])
+        self.assertEqual((folder/'cancel.json').read_bytes(), b'{}\n')
+        self.assertEqual(launch.call_args.args[0].folder, folder)
+        self.assertEqual(self.gm.task_store(folder).load(), before)
+
+    def test_current_task_binding_and_arbitrary_paths_fail_without_launch(self):
+        tools = self.gm_tools(mock.Mock())
+        task_id, folder, writer = self.current_gm_task(tools)
+        before = self.gm.task_store(folder).load()
+        with mock.patch.object(self.gm, 'launch_task') as launch:
+            for value in (str(folder), '../'+task_id, 'unrelated-task'):
+                for action in ('gm_task_status', 'gm_task_resume', 'gm_task_cancel'):
+                    self.assertFalse(tools.dispatch(action, dict(task_id=value))['ok'], (action, value))
+            for field, value in (('sessionId', 'aw-999'), ('guid', '4'), ('rpcUrl', 'http://127.0.0.1:9999/rpc')):
+                data = copy.deepcopy(before)
+                data['identity'][field] = value
+                with self.gm.task_store(folder) as store: store.save(data)
+                self.assertFalse(tools.dispatch('gm_current_task', {})['ok'], field)
+                self.assertFalse(tools.dispatch('gm_task_resume', dict(task_id=task_id))['ok'], field)
+            with self.gm.task_store(folder) as store: store.save(before)
+            data = self.gm.task_store(writer).load()
+            linked = self.folder/'linked-task'
+            linked.symlink_to(folder, target_is_directory=True)
+            data['stateDir'] = str(linked)
+            with self.gm.task_store(writer) as store: store.save(data)
+            self.assertFalse(tools.dispatch('gm_current_task', {})['ok'])
+        launch.assert_not_called()
+        self.assertEqual(self.gm.task_store(folder).load(), before)
+        self.assertFalse(self.rpc.writes)
+
+    def test_peer_can_read_current_task_but_cannot_resume_cancel_or_execute(self):
+        tools = self.gm_tools(mock.Mock())
+        task_id, folder, _ = self.current_gm_task(tools)
+        before = self.gm.task_store(folder).load()
+        self.gm_allowed = False
+        names = {row['function']['name'] for row in tools.tool_schemas()}
+        self.assertTrue({'gm_current_task', 'gm_task_status'} <= names)
+        self.assertFalse({'gm_task_resume', 'gm_task_cancel', 'gm_execute'} & names)
+        with mock.patch.object(self.gm, 'launch_task') as launch:
+            self.assertTrue(tools.dispatch('gm_current_task', {})['ok'])
+            for action, args in (('gm_task_resume', dict(task_id=task_id)),
+                                 ('gm_task_cancel', dict(task_id=task_id)),
+                                 ('gm_execute', dict(command='.gps'))):
+                self.assertFalse(tools.dispatch(action, args)['ok'])
+                with self.assertRaisesRegex(ValueError, 'current_owner_gm_authority_required'):
+                    tools._gm(action, args)
+        launch.assert_not_called()
+        self.assertEqual(self.gm.task_store(folder).load(), before)
+        self.assertFalse(self.rpc.writes)
+
+    def test_native_command_obeys_actual_writer_interlock_before_any_packet(self):
+        tools = self.gm_tools(mock.Mock())
+        _, folder, _ = self.current_gm_task(tools)
+        before = self.gm.task_store(folder).load()
+        with mock.patch.object(self.gm.subprocess, 'run') as packet:
+            blocked = tools.dispatch('gm_execute', dict(command='.gps', select_guid='3'))
+        self.assertFalse(blocked['ok'], blocked)
+        self.assertIn('already owns this body', blocked['error']['error'])
+        self.assertIsNone(tools.unknown_receipt)
+        packet.assert_not_called()
+        self.assertEqual(self.gm.task_store(folder).load(), before)
+
+    def test_native_command_expected_session_selected_guid_and_late_authority(self):
+        tools = self.gm_tools(mock.Mock())
+        _, _, writer = self.current_gm_task(tools)
+        with self.gm.task_store(writer) as store: store.save(dict(active=False))
+        original = self.rpc.call
+        def call(method, params, **kwargs):
+            if method == 'buddy-party.state': return dict(sessionId=self.rpc.sid)
+            return original(method, params, **kwargs)
+        self.rpc.call = call
+        reply = subprocess.CompletedProcess([], 0, b'grpc-status: 0\r\n', b'')
+        with mock.patch.object(self.gm.subprocess, 'run', return_value=reply) as packet:
+            result = tools.dispatch('gm_execute', dict(command='.modify hp 100', select_guid='3'))
+            self.assertTrue(result['ok'], result)
+            self.assertEqual(result['result']['sessionId'], self.rpc.sid)
+            self.assertEqual(result['result']['selectedGuid'], '3')
+            self.assertFalse(result['result']['gameEffectClaimed'])
+            self.assertEqual(packet.call_count, 2)
+            same = tools.dispatch('gm_execute', dict(command='.modify hp 100', select_guid='3'))
+            self.assertTrue(same['result']['historicalReceipt'])
+            self.assertEqual(packet.call_count, 2)
+        for mode in ('body', 'owner'):
+            self.gm_allowed = True
+            self.rpc.sid = 'aw-123'
+            def hook(method):
+                if method == 'buddy-party.state':
+                    if mode == 'owner': self.gm_allowed = False
+                    else: self.rpc.sid = 'aw-456'
+            def guarded(method, params, **kwargs):
+                value = call(method, params, **kwargs)
+                hook(method)
+                return value
+            self.rpc.call = guarded
+            with mock.patch.object(self.gm.subprocess, 'run') as packet:
+                rejected = tools.dispatch('gm_execute', dict(command='.gps '+mode))
+            self.assertFalse(rejected['ok'], rejected)
+            self.assertIsNone(tools.unknown_receipt)
+            packet.assert_not_called()
+
+    def test_native_command_unknown_retained_across_tool_recreation_no_replay(self):
+        tools = self.gm_tools(mock.Mock())
+        _, _, writer = self.current_gm_task(tools)
+        with self.gm.task_store(writer) as store: store.save(dict(active=False))
+        original = self.rpc.call
+        self.rpc.call = lambda method, params, **kw: (dict(sessionId=self.rpc.sid)
+            if method == 'buddy-party.state' else original(method, params, **kw))
+        with mock.patch.object(self.gm.subprocess, 'run', side_effect=TimeoutError('packet reply lost')) as packet:
+            with self.assertRaises(ToolOutcomeUnknown) as caught:
+                tools.dispatch('gm_execute', dict(command='.gps'))
+        receipt = caught.exception.receipt
+        self.assertFalse(receipt['replayAllowed'])
+        self.assertEqual(receipt['sessionId'], self.rpc.sid)
+        self.assertEqual(packet.call_count, 1)
+        replacement = DirectTools(self.rpc, self.rpc.sid, '87', self.workspace, self.host,
+            allowed=lambda: True, gm_allowed=lambda: True, request_id='actual-owner:seq9',
+            helpers={'gm_tasks': self.gm})
+        with mock.patch.object(self.gm.subprocess, 'run') as packet:
+            with self.assertRaises(ToolOutcomeUnknown): replacement.dispatch('gm_execute', dict(command='.gps'))
+        packet.assert_not_called()
+
+    def test_native_command_reservation_save_then_owner_cancel_is_known_no_packet(self):
+        tools = self.gm_tools(mock.Mock())
+        _, _, writer = self.current_gm_task(tools)
+        with self.gm.task_store(writer) as store: store.save(dict(active=False))
+        original_call = self.rpc.call
+        self.rpc.call = lambda method, params, **kw: (dict(sessionId=self.rpc.sid)
+            if method == 'buddy-party.state' else original_call(method, params, **kw))
+        original_save = self.gm.runtime.Store.save
+        def save(store, value):
+            original_save(store, value)
+            if value.get('reserved'): self.cancelled = True
+        with mock.patch.object(self.gm.runtime.Store, 'save', save), \
+                mock.patch.object(self.gm.subprocess, 'run') as packet:
+            refused = tools.dispatch('gm_execute', dict(command='.gps'))
+        self.assertFalse(refused['ok'], refused)
+        self.assertIn('cancelled', refused['error']['error'])
+        self.assertIsNone(tools.unknown_receipt)
+        packet.assert_not_called()
+        record = next((self.host/'data/converse/lotharen/gm-commands').glob('*/state.json'))
+        self.assertTrue(json.loads(record.read_text())['knownNotDispatched'])
+
+    def test_native_command_written_then_result_save_failure_retains_unknown(self):
+        tools = self.gm_tools(mock.Mock())
+        _, _, writer = self.current_gm_task(tools)
+        with self.gm.task_store(writer) as store: store.save(dict(active=False))
+        original_call = self.rpc.call
+        self.rpc.call = lambda method, params, **kw: (dict(sessionId=self.rpc.sid)
+            if method == 'buddy-party.state' else original_call(method, params, **kw))
+        original_save = self.gm.runtime.Store.save
+        def save(store, value):
+            if 'result' in value: raise OSError('disk write unavailable after packet')
+            return original_save(store, value)
+        reply = subprocess.CompletedProcess([], 0, b'grpc-status: 0\r\n', b'')
+        with mock.patch.object(self.gm.runtime.Store, 'save', save), \
+                mock.patch.object(self.gm.subprocess, 'run', return_value=reply) as packet:
+            with self.assertRaises(ToolOutcomeUnknown) as caught:
+                tools.dispatch('gm_execute', dict(command='.gps'))
+        self.assertEqual(packet.call_count, 1)
+        self.assertFalse(caught.exception.receipt['replayAllowed'])
+        self.assertEqual(caught.exception.receipt['characterGuid'], '87')
+        with mock.patch.object(self.gm.subprocess, 'run') as packet:
+            self.assertFalse(tools.dispatch('gm_execute', dict(command='.gps'))['ok'])
+        packet.assert_not_called()
+
+    def test_resume_authority_lost_while_reading_invocation_never_launches(self):
+        tools = self.gm_tools(mock.Mock())
+        task_id, folder, _ = self.current_gm_task(tools)
+        before = self.gm.task_store(folder).load()
+        original = self.gm.load_invocation
+        def load(store):
+            result = original(store)
+            self.gm_allowed = False
+            return result
+        with mock.patch.object(self.gm, 'load_invocation', load), \
+                mock.patch.object(self.gm, 'launch_task') as launch:
+            refused = tools.dispatch('gm_task_resume', dict(task_id=task_id))
+        self.assertFalse(refused['ok'], refused)
+        self.assertIsNone(tools.unknown_receipt)
+        launch.assert_not_called()
+        self.assertEqual(self.gm.task_store(folder).load(), before)
 
     def test_gm_mutations_default_deny_while_peer_lua_development_and_status_remain(self):
         self.rpc = RPC('87')

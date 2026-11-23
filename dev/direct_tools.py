@@ -532,27 +532,33 @@ class DirectTools:
                 self._gm_identity(prior)
                 if prior.get("result") is not None:
                     return dict(prior["result"], historicalReceipt=True)
-                self._unknown("gm_execute", dict(stateDir=str(folder), commandSHA256=digest,
-                    selectedGuid=selected), ToolError("retained_native_command_outcome_unconfirmed"))
+                if prior.get("knownNotDispatched") is not True:
+                    self._unknown("gm_execute", dict(stateDir=str(folder), commandSHA256=digest,
+                        selectedGuid=selected), ToolError("retained_native_command_outcome_unconfirmed"))
             entered = False
             def before_send():
                 nonlocal entered
                 self._catalog()
                 self._authorise_gm()
                 store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url),
-                    commandSHA256=digest, selectedGuid=selected, attempted=True))
+                    commandSHA256=digest, selectedGuid=selected, reserved=True))
+                self._catalog()
+                self._authorise_gm()
                 entered = True
             try:
                 result = gm.execute_command(self.rpc, config, command, self.root,
                     select_guid=selected, expected_session=self.session_id, before_send=before_send)
                 self._catalog()
+                result = dict(result, commandSHA256=digest, gameEffectClaimed=False)
+                store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url), result=result))
             except Exception as error:
                 if entered:
                     self._unknown("gm_execute", dict(stateDir=str(folder), commandSHA256=digest,
                         selectedGuid=selected), error)
+                if store.load() is not None:
+                    store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url),
+                        commandSHA256=digest, selectedGuid=selected, knownNotDispatched=True))
                 raise
-            result = dict(result, commandSHA256=digest, gameEffectClaimed=False)
-            store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url), result=result))
             return result
 
     def _gm(self, name, args):
@@ -625,6 +631,8 @@ class DirectTools:
                 folder, _ = self._bound_gm_task(gm, task_id, current_only=True)
                 require(gm.load_invocation(gm.task_store(folder)).get("rpcUrl") == self.rpc.url,
                         "gm_task_invocation_binding_changed")
+                self._catalog()
+                self._authorise_gm()
                 try:
                     operation = gm.request_resume if name == "gm_task_resume" else gm.request_cancel
                     result = operation(folder)
