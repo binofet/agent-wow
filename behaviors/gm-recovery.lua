@@ -55,6 +55,9 @@ local function departure_still_admitted(m,obs,without)
             local member=find(m.members,guid)
             if not member then return false,tostring(guid) end
             local p=find(obs.members,guid) or {}
+            local group=obs.group or {};local current=find(group.members,guid)
+            if group.known~=true or group.inGroup~=true or not current or
+                current.name~=member.name or current.online~=true then return false,member.name end
             -- A fresh observed combat-free member no longer needs the exception.
             if not (p.combatKnown==true and p.inCombat==false) and
                 not unobserved_transport(m,obs,member,p,false) then return false,member.name end

@@ -161,13 +161,14 @@ class TestGMTaskHost(unittest.TestCase):
   blocked=self.evaluate_unobserved_transport(frame,['3'])
   self.assertEqual(blocked['error'],'party_left_verified_destination');self.assertNotIn('action',blocked)
  def test_unobserved_transport_rechecks_online_permission_before_departure(self):
-  for change in ('offline','revoke'):
+  for change in ('offline','revoke','quiet_but_offline'):
    with self.subTest(change=change):
     frame=self.unobserved_transport_frame();out=self.evaluate_unobserved_transport(frame,['3'])
     frame['memory']=out['memory'];frame['memory'].update(stage='summon_first',waiting=None)
     group=frame['observations']['group'];group.update(leaderGuid='87')
     group['members']=[m for m in group['members']if m['guid']!='8']+[dict(guid='87',name='Lotharen',online=True)]
-    if change=='offline':next(p for p in group['members']if p['guid']=='3')['online']=False
+    if change in ('offline','quiet_but_offline'):next(p for p in group['members']if p['guid']=='3')['online']=False
+    if change=='quiet_but_offline':frame['observations']['members'][1].update(combatKnown=True,inCombat=False)
     blocked=self.evaluate_unobserved_transport(frame,[]if change=='revoke'else['3'])
     self.assertEqual(blocked['error'],'unobserved_transport_not_admitted:Joel');self.assertNotIn('action',blocked)
  def host(self,path,transport=None,bridge=None):
