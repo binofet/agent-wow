@@ -189,7 +189,9 @@ def normalized(world, actions=None):
     p=(actions or {}).get('position',{})
     use=p.get('known') is True and p.get('mapKnown') is True
     result={k:world.get(k) for k in ('guid','present','aliveKnown','alive','healthKnown','maxHealth','health','powerKnown','powerType','power','maxPower','positionRevision','movementFlagsKnown','movementFlags','mapKnown')}
-    result.update(known=world.get('present') is True,positionKnown=use or world.get('positionKnown') is True,
+    # PlayerState.alive is a non-optional proto3 bool: known false is omitted in ProtoJSON.
+    result.update(alive=world.get('alive',False) if world.get('aliveKnown') is True else None,
+        known=world.get('present') is True,positionKnown=use or world.get('positionKnown') is True,
         hp=world.get('health',0) if world.get('healthKnown') else None,maxHp=world.get('maxHealth',0) if world.get('healthKnown') else None,hpKnown=world.get('healthKnown') is True,
         mana=world.get('power',0) if world.get('powerKnown') else None,maxMana=world.get('maxPower',0) if world.get('powerKnown') else None,manaKnown=world.get('powerKnown') is True,
         combatKnown=world.get('unitFlagsKnown') is True,inCombat=bool(world.get('unitFlags',0)&0x80000),

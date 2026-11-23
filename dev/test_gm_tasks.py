@@ -16,6 +16,28 @@ class Store:
  def load(self):return self.saved
  def save(self,value):self.saved=json.loads(json.dumps(value))
 
+class TestGMObservationNormalization(unittest.TestCase):
+ def test_known_dead_protojson_omission_with_ghost_health_is_false(self):
+  world=json.loads('{"guid":"3","present":true,"aliveKnown":true,"healthKnown":true,"health":1,"maxHealth":3000}')
+  actual=gm.normalized(world)
+  self.assertIs(actual['aliveKnown'],True);self.assertIs(actual['alive'],False)
+  self.assertEqual((actual['hp'],actual['maxHp'],actual['hpKnown']),(1,3000,True))
+  self.assertNotIn('alive',world)
+ def test_explicit_known_life_values_are_preserved(self):
+  for alive in (True,False):
+   with self.subTest(alive=alive):
+    actual=gm.normalized(dict(aliveKnown=True,alive=alive))
+    self.assertIs(actual['alive'],alive);self.assertIs(actual['aliveKnown'],True)
+ def test_unknown_life_is_not_inferred_from_health_or_omitted_flags(self):
+  for known in ({},{'aliveKnown':False}):
+   for life in ({},{'alive':False},{'alive':True}):
+    with self.subTest(known=known,life=life):
+     actual=gm.normalized(dict(known,**life,health=1,maxHealth=3000))
+     self.assertIsNone(actual['alive']);self.assertIsNot(actual['aliveKnown'],True)
+     self.assertIsNone(actual['hp']);self.assertIsNone(actual['maxHp']);self.assertIs(actual['hpKnown'],False)
+     self.assertIs(actual['combatKnown'],False);self.assertIs(actual['inCombat'],False)
+     self.assertIs(actual['manaKnown'],False);self.assertIsNone(actual['mana'])
+
 class TestGMTaskTransport(unittest.TestCase):
  def rpc(self):
   return types.SimpleNamespace(call=lambda method,params: {'sessionId':'aw-123','selfGuid':'87'} if method=='buddy-actions.status' else {'sessionId':'aw-123'})
