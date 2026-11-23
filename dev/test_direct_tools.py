@@ -1341,7 +1341,7 @@ class PartyInviteToolTests(unittest.TestCase):
         self.assertEqual(invite['required'],['name'])
         self.assertEqual(set(invite['properties']),{'name'})
         self.assertFalse({'workspace_read','workspace_write','policy_show','policy_input','policy_apply',
-                          'spell_inspect','gm_execute','gm_task_start'} & schemas.keys())
+                          'gm_execute','gm_task_start'} & schemas.keys())
         self.owner=False
         self.assertNotIn('party_invite',{row['function']['name'] for row in self.tools.tool_schemas()})
         self.assertEqual(self.rpc.writes,[])
@@ -1510,6 +1510,224 @@ class PartyInviteToolTests(unittest.TestCase):
             self.assertEqual(retained['receipt']['sessionId'],'aw-123')
             with self.assertRaisesRegex(ModelError,'tool_outcome_unknown'):run(client,fresh,'third-owner')
             self.assertEqual(self.rpc.writes,[('buddy-party.invite',dict(name='Joel'))])
+
+
+class OwnerControlToolTests(unittest.TestCase):
+    class ControlRPC(RPC):
+        def __init__(self):
+            super().__init__('4')
+            self.state=dict(sessionId=self.sid,selfGuid=self.guid,following=False,motionUnconfirmed=False)
+            self.fail_method=None
+            self.catalog_edit=None
+            self.source_reads=0
+
+        def catalog(self):
+            catalog=super().catalog()
+            prefix='buddy-actions::warcraftbuddy.actions.v1.'
+            status=next(row for row in catalog['methods'] if row['name']=='buddy-actions.status')
+            status.update(module='buddy-actions',path='/warcraftbuddy.actions.v1.BuddyActions/Status',outputType=prefix+'State')
+            for alias,route in (('follow','Follow'),('buffs','Buffs'),('cast_buff','CastBuff')):
+                catalog['methods'].append(dict(name='buddy-actions.'+alias,module='buddy-actions',
+                    path='/warcraftbuddy.actions.v1.BuddyActions/'+route,effect='unspecified',
+                    inputType=prefix+'ToggleRequest',outputType=prefix+'State'))
+            catalog['messages'][prefix+'ToggleRequest']=dict(fields=[dict(name='enabled',number=1,kind='bool',type='bool')])
+            catalog['messages'][prefix+'State']=dict(protobufName='warcraftbuddy.actions.v1.State',syntax='proto3',
+                fields=[dict(name=name,number=number,kind=kind,type=kind) for name,number,kind in
+                        (('following',1,'bool'),('sessionId',106,'string'),('selfGuid',107,'uint64'))])
+            if self.catalog_edit:self.catalog_edit(catalog)
+            return catalog
+
+        def call(self,method,params,**kwargs):
+            if method not in ('buddy-actions.status','buddy-actions.follow','buddy-actions.buffs','session.send_event'):
+                return super().call(method,params,**kwargs)
+            self.calls.append((method,copy.deepcopy(params)))
+            if method=='buddy-actions.status':result=copy.deepcopy(self.state)
+            else:
+                self.writes.append((method,copy.deepcopy(params)))
+                if method==self.fail_method:raise TimeoutError('entered write, response lost')
+                if method=='session.send_event':
+                    result=dict(sessionId=self.sid,characterGuid=self.guid,status='queued',sequence='29')
+                else:
+                    if method=='buddy-actions.follow':self.state['following']=params['enabled']
+                    result=copy.deepcopy(self.state)
+                    if method=='buddy-actions.buffs':result['reason']='lua_buff_request_queued:29'
+            if self.hook:self.hook(method)
+            return result
+
+    def setUp(self):
+        folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup)
+        self.root=Path(folder.name).resolve();self.rpc=self.ControlRPC()
+        self.owner=True;self.cancelled=False;self.preparations=[];self.prepare_reason=None
+        self.runtime=load_helper(ROOT/'dev/task-runtime','owner_control_test_runtime')
+        self.tools=self.make_tools()
+
+    def prepare(self,actions,current):
+        self.preparations.append(copy.deepcopy(actions));current()
+        return self.prepare_reason
+
+    def make_tools(self,request='owner-request',**options):
+        return DirectTools(self.rpc,'aw-123','4',None,self.root,
+            allowed=lambda:False,owner_allowed=lambda:self.owner,cancelled=lambda:self.cancelled,
+            request_id=request,helpers={'task_runtime':self.runtime,'self-edit':load_helper(ROOT/'dev/self-edit','owner_control_self_edit')},
+            follow_prepare=self.prepare,**options)
+
+    def test_owner_toolset_has_typed_controls_and_no_developer_gm_or_assist_escape(self):
+        specs={row['function']['name']:row['function'] for row in self.tools.tool_schemas()}
+        self.assertTrue({'follow','gameplay_command','request_buffs','spell_inspect'} <= specs.keys())
+        self.assertFalse({'policy_input','policy_apply','workspace_write','gm_execute','assist'} & specs.keys())
+        self.assertEqual(specs['follow']['parameters']['properties'],dict(enabled=dict(type='boolean')))
+        self.assertEqual(specs['request_buffs']['parameters']['properties'],{})
+        guidance=specs['gameplay_command']['description']
+        for task in ('engage','control','focus','kill_order','wait_for_pull','cancel_task','cast_spell','cancel_spell'):
+            self.assertIn(task,guidance)
+        self.owner=False
+        self.assertFalse({'follow','gameplay_command','request_buffs','spell_inspect'} &
+            {row['function']['name'] for row in self.tools.tool_schemas()})
+        self.assertEqual(self.rpc.writes,[])
+
+    def test_follow_preparation_and_returned_state_never_claim_arrival(self):
+        for enabled in (True,False):
+            result=self.tools.dispatch('follow',dict(enabled=enabled),operation_id=str(enabled))
+            self.assertTrue(result['ok'],result)
+            self.assertEqual(result['result']['state']['following'],enabled)
+            self.assertEqual(result['result']['requestedEnabled'],enabled)
+            self.assertFalse(result['result']['gameEffectClaimed'])
+            self.assertIn('physical_movement_unverified',result['result']['completion'])
+        self.assertEqual(len(self.preparations),2)
+        self.assertEqual(self.rpc.writes,[('buddy-actions.follow',dict(enabled=True)),('buddy-actions.follow',dict(enabled=False))])
+
+    def test_unsettled_task_preparation_blocks_follow_without_replaying_or_clearing_it(self):
+        self.prepare_reason='Mission has an uncertain result preserved; following is unchanged.'
+        result=self.tools.dispatch('follow',dict(enabled=True))
+        self.assertTrue(result['ok'],result);self.assertFalse(result['result']['followDispatched'])
+        self.assertIn('uncertain',result['result']['reason']);self.assertEqual(self.rpc.writes,[])
+
+    def test_fresh_follow_intent_a_b_a_does_not_return_first_stale_receipt(self):
+        for operation,enabled in (('one',True),('two',False),('three',True)):
+            result=self.tools.dispatch('follow',dict(enabled=enabled),operation_id=operation)
+            self.assertTrue(result['ok'],result)
+            self.assertIs(result['result']['state']['following'],enabled)
+            self.assertNotIn('historicalReceipt',result['result'])
+        self.assertEqual([args['enabled'] for _,args in self.rpc.writes],[True,False,True])
+        duplicate=self.make_tools().dispatch('follow',dict(enabled=True),operation_id='four')
+        self.assertTrue(duplicate['result']['historicalReceipt']);self.assertEqual(len(self.rpc.writes),3)
+        # Current native intent can expire/change independently of this host's last receipt.
+        self.rpc.state['following']=False
+        renewed=self.make_tools().dispatch('follow',dict(enabled=True),operation_id='five')
+        self.assertTrue(renewed['ok'],renewed);self.assertIs(renewed['result']['state']['following'],True)
+        self.assertEqual(len(self.rpc.writes),4)
+
+    def test_fresh_lua_focus_a_b_a_delivers_current_intent_not_old_ack(self):
+        for operation,target in (('one','123'),('two','456'),('three','123')):
+            result=self.tools.dispatch('gameplay_command',dict(value=dict(task='focus',targetGuid=target)),operation_id=operation)
+            self.assertTrue(result['ok'],result);self.assertNotIn('historicalReceipt',result['result'])
+        self.assertEqual([args['value']['targetGuid'] for _,args in self.rpc.writes],['123','456','123'])
+
+    def test_proto3_omitted_false_is_known_stop_and_durable_without_resend(self):
+        original=self.rpc.call
+        def omit(method,params,**kwargs):
+            result=original(method,params,**kwargs)
+            if method=='buddy-actions.follow':result.pop('following',None)
+            return result
+        self.rpc.call=omit
+        result=self.tools.dispatch('follow',dict(enabled=False),operation_id='stop')
+        self.assertTrue(result['ok'],result);self.assertIs(result['result']['state']['following'],False)
+        self.assertFalse(result['result']['gameEffectClaimed'])
+        again=self.make_tools().dispatch('follow',dict(enabled=False),operation_id='another-stop')
+        self.assertTrue(again['ok'],again);self.assertTrue(again['result']['historicalReceipt'])
+        self.assertEqual(self.rpc.writes,[('buddy-actions.follow',dict(enabled=False))])
+        # An explicit invalid value is not the protobuf default.
+        other=self.make_tools(request='new-owner')
+        def invalid(method,params,**kwargs):
+            result=original(method,params,**kwargs)
+            if method=='buddy-actions.follow':result['following']='false'
+            return result
+        self.rpc.call=invalid
+        with self.assertRaises(ToolOutcomeUnknown):other.dispatch('follow',dict(enabled=False),operation_id='bad-result')
+        self.assertEqual(len(self.rpc.writes),2)
+
+    def test_lua_command_and_buff_use_fixed_installed_routes_with_delivery_only(self):
+        value=dict(task='wait_for_pull',id='wait-1',ownerGuid='3',responseYards=10)
+        result=self.tools.dispatch('gameplay_command',dict(value=value))
+        self.assertTrue(result['ok'],result);self.assertTrue(result['result']['deliveryOnly'])
+        self.assertFalse(result['result']['gameEffectClaimed'])
+        self.assertEqual(result['result']['observe']['arguments'],dict(method='session.policy_state',params={}))
+        self.assertEqual(self.rpc.writes,[('session.send_event',dict(sessionId='aw-123',characterGuid='4',kind='command',value=value))])
+        buffs=self.tools.dispatch('request_buffs',{})
+        self.assertTrue(buffs['ok'],buffs);self.assertTrue(buffs['result']['deliveryOnly'])
+        self.assertEqual(self.rpc.writes[-1],('buddy-actions.buffs',dict(enabled=True)))
+        self.assertFalse(buffs['result']['gameEffectClaimed'])
+        before=copy.deepcopy(self.rpc.writes)
+        self.assertFalse(self.tools.dispatch('gameplay_command',dict(value=value,kind='receipt'))['ok'])
+        self.assertFalse(self.tools.dispatch('request_buffs',dict(enabled=False))['ok'])
+        self.assertFalse(self.tools.dispatch('follow',dict(enabled='yes'))['ok'])
+        self.assertEqual(self.rpc.writes,before)
+
+    def test_late_owner_body_source_and_contract_changes_are_zero_native_writes(self):
+        for kind in ('owner','cancel','body','source','route'):
+            with self.subTest(change=kind):
+                self.rpc=self.ControlRPC();self.owner=True;self.cancelled=False
+                tools=self.make_tools(request=kind)
+                seen=[0]
+                def changed(method):
+                    if method!='session.policy_source':return
+                    seen[0]+=1
+                    if seen[0]!=2:return
+                    if kind=='owner':self.owner=False
+                    elif kind=='cancel':self.cancelled=True
+                    elif kind=='body':self.rpc.sid='aw-replaced'
+                    elif kind=='source':self.rpc.source+='-- edit'
+                    else:self.rpc.revision='changed-catalog'
+                self.rpc.hook=changed
+                result=tools.dispatch('gameplay_command',dict(value=dict(task='engage',targetGuid='123')))
+                self.assertFalse(result['ok'],result);self.assertEqual(self.rpc.writes,[])
+
+    def test_known_returns_survive_owner_cancel_and_reconstruct_without_second_write(self):
+        for tool,args,method in (('follow',dict(enabled=True),'buddy-actions.follow'),
+                ('gameplay_command',dict(value=dict(task='cast_spell',id='cast-1',spellId=1449)),'session.send_event'),
+                ('request_buffs',{},'buddy-actions.buffs')):
+            with self.subTest(tool=tool):
+                self.rpc=self.ControlRPC();self.cancelled=False
+                tools=self.make_tools(request=tool)
+                self.rpc.hook=lambda called:setattr(self,'cancelled',True) if called==method else None
+                result=tools.dispatch(tool,args,operation_id='first')
+                self.assertTrue(result['ok'],result)
+                self.rpc.hook=None;self.cancelled=False
+                retained=self.make_tools(request=tool).dispatch(tool,args,operation_id='fresh-call')
+                self.assertTrue(retained['ok'],retained);self.assertTrue(retained['result']['historicalReceipt'])
+                self.assertEqual(len(self.rpc.writes),1)
+
+    def test_unknown_command_cannot_change_task_id_or_endpoint_to_reenter_same_request(self):
+        known=dict(task='focus',targetGuid='123')
+        self.assertTrue(self.tools.dispatch('gameplay_command',dict(value=known),operation_id='known')['ok'])
+        self.rpc.fail_method='session.send_event'
+        original=dict(task='cast_spell',id='cast-1',spellId=1449)
+        with self.assertRaises(ToolOutcomeUnknown) as first:
+            self.tools.dispatch('gameplay_command',dict(value=original),operation_id='one')
+        folder=Path(first.exception.receipt['stateDir']);before=(folder/'state.json').read_bytes()
+        stored=json.loads(before)
+        self.assertEqual(stored['arguments'],dict(value=original))
+        self.assertEqual(stored['requestId'],'owner-request')
+        self.rpc.fail_method=None
+        # A fresh dispatcher represents another API model/endpoint, but the logical owner intent is unchanged.
+        with self.assertRaises(ToolOutcomeUnknown):
+            self.make_tools().dispatch('gameplay_command',dict(value=dict(original,id='made-up-new-id')),operation_id='two')
+        with self.assertRaises(ToolOutcomeUnknown):
+            self.make_tools(request='different-owner').dispatch('gameplay_command',dict(value=original),operation_id='three')
+        # An older matching ACK cannot bypass the later unknown operation.
+        with self.assertRaises(ToolOutcomeUnknown):
+            self.make_tools().dispatch('gameplay_command',dict(value=known),operation_id='old-known')
+        self.assertEqual((folder/'state.json').read_bytes(),before);self.assertEqual(len(self.rpc.writes),2)
+
+    def test_missing_or_legacy_only_buff_route_and_follow_spoof_are_not_dispatched(self):
+        for name in ('follow','request_buffs'):
+            self.rpc=self.ControlRPC();tools=self.make_tools(request=name)
+            def edit(catalog):
+                if name=='request_buffs':catalog['methods']=[row for row in catalog['methods'] if row['name']!='buddy-actions.cast_buff']
+                else:next(row for row in catalog['methods'] if row['name']=='buddy-actions.follow')['path']='/foreign.Service/Follow'
+            self.rpc.catalog_edit=edit
+            self.assertFalse(tools.dispatch(name,dict(enabled=True) if name=='follow' else {})['ok'])
+            self.assertEqual(self.rpc.writes,[])
 
 
 if __name__ == '__main__':
