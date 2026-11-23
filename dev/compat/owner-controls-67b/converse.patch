@@ -1,0 +1,132 @@
+--- a/dev/converse
++++ b/dev/converse
+@@ -2713,6 +2713,10 @@
+         mutation_entered = [False]
+         def interrupted():
+             return self.stopped() or bool(cancelled and cancelled())
++        private_context = getattr(self, '_generation_context', None) or {}
++        owner_check = private_context.get('ownerAllowed')
++        def owner_authorised():
++            return callable(owner_check) and owner_check() is True and not interrupted()
+         def gm_authorised():
+             current = state.get("current_request", {})
+             return (allow_gm and isinstance(current, dict) and current.get("source") == "owner"
+@@ -2745,7 +2749,7 @@
+             prompt_state["shared_tasks"] = mission_runtime_context(integer(development["selfGuid"]),
+                 development["sessionId"], development["rpcUrl"])
+         from direct_context import encode
+-        from direct_tools import ToolError, context_page, context_tool_schema
++        from direct_tools import DirectTools, ToolError, context_page, context_tool_schema
+         self._generation["stage"] = "preparing"
+         prompt_state = json.loads(encode(prompt_state))
+         gm_context = prompt_state.get("development", {}).get("gmTasks")
+@@ -2780,13 +2784,17 @@
+         full_context["conversationHistory"] = json.loads(encode(history))
+         if isinstance(prompt_state.get("current_request"), dict):
+             prompt_state["current_request"].pop("messages", None)  # Raw chat is USER content, never SYSTEM instructions.
+-        if developer:
+-            tools = DirectTools(RPC(development["rpcUrl"]), development["sessionId"],
+-                development["selfGuid"], self.developer_workspace, ROOT,
++        if developer or owner_authorised():
++            url = development['rpcUrl'] if developer else private_context['rpcUrl']
++            sid = development['sessionId'] if developer else self._generation['sessionId']
++            guid = development['selfGuid'] if developer else self._generation['selfGuid']
++            tools = DirectTools(RPC(url), sid, guid, self.developer_workspace if developer else None, ROOT,
+                 allowed=lambda: self.development_enabled(state) and not interrupted(),
+                 cancelled=interrupted, request_id=self._generation['toolCustodyRequestId'], context=full_context,
+                 gm_allowed=gm_authorised, chat_session_id=self._generation.get("chatSessionId"),
+-                chat_cursor=str(self._generation["cursor"]) if self._generation.get("cursor") is not None else None)
++                chat_cursor=str(self._generation["cursor"]) if self._generation.get("cursor") is not None else None,
++                owner_allowed=owner_authorised, receipt_root=self.state_dir,
++                follow_prepare=private_context.get('followPrepare'))
+         if tools is not None and gm_authorised():
+             read_started = int(time.time()*1000)
+             observed = tools.dispatch("gm_inspect", {})
+@@ -2815,7 +2823,7 @@
+             if interrupted():
+                 raise OwnerInputPending("Fresh owner input is waiting")
+             serial[0] += 1
+-            if name in ("workspace_write", "workspace_patch", "policy_apply", "policy_input", "gm_task_start", "gm_task_cancel", "gm_task_resume", "gm_execute"):
++            if name in ("workspace_write", "workspace_patch", "policy_apply", "policy_input", "party_invite", "follow", "gameplay_command", "request_buffs", "gm_task_start", "gm_task_cancel", "gm_task_resume", "gm_execute"):
+                 mutation_entered[0] = True
+                 record["mutationToolEntered"] = True
+             identity = self.last_request_id + ":" + str(serial[0])
+@@ -2842,7 +2850,8 @@
+                 if isinstance(receipt, dict):
+                     safe_keys = ("tool", "sessionId", "characterGuid", "outcome", "replayAllowed", "path",
+                         "expectedSHA256", "targetSHA256", "expectedRevision", "targetRevision",
+-                        "valueSHA256", "taskId", "stateDir")
++                        "valueSHA256", "taskId", "stateDir", "name", "transportWritten",
++                        "controlDispatched", "preparationUnconfirmed")
+                     row["unknownReceipt"] = {key: receipt[key] for key in safe_keys if key in receipt
+                         and (type(receipt[key]) in (bool, int) or isinstance(receipt[key], str)
+                              and len(receipt[key]) <= 512)}
+@@ -3999,7 +4008,8 @@
+         except (OSError,ValueError,KeyError,TypeError,RuntimeError):
+             return "I couldn't submit the workshop report. That repair is still unconfirmed."
+ 
+-    def mission_handoff(self, follow=False, wait_seconds=40):
++    def mission_handoff(self, follow=False, wait_seconds=40, check_current=None):
++        if check_current is not None: check_current()
+         if follow: self.mission_follow_binding=None
+         sid=self.actions.get('sessionId') if self.actions_available else None
+         url=getattr(self.rpc,'url',None)
+@@ -4015,6 +4025,7 @@
+         bindings={kind:row['instance'] for kind,row in initial['runtimes'].items()}
+         deadline=time.monotonic()+wait_seconds
+         while True:
++            if check_current is not None: check_current()
+             current=mission_control_snapshot(self.character_guid,sid,url)
+             if not current['known'] or {kind:row['instance'] for kind,row in current['runtimes'].items()}!=bindings:
+                 return "My mission instance changed during handoff. Following is unchanged."
+@@ -4041,6 +4052,23 @@
+             if time.monotonic()>=deadline:
+                 return "Mission stop requested; its current step is still settling. Following is unchanged."
+             time.sleep(.2)
++
++    def prepare_follow(self, actions, current):
++        """Existing mission/task handoff only; the typed tool owns the follow write."""
++        current()
++        self.actions, self.actions_available = actions, True
++        reason = self.mission_handoff(follow=True, check_current=current)
++        if reason: return reason
++        current()
++        party_town_snapshot(self.character_guid, revoke_follow=True)
++        current()
++        area_quest_snapshot(self.character_guid, stop=True, restore_follow=False)
++        current()
++        quest_task_snapshot(self.character_guid, getattr(self.rpc, 'url', None), stop=True, restore_follow=False)
++        current()
++        reason = self.mission_follow_recheck()
++        current()
++        return reason
+ 
+     def mission_follow_recheck(self):
+         if self.mission_follow_binding is None: return None
+@@ -4730,6 +4758,26 @@
+         sid=development.get('sessionId') if isinstance(development,dict) else None
+         context=dict(sessionId=sid if isinstance(sid,str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid) else self.session_id,
+             chatSessionId=self.session_id,selfGuid=str(self.character_guid),cursor=self.cursor)
++        request = state.get('current_request', {}) if isinstance(state, dict) else {}
++        if (isinstance(self.brain, DirectBrain) and request.get('source') == 'owner'
++                and request.get('senderGuid') == str(self.player_guid)):
++            # Ordinary party actions use fresh native identity, independently
++            # of workspace/development permission. This callable stays private
++            # to the host; captured/model JSON cannot create owner authority.
++            try:
++                native = self.rpc.call('session.describe', {}, timeout=.5)
++                native_sid = native.get('sessionId')
++                if (str(native.get('characterGuid')) == str(self.character_guid)
++                        and isinstance(native_sid,str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}',native_sid)):
++                    chat_sid, guid = self.session_id, self.character_guid
++                    context.update(sessionId=native_sid, rpcUrl=self.rpc.url,
++                        ownerAllowed=lambda: (not self.stopped() and self.session_id == chat_sid
++                            and self.character_guid == guid and request.get('source') == 'owner'
++                            and request.get('senderGuid') == str(self.player_guid) and self.same_body(timeout=.5)))
++                    prepare = getattr(self.controls, 'prepare_follow', None)
++                    if callable(prepare): context['followPrepare'] = prepare
++            except ConversationError:
++                pass  # Conversation remains available; no ordinary mutation tool is granted.
+         if tool_request_id is not None:context['toolCustodyRequestId'] = tool_request_id
+         previous_request=getattr(self.brain,'last_request_id',None)
+         previous_context=getattr(self.brain,'_generation_context',None)

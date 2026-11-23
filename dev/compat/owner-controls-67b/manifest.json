@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "kind": "public_source_compatibility",
+  "sourceHead": "3bac36ca9b1a78d2a4ddd59e6e685cb8490e5e9b",
+  "qualifiedMain": "6d4da2037d333ec7d01f9c40db90d1741696ad0d",
+  "pullRequest": "https://github.com/binofet/agent-wow/pull/238",
+  "requiredCI": "https://github.com/binofet/agent-wow/actions/runs/45283729725",
+  "historicalPublicSource": "67b379b2fd14ce95e9fa3de65e175e5cefa450ed",
+  "components": {
+    "dev/converse": {
+      "file": "converse",
+      "sha256": "c4630a3aa5b55d560f49a1df9b2ba3a64e489e17e5b2f0753be70ba6093679d6",
+      "patch": "converse.patch",
+      "patchSHA256": "8e25c7c94a94e11fc1c38391d7d891a12c012770986d17bcf393d59786372017",
+      "expectedPreimageSHA256": "6a23e21cde935a200870b065731d9e9b9ab9af6a817b01e6f7f96a4b60ff4f83",
+      "composition": "Public historical Converse plus reviewed invite and ordinary-owner feature hooks; no later reward-consumer changes."
+    },
+    "dev/direct_tools.py": {
+      "url": "https://raw.githubusercontent.com/binofet/agent-wow/3bac36ca9b1a78d2a4ddd59e6e685cb8490e5e9b/dev/direct_tools.py",
+      "sha256": "fa622692521bad764bc2b65d992e61e90c338f04ce754c3f4d5c255bbb9a9cb3",
+      "expectedPublic235PreimageSHA256": "06e14245d57670107573e95dfbcf9ab2624ec5a6316419ef295b26acce5ed95b"
+    }
+  },
+  "unchangedDependencies": {
+    "dev/task-runtime": {
+      "url": "https://raw.githubusercontent.com/binofet/agent-wow/3bac36ca9b1a78d2a4ddd59e6e685cb8490e5e9b/dev/task-runtime",
+      "sha256": "e2c77702eefc774e3ef7242662968f8e29a8337520fc467d39dcde9a59f9ce07",
+      "sameAsHistoricalSource": true
+    },
+    "dev/self-edit": {
+      "url": "https://raw.githubusercontent.com/binofet/agent-wow/3bac36ca9b1a78d2a4ddd59e6e685cb8490e5e9b/dev/self-edit",
+      "sha256": "41f216ba9d0089fe9b90f6ac564196523fb55f09f08eab96b44abb779d69567f",
+      "sameAsHistoricalSource": true
+    },
+    "dev/direct_context.py": {
+      "url": "https://raw.githubusercontent.com/binofet/agent-wow/3bac36ca9b1a78d2a4ddd59e6e685cb8490e5e9b/dev/direct_context.py",
+      "sha256": "345265e30e5b573a1ded5d75036c8bfc224b607998931fbe45f2e153deef6cfe",
+      "sameAsHistoricalSource": true
+    },
+    "dev/direct_model.py": {
+      "url": "https://raw.githubusercontent.com/binofet/agent-wow/3bac36ca9b1a78d2a4ddd59e6e685cb8490e5e9b/dev/direct_model.py",
+      "sha256": "78281189eae1ac81db3e1dc8b6f47d714b86607a8b8ab0a2ba54dd7e100bb50f",
+      "sameAsHistoricalSource": true
+    }
+  },
+  "sourceReview": {
+    "mainSource": "independent whole-source clear",
+    "compatibility": "independent public feature-only source clear",
+    "originalFunctions": 161,
+    "originalFunctionsUnchanged": 158,
+    "originalFunctionsChanged": [
+      "DirectBrain._generate",
+      "BuddyControls.mission_handoff",
+      "Conversation.generate_reply"
+    ],
+    "newFunction": "BuddyControls.prepare_follow"
+  },
+  "checks": {
+    "compatibility": {
+      "tests": 120,
+      "seconds": 19.839,
+      "outcome": "pass",
+      "scope": "direct tools, local fake-HTTP DirectBrain, existing mission handoff"
+    },
+    "mainAffected": {
+      "tests": 117,
+      "seconds": 19.471,
+      "outcome": "pass",
+      "head": "61e63c1b08017b6ffe3b4f570f544e8e23c0540e"
+    },
+    "finalChanged": {
+      "tests": 15,
+      "seconds": 5.508,
+      "outcome": "pass",
+      "head": "3bac36ca9b1a78d2a4ddd59e6e685cb8490e5e9b"
+    }
+  },
+  "runtime": {
+    "targetPreimagesVerified": false,
+    "deployed": false,
+    "gameEffectsTested": false,
+    "instructions": "Verify the actual selected host component preimages and unchanged helper closure before a coordinated chat-only handoff. This package contains public source only, no native binary, settings, actor policy, transcript or operation journal."
+  }
+}
