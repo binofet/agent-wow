@@ -731,8 +731,9 @@ class DirectTools:
                 return dict(exact['result'], historicalReceipt=True, superseded=exact is not latest)
             same_latest = (latest is not None and latest.get('order', 0) > 0
                 and latest.get('requestId') == self.request_id and latest.get('argumentsSHA256') == arguments_hash)
-            if same_latest and (name != 'follow' or type(actions.get('following', False)) is bool
-                    and actions.get('following', False) == args['enabled']):
+            if same_latest and (type(actions.get('following', False)) is bool
+                    and actions.get('following', False) == args['enabled'] if name == 'follow'
+                    else latest['result'].get('policyRevision') == binding[1]):
                 result = dict(latest['result'], historicalReceipt=True)
                 if name == 'follow': result['state'] = dict(actions, following=actions.get('following', False))
                 return result
