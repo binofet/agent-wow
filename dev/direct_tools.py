@@ -699,8 +699,7 @@ class DirectTools:
         target=selected
         if target is None and evidence.get('observedTargetKnown'):target=evidence.get('observedTargetGuid')
         family=verb[1:] if verb in ('.revive','.summon','.groupsummon','.appear') else \
-            'transport' if verb=='.go' and len(words)>1 and words[1].lower()=='xyz' or verb=='.tele' else \
-            'roster' if verb=='.group' else 'raw'
+            'transport' if verb=='.go' and len(words)>1 and words[1].lower()=='xyz' else 'raw'
         subject=dict(guid=target,name=None)
         normalized=' '.join(words)
         if family in ('revive','summon','groupsummon','appear'):
@@ -715,20 +714,19 @@ class DirectTools:
             elif subject['guid']=='0':subject['guid']='87'  # PlayerIdentifier::FromTargetOrSelf.
         else:normalized=verb+(' '+' '.join(words[1:]) if len(words)>1 else '')
         if family=='transport' and verb=='.go':subject=dict(guid='87',name=None)
-        if family=='roster':subject=dict(guid='group:'+str(group.get('groupGuid',0)),name=None)
         if subject['guid'] is not None:
             matched=[name for name,guids in names.items() if guids=={subject['guid']}]
             if len(matched)==1:subject['name']=matched[0]
         players=[world.get('self',{}),world.get('owner',{}),*world.get('nearbyPlayers',[])]
         target_row=next((row for row in players if str(row.get('guid'))==subject['guid'] and row.get('present') is True),{})
         def pose(row):
-            known=row.get('mapKnown') is True and row.get('positionKnown') is True
+            known=row.get('mapKnown') is True and row.get('positionKnown') is True and row.get('positionInferred') is not True
             return dict(known=known,**({key:row.get(key,0) for key in ('mapId','x','y','z')} if known else {}))
         roster=dict(known=group.get('known') is True,inGroup=group.get('inGroup',False),
             leaderGuid=str(group.get('leaderGuid',0)),members=sorted(str(row['guid']) for row in group.get('members',[]) if row.get('guid')))
         context=dict(life=dict(known=target_row.get('aliveKnown') is True,
             alive=target_row.get('alive',False) if target_row.get('aliveKnown') is True else None)) if family=='revive' else \
-            dict(roster=roster,destination=pose(world.get('self',{})),subject=pose(target_row)) if family in ('summon','groupsummon','appear','transport','roster') else {}
+            dict(roster=roster,destination=pose(world.get('self',{})),subject=pose(target_row)) if family in ('summon','groupsummon','appear','transport') else {}
         return dict(family=family,command=normalized,subject=subject,context=context)
 
     @staticmethod
@@ -747,25 +745,34 @@ class DirectTools:
         return False
 
     def _gm_prior_intent(self, gm, intent, folder):
-        if intent is None:return None
+        if intent is None:return None,None
         root=folder.parent
+        matches=[];ordinal=1
         for candidate in sorted(root.iterdir()):
             if candidate==folder or not re.fullmatch('[a-f0-9]{64}',candidate.name):continue
             row=gm.task_store(candidate).load()
             if not row or row.get('identity')!=dict(sessionId=self.session_id,guid='87',rpcUrl=self.rpc.url) \
                     or row.get('requestId')!=self.request_id or row.get('knownNotDispatched') is True:continue
+            sequence=row.get('commandOrdinal') or 0
+            require(type(sequence) is int and sequence>=0,'valid_retained_command_ordinal_required')
+            ordinal=max(ordinal,sequence+1)
             previous=row.get('commandIntent')
             if not previous or not self._same_gm_intent(previous,intent):continue
             result=row.get('result') or {}
             if result.get('commandTransportWritten') is False:continue
-            if result.get('commandTransportWritten') is True and self._gm_context_changed(previous,intent):continue
+            matches.append((sequence,candidate,row,result,previous))
+        # Unknown transport never becomes replayable from a newer snapshot.
+        unknown=[row for row in matches if row[3].get('commandTransportWritten') is not True]
+        latest=max((row[0] for row in matches),default=0)
+        for _,candidate,row,result,previous in unknown or [row for row in matches if row[0]==latest]:
+            if not unknown and self._gm_context_changed(previous,intent):continue
             return dict(allowed=False,reason='same_request_intent_has_no_observed_new_context',
                 priorOperationId=row.get('operationId'),priorStateDir=str(candidate),
                 priorCommandTransportWritten=result.get('commandTransportWritten'),
                 priorFeedbackStatus=result.get('feedback',{}).get('status'),
                 gameEffectClaimed=False,context=intent.get('context'),
-                guidance='Read current facts and retain the original receipt. ACK, SYSTEM text, selection, ages and revisions do not authorize repeating the effect.')
-        return None
+                guidance='Read current facts and retain the original receipt. ACK, SYSTEM text, selection, ages and revisions do not authorize repeating the effect.'),ordinal
+        return None,ordinal
 
     def _gm_execute(self, gm, args, operation_id=None):
         self._authorise_gm()
@@ -796,13 +803,15 @@ class DirectTools:
                         selectedGuid=selected), ToolError("retained_native_command_outcome_unconfirmed"))
             entered = False
             command_intent=None
+            command_ordinal=None
             def record(**values):
                 return dict(identity=dict(sessionId=self.session_id,guid='87',rpcUrl=self.rpc.url),
-                    requestId=self.request_id,operationId=operation_id,commandIntent=command_intent,**values)
+                    requestId=self.request_id,operationId=operation_id,commandIntent=command_intent,
+                    commandOrdinal=command_ordinal,**values)
             def command_guard(out,phase):
-                nonlocal command_intent
+                nonlocal command_intent,command_ordinal
                 command_intent=self._gm_command_intent(gm,command,selected,out.get('selection',{}),phase)
-                blocked=self._gm_prior_intent(gm,command_intent,folder)
+                blocked,command_ordinal=self._gm_prior_intent(gm,command_intent,folder)
                 if blocked is not None:return blocked
                 if phase=='before_command':
                     store.save(record(commandSHA256=digest,selectedGuid=selected,reserved=True))
@@ -981,7 +990,7 @@ class DirectTools:
                 specs += [("gm_task_start", "Start the whole commissioned GM recovery/regroup using the existing ordered Lua task. Goal uses current observed roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": {"type":"object", "description":"Recovery goal: members=[{guid,name,rpcUrl?}] for the currently observed original party, plus destination={mapId,x,y,z,tolerance?} OR player={guid,name,tolerance?}. Companion rpcUrl must match current bindings. The shared Lua initializer validates admission before any hold or child starts."}}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),
                           ("gm_task_resume", "Resume only gm_current_task's same stored goal/invocation and receipts. Runner started is not a GM effect; no new task or replay of uncertain actions.", {"task_id": string}, ["task_id"]),
-                          ("gm_execute", "Send one native dot command through this exact GM session. Optional select_guid binds the observed server target GUID; zero clears UI selection. Local visibility/resolution is reported separately because command families resolve selected units differently. A command is sent only when that target GUID is actually observed at the final packet boundary. If selection was written but not observed, no command is queued: inspect facts before a fresh tool invocation. Each actual tool call has its own host operation identity; exact-operation receipt/unknown is never replayed. Returns a fresh Chat baseline/window within the same writer, with explicit no-reply/cursor loss/read failure; SYSTEM text is temporal evidence, never target/effect proof. Active task writers still block competing commands; realm permissions apply. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]
+                          ("gm_execute", "Send one native dot command through this exact GM session. Optional select_guid binds the observed server target GUID; zero clears UI selection. Local visibility/resolution is reported separately because command families resolve selected units differently. A command is sent only when that target GUID is actually observed at the final packet boundary. If selection was written but not observed, no command is queued: inspect facts before a fresh tool invocation. Each actual tool call has its own host operation identity; exact-operation receipt/unknown is never replayed. Equivalent same-request effects also retain their original receipt until substantive observed context changes; a new tool call alone is not retry authority. Returns a fresh Chat baseline/window within the same writer, with explicit no-reply/cursor loss/read failure; SYSTEM text is temporal evidence, never target/effect proof. Active task writers still block competing commands; realm permissions apply. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]
         if self.self_guid == "87":
             specs += [("gm_inspect", "Default: readable compact facts for EVERY configured client: own life/pose, exact Actions position provenance, group, fixed owner and visible configured/observed-party player witnesses. Unknown and false remain distinct; witnesses are scoped to their observer, not proof of a cleared area. Bulk NPCs/nested fields have explicit omitted counts/rawPath. Nonempty JSON path reads the FULL original raw tree; rawPath on each witness gives its original index. Raw pages use offset/limit; default compact output is bounded separately. No caller URL, game write or task.", paging, []),
                       ("gm_current_task", "Discover only this GM session's maintained active writer-owned task and actual retained status. No caller path, new task or execution. Page large observations/memory with JSON path/offset/limit.", paging, []),

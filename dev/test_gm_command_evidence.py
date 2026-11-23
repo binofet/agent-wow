@@ -36,6 +36,7 @@ class NativeRPC(fixtures.RPC):
         self.group_revision=1;self.after_selection_read_error=False
         self.group_members=['1','3','4','5','87'];self.group_leader='1'
         self.life={};self.life_known={};self.vitals_age=284517;self.world_revision=1
+        self.world_x=12;self.position_inferred=False
         self.allow_gm=True;self.cancelled=False
         self.corpses=[]
         self.local=['3','4','5'];self.on_read=None
@@ -59,7 +60,7 @@ class NativeRPC(fixtures.RPC):
                 aliveKnown=self.life_known.get(guid,True),alive=self.life.get(guid,True),
                 health=100 if self.life.get(guid,True) else 0,vitalsAgeMs=str(self.vitals_age),positionRevision=str(self.world_revision)) for guid in self.local]
             value=dict(visitRevision='visit-1',self=dict(guid='87',present=True,mapKnown=True,mapId=349,
-                positionKnown=True,targetKnown=True,targetGuid=self.selected,x=12,y=34,z=56),
+                positionKnown=True,positionInferred=self.position_inferred,targetKnown=True,targetGuid=self.selected,x=self.world_x,y=34,z=56),
                 owner=next((row for row in players if row['guid']=='3'),dict(guid='3',present=False)),
                 nearbyPlayers=[row for row in players if row['guid']!='3'],nearbyCreatures=[],playerCorpses=self.corpses)
         else:
@@ -325,6 +326,29 @@ class GMCommandEvidenceTests(unittest.TestCase):
         self.assertFalse(self.execute('.summon Arlen',operation='request:1')['ok'])
         self.assertEqual(len(self.rpc.commands),2)
         self.assertFalse(self.tools.dispatch('gm_execute',dict(command='.gps',operation_id='model-chosen'))['ok'])
+
+    def test_returning_to_an_earlier_real_roster_uses_latest_intent_not_old_context(self):
+        original=list(self.rpc.group_members)
+        first=self.execute('.groupsummon Arlen',operation='cycle:1')
+        self.rpc.group_members=['1','3','4','8','87']
+        second=self.execute('.groupsummon Arlen',operation='cycle:2')
+        self.rpc.group_members=original
+        third=self.execute('.groupsummon Arlen',operation='cycle:3')
+        self.assertTrue(all(row['result']['commandTransportWritten'] for row in (first,second,third)))
+        self.assertEqual(self.rpc.commands,['.groupsummon Arlen']*3)
+        records=[json.loads(path.read_text()) for path in (self.host/'data/converse/lotharen/gm-commands').glob('*/state.json')]
+        self.assertEqual(sorted(row['commandOrdinal'] for row in records),[1,2,3])
+
+    def test_inferred_pose_and_unknown_grammar_do_not_authorize_a_repeat(self):
+        self.assertTrue(self.execute('.groupsummon Arlen')['result']['commandTransportWritten'])
+        self.rpc.world_x=999;self.rpc.position_inferred=True
+        inferred=self.execute('.groupsummon Arlen',operation='inferred:2')
+        self.assertFalse(inferred['result']['commandTransportWritten'])
+        for index,command in enumerate(('.tele add Example','.group unfamiliar Example')):
+            self.assertTrue(self.execute(command,operation='raw:first'+str(index))['result']['commandTransportWritten'])
+            self.rpc.world_x+=1;self.rpc.group_members=['1','3','4','8','87']
+            repeated=self.execute(command,operation='raw:second'+str(index))
+            self.assertFalse(repeated['result']['commandTransportWritten'])
 
     def test_named_then_selected_revive_with_only_ack_blocks_before_second_selection(self):
         self.rpc.selected='8';self.rpc.life['3']=False;self.rpc.feedback_enabled=False
