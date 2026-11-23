@@ -780,8 +780,11 @@ def main(argv=None):
             process=json.loads((args.state_dir/'process.json').read_text());print(json.dumps(dict(phase='starting',done=False,process=process)));return 0
         print(json.dumps(public_status(data)));return 0
     if not args.goal or not args.transport or not args.rpc_url:parser.error('run requires --goal, --transport and --rpc-url')
-    goal=json.loads(args.goal.read_text());config=json.loads(args.transport.read_text());goal_containers(goal)
+    goal=json.loads(args.goal.read_text());config=json.loads(args.transport.read_text())
     with task_store(args.state_dir.absolute()) as store:
+        # Older tasks may own holds despite a malformed goal. Their exact
+        # stored goal must still reach the maintained cancellation path.
+        if store.load() is None:goal_containers(goal)
         rpc=task_rpc(args.rpc_url);sid=rpc.call('buddy-actions.status',{}).get('sessionId')
         host=Host(store,rpc,SessionTransport(rpc,config),task_bridge(args.policy_binary,ROOT/'modules'),goal,args.policy,ROOT/'behaviors/gm-recovery-hold.lua')
         identity=dict(sessionId=sid,guid='87',rpcUrl=args.rpc_url)

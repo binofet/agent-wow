@@ -78,6 +78,9 @@ class GMTaskObservationTests(unittest.TestCase):
                             Path(__file__).parents[1] / 'behaviors/gm-recovery.lua',
                             Path(__file__).parents[1] / 'behaviors/gm-recovery-hold.lua')
         self.host.member_rpcs = {'1': self.member}
+        # These fixtures isolate hold/observation custody, including an
+        # intentionally unavailable member. Real Lua admission has its own suite.
+        self.host.admission = Mock(return_value=dict(accepted=True))
 
     def test_protojson_known_zero_pose_vitals_and_mana_remain_known(self):
         p = gm.normalized(dict(guid='3', present=True, positionKnown=True, mapKnown=True,
@@ -293,6 +296,46 @@ class GMTaskObservationTests(unittest.TestCase):
         self.assertEqual(saved['goal'],self.goal)
         self.assertEqual(len(clients['8'].calls),1)
         self.assertTrue(all(r['restored'] for r in saved['holds'].values()))
+        bridge.evaluate.assert_not_called();transport.gm.assert_not_called();transport.select.assert_not_called()
+
+    def test_cli_cancels_old_malformed_goal_and_restores_only_its_recorded_holds(self):
+        # Before admission existed, holds could precede Lua's shape rejection.
+        self.goal['destination']='bad'
+        self.gm.sid=self.gm.status['sessionId']=self.gm.party['sessionId']='aw-123'
+        clients,original=self.partial_hold_clients()
+        with self.assertRaisesRegex(TimeoutError,'member 8'):self.host.run()
+        self.assertEqual(set(self.host.data['holds']),{'87','1','4','5'})
+        root=self.host.store.folder.resolve();state=root/'old-task';goal=root/'old-goal.json';config=root/'transport.json'
+        goal.write_text(json.dumps(self.goal));cfg=dict(writerRoot=str(root/'writers'));config.write_text(json.dumps(cfg))
+        args=['run','--state-dir',str(state),'--goal',str(goal),'--transport',str(config),'--rpc-url','http://127.0.0.1:8090/rpc']
+        invocation=dict(rpcUrl=args[-1],goal=str(goal),transport=str(config),
+            policy=str(gm.ROOT/'behaviors/gm-recovery.lua'),policyBinary=str(gm.ROOT/'data/bin/luapolicy'))
+        original_invocation=json.dumps(invocation).encode()
+        with gm.task_store(state) as store:
+            store.save(self.host.data);store.write('invocation.json',original_invocation,gm.runtime.MAX_INPUT)
+        writer=gm.task_store(gm.writer_folder(root,'aw-123',cfg))
+        with writer:gm.claim_writer(writer,state)
+        (state/'cancel.json').write_text('{}')
+        before={g:len(r.calls) for g,r in clients.items()}
+        by_url={m['rpcUrl']:clients[str(m['guid'])] for m in self.goal['members'] if m.get('rpcUrl')}
+        by_url[args[-1]]=self.gm;transport,bridge=Mock(),Mock()
+        with patch.object(gm,'task_rpc',side_effect=lambda url:by_url[url]), \
+                patch.object(gm,'SessionTransport',return_value=transport),patch.object(gm,'task_bridge',return_value=bridge), \
+                patch.object(gm.signal,'signal'),patch.object(gm.Host,'install_holds',side_effect=AssertionError('No new holds')), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(gm.main(args),1)
+        saved=gm.task_store(state).load()
+        self.assertTrue(saved['cancelled'] and saved['cleanupComplete'])
+        self.assertFalse(saved['done'] or saved['success'] or writer.load()['active'])
+        self.assertEqual(saved['goal'],self.goal)
+        self.assertEqual((saved['memory'],saved['last'],saved['reservations']),({},None,{}))
+        self.assertEqual((state/'invocation.json').read_bytes(),original_invocation)
+        self.assertEqual(len(clients['8'].calls),before['8'],'cleanup must not observe the unavailable unheld client')
+        for guid in ('87','1','4','5'):
+            self.assertTrue(saved['holds'][guid]['restored'])
+            self.assertEqual(clients[guid].source,original[guid])
+            writes=[p for m,p in clients[guid].calls[before[guid]:] if m=='session.reload_policy']
+            self.assertEqual([p['source'] for p in writes],[original[guid]])
         bridge.evaluate.assert_not_called();transport.gm.assert_not_called();transport.select.assert_not_called()
 
     def test_partial_cancel_preserves_independently_changed_source_and_resumable_custody(self):
