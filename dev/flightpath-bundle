@@ -2,29 +2,80 @@
 """Write the editable flightpath Lua child to stdout; does not attach or run it."""
 
 import argparse
+import json
 from pathlib import Path
+import re
 import sys
 
 
-def compose(behaviors, task_runtime=False):
+def compose(behaviors, task_runtime=False, parent=False):
     parts = []
     modules = [] if task_runtime else [("tasks", "task-stack.lua")]
     modules.append(("planner", "flightpath-plan.lua"))
     for name, filename in modules:
         source = (behaviors / filename).read_text(encoding="utf-8")
         parts.append(f"local {name}=(function()\n{source}\nend)()\n")
-    parts.append((behaviors / "flightpath-activation.lua").read_text(encoding="utf-8"))
+    child = (behaviors / "flightpath-activation.lua").read_text(encoding="utf-8")
+    if parent:
+        parts.append("local flightpath=(function()\n" + child + "\nend)()\n")
+        parts.append("local discovery=(function()\n" +
+                     (behaviors / "flightpath-discovery.lua").read_text(encoding="utf-8") + "\nend)()\n")
+        parts.append((behaviors / "flightpath-parent.lua").read_text(encoding="utf-8"))
+    else:
+        parts.append(child)
     return "".join(parts)
+
+
+def parent_goal(goal_id, destination, accept_unknown_fare=False, npc_guid=None):
+    if not isinstance(goal_id, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,96}', goal_id):
+        raise ValueError("explicit task ID required")
+    if type(destination) is not int or not 0 < destination <= 0xffffffff:
+        raise ValueError("destination must be a positive uint32 node ID")
+    if type(accept_unknown_fare) is not bool:
+        raise ValueError("explicit unknown-fare choice required")
+    params = dict(destinationNode=destination, acceptUnknownFare=accept_unknown_fare)
+    if npc_guid is not None:
+        if not isinstance(npc_guid, str) or not re.fullmatch(r'[1-9][0-9]{0,19}', npc_guid) or int(npc_guid) > 0xffffffffffffffff:
+            raise ValueError("flightmaster must be a canonical uint64 GUID")
+        params['npcGuid'] = npc_guid
+    def observation(method, fields): return dict(method=method, params={}, select=fields.split())
+    return dict(id=goal_id, kind='flightpath_parent', params=params, observations={
+        'world': observation('buddy-world.snapshot', 'self visitRevision selfCopperKnown selfCopper selfCopperRevision '
+                             'requestedCreature nearbyCreatures selfMovementFacts selfMotionAuthority splineCompletion worldTransfer'),
+        'actions': observation('buddy-actions.status', 'sessionId selfGuid interactionOwner interactionLeaseRemainingMs '
+                               'moving castPending motionUnconfirmed autoAttacking autoAttackRequested autoAttackUnconfirmed '
+                               'practicing traveling recovery'),
+        'flightpath': observation('buddy-actions.flightpath_observation', 'sessionId selfGuid visitId visitBound revision '
+                                  'operation activationRevision activation transferAttempt'),
+    }, allow=['buddy-actions.status', 'buddy-world.snapshot', 'buddy-actions.flightpath_observation',
+              'buddy-actions.acquire_idle_interaction', 'buddy-actions.release_interaction',
+              'buddy-actions.query_flightpath', 'buddy-actions.flightpath_reference',
+              'buddy-actions.activate_flightpath', 'buddy-world.complete_spline',
+              'buddy-world.retire_spline_completion', 'buddy-actions.adopt_flightpath_transfer',
+              'buddy-actions.settle_flightpath'])
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task-runtime", action="store_true",
                         help="omit TaskStack for dev/task-runtime, which adds it before --source")
+    parser.add_argument("--parent", action="store_true", help="include editable parent-owned idle custody and discovery")
+    parser.add_argument("--parent-goal", action="store_true", help="write an explicit parent goal JSON instead of Lua")
+    parser.add_argument("--id", help="unique parent task ID")
+    parser.add_argument("--destination-node", type=int, help="instructed node ID, also usable by an exploration caller")
+    parser.add_argument("--npc-guid", help="optional exact observed flightmaster GUID")
+    parser.add_argument("--accept-unknown-fare", action="store_true", help="explicitly permit the child's unknown-fare booking choice")
     args = parser.parse_args()
     try:
-        source = compose(Path(__file__).resolve().parent.parent / "behaviors", args.task_runtime)
-    except (OSError, UnicodeError) as error:
+        if args.parent_goal:
+            if args.parent or args.task_runtime:
+                parser.error("--parent-goal outputs JSON and cannot select a Lua composition mode")
+            source = json.dumps(parent_goal(args.id, args.destination_node, args.accept_unknown_fare, args.npc_guid)) + "\n"
+        else:
+            if args.id is not None or args.destination_node is not None or args.npc_guid is not None or args.accept_unknown_fare:
+                parser.error("goal options require --parent-goal")
+            source = compose(Path(__file__).resolve().parent.parent / "behaviors", args.task_runtime, args.parent)
+    except (OSError, UnicodeError, ValueError) as error:
         parser.exit(1, f"{error}\n")
     sys.stdout.write(source)
 
