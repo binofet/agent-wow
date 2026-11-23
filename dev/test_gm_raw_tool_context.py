@@ -1,12 +1,16 @@
 """Raw GM facts/tool wiring only; scripted API text is not model-planning proof."""
+import contextlib
 import copy
 import json
 from pathlib import Path
+import types
 import unittest
+from unittest import mock
 
 import direct_model
 import direct_tools
 import test_direct_brain as brain_fixtures
+import test_direct_model as model_fixtures
 import test_gm_command_evidence as command_fixtures
 
 
@@ -136,6 +140,137 @@ class RawGMNamedDispatchTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), original)
         self.assertEqual(self.rpc.commands, [command])
         self.assertEqual(len(self.rpc.packets), 1)
+
+
+class DirectFailureFeedbackTests(unittest.TestCase):
+    generic = "I couldn't finish confirming that request. Its outcome still needs checking."
+
+    def setUp(self):
+        brain_fixtures.DirectBrainIntegrationTests.setUp(self)
+        (self.workspace/'dev').mkdir()
+        (self.workspace/'dev/task-runtime').write_bytes((ROOT/'dev/task-runtime').read_bytes())
+
+    @contextlib.contextmanager
+    def conversation(self, responses, *, developer=False):
+        converse = brain_fixtures.converse
+        self.rpc = brain_fixtures.PublicRPC(owner_request=True)
+        self.control_state = {}
+        self.legacy_actions = []
+        with model_fixtures.FakeHTTP(responses) as http, \
+                mock.patch.object(converse, 'ROOT', self.workspace), \
+                mock.patch.object(converse, 'RPC', side_effect=lambda url:self.rpc if url == self.rpc.url else
+                    (_ for _ in ()).throw(converse.ConversationError('Foreign RPC'))):
+            brain = converse.DirectBrain(self.state, developer_workspace=self.workspace if developer else None,
+                character_name='Mira', character_class='mage', model='fixture-model', provider='local',
+                base_url=http.base+'/v1')
+            controls = types.SimpleNamespace(actions_available=True, party_available=True,
+                actions=self.rpc.call('buddy-actions.status', {}), party_session=self.rpc.core, events=[],
+                refresh=lambda:None, context=lambda:dict(self.control_state),
+                execute=lambda action, **_:self.legacy_actions.append(action))
+            loop = converse.Conversation(self.rpc, brain, controls=controls,
+                character_name='Mira', character_class='mage', character_guid=4,
+                status=lambda **row:self.statuses.append(copy.deepcopy(row)))
+            self.assertIsNone(loop.baseline())
+            self.assertEqual((loop.session_id, loop.cursor), (self.rpc.chat, 0))
+            yield loop, brain, http
+
+    def test_current_zero_tool_http_400_reports_api_failure_not_model_refusal(self):
+        error = dict(error=dict(code='context_size_exceeded',
+            message='Context size exceeded; authorization=private-token'))
+        with self.conversation([(400, error)]) as (loop, brain, http):
+            with self.assertRaisesRegex(brain_fixtures.converse.ConversationError, 'provider_http_error'):
+                loop.tick()
+            self.assertEqual(len(http.requests), 1)
+            self.assertEqual(loop.cursor, 1)
+            self.assertEqual(self.rpc.commands, [])
+            self.assertEqual(self.legacy_actions, [])
+            self.assertEqual(len(self.rpc.replies), 2)  # Host ACK, then host transport status.
+            text = self.rpc.replies[-1]['text']
+            self.assertTrue(text.startswith('This local model API request failed before any model tool ran (HTTP 400).'), text)
+            self.assertIn('Cause: Context size exceeded;', text)
+            self.assertNotIn('private-token', text)
+            self.assertNotIn(self.generic, text)
+            self.assertNotIn('try again', text.lower())
+            self.assertNotIn('repeat', text.lower())
+            failure, api = brain.last_failure_receipt, brain.last_api_receipt
+            self.assertEqual(api['requestId'], brain.last_request_id)
+            self.assertEqual(failure['requestId'], api['requestId'])
+            self.assertEqual(failure['toolCustodyRequestId'], api['requestId'])
+            self.assertEqual((failure['chatSessionId'], failure['selfGuid'], failure['cursor']),
+                             (self.rpc.chat, '4', 1))
+            self.assertEqual(api['toolCalls'], 0)
+            self.assertEqual(failure['counts'], dict(completedTools=0, failedTools=0))
+            self.assertFalse(failure['pendingTools'])
+            saved = json.loads((self.state/'brain-failures'/(brain.last_request_id+'.json')).read_text())
+            self.assertEqual(saved['requestId'], api['requestId'])
+            self.assertEqual(saved['api']['httpStatus'], 400)
+
+    def test_actual_policy_delivery_then_http_400_keeps_generic_uncertainty_and_receipts(self):
+        intent = dict(task='cast_spell', id='one-delivered-request', spellId=1449)
+        before_error = {}
+        def failed_after_delivery(_):
+            paths = list((self.state/'api-conversations').glob('*.json'))
+            self.assertEqual(len(paths), 1)
+            before_error[paths[0]] = paths[0].read_bytes()
+            return 400, dict(error=dict(message='Context size exceeded after a tool result.'))
+        with self.conversation([brain_fixtures.chat(('delivered', 'policy_input', dict(value=intent))),
+                                failed_after_delivery], developer=True) as (loop, brain, http):
+            with self.assertRaisesRegex(brain_fixtures.converse.ConversationError, 'provider_http_error'):
+                loop.tick()
+            self.assertEqual(len(http.requests), 2)
+            self.assertEqual(self.rpc.commands, [dict(sessionId=self.rpc.core, characterGuid='4',
+                                                    kind='command', value=intent)])
+            self.assertEqual(self.rpc.replies[-1]['text'], self.generic)
+            self.assertEqual(self.legacy_actions, [])
+            self.assertEqual(brain.last_api_receipt['toolCalls'], 1)
+            failure = brain.last_failure_receipt
+            self.assertEqual(failure['counts']['completedTools'], 1)
+            self.assertTrue(failure['mutationToolEntered'])
+            self.assertEqual(failure['tools'][0]['name'], 'policy_input')
+            self.assertEqual(failure['tools'][0]['status'], 'returned')
+            for path, original in before_error.items():
+                self.assertEqual(path.read_bytes(), original)
+                transcript = json.loads(original)
+                tool = next(row for row in transcript['messages'] if row['role'] == 'tool')
+                returned = json.loads(tool['content'])
+                self.assertTrue(returned['result']['deliveryOnly'])
+                self.assertFalse(returned['result']['gameEffectClaimed'])
+                self.assertEqual(returned['result']['result']['status'], 'queued')
+                self.assertIsNone(transcript['pending'])
+            saved = json.loads((self.state/'brain-failures'/(brain.last_request_id+'.json')).read_text())
+            self.assertEqual(saved['tools'], failure['tools'])
+
+    def test_stale_prior_http_receipt_cannot_describe_current_preparation_failure(self):
+        with self.conversation([(400, dict(error=dict(message='OLD failure must not label a later request.')))]) as (loop, brain, http):
+            with self.assertRaisesRegex(brain_fixtures.converse.ConversationError, 'provider_http_error'):
+                loop.tick()
+            prior_api = copy.deepcopy(brain.last_api_receipt)
+            prior_file = self.state/'brain-failures'/(brain.last_request_id+'.json')
+            prior_bytes = prior_file.read_bytes()
+            self.rpc.new_owner = True
+            catalog = dict(available=True, sessionId=self.rpc.chat, emotes=[dict(name='WAVE', id=1)])
+            self.control_state = dict(emote_catalog=catalog)
+            original = self.rpc.call
+            def changed_during_binding(method, params, **kwargs):
+                result = original(method, params, **kwargs)
+                if method == 'session.describe':
+                    # The current conversation's first catalog validation passed;
+                    # a subsequent native binding read exposes invalid new data.
+                    catalog['emotes'] = []
+                return result
+            with mock.patch.object(self.rpc, 'call', side_effect=changed_during_binding):
+                with self.assertRaisesRegex(brain_fixtures.converse.ConversationError, 'Invalid installed emote catalog'):
+                    loop.tick()
+            self.assertEqual(loop.cursor, 2)
+            self.assertNotEqual(brain.last_request_id, prior_api['requestId'])
+            self.assertEqual(brain.last_api_receipt, prior_api)
+            self.assertEqual(brain.last_failure_receipt['requestId'], brain.last_request_id)
+            self.assertEqual(brain.last_failure_receipt['cursor'], 2)
+            self.assertEqual(len(http.requests), 1)  # No new HTTP request; the old 400 is stale.
+            self.assertEqual(self.rpc.replies[-1]['text'], self.generic)
+            self.assertNotIn('HTTP 400', self.rpc.replies[-1]['text'])
+            self.assertEqual(prior_file.read_bytes(), prior_bytes)
+            self.assertEqual(self.rpc.commands, [])
 
 
 if __name__ == '__main__':

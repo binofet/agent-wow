@@ -5096,6 +5096,7 @@ class Conversation:
             if continuation is not None:state['current_request']['continuation'] = dict(continuation)
         if allow_gm:
             state["gm_controls_available"] = True
+        previous_brain_request = getattr(self.brain, 'last_request_id', None)
         try:
             reply = validate_reply(self.generate_reply(self.history[history_key], state,
                 tool_request_id=continuation['requestId'] if continuation is not None else None),self.reply_emotes,
@@ -5113,7 +5114,37 @@ class Conversation:
             if acknowledged in ('transport_written','transport_unconfirmed'):
                 try:
                     if not self.stopped() and self.same_body():
-                        self.send_reply({'text':"I couldn't finish confirming that request. Its outcome still needs checking.",
+                        failure_text = "I couldn't finish confirming that request. Its outcome still needs checking."
+                        api = getattr(self.brain, 'last_api_receipt', None)
+                        failure = getattr(self.brain, 'last_failure_receipt', None)
+                        current = getattr(self.brain, 'last_request_id', None)
+                        if isinstance(self.brain, DirectBrain) and isinstance(api, dict) and isinstance(failure, dict):
+                            counts = failure.get('counts', {})
+                            http = api.get('httpStatus')
+                            # This API attempt only: do not reinterpret a prior
+                            # request, an entered tool or any uncertain receipt.
+                            if (current is not None and current != previous_brain_request
+                                    and api.get('requestId') == current == failure.get('requestId')
+                                    and failure.get('toolCustodyRequestId') == current
+                                    and failure.get('chatSessionId') == self.session_id
+                                    and failure.get('selfGuid') == str(self.character_guid)
+                                    and failure.get('cursor') == self.cursor
+                                    and api.get('outcome') == failure.get('outcome') == 'failed'
+                                    and api.get('reason') == failure.get('reason') == 'provider_http_error'
+                                    and type(http) is int and 100 <= http <= 599 and not 200 <= http < 300
+                                    and type(api.get('toolCalls')) is int and api['toolCalls'] == 0
+                                    and isinstance(counts, dict) and counts.get('completedTools') == counts.get('failedTools') == 0
+                                    and not failure.get('tools') and not failure.get('pendingTools')
+                                    and not failure.get('omittedTools') and not failure.get('omittedPendingTools')
+                                    and failure.get('mutationToolEntered') is not True):
+                                detail = api.get('providerError')
+                                cause = next((detail.get(key) for key in ('message','reason','code','type')
+                                    if isinstance(detail, dict) and isinstance(detail.get(key), str) and detail[key]), 'unknown')
+                                cause = cause.encode('utf-8', 'replace')[:140].decode('utf-8', 'ignore')
+                                service = 'local model' if api.get('provider') == 'local' else 'model'
+                                failure_text = (f"This {service} API request failed before any model tool ran "
+                                    f"(HTTP {http}). Cause: {cause}")
+                        self.send_reply({'text':failure_text,
                             'emote':'NONE'},channel,target_guid=sender,history_key=history_key)
                 except ConversationError:
                     self.status(ownerAcknowledgement='failure_reply_unconfirmed')
