@@ -1,5 +1,6 @@
 """Direct provider tests use only a local fake HTTP server and typed callbacks."""
 import copy
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -381,6 +382,183 @@ class DirectModelTests(unittest.TestCase):
                 dict(provider="local",model="fixture",base_url="http://user:secret@127.0.0.1/v1"),
                 dict(provider="claude",model="fixture",base_url="https://api.anthropic.com/v1")):
             with self.subTest(kwargs=kwargs),self.assertRaises(ModelError):DirectModel(**kwargs)
+
+
+class ActiveContextTests(unittest.TestCase):
+    @staticmethod
+    def text(value='The recorded observations are available.'):
+        return dict(choices=[dict(finish_reason='stop',message=dict(role='assistant',content=value))])
+
+    @staticmethod
+    def tools(*names):
+        return [dict(type='function',function=dict(name=name,description='Synthetic typed read or action',
+            parameters=dict(type='object',properties=dict(key=dict(type='string')),
+                            required=['key'],additionalProperties=False))) for name in names]
+
+    def test_109_reads_keep_full_journal_but_supersede_redundant_api_bodies_after_restart(self):
+        names=['session_catalog']*39+['read_observation']*70
+        responses=[chat((f'read-{index}',name,dict(key='same-bound-query'))) for index,name in enumerate(names)]
+        human='Exact owner intent, never clipped: '+('original human words '*900)
+        with tempfile.TemporaryDirectory() as folder,FakeHTTP([*responses,self.text(),self.text('Continue naturally.')]) as server:
+            path=Path(folder)/'conversation.json';dispatched=[]
+            def read(name,args):
+                dispatched.append((name,args))
+                return dict(ok=True,result=dict(binding='aw-1:87',observedAt=len(dispatched),
+                    facts=('complete catalog mechanics '*600 if name=='session_catalog' else 'complete own observation '*300)))
+            client=DirectModel('local','fixture',server.base+'/v1')
+            client.generate('Current facts, not a historical freshness claim.',[dict(role='user',content=human)],None,
+                self.tools(*set(names)),read,natural=True,transcript_path=path,conversation_key='aw-1:87:chat:owner',
+                request_id='owner-one',read_only_tools=set(names))
+            original_raw=path.read_bytes();original=json.loads(original_raw)
+            raw_results=[row for row in original['messages'] if row['role']=='tool']
+            self.assertEqual(len(raw_results),109)
+            self.assertTrue(all('complete ' in row['content'] for row in raw_results))
+            self.assertNotIn('historicalRead',original_raw.decode())
+            # Computing the active view does not write or replace canonical bytes.
+            client._active_conversation(original['messages'],set(names),original['unknown'],original['pending'])
+            self.assertEqual(path.read_bytes(),original_raw)
+            recreated=DirectModel('local','fixture',server.base+'/v1')
+            recreated.generate('Fresh current system facts.',[dict(role='user',content='Keep the original intent.')],None,
+                self.tools(*set(names)),lambda *_:self.fail('History must not be redispatched'),natural=True,
+                transcript_path=path,conversation_key='aw-1:87:chat:owner',request_id='owner-two',read_only_tools=set(names))
+            active=server.requests[-1]['body']['messages']
+            self.assertEqual(active[0],dict(role='system',content='Fresh current system facts.'))
+            self.assertEqual(active[1],dict(role='user',content=human))
+            self.assertEqual(active[-1],dict(role='user',content='Keep the original intent.'))
+            calls=[call['id'] for row in active for call in row.get('tool_calls',[])]
+            results=[row for row in active if row['role']=='tool']
+            self.assertEqual(calls,[row['tool_call_id'] for row in results])
+            markers=[json.loads(row['content']) for row in results if json.loads(row['content']).get('historicalRead')]
+            self.assertEqual(len(markers),107)
+            for marker in markers:
+                old=original['messages'][marker['original']['transcriptMessage']]['content']
+                self.assertEqual(marker['resultSHA256'],hashlib.sha256(old.encode()).hexdigest())
+                latest=original['messages'][marker['supersededBy']['transcriptMessage']]
+                self.assertEqual(latest['tool_call_id'],marker['supersededBy']['toolCallId'])
+            kept=[json.loads(row['content'])['result']['observedAt'] for row in results
+                  if not json.loads(row['content']).get('historicalRead')]
+            self.assertEqual(kept,[39,109])
+            raw_size=len(json.dumps(original['messages'],ensure_ascii=False).encode())
+            self.assertLess(len(json.dumps(active,ensure_ascii=False).encode()),raw_size/3)
+            final=json.loads(path.read_text())
+            self.assertEqual(final['messages'][:len(original['messages'])],original['messages'])
+            self.assertEqual(final['seen']['owner-one'],original['seen']['owner-one'])
+            self.assertEqual(dispatched,[(name,dict(key='same-bound-query')) for name in names])
+            self.assertEqual(recreated.last_receipt['httpRequests'],1)
+            self.assertEqual(recreated.last_receipt['contextProjection']['supersededReadResults'],107)
+
+    def test_mutations_and_unresolved_read_custody_remain_verbatim(self):
+        sequence=[('write','mutate','action'),('old','observe','ordinary'),('pending','observe','pending'),
+                  ('fresh','observe','ordinary'),('settled','observe','pending')]
+        large='retained raw facts '*500
+        with tempfile.TemporaryDirectory() as folder,FakeHTTP([
+                *[chat((identity,name,dict(key=key))) for identity,name,key in sequence],self.text(),self.text()]) as server:
+            path=Path(folder)/'conversation.json'
+            def dispatch(name,args):
+                if name=='mutate':return dict(transportWritten=True,gameEffectClaimed=False,receipt=large)
+                if args['key']=='pending' and not getattr(self,'pending_read',False):
+                    self.pending_read=True
+                    return dict(ok=True,result=dict(pendingActionIds=['issued-once'],raw=large))
+                return dict(ok=True,result=dict(raw=large))
+            kwargs=dict(natural=True,transcript_path=path,conversation_key='same-body',read_only_tools={'observe'})
+            client=DirectModel('local','fixture',server.base+'/v1')
+            client.generate('Facts.',[dict(role='user',content='One explicit action.')],None,
+                self.tools('observe','mutate'),dispatch,request_id='first',**kwargs)
+            original=json.loads(path.read_text())
+            fresh=DirectModel('local','fixture',server.base+'/v1')
+            fresh.generate('New facts.',[dict(role='user',content='Inspect the receipts.')],None,
+                self.tools('observe','mutate'),lambda *_:self.fail('No action replay'),request_id='second',**kwargs)
+            results={row['tool_call_id']:row['content'] for row in server.requests[-1]['body']['messages'] if row['role']=='tool'}
+            originals={row['tool_call_id']:row['content'] for row in original['messages'] if row['role']=='tool'}
+            self.assertEqual(results['write'],originals['write'])
+            self.assertEqual(results['pending'],originals['pending'])
+            self.assertTrue(json.loads(results['old'])['historicalRead'])
+            self.assertEqual(results['fresh'],originals['fresh'])
+            self.assertEqual(results['settled'],originals['settled'])
+            self.assertEqual(json.loads(path.read_text())['messages'][:len(original['messages'])],original['messages'])
+
+    def test_native_claude_and_gemini_pairs_and_opaque_parts_survive_projection(self):
+        for provider in ('claude','gemini'):
+            with self.subTest(provider=provider),tempfile.TemporaryDirectory() as folder:
+                def call(identifier):
+                    if provider=='claude':return dict(stop_reason='tool_use',content=[dict(type='tool_use',id=identifier,name='observe',input=dict(key='same'))])
+                    return dict(candidates=[dict(finishReason='STOP',content=dict(role='model',parts=[
+                        dict(functionCall=dict(id=identifier,name='observe',args=dict(key='same')),thoughtSignature='opaque-'+identifier)]))])
+                final=(dict(stop_reason='end_turn',content=[dict(type='text',text='Observed.')]) if provider=='claude' else
+                       dict(candidates=[dict(finishReason='STOP',content=dict(role='model',parts=[dict(text='Observed.')]))]))
+                with FakeHTTP([call('first'),call('latest'),final]) as server,patch.dict(os.environ,{'FIXTURE_KEY':'test-only'}):
+                    client=DirectModel(provider,'fixture',server.base+('/v1' if provider=='claude' else '/v1beta'),api_key_env='FIXTURE_KEY')
+                    path=Path(folder)/'conversation.json'
+                    client.generate('Facts.',[dict(role='user',content='Read twice.')],None,self.tools('observe'),
+                        lambda *_:dict(facts='full facts '*1000),natural=True,transcript_path=path,
+                        conversation_key='bound',request_id='owner',read_only_tools={'observe'})
+                    wire=server.requests[-1]['body']['messages' if provider=='claude' else 'contents']
+                    original=json.loads(path.read_text())['messages']
+                    if provider=='claude':
+                        first=json.loads(wire[2]['content'][0]['content'])
+                        self.assertEqual(wire[2]['content'][0]['tool_use_id'],'first')
+                        self.assertEqual(wire[4]['content'][0],original[4]['content'][0])
+                    else:
+                        first=wire[2]['parts'][0]['functionResponse']['response']
+                        self.assertEqual(wire[2]['parts'][0]['functionResponse']['id'],'first')
+                        self.assertEqual(wire[1]['parts'],original[1]['parts'])
+                        self.assertEqual(wire[3]['parts'][0]['thoughtSignature'],'opaque-latest')
+                        self.assertEqual(wire[4]['parts'],original[4]['parts'])
+                    self.assertTrue(first['historicalRead'])
+                    self.assertIn('full facts',json.dumps(original[2]))
+
+    def test_native_unconfirmed_read_phases_are_pinned_even_after_newer_read(self):
+        for phase in ('CANCEL_SENT','ACCEPT_SENT','waiting_server','outcome_unconfirmed'):
+            with self.subTest(phase=phase),FakeHTTP([
+                    chat(('old','observe',dict(key='native-state'))),
+                    chat(('latest','observe',dict(key='native-state'))),self.text()]) as server:
+                client=DirectModel('local','fixture',server.base+'/v1');count=[0]
+                def read(*_):
+                    count[0]+=1
+                    return dict(ok=True,result=dict(lastBuff=dict(phase=phase if count[0]==1 else 'completed'),
+                        raw='native action evidence '*500))
+                client.generate('Facts.',[dict(role='user',content='Inspect, without retrying.')],None,
+                    self.tools('observe'),read,natural=True,conversation_key='bound',read_only_tools={'observe'})
+                results=[row for row in server.requests[-1]['body']['messages'] if row['role']=='tool']
+                self.assertEqual(json.loads(results[0]['content'])['result']['lastBuff']['phase'],phase)
+                self.assertFalse(json.loads(results[0]['content']).get('historicalRead',False))
+                self.assertEqual(json.loads(results[1]['content'])['result']['lastBuff']['phase'],'completed')
+
+    def test_pending_unknown_distinct_queries_and_small_results_are_not_superseded(self):
+        client=DirectModel('local','fixture','http://127.0.0.1/v1');client.last_receipt={}
+        rows=[]
+        for identity,key,result in [('old','same',dict(facts='a'*2000)),('new','same',dict(facts='b'*2000)),
+                                    ('page','another-page',dict(facts='c'*2000)),('small','same',dict(ok=True))]:
+            rows.extend([chat((identity,'observe',dict(key=key)))['choices'][0]['message'],
+                         dict(role='tool',tool_call_id=identity,content=json.dumps(result))])
+        self.assertEqual(client._active_conversation(rows,{'observe'},{},dict(calls=['pending'])),rows)
+        fingerprint=hashlib.sha256(json.dumps(['observe',dict(key='same')],separators=(',',':')).encode()).hexdigest()
+        self.assertEqual(client._active_conversation(rows,{'observe'},{fingerprint:dict(outcomeUnknown=True)},None),rows)
+        active=client._active_conversation(rows,{'observe'},{},None)
+        self.assertEqual(active[5],rows[5]) # Another query remains available verbatim.
+        self.assertEqual(active[-1],rows[-1]) # Latest small response is not inflated.
+        self.assertTrue(json.loads(active[1]['content'])['historicalRead'])
+
+    def test_provider_http_failures_retain_safe_reason_and_status_without_raw_dump(self):
+        cases=[(dict(error={},code='context_size_exceeded',reason='failed to find free space in KV cache'),
+                dict(code='context_size_exceeded',reason='failed to find free space in KV cache')),
+               (dict(error='Context size exceeded'),dict(message='Context size exceeded')),
+               (dict(error={}),dict(reason='empty_error_object')),
+               (dict(detail='No available slot; authorization=private-token'),dict(message='No available slot; authorization=[redacted]')),
+               (b'<html>Bearer private-token</html>',dict(reason='non_json_error_response',responseBytes=33))]
+        for value,expected in cases:
+            with self.subTest(value=value),FakeHTTP([(400,value)]) as server:
+                client=DirectModel('local','fixture',server.base+'/v1')
+                with self.assertRaises(ModelError) as caught:
+                    client.generate('Do not echo this private prompt.',[dict(role='user',content='Original user message.')],None,
+                        [],lambda *_:self.fail('HTTP failure must not dispatch'),natural=True,conversation_key='owner')
+                self.assertEqual(caught.exception.reason,'provider_http_error')
+                self.assertEqual(caught.exception.receipt['httpStatus'],400)
+                self.assertEqual(caught.exception.receipt['providerError'],expected)
+                self.assertEqual(caught.exception.receipt['toolCalls'],0)
+                self.assertEqual(len(server.requests),1)
+                self.assertNotIn('private-token',json.dumps(caught.exception.receipt))
+                self.assertNotIn('private prompt',json.dumps(caught.exception.receipt))
 
 
 if __name__=="__main__":unittest.main()

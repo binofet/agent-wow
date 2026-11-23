@@ -127,8 +127,8 @@ def _provider_error(value):
             item = source.get(key)
             if key not in result and (isinstance(item, str) or type(item) is int and abs(item) < 2**53):
                 result[key] = _safe(item, 384 if key in ("message", "reason") else 128) if isinstance(item, str) else item
-    if not result and isinstance(nested, str): result["message"] = _safe(nested)
-    if not result and isinstance(value, dict) and isinstance(value.get("detail"), str):
+    if "message" not in result and isinstance(nested, str): result["message"] = _safe(nested)
+    if "message" not in result and isinstance(value, dict) and isinstance(value.get("detail"), str):
         result["message"] = _safe(value["detail"])
     return result or dict(reason="empty_error_object" if nested == {} else "provider_error_without_detail")
 
@@ -140,9 +140,13 @@ def _read_custody(value):
     if value.get("ok") is False or value.get("outcomeUnknown") is True or value.get("replayAllowed") is False:
         return True
     for key, item in value.items():
-        if isinstance(key, str) and (key.startswith("pending") or key in ("unknownReceipt", "unknownReceipts")) and item:
+        name = key.lower() if isinstance(key, str) else ""
+        if (name.startswith("pending") or name.endswith(("pending", "unconfirmed")) or
+                name in ("unknownreceipt", "unknownreceipts", "unknownactions", "reservations", "custody")) and item:
             return True
-        if key in ("phase", "outcome") and item in ("entered", "reserved", "unknown", "unconfirmed", "attempted"):
+        if name in ("phase", "status", "outcome") and isinstance(item, str) and (
+                re.search(r"unknown|unconfirmed|(?:^|_)(?:pending|issued|reserved|offered|entered|attempted|waiting)(?:_|$)", item, re.I)
+                or item.upper() in ("REQUESTED", "INVITED", "OPENING", "OPEN", "ACCEPT_SENT", "CANCEL_SENT")):
             return True
         if _read_custody(item): return True
     return False
