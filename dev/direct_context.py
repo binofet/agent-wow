@@ -47,6 +47,7 @@ CONTROL_RECORDS = {"position", "recovery", "lastSpellOperation", "lastMeleeOpera
     "bodyMovement", "targetMovement", "movementOwner", "lastTransportFailure", "lastFollowPolicyFailure",
     "crowdControl", "engageNpc"}
 STATUS_KEYS = {"phase", "status", "outcome"}
+NONTERMINAL_TRADE = {"REQUESTED", "INVITED", "OPENING", "OPEN", "ACCEPT_SENT", "CANCEL_SENT"}
 CUSTODY_KEYS = {"pending", "pendingactions", "pendingtools", "reservations", "custody",
     "unknownreceipt", "unknownactions", "outcomeunknown", "castpending", "motionunconfirmed",
     "autoattackunconfirmed", "cleanupunconfirmed", "exitunconfirmed", "transportunconfirmed"}
@@ -59,12 +60,15 @@ def _custody(value, path=()):
         unsettled = any(key in STATUS_KEYS and isinstance(item, str) and
             re.search(r"unknown|unconfirmed|(?:^|_)(?:pending|issued|reserved|offered)(?:_|$)", item, re.I)
             for key, item in value.items())
+        if path == ("trade",) and value.get("phase") in NONTERMINAL_TRADE:
+            unsettled = True
         if unsettled:
             return [dict(path=list(path), value=copy.deepcopy(value))]
         for key, item in value.items():
             name = key.lower()
             if (item is not None and item is not False and item != 0 and item != [] and item != {} and
-                    (name in CUSTODY_KEYS or name.endswith("pending") or name.endswith("unconfirmed"))):
+                    (name in CUSTODY_KEYS or name.startswith("pending") or name.endswith("pending")
+                     or name.endswith("unconfirmed"))):
                 found.append(dict(path=[*path, key], value=copy.deepcopy(item)))
             else:
                 found.extend(_custody(item, (*path, key)))
@@ -75,7 +79,11 @@ def _custody(value, path=()):
 
 
 def project_context(state, max_bytes=CONTEXT_BYTES):
-    original = len(encode(state))
+    raw = encode(state)
+    original = len(raw)
+    # A typed request may carry host-only bound callbacks as attributes. Copy
+    # only its JSON-visible mapping values; authority stays on the original.
+    state = json.loads(raw)
     if original <= max_bytes:
         return copy.deepcopy(state), dict(fullContextBytes=original, contextBytes=original,
                                           contextOmittedPaths=0)

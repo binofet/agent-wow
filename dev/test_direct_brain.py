@@ -110,6 +110,38 @@ class PublicRPC:
 
 
 class DirectBrainIntegrationTests(unittest.TestCase):
+    def test_nonterminal_trade_and_pending_prefix_remain_exact_in_large_initial_view(self):
+        from direct_context import CONTEXT_BYTES, encode, project_context
+        for phase in ("CANCEL_SENT", "ACCEPT_SENT", "OPENING", "REQUESTED", "INVITED", "OPEN"):
+            with self.subTest(phase=phase):
+                trade = dict(sessionId="aw-current", phase=phase, partnerGuid="8", pendingCancel=True,
+                             ownRequestedItems=[dict(itemGuid=str(index), count=20) for index in range(60)])
+                state = dict(character=dict(guid="4"), current_request=dict(source="owner", senderGuid="3"),
+                    trade=trade, professions=dict(pendingCancel=dict(operationId="exact-old-operation", sent=True)),
+                    observations=dict(nearbyCreatures=[dict(raw="bulk-facts "*80) for _ in range(80)]))
+                projected, _ = project_context(state)
+                self.assertLessEqual(len(encode(projected)), CONTEXT_BYTES)
+                custody = projected["currentUnresolvedCustody"]
+                self.assertIn(dict(path=["trade"], value=trade), custody)
+                self.assertIn(dict(path=["professions", "pendingCancel"],
+                                   value=state["professions"]["pendingCancel"]), custody)
+
+    def test_typed_request_mapping_is_projected_without_copying_host_callback_attributes(self):
+        from direct_context import project_context
+        class Request(dict):
+            def __deepcopy__(self, memo):
+                raise AssertionError("Host callback objects must not be deep-copied")
+        request = Request(source="owner", senderGuid="3", commission=dict(goalId="original"))
+        request.host_callback = object()
+        for bulk in (False, True):
+            with self.subTest(bulk=bulk):
+                state = dict(character=dict(guid="4"), current_request=request)
+                if bulk: state["spell_toolkit"] = dict(spells=[dict(raw="fact"*1000) for _ in range(20)])
+                projected, _ = project_context(state)
+                self.assertEqual(projected["current_request"], dict(request))
+                self.assertIs(state["current_request"], request)
+                self.assertTrue(hasattr(request, "host_callback"))
+
     def test_large_initial_facts_are_bounded_without_clipping_authority_party_or_unknown(self):
         from direct_context import CONTEXT_BYTES, encode, project_context
         people = [dict(guid=str(guid), present=True, aliveKnown=True, alive=guid != 5,
