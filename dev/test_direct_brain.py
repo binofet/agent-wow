@@ -168,8 +168,9 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                 return dict(transportWritten=True, completion="effect_not_yet_verified", gameEffectClaimed=False)
             self.assertEqual(name, "gm_inspect")
             return dict(gameEffectClaimed=False, clients=[dict(guid="87", identityMatches=True, group=state["party"],
-                observations=dict(nearbyPlayers=[dict(guid="1", present=True, aliveKnown=True, alive=True)],
-                    owner=dict(guid="3", present=False, aliveKnown=False, positionKnown=False)))])
+                observations=dict(world=dict(nearbyPlayers=[dict(guid="1", present=True, aliveKnown=True, alive=True)],
+                    owner=dict(guid="3", present=False, aliveKnown=False, positionKnown=False)),
+                    actions=dict(position=dict(known=True, mapKnown=True)), party=dict(group=state["party"])))])
         def feedback(tools, args):
             self.assertEqual(args, dict(after_sequence="10", limit=20))
             return dict(sessionId=rpc.chat, latestSequence="11", nextSequence="11", messages=[dict(
@@ -190,7 +191,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             rows = [json.loads(m["content"])["result"] for m in final if m["role"] == "tool"]
             self.assertEqual(len(rows), 4); self.assertEqual(rows[0]["completion"], "effect_not_yet_verified")
             self.assertEqual(rows[1]["messages"][0]["channel"], "CHANNEL_UNSPECIFIED")
-            self.assertFalse(rows[-1]["clients"][0]["observations"]["owner"]["aliveKnown"])
+            self.assertFalse(rows[-1]["clients"][0]["observations"]["world"]["owner"]["aliveKnown"])
             self.assertEqual(sum(m["role"] == "system" for m in final), 1)
             self.assertIn("Later source-verified or actually observed corrections", final[0]["content"])
             self.assertFalse(rpc.commands or rpc.replies)
