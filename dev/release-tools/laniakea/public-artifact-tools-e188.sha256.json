@@ -1,0 +1,69 @@
+{
+  "archive": "public-artifact-tools-e188.tar.gz",
+  "bytes": 28605,
+  "sha256": "a74a58edccfa719ae7e69ee0a476af748fcac406ada37fcc972bd1b6ab83dfbf",
+  "sourceCommit": "e1881031b5f12052bbddccad4caf7fc48b40cc89",
+  "sourceTree": "310de6471375ccb7ef8d2de5d04ea1afd51ebfb2",
+  "packageManifestSHA256": "5cd8c928fb66db9dd0626ab1383ea43b242fc3ad73344d7003ee1497a9c8c0cf",
+  "files": {
+    "README.json": {
+      "bytes": 3893,
+      "sha256": "0f0e4d8290f30d3606cbc9c094f97fb4aa824aee31319f7961b781a2561e5a67"
+    },
+    "artifact_qualification_test.go": {
+      "bytes": 31437,
+      "sha256": "fbebe80d9aa5df6f0a156dcc59990d030540e35112569391ded1d1d1255e144e"
+    },
+    "input.plan.example.json": {
+      "bytes": 3629,
+      "sha256": "cfe2e6485e68bdbc51c96e01b7768fa1666189ac26b767396c644589c25e2eb8"
+    },
+    "overlay.example.json": {
+      "bytes": 240,
+      "sha256": "e25b19b5f9f1614c9a093a48c35067c73fdb7b63253a4c83803ce4359fc808d2"
+    },
+    "phase1-e188/build-public.sh": {
+      "bytes": 345,
+      "sha256": "02d96d39b5b78339d8358f59d54a33ae45a861fb44dcb323a5d27a8d242c765c"
+    },
+    "phase1-e188/freeze.json": {
+      "bytes": 2850,
+      "sha256": "07106724ba1dd18638bf8205140af8570ee3f3222af59d9ee797d35a676a1957"
+    },
+    "phase1-e188/prepare_overlay.py": {
+      "bytes": 7090,
+      "sha256": "725c8758f10aac436ae469c37d3eeebd6c919251cfa8fa688e33db0f0374b193"
+    },
+    "phase1-e188/public-build-once.sh": {
+      "bytes": 8119,
+      "sha256": "fcbf8341778b0d2b810747815707df2a1c3f9b210620cd7db563895f63f2283f"
+    },
+    "phase1-e188/source-handoff.json": {
+      "bytes": 460,
+      "sha256": "485953df8b5c26eea7a300bcbfbf1228a2825888392d787ba918f022580a6d2b"
+    },
+    "plan.json": {
+      "bytes": 10556,
+      "sha256": "69d88f24d6e8b78db8c41f35593eb5719c689202f83fdc951e305c4f74bb843e"
+    },
+    "prepare_image_inputs.py": {
+      "bytes": 10838,
+      "sha256": "695fde9115dd0d6e29e909fae773c582a1738004a8cd380207bdc359e5292a01"
+    },
+    "prepare_overlay.py": {
+      "bytes": 7090,
+      "sha256": "725c8758f10aac436ae469c37d3eeebd6c919251cfa8fa688e33db0f0374b193"
+    },
+    "source-receipt.json": {
+      "bytes": 3333,
+      "sha256": "51ff87f5a43ab4860666e6cbc878181c3916be887f190974907586f54ea2e310"
+    },
+    "package-manifest.json": {
+      "bytes": 2220,
+      "sha256": "5cd8c928fb66db9dd0626ab1383ea43b242fc3ad73344d7003ee1497a9c8c0cf"
+    }
+  },
+  "qualification": "Public helper source package only; unexecuted. Prior whole-source clear; association/hash delta independently reviewed separately.",
+  "privatePayloadIncluded": false,
+  "runtimeReady": false
+}
