@@ -67,7 +67,7 @@ func TestPolicyResurrectionObservedLifeSettlesUnknownLedgerBeforeNewDeath(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.recordPolicyEffect(token, body, false)
+	manager.recordPolicyEffect(actionsModule, token, body, false)
 	if err = vm.Drain(ctx); err != nil || vm.Status().Pending != 0 {
 		t.Fatal("positive life left the attached VM pending forever", vm.Status(), err)
 	}
