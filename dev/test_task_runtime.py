@@ -1,6 +1,7 @@
 """Typed-bridge/RPC fakes and private temporary ledgers; no game calls."""
 import copy
 import concurrent.futures
+import hashlib
 import importlib.machinery
 import importlib.util
 import io
@@ -8,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -53,6 +55,63 @@ class FakeRPC:
         if method == 'buddy-actions.status': return dict(sessionId=self.sid, selfGuid=self.guid)
         if method == 'vendor.buy': self.count += 1; return dict(accepted=True, receipt='owned-1')
         return dict(count=self.count, items=[dict(entry=4498, private='omit')], private='not selected')
+
+
+class FlightpathBundleTests(unittest.TestCase):
+    def bundle(self, *args):
+        return subprocess.run([sys.executable, '-B', str(m.ROOT / 'dev/flightpath-bundle'), *args],
+                              capture_output=True, check=True).stdout.decode('utf-8')
+
+    def test_both_public_modes_match_the_qualified_composition(self):
+        behaviors = m.ROOT / 'behaviors'
+        tasks = 'local tasks=(function()\n' + (behaviors / 'task-stack.lua').read_text() + '\nend)()\n'
+        planner = 'local planner=(function()\n' + (behaviors / 'flightpath-plan.lua').read_text() + '\nend)()\n'
+        child = (behaviors / 'flightpath-activation.lua').read_text()
+        self.assertEqual(self.bundle(), tasks + planner + child)
+        self.assertEqual(self.bundle('--task-runtime'), planner + child)
+
+    def test_missing_child_emits_no_partial_module(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'dev').mkdir(); (root / 'behaviors').mkdir()
+            helper = root / 'dev/flightpath-bundle'
+            helper.write_bytes((m.ROOT / 'dev/flightpath-bundle').read_bytes())
+            for name in ('task-stack.lua', 'flightpath-plan.lua'):
+                (root / 'behaviors' / name).write_text('return {}')
+            result = subprocess.run([sys.executable, '-B', str(helper)], capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, b'')
+            self.assertIn(b'flightpath-activation.lua', result.stderr)
+
+    @unittest.skipUnless(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY'), 'compiled local typed bridge not requested')
+    def test_real_runtime_prefix_exports_child_and_retains_unknown_memory(self):
+        bridge = m.Bridge(os.environ['BUDDY_LUAPOLICY_TEST_BINARY'], m.ROOT / 'modules')
+        rpc = FakeRPC()
+        goal = dict(id='flight', kind='flightpath_activation', params={}, observations={},
+                    allow=['buddy-actions.status'])
+        waiting = dict(id='flight:7', method='buddy-actions.activate_flightpath')
+        memory = dict(serial=7, stack=[dict(kind='flightpath_activation', waiting=waiting,
+                                          stage='observe', parentToken='parent-owned')])
+        value = dict(goal=goal, body=dict(sessionId='aw-test', selfGuid='87'), now=1,
+                     observations={}, memory=memory,
+                     pending=[dict(waiting, effect='mutation', outcome='pending')])
+        original = copy.deepcopy(value)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            source = root / 'child.lua'
+            source.write_text(self.bundle('--task-runtime'))
+            with m.Store(root / 'state') as store:
+                runner = m.Runner(store, bridge, rpc, 87, 'aw-test', goal, source,
+                                  m.ROOT / 'behaviors/task-stack.lua')
+                result = runner.evaluate(value)
+                self.assertEqual(runner.data['goodRevision'], hashlib.sha256(self.bundle().encode()).hexdigest())
+                self.assertEqual(result, bridge.evaluate(self.bundle(), value))
+        self.assertEqual(result['phase'], 'blocked_on_ambiguous_call')
+        self.assertEqual(result['memory'], memory)
+        self.assertFalse(result['done'])
+        self.assertNotIn('action', result)
+        self.assertEqual(value, original)
+        self.assertEqual(rpc.calls, [])
 
 
 class BridgeDiagnosticsTests(unittest.TestCase):
