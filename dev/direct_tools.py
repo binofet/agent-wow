@@ -579,7 +579,7 @@ class DirectTools:
         self._authorise_gm()
         command = args.get("command")
         require(isinstance(command, str) and re.fullmatch(r"\.[A-Za-z][ -~]{0,253}", command)
-                and command == command.rstrip() and "|" not in command, "one_native_gm_command_required")
+                and command == command.rstrip(), "one_native_gm_command_required")
         selected = args.get("select_guid")
         require(selected is None or isinstance(selected, str) and re.fullmatch(r"0|[1-9][0-9]{0,19}", selected)
                 and int(selected) < 2**64, "exact_selection_guid_required")
@@ -612,16 +612,19 @@ class DirectTools:
                 self._catalog()
                 self._authorise_gm()
                 entered = True
+            result=None
             try:
                 result = gm.execute_command(self.rpc, config, command, self.root,
                     select_guid=selected, expected_session=self.session_id, before_send=before_send,
                     feedback_reader=self._chat_read)
+                if not result.get("commandTransportWritten"):
+                    self._authorise_gm()
                 self._catalog()
                 result = dict(result, operationId=operation_id, commandSHA256=digest, gameEffectClaimed=False)
                 store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url), result=result))
             except Exception as error:
                 if entered:
-                    transport = getattr(error,"gm_receipt",{})
+                    transport = getattr(error,"gm_receipt",None) or result or {}
                     details = {key:transport[key] for key in ("selectionTransportWritten","commandTransportWritten",
                         "selectionOutcomeUnknown","commandOutcomeUnknown") if key in transport}
                     self._unknown("gm_execute", dict(stateDir=str(folder), commandSHA256=digest,
@@ -764,7 +767,7 @@ class DirectTools:
                 specs += [("gm_task_start", "Start the whole commissioned GM recovery/regroup using the existing ordered Lua task. Goal uses current observed roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": obj}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),
                           ("gm_task_resume", "Resume only gm_current_task's same stored goal/invocation and receipts. Runner started is not a GM effect; no new task or replay of uncertain actions.", {"task_id": string}, ["task_id"]),
-                          ("gm_execute", "Send one native dot command through this exact GM session. Optional select_guid must be locally observed; zero clears UI selection. A command is sent only when that selection is actually observed. If selection was written but not observed, no command is queued: inspect facts before a fresh tool invocation. Each actual tool call has its own host operation identity; exact-operation receipt/unknown is never replayed. Returns a fresh Chat baseline/window within the same writer, with explicit no-reply/cursor loss/read failure; SYSTEM text is temporal evidence, never target/effect proof. Active task writers still block competing commands; realm permissions apply. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]
+                          ("gm_execute", "Send one native dot command through this exact GM session. Optional select_guid binds the observed server target GUID; zero clears UI selection. Local visibility/resolution is reported separately because command families resolve selected units differently. A command is sent only when that target GUID is actually observed at the final packet boundary. If selection was written but not observed, no command is queued: inspect facts before a fresh tool invocation. Each actual tool call has its own host operation identity; exact-operation receipt/unknown is never replayed. Returns a fresh Chat baseline/window within the same writer, with explicit no-reply/cursor loss/read failure; SYSTEM text is temporal evidence, never target/effect proof. Active task writers still block competing commands; realm permissions apply. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]
         if self.self_guid == "87":
             specs += [("gm_inspect", "Read fresh configured public GM/companion clients in parallel: their own life, pose, session and group, including offscreen companions. No caller URL, game write or task. JSON path/offset/limit pages large facts.", paging, []),
                       ("gm_current_task", "Discover only this GM session's maintained active writer-owned task and actual retained status. No caller path, new task or execution. Page large observations/memory with JSON path/offset/limit.", paging, []),
