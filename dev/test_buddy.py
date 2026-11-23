@@ -859,6 +859,29 @@ class BuddyLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(buddy.BuddyError, "replaced"):
             buddy.readiness(record)
 
+    def test_old_boot_event_and_live_pid_do_not_claim_current_realm_readiness(self):
+        record = self.launch()
+        before = buddy.PID_FILE.read_bytes(), buddy.LOG_FILE.read_bytes()
+        self.output.seek(0); self.output.truncate()
+        self.assertEqual(buddy.status(), 0)
+        report = self.output.getvalue()
+        self.assertIn("Running: yes", report)
+        self.assertIn("Boot ready event: observed (historical)", report)
+        self.assertIn("Realm connection: unverified", report)
+        self.assertNotIn("Readiness:", report)
+        self.assertNotIn("PRIVATE_NEVER_PRINT", report)
+        self.assertEqual((buddy.PID_FILE.read_bytes(), buddy.LOG_FILE.read_bytes()), before)
+        self.assertTrue(buddy.running_owned(record))
+        self.stop_rpc.assert_not_called()
+        self.send_signal.assert_not_called()
+
+        self.alive = False
+        self.output.seek(0); self.output.truncate()
+        self.assertEqual(buddy.status(), 0)
+        self.assertIn("Running: no", self.output.getvalue())
+        self.assertIn("Boot ready event: observed (historical)", self.output.getvalue())
+        self.assertIn("Realm connection: unverified", self.output.getvalue())
+
     def test_ready_event_needs_exact_pid_character_and_url(self):
         line = (
             b'level=INFO msg="world session ready" event=ready pid=12345 '

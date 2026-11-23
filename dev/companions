@@ -335,8 +335,10 @@ def native_status(actor, runner):
     if re.search(r"^Running: (yes|no)$", result, re.M) is None:
         raise Error("Maintained buddy status shape is unrecognized")
     running = re.search(r"^Running: (yes|no)$", result, re.M).group(1) == "yes"
-    return dict(running=running,
-                ready=running and re.search(r"^Readiness: matching ready event observed$", result, re.M) is not None)
+    # Older maintained launchers use "Readiness" for this same boot-log fact.
+    observed = re.search(r"^(Boot ready event: observed \(historical\)|Readiness: matching ready event observed)$", result, re.M) is not None
+    return dict(running=running, readyEventObserved=observed,
+                launcherInitialized=running and observed, realmConnection="unverified")
 
 
 def chat_status(actor, runner):
@@ -349,6 +351,10 @@ def chat_status(actor, runner):
             identity.get("class") != actor["class"] or identity.get("owner_guid") != 3 or
             identity.get("rpc_url") != f"http://127.0.0.1:{actor['native_port']}/rpc"):
         raise Error("Existing listener identity is unconfirmed; left untouched")
+    updated, now = result.get("updated"), time.time()
+    result.update(phaseSource="saved_listener_status",
+                  statusAgeSeconds=now-updated if type(updated) in (int, float) and 0 <= updated <= now else None,
+                  chatDelivery="unverified", modelInference="unverified")
     return result
 
 
@@ -381,7 +387,11 @@ def native_identity(actor, expected_methods=()):
     if attached.get("sessionId") != sid or attached.get("characterGuid") != guid or attached.get("revision") != revision or not isinstance(policy, dict) or not re.fullmatch(r"[0-9a-f]{64}", str(policy.get("revision", ""))):
         raise Error("This body has no identity-bound attached Lua policy")
     return dict(sessionId=sid, characterGuid=guid, catalogRevision=revision, methods=sorted(observed),
-                policyRevision=policy["revision"], policyHealthy=policy.get("faulted") is not True)
+                policyRevision=policy["revision"], policyHealthy=policy.get("faulted") is not True,
+                rpcIdentityAvailable=True, rpcIdentityReadAtUnixMs=int(time.time()*1000),
+                identityEvidence="retained_world_party_and_attached_policy",
+                worldObservation={key:own[key] for key in ("guid", "present", "observationAgeMs", "positionAgeMs", "vitalsAgeMs") if key in own},
+                realmConnection="unverified")
 
 
 def selection_matches(status, model):
@@ -398,7 +408,7 @@ def wait_chat(actor, runner, running, sid=None, timeout=30):
                 and status.get("phase") in ("listening", "thinking")):
             return status
         if time.monotonic() >= deadline:
-            raise Error("Listener readiness/exit is unconfirmed; existing processes and journals were preserved")
+            raise Error("Listener initialization/exit is unconfirmed; existing processes and journals were preserved")
         time.sleep(0.2)
 
 
@@ -435,15 +445,23 @@ def operate(actor, action, runner=None):
                 raise Error("Selected model is not advertised by the configured endpoint; no fallback or native restart")
         native, chat = native_status(actor, runner), chat_status(actor, runner)
         if action == "status":
-            body = native_identity(actor, record.get("methods", ())) if native["ready"] else None
+            body, identity_error = None, None
+            if native["launcherInitialized"]:
+                try:
+                    body = native_identity(actor, record.get("methods", ()))
+                except Error as error:
+                    identity_error = str(error)
             return dict(actor=actor["id"], native=native, body=body, listener=chat,
+                        controlPlaneAttached=body is not None, identityReadError=identity_error,
+                        listenerInitialized=body is not None and chat["running"] and listener_bound(chat, actor, body["sessionId"]),
+                        realmConnection="unverified", chatDelivery="unverified", modelInference="unverified",
                         modelConfigMatches=selection_matches(chat, actor["model"]) if chat["running"] else False)
         if action in ("stop", "restart-chat"):
             previous_body = None
             chat_stopped = False
             if action == "restart-chat":
-                if not native["ready"]:
-                    raise Error("restart-chat requires the existing ready native body; it never reconnects one")
+                if not native["launcherInitialized"]:
+                    raise Error("restart-chat requires the existing initialized native process; it never reconnects one")
                 previous_body = native_identity(actor, record.get("methods", ()))
                 if chat["running"] and not listener_bound(chat, actor, previous_body["sessionId"]):
                     raise Error("Existing listener belongs to an older native session; left untouched")
@@ -457,20 +475,22 @@ def operate(actor, action, runner=None):
                 if native_status(actor, runner)["running"]:
                     raise Error("Native stop is unconfirmed; no force signal or replay")
                 save(phase="stopped")
-                return dict(actor=actor["id"], nativeReady=False, listenerReady=False, stopped=True,
+                return dict(actor=actor["id"], nativeProcessRunning=False, listenerProcessRunning=False,
+                            launcherInitialized=False, controlPlaneAttached=False, listenerInitialized=False,
+                            realmConnection="unverified", chatDelivery="unverified", modelInference="unverified", stopped=True,
                             logoutVerified="server logout completion and process exit verified" in stopped)
-            if not native["ready"]:
-                raise Error("restart-chat requires the existing ready native body; it never starts/reconnects one")
+            if not native["launcherInitialized"]:
+                raise Error("restart-chat requires the existing initialized native process; it never starts/reconnects one")
         if not native["running"]:
             if record.get("phase") in ("native_starting", "model_starting"):
                 raise Error("Previous launch outcome is unresolved; inspect maintained status/logs before a new start")
             if chat["running"]:
-                raise Error("A listener already owns this body without a ready native; left untouched")
+                raise Error("A listener already owns this body without an initialized native process; left untouched")
             save(phase="native_starting", operation=uuid.uuid4().hex)
             runner.run(with_command(planned["native"], "start"), actor, actor["native_env"])
             native = native_status(actor, runner)
-        if not native["ready"]:
-            raise Error("Native is running without verified readiness; no restart or model launch")
+        if not native["launcherInitialized"]:
+            raise Error("Native is running without a matching boot ready event; no restart or model launch")
         body = native_identity(actor, record.get("methods", ()))
         if action == "restart-chat" and body["sessionId"] != previous_body["sessionId"]:
             raise Error("Native session changed during chat stop; no new listener or native restart")
@@ -493,7 +513,9 @@ def operate(actor, action, runner=None):
         if final["sessionId"] != body["sessionId"]:
             raise Error("Native body changed during listener startup; no retry or gameplay action")
         save(phase="running", sessionId=body["sessionId"], methods=body["methods"], model=actor["model"])
-        return dict(actor=actor["id"], nativeReady=True, listenerReady=True, body=final,
+        return dict(actor=actor["id"], nativeProcessRunning=True, listenerProcessRunning=True,
+                    launcherInitialized=True, controlPlaneAttached=True, listenerInitialized=True, body=final,
+                    realmConnection="unverified", chatDelivery="unverified", modelInference="unverified",
                     modelAvailable=available.get("advertised"), inferenceVerified=False)
 
 
