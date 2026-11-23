@@ -170,14 +170,16 @@ class DirectModelTests(unittest.TestCase):
         final=dict(choices=[dict(finish_reason='stop',message=dict(role='assistant',content='Fresh observation received.'))])
         with tempfile.TemporaryDirectory() as directory, FakeHTTP([
                 chat(('first-read','observe',dict(what='self'))),
-                chat(('fresh-read','observe',dict(what='self'))),final]) as server:
+                final,chat(('fresh-read','observe',dict(what='self'))),final]) as server:
             path=Path(directory)/'conversation.json'
             old=DirectModel('local','fixture',server.base+'/v1')
             calls=[]
             def interrupted_read(*_): calls.append('old');raise TimeoutError('read response lost')
-            with self.assertRaisesRegex(ModelError,'tool_outcome_unknown'):
-                self.generate(old,interrupted_read,natural=True,transcript_path=path,conversation_key='owner',
-                              request_id='old',read_only_tools={'observe'})
+            self.generate(old,interrupted_read,natural=True,transcript_path=path,conversation_key='owner',
+                          request_id='old',read_only_tools={'observe'})
+            failed=json.loads(server.requests[1]['body']['messages'][-1]['content'])
+            self.assertTrue(failed['readOnly']);self.assertTrue(failed['refreshAllowed'])
+            self.assertNotIn('outcomeUnknown',failed);self.assertNotIn('replayAllowed',failed)
             new=DirectModel('local','fixture',server.base+'/v1')
             def fresh_read(*_): calls.append('fresh');return dict(observedAt='new-observation')
             result=self.generate(new,fresh_read,natural=True,transcript_path=path,conversation_key='owner',

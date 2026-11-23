@@ -462,8 +462,11 @@ class DirectModel:
                         call = row["call"]
                         result = row.get("result")
                         if result is None:
-                            result = dict(ok=False, outcomeUnknown=row["phase"]=="entered", replayAllowed=False,
-                                          reason="interrupted_tool_exchange" if row["phase"]=="entered" else "not_dispatched")
+                            if row.get("readOnly", False):
+                                result = dict(ok=False, readOnly=True, refreshAllowed=True, reason="read_interrupted")
+                            else:
+                                result = dict(ok=False, outcomeUnknown=row["phase"]=="entered", replayAllowed=False,
+                                              reason="interrupted_tool_exchange" if row["phase"]=="entered" else "not_dispatched")
                         if isinstance(result, dict) and result.get("outcomeUnknown") is True and not row.get("readOnly", False):
                             state["unknown"][call["fingerprint"]] = copy.deepcopy(result)
                         recovered.append((call, result))
@@ -542,12 +545,15 @@ class DirectModel:
                                 returned = dispatch(call["name"], copy.deepcopy(call["arguments"]))
                                 _packed(returned, self.max_request_bytes)
                             except BaseException as error:
-                                row["result"] = dict(ok=False, outcomeUnknown=True, replayAllowed=False,
-                                    reason="tool_outcome_unknown", receipt=copy.deepcopy(getattr(error, "receipt", {})))
-                                if not row["readOnly"]:
+                                if row["readOnly"]:
+                                    returned = dict(ok=False, readOnly=True, refreshAllowed=True,
+                                        reason="read_failed", errorType=type(error).__name__)
+                                else:
+                                    row["result"] = dict(ok=False, outcomeUnknown=True, replayAllowed=False,
+                                        reason="tool_outcome_unknown", receipt=copy.deepcopy(getattr(error, "receipt", {})))
                                     state["unknown"][fingerprint] = copy.deepcopy(row["result"])
-                                journal.save()
-                                raise ModelError("tool_outcome_unknown") from error
+                                    journal.save()
+                                    raise ModelError("tool_outcome_unknown") from error
                         row["phase"], row["result"] = "returned", copy.deepcopy(returned)
                         seen[call["id"]] = [fingerprint, copy.deepcopy(returned)]
                         journal.save()
