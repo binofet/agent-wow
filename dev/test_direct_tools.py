@@ -1445,6 +1445,31 @@ class PartyInviteToolTests(unittest.TestCase):
         self.assertEqual(retained.exception.receipt['characterGuid'],'4')
         self.assertEqual(self.rpc.writes,[('buddy-party.invite',dict(name='Joel'))])
 
+    def test_owner_interrupt_after_ack_settles_durable_transport_without_reinvite(self):
+        receipt_root=self.root/'interrupted-receipts'
+        self.tools=self.make_tools(receipt_root=receipt_root)
+        def interrupt(method):
+            if method=='buddy-party.invite':
+                self.cancelled=True;self.owner=False
+        self.rpc.hook=interrupt
+        reply=self.invite()
+        self.assertTrue(reply['ok'],reply)
+        self.assertTrue(reply['result']['transportWritten'])
+        self.assertFalse(reply['result']['gameEffectClaimed'])
+        self.assertIsNone(self.tools.unknown_receipt)
+        receipts=list((receipt_root/'party-invites').glob('*/*/state.json'))
+        self.assertEqual(len(receipts),1)
+        stored=json.loads(receipts[0].read_text())
+        self.assertEqual(stored['result'],reply['result'])
+        self.assertNotIn('knownNotDispatched',stored)
+        self.rpc.hook=None;self.cancelled=False;self.owner=True
+        fresh=self.make_tools(receipt_root=receipt_root)
+        historical=fresh.dispatch('party_invite',dict(name='joel'))
+        self.assertTrue(historical['ok'],historical)
+        self.assertTrue(historical['result']['historicalReceipt'])
+        self.assertTrue(historical['result']['transportWritten'])
+        self.assertEqual(self.rpc.writes,[('buddy-party.invite',dict(name='Joel'))])
+
     def test_packet_ack_is_not_server_acceptance_and_membership_requires_its_own_observation(self):
         reply=self.invite()
         self.assertTrue(reply['ok'],reply);self.assertTrue(reply['result']['transportWritten'])

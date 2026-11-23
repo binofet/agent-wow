@@ -619,8 +619,8 @@ class DirectTools:
             self._unknown("policy_input", dict(valueSHA256=sha(value)), error)
         return dict(result=result, deliveryOnly=True, gameEffectClaimed=False)
 
-    def _party_invite_binding(self):
-        catalog = self._catalog()
+    def _party_invite_binding(self, *, settling_written=False):
+        catalog = self._catalog(settling_written=settling_written)
         methods = self._methods(catalog)
         prefix = 'buddy-party::warcraftbuddy.party.v1.'
         method = methods.get('buddy-party.invite', {})
@@ -642,7 +642,7 @@ class DirectTools:
                 state.get('path') == '/warcraftbuddy.party.v1.BuddyParty/State', 'canonical_party_state_required')
         party = self.rpc.call('buddy-party.state', {})
         require(isinstance(party, dict) and party.get('sessionId') == self.session_id, 'party_body_changed')
-        after = self._catalog()
+        after = self._catalog(settling_written=settling_written)
         require(after['revision'] == catalog['revision'] and
                 self._methods(after).get('buddy-party.invite') == method, 'catalog_changed_during_invite_binding')
         return after['revision']
@@ -692,7 +692,7 @@ class DirectTools:
                     result = self.rpc.call('buddy-party.invite',dict(name=name))
                     require(isinstance(result,dict) and result.get('transportWritten') is True,
                             'invite_transport_unconfirmed')
-                    require(self._party_invite_binding() == revision, 'catalog_changed_after_invite')
+                    require(self._party_invite_binding(settling_written=True) == revision, 'catalog_changed_after_invite')
                     result = dict(name=name,sessionId=self.session_id,characterGuid=self.self_guid,
                         transportWritten=True,completion='transport_written; server_result_and_membership_unverified',
                         gameEffectClaimed=False)
