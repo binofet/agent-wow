@@ -173,7 +173,7 @@ class DirectModel:
         if deadline is not None and time.monotonic() >= deadline:
             raise ModelError("timeout")
 
-    def _http(self, payload, cancelled, deadline):
+    def _http(self, payload, cancelled, deadline, progress=None):
         self._check(cancelled, deadline)
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.api_key_env:
@@ -187,6 +187,14 @@ class DirectModel:
             "/models/" + urllib.parse.quote(self.model, safe="") + ":generateContent" if self.provider == "gemini" else "/chat/completions")
         target = urllib.parse.urlsplit(self.base_url + suffix)
         body = _packed(payload, self.max_request_bytes)
+        index = self.last_receipt["httpRequests"] + 1
+        self.last_receipt.update(lastRequestBytes=len(body), requestIndex=index,
+            requestPreparedAtUnixMs=int(time.time()*1000), requestPhase="prepared")
+        if index == 1:
+            self.last_receipt["initialRequestBytes"] = len(body)
+        if progress is not None:
+            progress(copy.deepcopy(self.last_receipt))
+        self._check(cancelled, deadline)
         connection_type = http.client.HTTPSConnection if target.scheme == "https" else http.client.HTTPConnection
         remaining = None if deadline is None else max(.001, deadline-time.monotonic())
         connection = connection_type(target.hostname, target.port, timeout=remaining)
@@ -322,7 +330,7 @@ class DirectModel:
                 parts.append(dict(functionResponse=reply))
             conversation.append(dict(role="user",parts=parts))
 
-    def generate(self, system, messages, reply_schema, tools, dispatch, *, cancelled=None, request_id=None):
+    def generate(self, system, messages, reply_schema, tools, dispatch, *, cancelled=None, request_id=None, progress=None):
         identifier = request_id or uuid.uuid4().hex
         self.last_receipt = dict(requestId=identifier,execution="direct_api",provider=self.provider,
             requestedModel=self.model,baseURL=self.base_url,outcome="in_progress",httpRequests=0,
@@ -353,7 +361,7 @@ class DirectModel:
             seen = {}
             for index in range(self.max_tool_rounds):
                 self._check(cancelled, deadline)
-                value = self._http(self._payload(system,conversation,list(functions.values())),cancelled,deadline)
+                value = self._http(self._payload(system,conversation,list(functions.values())),cancelled,deadline,progress)
                 native, calls = self._parse(value,index)
                 if not calls or len(calls)>16:
                     raise ModelError("missing_or_unbounded_tool_calls")

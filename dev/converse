@@ -2672,7 +2672,8 @@ without observations. Keep final action NONE after performing a tool action.
         def api_metadata():
             raw = self.client.last_receipt or {}
             keys = ("requestId", "execution", "provider", "requestedModel", "providerReportedModel",
-                    "outcome", "reason", "httpRequests", "httpStatus", "toolCalls", "transportErrorType")
+                    "outcome", "reason", "httpRequests", "httpStatus", "toolCalls", "transportErrorType",
+                    "initialRequestBytes", "lastRequestBytes", "requestIndex", "requestPreparedAtUnixMs", "requestPhase")
             result = {key: raw[key] for key in keys if key in raw}
             if isinstance(raw.get("providerError"), dict): result["providerError"] = raw["providerError"]
             return result
@@ -2684,18 +2685,42 @@ without observations. Keep final action NONE after performing a tool action.
             except Exception: record["receiptStored"] = False
             callback = getattr(self, "_generation_progress", None)
             if callable(callback): callback(record)
+        def api_progress(_):
+            record["api"] = api_metadata()
+            publish()
         tools = None
         if developer:
             from direct_tools import DirectTools
-            tools = DirectTools(RPC(development["rpcUrl"]), development["sessionId"],
-                development["selfGuid"], self.developer_workspace, ROOT,
-                allowed=lambda: self.development_enabled(state) and not interrupted(),
-                cancelled=interrupted, request_id=self.last_request_id)
             prompt_state["shared_development"] = companion_role_context(self.character_name)
             prompt_state["shared_tasks"] = mission_runtime_context(integer(development["selfGuid"]),
                 development["sessionId"], development["rpcUrl"])
+        from direct_context import ContextLimitError, encode, project_context, project_history
+        from direct_tools import ToolError, context_page, context_tool_schema
+        self._generation["stage"] = "preparing"
+        try:
+            # JSON detachment retains values, never copies typed authority
+            # callback attributes into the read-only model snapshot.
+            full_context = json.loads(encode(prompt_state))
+            if "emote_catalog" in state:
+                full_context["emote_catalog"] = json.loads(encode(state["emote_catalog"]))
+            full_context["conversationHistory"] = json.loads(encode(history))
+            history_view, history_metrics = project_history(history)
+            if history_metrics["historyOmittedRows"]:
+                prompt_state["historyProjection"] = dict(omittedRows=history_metrics["historyOmittedRows"],
+                    fullStatePath=["conversationHistory"],
+                    note="Older conversation rows omitted; the latest request is preserved whole.")
+            prompt_state, context_metrics = project_context(prompt_state)
+        except ContextLimitError as error:
+            raise ConversationError(str(error)) from None
+        if developer:
+            tools = DirectTools(RPC(development["rpcUrl"]), development["sessionId"],
+                development["selfGuid"], self.developer_workspace, ROOT,
+                allowed=lambda: self.development_enabled(state) and not interrupted(),
+                cancelled=interrupted, request_id=self.last_request_id, context=full_context)
+        record["promptMetrics"] = dict(context_metrics, **history_metrics,
+            fullCapturedContextBytes=len(encode(full_context)))
         def dispatch(name, arguments):
-            if tools is None or interrupted():
+            if interrupted():
                 raise OwnerInputPending("Fresh owner input is waiting")
             serial[0] += 1
             if name in ("workspace_write", "workspace_patch", "policy_apply", "policy_input", "gm_task_start", "gm_task_cancel"):
@@ -2710,7 +2735,15 @@ without observations. Keep final action NONE after performing a tool action.
             record.update(childPhase="tool.dispatch", lastTool=row, actionOutcome="unknown")
             publish()  # Retain an entered/unknown operation before the callback.
             try:
-                result = tools.dispatch(name, arguments)
+                if tools is not None:
+                    result = tools.dispatch(name, arguments)
+                elif name == "context_read":
+                    try:
+                        result = dict(ok=True, result=context_page(full_context, **arguments))
+                    except ToolError as error:
+                        result = dict(ok=False, error=dict(outcome="not_dispatched", error=str(error)[:384]))
+                else:
+                    raise ConversationError("Tool unavailable for this request")
             except BaseException as error:
                 row["errorType"] = type(error).__name__
                 receipt = getattr(error, "receipt", None)
@@ -2731,14 +2764,19 @@ without observations. Keep final action NONE after performing a tool action.
             return result
         self._generation["stage"] = "api_request"
         try:
+            system = ((self.developer_persona if developer else self.persona)
+                      + (self.gm_instructions if allow_gm else ""))
+            messages = [{"role":"user", "content":"Current observations and control state JSON:\n"
+                + encode(prompt_state).decode("utf-8")
+                + "\nConversation JSON:\n" + encode(history_view).decode("utf-8")}]
+            schemas = tools.tool_schemas() if tools is not None else [context_tool_schema()]
+            record["promptMetrics"].update(systemBytes=len(system.encode("utf-8")),
+                messagesBytes=len(encode(messages)), toolSchemaBytes=len(encode(schemas)))
+            record["requestPreparedAtUnixMs"] = int(time.time()*1000)
+            publish()  # Prepared bytes/phase only; no HTTP write or effect inferred.
             value = self.client.generate(
-                (self.developer_persona if developer else self.persona)
-                    + (self.gm_instructions if allow_gm else ""),
-                [{"role":"user", "content":"Current observations and control state JSON:\n"
-                    + json.dumps(prompt_state, ensure_ascii=False)
-                    + "\nConversation JSON:\n" + json.dumps(history, ensure_ascii=False)}],
-                schema, tools.tool_schemas() if tools is not None else [], dispatch,
-                cancelled=interrupted, request_id=self.last_request_id)
+                system, messages, schema, schemas, dispatch,
+                cancelled=interrupted, request_id=self.last_request_id, progress=api_progress)
             if interrupted():
                 raise OwnerInputPending("Fresh owner input is waiting")
             if mutation_entered[0] and (value.get("action", "NONE") != "NONE" or value.get("gm_command")):

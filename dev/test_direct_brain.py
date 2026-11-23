@@ -110,6 +110,132 @@ class PublicRPC:
 
 
 class DirectBrainIntegrationTests(unittest.TestCase):
+    def test_large_initial_facts_are_bounded_without_clipping_authority_party_or_unknown(self):
+        from direct_context import CONTEXT_BYTES, encode, project_context
+        people = [dict(guid=str(guid), present=True, aliveKnown=True, alive=guid != 5,
+            healthKnown=True, health=300+guid, maxHealth=900, powerKnown=True, power=100,
+            maxPower=700, unitFlagsKnown=True, unitFlags=0x80000 if guid == 5 else 0,
+            mapKnown=True, mapId=349, positionKnown=True, x=guid, y=-220, z=-79,
+            positionAgeMs="9007199254740993", vitalsAgeMs="37", observationAgeMs="99",
+            positionInferred=False) for guid in (1, 3, 4, 5, 8)]
+        state = dict(character=dict(guid="4", name="Mira", **{"class":"mage"}),
+            current_request=dict(source="owner", senderGuid="3", controls_allowed=True,
+                                 commission=dict(goalId="same-human-request", sessionId="aw-current")),
+            development=dict(enabled=True, directDevelopment=True, workspace="/owned/mira",
+                rpcUrl="http://127.0.0.1:8087/rpc", selfGuid="4", ownerGuid="3", sessionId="aw-current",
+                policyCommands={"show":["same", "mechanical", "helper"]}),
+            controls=dict(sessionId="aw-current", selfGuid="4", castPending=True, moving=False,
+                lastSpellOperation=dict(spellId=8427, actionId="original-id", phase="transport_unconfirmed",
+                                        operationRevision="18446744073709550001")),
+            party=dict(known=True, inGroup=True, leaderGuid="1", members=[dict(guid=p["guid"], online=True) for p in people]),
+            observations=dict(self=people[2], owner=people[1], nearbyPlayers=people,
+                nearbyCreatures=[dict(guid=str(1000+i), health=100, observedText="raw-observed-data"*90) for i in range(60)]),
+            spell_toolkit=dict(known=True, revision="88", spells=[dict(spellId=i+100, learned=True,
+                mechanics="raw-client-spell-mechanics"*20) for i in range(180)]),
+            inventory=dict(sessionId="aw-current", revision="74", items=[dict(guid=str(2000+i),
+                count=20, metadata="raw-item-template-facts"*10) for i in range(48)]),
+            trade=dict(phase="IDLE", lastJunkDisposal=dict(status="OUTCOME_UNCONFIRMED",
+                       itemGuid="uncertain-original", requestId="preserve-me", count=1)))
+        original = copy.deepcopy(state)
+        self.assertGreater(len(encode(state)), 170*1024)
+        projected, metrics = project_context(state)
+        self.assertLessEqual(len(encode(projected)), CONTEXT_BYTES)
+        self.assertEqual(metrics["contextBytes"], len(encode(projected)))
+        self.assertEqual(metrics["fullContextBytes"], len(encode(state)))
+        self.assertEqual(projected["character"], state["character"])
+        self.assertEqual(projected["current_request"], state["current_request"])
+        self.assertEqual(projected["development"]["sessionId"], "aw-current")
+        self.assertEqual(projected["development"]["rpcUrl"], state["development"]["rpcUrl"])
+        self.assertEqual(projected["controls"], state["controls"])
+        self.assertEqual(projected["observations"]["nearbyPlayers"], people)
+        self.assertEqual(projected["observations"]["self"], people[2])
+        self.assertEqual(projected["observations"]["owner"], people[1])
+        self.assertTrue(any(row["path"] == ["observations", "nearbyCreatures"]
+                            for row in projected["contextProjection"]["omittedPaths"]))
+        retained = projected.get("currentUnresolvedCustody", [])
+        self.assertTrue(any(row["value"] == state["trade"]["lastJunkDisposal"] for row in retained)
+                        or projected.get("trade") == state["trade"])
+        self.assertEqual(state, original)
+
+    def test_required_context_and_latest_history_overflow_refuse_without_silent_truncation(self):
+        from direct_context import CONTEXT_BYTES, HISTORY_BYTES, ContextLimitError, encode, project_context, project_history
+        state = dict(character=dict(guid="4"), current_request=dict(source="owner", commission="x"*CONTEXT_BYTES))
+        with self.assertRaisesRegex(ContextLimitError, "Required identity"):
+            project_context(state)
+        latest = dict(speaker="Joel", channel="WHISPER", text="Latest exact request: " + "é"*100)
+        old = [dict(speaker="Mira", text="old context "*100) for _ in range(20)]
+        history, metrics = project_history([*old, latest])
+        self.assertEqual(history[-1], latest)
+        self.assertLessEqual(len(encode(history)), HISTORY_BYTES)
+        self.assertGreater(metrics["historyOmittedRows"], 0)
+        with self.assertRaisesRegex(ContextLimitError, "Latest user request"):
+            project_history([dict(speaker="Joel", text="é"*HISTORY_BYTES)])
+
+    def test_actual_direct_request_publishes_bytes_before_http_and_reads_full_captured_context(self):
+        from direct_context import CONTEXT_BYTES, HISTORY_BYTES
+        state = dict(character=dict(guid="4"), current_request=dict(source="owner", senderGuid="3"),
+            observations=dict(self=dict(guid="4", aliveKnown=True, alive=True, healthKnown=True, health=900),
+                nearbyCreatures=[dict(guid=str(index+100), rawFacts="large-observation "*100) for index in range(90)]),
+            spell_toolkit=dict(known=True, revision="17", spells=[dict(spellId=100+index,
+                mechanics="large-mechanical-facts "*50) for index in range(80)]))
+        original = copy.deepcopy(state)
+        latest = dict(speaker="Joel", channel="WHISPER", text="Tell me what you observed. é")
+        history = [*[dict(speaker="Mira", text="older known chat "*120) for _ in range(12)], latest]
+        brain = converse.DirectBrain(self.state, character_name="Mira", character_class="mage",
+            model="fixture-requested-model", provider="local", base_url="http://127.0.0.1:1/v1")
+        requests, early = [], []
+        def capture(payload, *_):
+            requests.append(copy.deepcopy(payload))
+            if len(requests) == 1:
+                early.append(json.loads((self.state/"development-events-last.json").read_text()))
+                return chat(("full-facts", "context_read", dict(path=["spell_toolkit", "spells"], offset=79, limit=1)))
+            return chat(("final", "final_reply", REPLY))
+        with patch.object(brain.client, "_http", side_effect=capture), \
+             patch.object(converse, "RPC", side_effect=AssertionError("Captured context needs no game RPC")):
+            self.assertEqual(brain.generate(history, state), REPLY)
+        self.assertEqual(early[0]["childPhase"], "api.request")
+        content = requests[0]["messages"][1]["content"]
+        context_raw, history_raw = content.split("Current observations and control state JSON:\n", 1)[1].split("\nConversation JSON:\n", 1)
+        self.assertLessEqual(len(context_raw.encode()), CONTEXT_BYTES)
+        self.assertLessEqual(len(history_raw.encode()), HISTORY_BYTES)
+        self.assertEqual(json.loads(history_raw)[-1], latest)
+        self.assertEqual(early[0]["promptMetrics"]["contextBytes"], len(context_raw.encode()))
+        self.assertEqual(early[0]["promptMetrics"]["historyBytes"], len(history_raw.encode()))
+        self.assertGreater(early[0]["promptMetrics"]["fullCapturedContextBytes"], 170*1024)
+        page = json.loads(requests[1]["messages"][-1]["content"])["result"]
+        self.assertEqual(page["path"], ["spell_toolkit", "spells"])
+        self.assertEqual(page["total"], 80)
+        self.assertEqual(page["rows"][0]["key"], 79)
+        self.assertEqual(page["rows"][0]["preview"]["spellId"], 179)
+        self.assertIn("context_read", [row["function"]["name"] for row in requests[0]["tools"]])
+        self.assertEqual(state, original)
+
+    def test_exact_http_body_metrics_are_published_before_connection_without_claiming_write(self):
+        brain = converse.DirectBrain(self.state, character_name="Mira", character_class="mage",
+            model="fixture-requested-model", provider="local", base_url="http://127.0.0.1:1/v1")
+        observed = []
+        class Connection:
+            sock = None
+            def connect(inner):
+                record = json.loads((self.state/"development-events-last.json").read_text())
+                observed.append(record)
+            def request(inner, method, path, body, headers):
+                self.assertEqual(method, "POST")
+                self.assertEqual(path, "/v1/chat/completions")
+                self.assertEqual(observed[0]["api"]["initialRequestBytes"], len(body))
+                self.assertEqual(observed[0]["api"]["lastRequestBytes"], len(body))
+                self.assertEqual(observed[0]["api"]["httpRequests"], 0)
+                self.assertEqual(observed[0]["api"]["requestPhase"], "prepared")
+                self.assertEqual(observed[0]["api"]["requestIndex"], 1)
+            def getresponse(inner):
+                return types.SimpleNamespace(status=200, read=lambda _: json.dumps(chat(("final", "final_reply", REPLY))).encode())
+            def close(inner): pass
+        with patch.object(direct_model.http.client, "HTTPConnection", return_value=Connection()):
+            self.assertEqual(brain.generate([dict(speaker="Joel", text="Hello")],
+                dict(character=dict(guid="4"), current_request=dict(source="owner", senderGuid="3"))), REPLY)
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0]["actionOutcome"], "unknown")
+
     def test_direct_request_compacts_only_redundant_emote_table_and_keeps_schema_names(self):
         rows = [dict(id=1000+index, name="EMOTE_%03d" % index) for index in range(512)]
         state = dict(character=dict(guid="4"), current_request=dict(source="owner", senderGuid="3"),
