@@ -134,6 +134,16 @@ func TestFormationFollowKeepsHealingAndLateTickStopPriority(t *testing.T) {
 func TestFormationCatchUpUsesVerifiedRoutesUpTo200Yards(t *testing.T) {
 	for _, gap := range []float32{90, 150, 200, 201} {
 		s, f, advance := formationRig(t, 4, 8)
+		// Exercise the full real policy's verified-route geometry with a healthy
+		// semantic fixture. The separate production watchdog retains its 5ms limit.
+		runtime, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
+			t.Fatal(err)
+		}
+		s.formation.runtime = runtime
 		f.world.Owner.X += gap
 		plans := 0
 		s.planMapPath = func(_ context.Context, _ string, mapID uint32, from, to position) ([]position, error) {
