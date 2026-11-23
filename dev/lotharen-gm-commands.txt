@@ -21,7 +21,8 @@ TOOLS AND INDEPENDENT EXAMPLES
 - gm_execute(command=".help groupsummon") or command=".help appear": ask the realm for current
   syntax. .commands and .help group leader are other native discovery forms; the full public catalog
   follows. Published syntax/security are reference facts; current realm help/permission replies win.
-- gm_execute returns fresh feedback inline in feedback.messages and feedback.systemMessages; use
+- gm_execute returns collected feedback inline when available in
+  feedback.messages and feedback.systemMessages; retain feedback.status and no-reply/unknown distinctions. Use
   feedback.readMore to continue reading. chat_read() defaults to the current monotonic cursor;
   after_sequence="0" is ONLY old history, not a fresh command response.
   The Chat session/cursor belongs to the feedback feed, not the Core session. Server text is
