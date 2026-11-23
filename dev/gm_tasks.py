@@ -135,6 +135,8 @@ class SessionTransport:
             if self.before_send is not None:self.before_send()
             guard=getattr(self,'before_packet',None)
             if guard is not None:guard(opcode,payload)
+            final_authorise=getattr(self,'final_authorise',None)
+            if final_authorise is not None:final_authorise()
             attempted=True
             reply=subprocess.run(argv,input=wire,capture_output=True,timeout=10)
             if reply.returncode or not re.search(rb'^grpc-status: 0\r?$',reply.stdout,re.M|re.I):
@@ -204,7 +206,7 @@ def _feedback_cursor(value):
     return cursor
 
 
-def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expected_session=None,before_send=None,feedback_reader=None):
+def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expected_session=None,before_send=None,feedback_reader=None,final_authorise=None):
     if command is not None and (not isinstance(command,str) or
             re.fullmatch(r'\.[A-Za-z][ -~]{0,253}',command) is None or command!=command.rstrip()):
         raise ValueError('one native GM command required')
@@ -220,6 +222,7 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
     with task_store(writer_folder(root,sid,config).absolute()) as owner:
         claim_writer(owner)
         transport=SessionTransport(rpc,config) if before_send is None else SessionTransport(rpc,config,before_send=before_send)
+        transport.final_authorise=final_authorise
         out=dict(sessionId=sid,selectedGuid=select_guid,command=command,transportWritten=False,
             selectionTransportWritten=False,commandTransportWritten=False,gameEffectClaimed=False)
         try:out['selection']=selection_evidence(rpc,sid,select_guid)

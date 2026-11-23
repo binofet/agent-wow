@@ -34,6 +34,7 @@ class NativeRPC(fixtures.RPC):
         self.selected='87';self.settle_selection=True;self.packets=[];self.commands=[]
         self.post_failure=None;self.feedback_enabled=True;self.cursor_lost=False;self.stale=False
         self.group_revision=1;self.after_selection_read_error=False
+        self.allow_gm=True;self.cancelled=False
         self.corpses=[]
         self.local=['3','4','5'];self.on_read=None
         self.messages=[dict(sequence=str(i),text='Old SYSTEM '+str(i)) for i in range(1,11)]
@@ -102,7 +103,8 @@ class GMCommandEvidenceTests(unittest.TestCase):
 
     def make_tools(self):
         return direct_tools.DirectTools(self.rpc,self.rpc.sid,'87',self.workspace,self.host,
-            allowed=lambda:True,gm_allowed=lambda:True,request_id='one-owner-request',chat_session_id=self.rpc.chat_sid,
+            allowed=lambda:True,gm_allowed=lambda:self.rpc.allow_gm,cancelled=lambda:self.rpc.cancelled,
+            request_id='one-owner-request',chat_session_id=self.rpc.chat_sid,
             helpers={'gm_tasks':self.gm})
 
     def execute(self,command='.gps Joel',selected=None,operation='owner:1'):
@@ -176,6 +178,26 @@ class GMCommandEvidenceTests(unittest.TestCase):
         result=self.execute(selected='3')
         self.assertTrue(result['ok'],result);self.assertFalse(result['result']['commandTransportWritten'])
         self.assertEqual(result['result']['selection']['observedTargetGuid'],'5');self.assertFalse(self.rpc.commands)
+
+    def test_owner_cancel_or_authority_loss_during_final_world_read_is_known_no_packet(self):
+        for mode in ('cancel','authority'):
+            with self.subTest(mode=mode):
+                self.rpc.selected='3';self.rpc.allow_gm=True;self.rpc.cancelled=False
+                original=self.gm.runtime.Store.save
+                armed=[False]
+                def save(store,value):
+                    original(store,value)
+                    if value.get('reserved'):armed[0]=True
+                def observe(method,value):
+                    if method=='buddy-world.snapshot' and armed[0]:
+                        if mode=='cancel':self.rpc.cancelled=True
+                        else:self.rpc.allow_gm=False
+                self.rpc.on_read=observe
+                with mock.patch.object(self.gm.runtime.Store,'save',save):
+                    result=self.execute(selected='3',operation='final-world:'+mode)
+                self.assertFalse(result['ok'],result)
+                self.assertIsNone(self.tools.unknown_receipt)
+                self.assertFalse(self.rpc.packets);self.assertFalse(self.rpc.commands)
 
     def test_same_operation_dedups_but_new_tool_call_after_roster_change_repeats_command(self):
         first=self.execute('.groupsummon Arlen',operation='request:1')

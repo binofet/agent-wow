@@ -616,7 +616,9 @@ class DirectTools:
             try:
                 result = gm.execute_command(self.rpc, config, command, self.root,
                     select_guid=selected, expected_session=self.session_id, before_send=before_send,
-                    feedback_reader=self._chat_read)
+                    feedback_reader=self._chat_read, final_authorise=self._authorise_gm)
+                if result.get("transportWritten") is False:
+                    entered=False  # A final guard can refuse after the durable reservation, before any packet.
                 if not result.get("commandTransportWritten"):
                     self._authorise_gm()
                 self._catalog()
