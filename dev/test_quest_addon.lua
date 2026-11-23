@@ -303,3 +303,16 @@ local count=#widgets;T.Open();assert(not teamWindow:IsShown());T.Open()
 assert(teamWindow:IsShown() and #widgets==count,"toggle must reuse the same window")
 UIParent=nil -- Keep nested inventory harnesses independent of this fake UI.
 print("Team UI, owner-only requests, status freshness and receipt checks passed")
+
+-- Keep the full public TOC and callback-isolation regression in the maintained
+-- Lua5.1 CI entry point without replacing the caller's source argument/globals.
+local isolation = assert(loadfile("dev/test_addon_ui_isolation.lua"))
+local addonDirectory = source:match("^(.*[/\\])") or "./"
+local isolationEnvironment = {arg = {[1] = addonDirectory .. "WarcraftBuddyQuestSync.toc"}}
+isolationEnvironment._G = isolationEnvironment
+setmetatable(isolationEnvironment, {__index = function(_, key)
+    if type(key) == "string" and key:match("^WarcraftBuddy") then return nil end
+    return _G[key]
+end})
+setfenv(isolation, isolationEnvironment)
+isolation()
