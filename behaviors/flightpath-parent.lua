@@ -59,6 +59,7 @@ local function consume(context,p)
             p.unverified=true;return await(context,p,"flight_parent_custody_reply_unverified")
         end
         p.lease={token=reply.token,visitId=p.request.visitId,requestId=p.callId}
+        p.visitId=p.request.visitId
     elseif (state.interactionOwner or "")~="" then
         p.unverified=true;return await(context,p,"flight_parent_release_reply_unverified")
     else
@@ -104,7 +105,7 @@ function M.decide(state)
         end
         if type(goal.id)~="string" or goal.id=="" or not uint(params.destinationNode) or params.destinationNode==0 or
            type(params.acceptUnknownFare)~="boolean" then return tasks.await(context,"flight_parent_explicit_goal_required") end
-        p={sessionId=b.sessionId,selfGuid=b.selfGuid,goalId=goal.id,destination=params.destinationNode,
+        p={sessionId=b.sessionId,selfGuid=b.selfGuid,visitId=w.visitRevision,goalId=goal.id,destination=params.destinationNode,
            acceptUnknownFare=params.acceptUnknownFare,stage="prepare"};memory.flightpathParent=p
     end
     if p.sessionId~=b.sessionId or p.selfGuid~=b.selfGuid or p.goalId~=goal.id or
@@ -137,6 +138,9 @@ function M.decide(state)
     end
     local booking=f.activation or {}
     local paid=booking.pending==true
+    if p.visitId~=w.visitRevision and not paid then
+        return await(context,p,"flight_parent_unbooked_visit_replaced")
+    end
     local activation=frame
     if frame and frame.kind=="flightpath_plan" then activation=(memory.stack or {})[#memory.stack-1] end
     if p.bookingIssued and activation and activation.kind=="flightpath_activation" and not activation.request and not paid and

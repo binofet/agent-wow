@@ -184,6 +184,23 @@ class FlightpathParentRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runner.data['phase'], 'flight_parent_binding_unavailable')
         self.assertEqual(self.rpc.count('buddy-actions.acquire_idle_interaction'), 0)
 
+    def test_unbooked_same_map_visit_replacement_preserves_old_task_and_custody(self):
+        self.until('buddy-actions.flightpath_reference')
+        before = copy.deepcopy(self.runner.data['memory'])
+        mutations = [(m, p) for m, p in self.rpc.calls if m != 'buddy-actions.status' and m != 'buddy-world.snapshot'
+                     and m != 'buddy-actions.flightpath_observation' and m != 'buddy-actions.flightpath_reference']
+        self.rpc.world['visitRevision'] = '2'; self.rpc.flight['visitId'] = '2'
+        for _ in range(3): self.runner.tick()
+        after = self.runner.data['memory']
+        self.assertEqual(after['stack'], before['stack'])
+        self.assertEqual(after['flightpathParent']['visitId'], '1')
+        self.assertEqual(after['flightpathParent']['lease'], before['flightpathParent']['lease'])
+        self.assertEqual(self.runner.data['phase'], 'flight_parent_unbooked_visit_replaced')
+        current = [(m, p) for m, p in self.rpc.calls if m != 'buddy-actions.status' and m != 'buddy-world.snapshot'
+                   and m != 'buddy-actions.flightpath_observation' and m != 'buddy-actions.flightpath_reference']
+        self.assertEqual(current, mutations)
+        self.assertEqual(self.rpc.count('buddy-actions.activate_flightpath'), 0)
+
     def test_explicit_fare_refusal_and_foreign_custody_do_not_book_or_steal(self):
         self.goal['params']['acceptUnknownFare'] = False; self.reopen()
         for _ in range(9): self.runner.tick()
