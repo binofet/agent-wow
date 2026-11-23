@@ -353,8 +353,26 @@ func compatibleWorldPacket(packet protoreflect.MessageDescriptor) bool {
 	}
 	want := modv1.File_api_module_v1_session_proto.Messages().ByName("WorldPacket")
 	// A matching message name alone must not admit a shadowed scope schema.
-	return proto.Equal(protodesc.ToDescriptorProto(packet), protodesc.ToDescriptorProto(want)) &&
-		proto.Equal(protodesc.ToDescriptorProto(fields.ByNumber(3).Message()), protodesc.ToDescriptorProto(want.Fields().ByNumber(3).Message()))
+	if !proto.Equal(protodesc.ToDescriptorProto(packet), protodesc.ToDescriptorProto(want)) {
+		return false
+	}
+	actualScope := fields.ByNumber(3).Message()
+	expectedScope := want.Fields().ByNumber(3).Message()
+	actual, expected := protodesc.ToDescriptorProto(actualScope), protodesc.ToDescriptorProto(expectedScope)
+	// Keep the prior canonical twelve-field scope usable by pinned modules.
+	// It exposes no transfer witness and cannot authorize transfer adoption.
+	legacy := proto.Clone(expected).(*descriptorpb.DescriptorProto)
+	legacy.Field = legacy.Field[:12]
+	if proto.Equal(actual, legacy) {
+		return true
+	}
+	if !proto.Equal(actual, expected) {
+		return false
+	}
+	// Scope now references a message: validate its full leaf shape too, rather
+	// than accepting a shadowed transfer witness by its message name alone.
+	transfer := actualScope.Fields().ByNumber(13).Message()
+	return proto.Equal(protodesc.ToDescriptorProto(transfer), protodesc.ToDescriptorProto(expectedScope.Fields().ByNumber(13).Message()))
 }
 
 func parseOpcode(key string) (uint16, error) {

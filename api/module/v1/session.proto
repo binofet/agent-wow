@@ -42,6 +42,41 @@ message TransportScope {
   uint64 spline_source_revision = 10;
   bool spline_active = 11;
   uint32 spline_source_opcode = 12;
+  // Latest immediate observed transfer edge. It proves neither taxi booking
+  // causality nor arrival and never replaces this scope's current binding.
+  ObservedWorldTransfer world_transfer = 13;
+}
+
+// Flat owner-ordered protocol observations, not a route or a visit history.
+// Known requires an exact supported Pending, matching NewWorld and known ACK
+// write. There is no server acknowledgement of the ACK or booking identifier.
+message ObservedWorldTransfer {
+  uint64 revision = 1;
+  string phase = 2;
+  bool known = 3;
+  string connection_id = 4;
+  uint64 self_guid = 5;
+  uint64 from_visit_revision = 6;
+  uint32 from_map_id = 7;
+  uint64 from_motion_revision = 8;
+  bool from_spline_id_known = 9;
+  uint32 from_spline_id = 10;
+  uint64 from_spline_revision = 11;
+  uint64 from_spline_source_revision = 12;
+  uint32 from_spline_source_opcode = 13;
+  bool from_spline_active = 14;
+  uint64 pending_motion_revision = 15;
+  uint32 target_map_id = 16;
+  uint64 to_visit_revision = 17;
+  uint32 to_map_id = 18;
+  uint64 entry_motion_revision = 19;
+  uint64 worldport_ack_motion_revision = 20;
+  bool worldport_ack_written = 21;
+  bool worldport_ack_unknown = 22;
+  bool completion_report_written = 23;
+  uint64 completion_report_motion_revision = 24;
+  string reason = 25;
+  bool target_map_known = 26;
 }
 
 // ClockResponse samples the clock shared by modules and core time-sync replies.

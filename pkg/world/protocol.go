@@ -36,7 +36,14 @@ func (e *engine) handle(op uint16, body []byte) (bool, error) {
 		e.checkReady()
 	case opcode.MSGMoveTeleportAck, opcode.SMSGNewWorld:
 		if replyOp, reply, valid := teleportAcknowledgement(op, body, e.s.state.Character.GUID, e.timestamp()); valid {
+			if op == opcode.SMSGNewWorld {
+				return false, e.writeWorldportAcknowledgement(replyOp, reply)
+			}
 			return false, e.write(replyOp, reply)
+		}
+		if op == opcode.SMSGNewWorld {
+			e.transport.worldportAckUnavailable()
+			e.publishTransportScope()
 		}
 	case opcode.SMSGForceMoveRoot, opcode.SMSGForceMoveUnroot:
 		if replyOp, reply, info, valid := e.movement.acknowledgement(op, body, e.s.state.Character.GUID, e.timestamp()); valid {

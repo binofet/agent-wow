@@ -85,6 +85,7 @@ type Service struct {
 	session                      modv1.SessionClient
 	motion                       ownMotionAuthority
 	completion                   splineCompletionState
+	worldTransfer                worldTransferObservation
 }
 
 func NewService(selfGUID uint64) *Service {
@@ -173,6 +174,7 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 	r.SelfSplineFacts = s.state.ownSpline.snapshot(now)
 	r.SelfMotionAuthority = s.motionSnapshotLocked(now)
 	r.SplineCompletion = s.completionSnapshotLocked()
+	r.WorldTransfer = s.worldTransferSnapshotLocked(now)
 	if owner := s.state.players[1]; owner.guid != 0 {
 		r.Owner = snapshot(owner, now)
 	}
@@ -203,8 +205,10 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	s.observeCombatPacketLocked(packet.Opcode, packet.Payload, s.now())
 	next := s.state.clone()
 	observedAt := s.now()
+	transferBefore := s.captureWorldTransferBeforeLocked(packet, observedAt)
 	handled, err := parsePacket(packet.Opcode, packet.Payload, &next, observedAt)
 	if err != nil {
+		s.invalidateWorldTransferPacketLocked(packet)
 		s.invalidateMalformedMotionLocked(packet)
 		s.malformed++
 		s.lastError = fmt.Sprintf("%s (opcode 0x%03x)", err.Error(), packet.Opcode)
@@ -235,8 +239,10 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		}
 		next.edited = nil
 		s.state = next
+		s.observeWorldTransferLocked(packet, current, &next, transferBefore, observedAt)
 		s.observed++
 	} else {
+		s.invalidateWorldTransferPacketLocked(packet)
 		s.observeUnsupportedMotionLocked(packet)
 		s.ignored++
 	}
