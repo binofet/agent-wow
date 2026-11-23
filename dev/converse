@@ -2703,18 +2703,36 @@ class DirectBrain(AgentBrain):
         from direct_context import encode
         from direct_tools import ToolError, context_page, context_tool_schema
         self._generation["stage"] = "preparing"
+        prompt_state = json.loads(encode(prompt_state))
+        gm_context = prompt_state.get("development", {}).get("gmTasks")
+        if isinstance(gm_context, dict):
+            # Present the same direct API in the prompt and lazy context.
+            # Keep CLI implementation references distinct from tool inputs.
+            gm_context["cliReference"] = {key:gm_context.pop(key) for key in (
+                "policy", "holdPolicy", "transportConfig", "stateRoot", "start", "run", "bindings",
+                "source", "execute", "select", "inspect", "status", "cancel", "resume") if key in gm_context}
+            gm_context["instructions"] = (
+                "Use the advertised structured tools directly. gm_task_start(goal) runs the EXISTING ordered Lua "
+                "recovery/regroup task; provide the current observed original members and either a destination pose "
+                "or player anchor. Existing tasks require no new Lua, workspace file, transport-config read or CLI invocation. "
+                "gm_execute(command, select_guid?) sends an individual native command. Choose the tool suited to the "
+                "request; a task is not mandatory for every GM action. gm_inspect reads current client facts; "
+                "gm_current_task, gm_task_status, gm_task_resume and gm_task_cancel inspect or continue retained work. "
+                "Tools already bind the current session and transport; cliReference is optional operator reference, "
+                "not workspace input. Tool contracts, current observations and the full command reference are already "
+                "supplied; inspect needed missing facts or unfamiliar realm syntax. Preserve uncertain receipts and verify "
+                "effects separately from helper start or packet ACK. These mappings grant no additional authority.")
+            gm_context["directTools"] = dict(start="gm_task_start(goal)", execute="gm_execute(command, select_guid?)",
+                inspect="gm_inspect()", current="gm_current_task()", status="gm_task_status(task_id)",
+                resume="gm_task_resume(task_id)", cancel="gm_task_cancel(task_id)")
         # Keep the complete factual snapshot available without projecting or
         # truncating the model's context. Typed authority stays in `state` only.
         full_context = json.loads(encode(prompt_state))
         if "emote_catalog" in state:
             full_context["emote_catalog"] = json.loads(encode(state["emote_catalog"]))
         full_context["conversationHistory"] = json.loads(encode(history))
-        prompt_state = json.loads(encode(prompt_state))
         if isinstance(prompt_state.get("current_request"), dict):
             prompt_state["current_request"].pop("messages", None)  # Raw chat is USER content, never SYSTEM instructions.
-        gm_context = prompt_state.get("development", {}).get("gmTasks")
-        if isinstance(gm_context, dict):
-            gm_context.pop("instructions", None)  # CLI lifecycle guidance is not direct-model policy.
         if developer:
             tools = DirectTools(RPC(development["rpcUrl"]), development["sessionId"],
                 development["selfGuid"], self.developer_workspace, ROOT,
