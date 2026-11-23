@@ -2601,6 +2601,48 @@ class AgentBrain:
 
 
 
+def gm_reference_context(reference):
+    """Index the maintained public format losslessly; custom references stay eager."""
+    raw=reference.encode('utf-8')
+    captured=dict(format='custom_full_eager',raw=reference,sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw))
+    metadata={key:captured[key] for key in ('format','sha256','bytes')}
+    metadata['rawPath']=['gmReference','raw']
+    fallback=dict(eager=reference,captured=captured,metadata=metadata)
+    guide_end='END GENERAL GUIDE — FULL PUBLIC CATALOG PRESERVED BELOW\n'
+    catalog_start='FULL COMMAND HELP AND SOURCE SIGNATURES\n'
+    manifest_start='\nPUBLIC SOURCE FILE MANIFEST\n'
+    if any(reference.count(marker)!=1 for marker in (guide_end,catalog_start,manifest_start)):return fallback
+    if not reference.index(guide_end)<reference.index(catalog_start)<reference.index(manifest_start):return fallback
+    guide,remainder=reference.split(guide_end,1)
+    if not guide.startswith('GENERAL GM OPERATIONS GUIDE —'):return fallback
+    preamble,catalog_and_manifest=remainder.split(catalog_start,1)
+    catalog,manifest=catalog_and_manifest.split(manifest_start,1)
+    pin=re.search(r'^Public source revision: ([a-f0-9]{40})$',preamble,re.M)
+    count=re.search(r'(\d+) distinct paths in the\n  complete case-insensitive union',preamble)
+    headers=list(re.finditer(r'^={72}\n(\.[^\r\n]+)\n',catalog,re.M))
+    if not pin or not count or not headers or len(headers)!=int(count[1]) or catalog[:headers[0].start()].strip():return fallback
+    names=[header[1] for header in headers]
+    if len(set(name.casefold() for name in names))!=len(names) or any(name!=name.strip() for name in names):return fallback
+    url='https://github.com/azerothcore/azerothcore-wotlk/blob/'+pin[1]+'/'
+    for line in manifest.splitlines():
+        if not line or line=='All paths below are relative to '+url or \
+                line=='ADDITIONAL GENERAL-GUIDE PRIMARY SOURCES (SAME REFERENCE PIN)' or line.startswith(url):continue
+        if not re.fullmatch(r'.+ \| \d+ bytes \| SHA-256 [a-f0-9]{64}',line):return fallback
+    entries={header[1]:dict(sourcePin=pin[1],text=catalog[header.start():headers[index+1].start() if index+1<len(headers) else len(catalog)])
+        for index,header in enumerate(headers)}
+    captured.update(format='pinned_public_command_catalog_v1',sourcePin=pin[1],guide=guide,
+        preamble=preamble,manifest=manifest_start+manifest,commands=entries)
+    metadata.update(format=captured['format'],sourcePin=pin[1],commandCount=len(entries),
+        commandPath=['gmReference','commands','<exact command name>','text'],
+        manifestPath=['gmReference','manifest'],preamblePath=['gmReference','preamble'])
+    eager=(guide+'\nCOMPLETE COMMAND NAME INDEX ('+str(len(entries))+')\n'+'\n'.join(names)+
+        '\n\nThe full exact reference is preserved in captured context. Read a complete published entry with '
+        'context_read(path=["gmReference","commands",".groupsummon","text"],limit=4096); substitute ANY indexed '
+        'command name. Entries retain syntax, security, registration and signature, with sourcePin on their parent. '
+        'Continue nextOffset when paged. Raw unchanged text/SHA, preamble and source manifest are at the gmReference paths below.\n')
+    return dict(eager=eager,captured=captured,metadata=metadata)
+
+
 class DirectBrain(AgentBrain):
     """Conversation brain using model HTTP APIs and actor-bound native tools."""
     def __init__(self, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen",
@@ -2727,9 +2769,12 @@ class DirectBrain(AgentBrain):
             gm_context["directTools"] = dict(start="gm_task_start(goal)", execute="gm_execute(command, select_guid?)",
                 inspect="gm_inspect()", current="gm_current_task()", status="gm_task_status(task_id)",
                 resume="gm_task_resume(task_id)", cancel="gm_task_cancel(task_id)")
+        reference=gm_reference_context(self.gm_reference) if allow_gm and self.gm_reference else None
+        if reference is not None:prompt_state['gmReference']=reference['metadata']
         # Keep the complete factual snapshot available without projecting or
         # truncating the model's context. Typed authority stays in `state` only.
         full_context = json.loads(encode(prompt_state))
+        if reference is not None:full_context['gmReference']=reference['captured']
         if "emote_catalog" in state:
             full_context["emote_catalog"] = json.loads(encode(state["emote_catalog"]))
         full_context["conversationHistory"] = json.loads(encode(history))
@@ -2812,8 +2857,8 @@ class DirectBrain(AgentBrain):
         self._generation["stage"] = "api_request"
         try:
             system = (self.developer_persona if developer else self.persona)
-            if allow_gm and self.gm_reference:
-                system += "\nLocal realm command reference:\n" + self.gm_reference
+            if reference is not None:
+                system += "\nLocal realm command reference:\n" + reference['eager']
             system += "\nCurrent observations and control state JSON:\n" + encode(prompt_state).decode("utf-8")
             incoming = request.get("messages")
             if incoming is None:
