@@ -157,16 +157,29 @@ class GMCommandEvidenceTests(unittest.TestCase):
         self.assertFalse(self.rpc.packets)
 
     def test_named_location_forms_keep_exact_native_text_and_do_not_claim_arrival(self):
-        commands=['.lookup teleport FixtureLocation','.teleport FixtureLocation',
-                  '.teleport name Joel FixtureLocation','.teleport group FixtureLocation']
+        schema=next(row['function'] for row in self.tools.tool_schemas() if row['function']['name']=='gm_execute')
+        for literal in ('.teleport Maraudon','.teleport name Joel Maraudon',
+                '#location and #playername are placeholders','do not send the # prefix',
+                'Chat message sequence is not a teleport ID','needs no select_guid or local player visibility',
+                'only when optional select_guid is provided','does not require an ordered task',
+                'Realm security, group and instance admission still apply','GPS SYSTEM'):
+            self.assertIn(literal,schema['description'])
+        commands=['.lookup teleport FixtureLocation','.teleport Maraudon',
+                  '.teleport name Joel Maraudon','.teleport group FixtureLocation']
         for index,command in enumerate(commands):
             with self.subTest(command=command):
+                if index==2:
+                    self.rpc.local=[] # No local owner/player witness; explicit names are resolved by the realm.
+                    self.assertFalse(self.rpc.call('buddy-world.snapshot',{})['owner']['present'])
                 result=self.execute(command,selected='3' if index==3 else None,
                     operation='named-location:'+str(index))
                 self.assertTrue(result['ok'],result)
                 self.assertTrue(result['result']['commandTransportWritten'])
                 self.assertFalse(result['result']['gameEffectClaimed'])
                 self.assertFalse(result['result']['feedback']['commandSuccessKnown'])
+                if index<3:
+                    self.assertIsNone(result['result']['selectedGuid'])
+                    self.assertFalse(result['result']['selectionTransportWritten'])
         self.assertEqual(self.rpc.commands,commands)
         self.assertEqual([code for code,_ in self.rpc.packets],[0x95,0x95,0x95,0x13d,0x95])
 
