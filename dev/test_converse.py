@@ -1889,6 +1889,48 @@ class GearContextTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_loaded_lazy_gm_guide_exposes_named_repair_without_changing_catalog_or_tool_contract(self):
+        from direct_tools import DirectTools, READ_PAGE_BYTES, context_page, packed
+        class NoRPC:
+            url = 'http://127.0.0.1:1/rpc'
+            def call(self, *args, **kwargs):
+                raise AssertionError('Guide metadata must not call a client or model')
+        with real_temp_directory() as temporary:
+            brain = converse.AgentBrain(temporary, character_name='Lotharen', character_class='paladin')
+            reference = Path(__file__).with_name('lotharen-gm-commands.txt').read_text()
+            self.assertEqual(brain.gm_reference, reference)  # Actual maintained file loader.
+            view = converse.gm_reference_context(brain.gm_reference)
+            self.assertEqual(view['metadata']['format'], 'pinned_public_command_catalog_v1')
+            self.assertEqual(view['metadata']['commandCount'], 739)
+            shortcut = "gm_execute(command='.gear repair Joel')"
+            self.assertIn(shortcut, view['eager'])  # Visible without a tool round or full catalog.
+            context = dict(gmReference=view['captured'], pending=dict(outcome='unknown', replayAllowed=False))
+            original = copy.deepcopy(context)
+            page = context_page(context, ['gmReference', 'guide'], limit=4096)
+            self.assertIn(shortcut, page['value'])
+            for fact in ('omitting select_guid', 'requires no movement', 'group membership or UI selection',
+                         'target security', 'source-supported syntax, not a verified repair on this realm',
+                         'SERVER-REPORTED completion', 'Independent durability observation is distinct',
+                         'no position or party query is required', 'not a general rule',
+                         'keep existing no-replay receipts'):
+                self.assertIn(fact, page['value'])
+            self.assertLessEqual(len(packed(dict(ok=True, result=page))), READ_PAGE_BYTES)
+            self.assertEqual(context, original)
+            catalog = reference.split('FULL COMMAND HELP AND SOURCE SIGNATURES\n', 1)[1].split(
+                '\nPUBLIC SOURCE FILE MANIFEST\n', 1)[0]
+            self.assertEqual(hashlib.sha256(catalog.encode()).hexdigest(),
+                             '43204986573bd7c99ada6e92d499be5b8b05a481b2be3d5763ebef4002d94581')
+            self.assertIn('Optional<PlayerIdentifier> target', view['captured']['commands']['.gear repair']['text'])
+            tools = DirectTools(NoRPC(), 'aw-123', '87', temporary, converse.ROOT,
+                                allowed=lambda: True, gm_allowed=lambda: True,
+                                request_id='guide-fixture', context=context)
+            schema = {row['function']['name']: row['function'] for row in tools.tool_schemas()}['gm_execute']
+            self.assertEqual(schema['parameters']['required'], ['command'])
+            self.assertEqual(schema['parameters']['properties']['command']['type'], 'string')
+            self.assertIn('select_guid', schema['parameters']['properties'])
+            self.assertIn('realm permissions apply', schema['description'])
+            self.assertIsNone(tools.last_receipt)
+
     def test_generic_learned_cast_support_is_separate_from_effect_classification(self):
         body=dict(sessionId='spell-body',selfGuid='4')
         raw=dict(body,spellbookKnown=True,spellbookRevision='2',spells=[
