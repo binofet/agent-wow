@@ -894,4 +894,6 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(all(method == 'buddy-actions.status' for method, _ in self.rpc.calls))
 
 
+from test_flightpath_parent import FlightpathParentGoalTests, FlightpathParentRuntimeTests
+
 if __name__ == '__main__': unittest.main()
