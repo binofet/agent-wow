@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 
 class ToolError(ValueError):
@@ -680,6 +681,7 @@ class DirectTools:
         require(isinstance(self.request_id, str) and 0 < len(self.request_id) <= 512, 'host_request_identity_required')
         require(operation_id is None or isinstance(operation_id, str) and
                 re.fullmatch(r'[A-Za-z0-9._:-]{1,512}', operation_id), 'host_operation_identity_required')
+        operation_id = operation_id or uuid.uuid4().hex
         if name == 'follow':
             require(type(args.get('enabled')) is bool, 'follow_boolean_required')
             require(callable(self.follow_prepare), 'maintained_follow_preparation_required')
@@ -704,23 +706,39 @@ class DirectTools:
         target = self.receipt_root / 'owner-controls' / sha(packed([self.session_id, self.self_guid, name]))
         operation = target / sha(packed([self.request_id, operation_id, arguments_hash]))
         with runtime.Store(target):
+            accepted, exact, order = [], None, 0
             for folder in sorted(target.iterdir()):
                 if folder.name == 'lock': continue
                 require(re.fullmatch(r'[a-f0-9]{64}', folder.name) is not None and folder.is_dir(), 'control_receipt_directory_invalid')
                 with runtime.Store(folder) as previous: prior = previous.load()
                 if prior is None: continue
                 require(prior.get('identity') == identity, 'control_receipt_identity_changed')
+                ordinal = prior.get('order', 0)
+                require(type(ordinal) is int and ordinal >= 0, 'control_receipt_order_invalid')
+                order = max(order, ordinal)
                 if prior.get('knownNotDispatched') is True: continue
                 if prior.get('result') is not None:
-                    if prior.get('requestId') == self.request_id and prior.get('argumentsSHA256') == arguments_hash:
-                        return dict(prior['result'], historicalReceipt=True)
+                    accepted.append(prior)
+                    if folder == operation: exact = prior
                     continue
                 if prior.get('requestId') == self.request_id or prior.get('key') == key:
                     self._unknown(name, dict(stateDir=str(folder), valueSHA256=prior.get('argumentsSHA256')),
                                   ToolError('retained_control_outcome_unconfirmed'))
+            # Check all unknowns first. A fresh A after accepted A→B is a new
+            # intent, while retrying an exact operation can only read its receipt.
+            latest = max(accepted, key=lambda row:row.get('order', 0), default=None)
+            if exact is not None:
+                return dict(exact['result'], historicalReceipt=True, superseded=exact is not latest)
+            same_latest = (latest is not None and latest.get('order', 0) > 0
+                and latest.get('requestId') == self.request_id and latest.get('argumentsSHA256') == arguments_hash)
+            if same_latest and (name != 'follow' or type(actions.get('following', False)) is bool
+                    and actions.get('following', False) == args['enabled']):
+                result = dict(latest['result'], historicalReceipt=True)
+                if name == 'follow': result['state'] = dict(actions, following=actions.get('following', False))
+                return result
             with runtime.Store(operation) as store:
                 record = dict(identity=identity, key=key, requestId=self.request_id, operationId=operation_id,
-                              arguments=copy.deepcopy(args), argumentsSHA256=arguments_hash)
+                              arguments=copy.deepcopy(args), argumentsSHA256=arguments_hash, order=order+1)
                 store.save(record)
                 entered, preparing = False, False
                 try:

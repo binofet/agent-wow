@@ -1602,6 +1602,27 @@ class OwnerControlToolTests(unittest.TestCase):
         self.assertTrue(result['ok'],result);self.assertFalse(result['result']['followDispatched'])
         self.assertIn('uncertain',result['result']['reason']);self.assertEqual(self.rpc.writes,[])
 
+    def test_fresh_follow_intent_a_b_a_does_not_return_first_stale_receipt(self):
+        for operation,enabled in (('one',True),('two',False),('three',True)):
+            result=self.tools.dispatch('follow',dict(enabled=enabled),operation_id=operation)
+            self.assertTrue(result['ok'],result)
+            self.assertIs(result['result']['state']['following'],enabled)
+            self.assertNotIn('historicalReceipt',result['result'])
+        self.assertEqual([args['enabled'] for _,args in self.rpc.writes],[True,False,True])
+        duplicate=self.make_tools().dispatch('follow',dict(enabled=True),operation_id='four')
+        self.assertTrue(duplicate['result']['historicalReceipt']);self.assertEqual(len(self.rpc.writes),3)
+        # Current native intent can expire/change independently of this host's last receipt.
+        self.rpc.state['following']=False
+        renewed=self.make_tools().dispatch('follow',dict(enabled=True),operation_id='five')
+        self.assertTrue(renewed['ok'],renewed);self.assertIs(renewed['result']['state']['following'],True)
+        self.assertEqual(len(self.rpc.writes),4)
+
+    def test_fresh_lua_focus_a_b_a_delivers_current_intent_not_old_ack(self):
+        for operation,target in (('one','123'),('two','456'),('three','123')):
+            result=self.tools.dispatch('gameplay_command',dict(value=dict(task='focus',targetGuid=target)),operation_id=operation)
+            self.assertTrue(result['ok'],result);self.assertNotIn('historicalReceipt',result['result'])
+        self.assertEqual([args['value']['targetGuid'] for _,args in self.rpc.writes],['123','456','123'])
+
     def test_proto3_omitted_false_is_known_stop_and_durable_without_resend(self):
         original=self.rpc.call
         def omit(method,params,**kwargs):
@@ -1677,6 +1698,8 @@ class OwnerControlToolTests(unittest.TestCase):
                 self.assertEqual(len(self.rpc.writes),1)
 
     def test_unknown_command_cannot_change_task_id_or_endpoint_to_reenter_same_request(self):
+        known=dict(task='focus',targetGuid='123')
+        self.assertTrue(self.tools.dispatch('gameplay_command',dict(value=known),operation_id='known')['ok'])
         self.rpc.fail_method='session.send_event'
         original=dict(task='cast_spell',id='cast-1',spellId=1449)
         with self.assertRaises(ToolOutcomeUnknown) as first:
@@ -1691,7 +1714,10 @@ class OwnerControlToolTests(unittest.TestCase):
             self.make_tools().dispatch('gameplay_command',dict(value=dict(original,id='made-up-new-id')),operation_id='two')
         with self.assertRaises(ToolOutcomeUnknown):
             self.make_tools(request='different-owner').dispatch('gameplay_command',dict(value=original),operation_id='three')
-        self.assertEqual((folder/'state.json').read_bytes(),before);self.assertEqual(len(self.rpc.writes),1)
+        # An older matching ACK cannot bypass the later unknown operation.
+        with self.assertRaises(ToolOutcomeUnknown):
+            self.make_tools().dispatch('gameplay_command',dict(value=known),operation_id='old-known')
+        self.assertEqual((folder/'state.json').read_bytes(),before);self.assertEqual(len(self.rpc.writes),2)
 
     def test_missing_or_legacy_only_buff_route_and_follow_spoof_are_not_dispatched(self):
         for name in ('follow','request_buffs'):
