@@ -189,7 +189,7 @@ func TestTradeConsentMalformedOrIncompleteFactsWait(t *testing.T) {
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
 			fixtureRuntime := tradeConsentFixtureRuntime
-			if name == "duplicate_slots" || name == "extra_item_fact" || name == "keyed_items" || name == "partner_slot_7" {
+			if name == "duplicate_slots" || name == "extra_item_fact" || name == "keyed_items" || name == "partner_slot_7" || name == "unknown_acceptance" {
 				// Keep the observed instrumented semantic case separate from
 				// its unchanged real default-5ms CLI proof below.
 				fixtureRuntime = disposalArmorSemanticRuntime
