@@ -194,6 +194,17 @@ func TestDistantFormationCatchUpNeverMovesOnPartialOrOverBudgetRoute(t *testing.
 
 func TestDistantFormationCatchUpCrossesFormerNorthshireFenceOnVerifiedRoute(t *testing.T) {
 	s, f, advance := formationRig(t, 4, 8)
+	// This checks verified catch-up geometry across the former area fence.
+	// Use the full real policy with a semantic-test budget; the separate
+	// production watchdog test retains its actual default 5ms budget.
+	runtime, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
+		t.Fatal(err)
+	}
+	s.formation.runtime = runtime
 	f.world.Self.X = -9590
 	f.world.Owner.X = -9740
 	plans := 0
