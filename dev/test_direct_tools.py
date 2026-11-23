@@ -309,6 +309,83 @@ class DirectToolTests(unittest.TestCase):
         self.assertLessEqual(len(packed(result)), READ_PAGE_BYTES)
         return result['result']
 
+    def test_default_context_text_reads_whole_311_character_command_section(self):
+        # Retained public .gear entry: the old default returned only separators.
+        section = ('=' * 72 + '\n.gear\n'
+            'Published default minimum security: unspecified (no command.sql row).\n'
+            'Group registration: cs_gear.cpp / commandTable -> gearCommandTable\n'
+            'Published help: not supplied at this pin. Native signature above; live realm help may differ.\n\n')
+        self.assertEqual(len(section), 311)
+        context = dict(gmReference=dict(commands={'.gear': dict(text=section)}),
+                       pending=dict(outcome='unknown', action_id='already-issued'))
+        self.tools.context = copy.deepcopy(context)
+        path = ['gmReference', 'commands', '.gear', 'text']
+        page = self.page('context_read', path=path)
+        self.assertEqual(page['value'], section)
+        self.assertEqual((page['total'], page['nextOffset'], page['omitted']), (311, 311, 0))
+        self.assertFalse(page['truncated'])
+        self.assertEqual(context_page(context, path)['value'], section)  # No-workspace reader uses the same default.
+        explicit = self.page('context_read', path=path, limit=20)
+        self.assertEqual(explicit['value'], '=' * 20)
+        self.assertEqual(explicit['nextOffset'], 20)
+        self.assertEqual(self.tools.context, context)
+        self.assertEqual(self.rpc.pending, ['issued-before-edit'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_context_defaults_are_type_specific_and_explicit_limits_keep_their_units(self):
+        text = 'abcdefghijklmnopqrstuvwxyz' * 400
+        self.tools.context = dict(text=text, rows=list(range(40)), fields={str(i): i for i in range(40)})
+        default = self.page('context_read', path=['text'])
+        self.assertEqual(default['value'], text[:4096])
+        self.assertEqual(default['nextOffset'], 4096)
+        self.assertTrue(default['truncated'])
+        explicit = self.page('context_read', path=['text'], offset=100, limit=23)
+        self.assertEqual(explicit['value'], text[100:123])
+        self.assertEqual(explicit['nextOffset'], 123)
+        for field in ('rows', 'fields'):
+            page = self.page('context_read', path=[field])
+            self.assertEqual(len(page['rows']), 20)
+            self.assertEqual(page['nextOffset'], 20)
+            self.assertTrue(page['truncated'])
+        self.assertEqual(len(context_page(self.tools.context['fields'])['rows']), 20)
+        tail = self.page('context_read', path=['rows'], offset=37, limit=2)
+        self.assertEqual([row['value'] for row in tail['rows']], [37, 38])
+        self.assertEqual(tail['nextOffset'], 39)
+        for limit in (None, 0, -1, True, 4097):
+            with self.subTest(limit=limit):
+                self.assertFalse(self.tools.dispatch('context_read', dict(path=['text'], limit=limit))['ok'])
+        description = context_tool_schema()['function']['description']
+        self.assertIn('4096 characters', description)
+        self.assertIn('20 entries', description)
+        self.assertFalse(self.rpc.writes)
+
+    def test_default_context_unicode_pages_preserve_text_and_wrapped_byte_bound(self):
+        text = '😀界"\\' * 3000
+        self.tools.context = dict(text=text)
+        chunks, offset, hashes = [], 0, set()
+        while True:
+            page = self.page('context_read', path=['text'], offset=offset)
+            chunks.append(page['value']); hashes.add(page['viewSHA256'])
+            self.assertEqual(page['nextOffset'], offset + len(page['value']))
+            if not page['truncated']: break
+            self.assertGreater(page['nextOffset'], offset)
+            offset = page['nextOffset']
+        self.assertEqual(''.join(chunks), text)
+        self.assertEqual(len(hashes), 1)
+        self.assertFalse(self.rpc.writes)
+
+    def test_context_default_does_not_change_generic_observation_text_paging(self):
+        original = self.rpc.call
+        def call(method, params, **kwargs):
+            result = original(method, params, **kwargs)
+            if method == 'buddy-world.snapshot': result['text'] = 'x' * 200
+            return result
+        with mock.patch.object(self.rpc, 'call', side_effect=call):
+            page = self.page('read_observation', method='buddy-world.snapshot', params={}, path=['text'])
+        self.assertEqual(page['value'], 'x' * 20)
+        self.assertEqual(page['nextOffset'], 20)
+        self.assertFalse(self.rpc.writes)
+
     def test_captured_context_is_immutable_and_full_array_and_unicode_pages_survive(self):
         captured = dict(pending=[dict(action_id='issued', phase='unknown')],
             inventory=dict(items=[dict(guid=str(i), name='Item '+str(i), count=i) for i in range(150)]),
