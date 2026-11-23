@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from direct_tools import DirectTools, ToolOutcomeUnknown, load_helper
+from direct_tools import DirectTools, ToolOutcomeUnknown, load_helper, context_page, context_tool_schema, packed, READ_PAGE_BYTES
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -123,6 +123,129 @@ class DirectToolTests(unittest.TestCase):
             self.rpc.hook = hook
             self.assertFalse(self.tools.dispatch("read_observation", dict(method="buddy-world.snapshot", params={}))['ok'])
         self.assertEqual(self.rpc.writes, [])
+
+    def page(self, name, **args):
+        result = self.tools.dispatch(name, args)
+        self.assertTrue(result['ok'], result)
+        self.assertLessEqual(len(packed(result)), READ_PAGE_BYTES)
+        return result['result']
+
+    def test_captured_context_is_immutable_and_full_array_and_unicode_pages_survive(self):
+        captured = dict(pending=[dict(action_id='issued', phase='unknown')],
+            inventory=dict(items=[dict(guid=str(i), name='Item '+str(i), count=i) for i in range(150)]),
+            longText='😀界"\\' * 2000)
+        original = copy.deepcopy(captured)
+        self.tools = DirectTools(self.rpc, self.rpc.sid, self.rpc.guid, self.workspace, self.host,
+            allowed=lambda: self.allowed, cancelled=lambda: self.cancelled, context=captured)
+        captured['pending'][0]['phase'] = 'must-not-change-captured-facts'
+        captured['inventory']['items'].clear()
+        pending = self.page('context_read', path=['pending', '0', 'phase'])
+        self.assertEqual(pending['value'], 'unknown')
+        items, offset, hashes = [], 0, set()
+        while True:
+            view = self.page('context_read', path=['inventory', 'items'], offset=offset, limit=31)
+            items.extend(row['value'] for row in view['rows'])
+            hashes.add(view['viewSHA256'])
+            if not view['truncated']: break
+            self.assertGreater(view['nextOffset'], offset)
+            offset = view['nextOffset']
+        self.assertEqual(items, original['inventory']['items'])
+        chunks, offset = [], 0
+        while True:
+            view = self.page('context_read', path=['longText'], offset=offset, limit=4096)
+            chunks.append(view['value']); hashes.add(view['viewSHA256'])
+            if not view['truncated']: break
+            self.assertGreater(view['nextOffset'], offset)
+            offset = view['nextOffset']
+        self.assertEqual(''.join(chunks), original['longText'])
+        self.assertEqual(len(hashes), 1)
+        self.assertEqual(self.rpc.writes, [])
+
+    def test_pure_context_read_needs_no_rpc_authority_and_paths_are_data_only(self):
+        facts = dict(rows=[dict(value=42)], pending=dict(outcome='unknown'))
+        self.assertEqual(context_page(facts, ['rows', '0', 'value'])['value'], 42)
+        self.assertEqual(context_page(facts, ['rows', 0, 'value'])['value'], 42)
+        self.assertEqual(context_tool_schema()['function']['parameters']['properties']['path']['items'], dict(type='string'))
+        self.assertFalse(self.rpc.calls)
+        for path in ('rows[0].value', ['rows', True], ['rows', '-1'], ['missing'], ['rows', '__class__']):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                context_page(facts, path)
+        self.assertEqual(facts, dict(rows=[dict(value=42)], pending=dict(outcome='unknown')))
+
+    def test_large_fresh_observation_projects_pages_after_existing_body_guards(self):
+        original = self.rpc.call
+        players = [dict(guid=str(i), name='Player '+str(i), detail='x'*900) for i in range(100)]
+        def call(method, params, **kwargs):
+            result = original(method, params, **kwargs)
+            if method == 'buddy-world.snapshot': result['players'] = copy.deepcopy(players)
+            return result
+        self.rpc.call = call
+        default = self.page('read_observation', method='buddy-world.snapshot', params={})
+        summary = next(row for row in default['rows'] if row['key'] == 'players')
+        self.assertTrue(summary['omitted']); self.assertEqual(summary['total'], 100)
+        exact = self.page('read_observation', method='buddy-world.snapshot', params={}, path=['players', '99', 'detail'], limit=4096)
+        self.assertEqual(exact['value'], players[-1]['detail'])
+        self.assertFalse(exact['truncated'])
+        self.rpc.hook = lambda method: setattr(self.rpc, 'sid', 'aw-replaced') if method == 'buddy-world.snapshot' else None
+        self.assertFalse(self.tools.dispatch('read_observation', dict(method='buddy-world.snapshot', params={}, path=['players']))['ok'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_catalog_index_and_exact_large_message_dependencies_are_pageable(self):
+        original = self.rpc.catalog
+        fields = [dict(name='field'+str(i), kind='string', description='exact-fact '*40) for i in range(300)]
+        def catalog():
+            result = original()
+            result['methods'] += [dict(name='extra.read_'+str(i), effect='read', inputType='request', outputType='response') for i in range(100)]
+            result['messages']['request']['fields'] = fields
+            return result
+        self.rpc.catalog = catalog
+        index = self.page('session_catalog')
+        self.assertEqual(index['type'], 'array')
+        self.assertTrue(index['truncated'])
+        self.assertEqual(len(index['rows']), 20)
+        self.assertEqual(index['rows'][0]['value']['name'], 'buddy-actions.status')
+        selected = self.page('session_catalog', method='buddy-actions.cast_spell', path=['messages', 'request', 'fields'], offset=299)
+        self.assertEqual(selected['rows'][0]['value'], fields[-1])
+        message = self.page('session_catalog', message='request', path=['message', 'fields'], offset=299)
+        self.assertEqual(message['rows'][0]['value'], fields[-1])
+        self.assertFalse(self.rpc.writes)
+
+    def test_large_policy_default_is_metadata_and_long_single_source_line_can_be_read(self):
+        self.rpc.source = "return {text='" + 'x'*330000 + "'}\n"
+        default = self.page('policy_show')
+        source_row = next(row for row in default['rows'] if row['key'] == 'source')
+        self.assertTrue(source_row['omitted'])
+        self.assertEqual(source_row['sha256'], checksum(self.rpc.source))
+        self.assertNotIn('x'*1000, json.dumps(default))
+        exact = self.page('policy_show', path=['source'], offset=len(self.rpc.source)-40, limit=4096)
+        self.assertEqual(exact['value'], self.rpc.source[-40:])
+        snapshot = self.tools.dispatch('policy_show', dict(save_as='snapshot.lua', expected_sha256=''))
+        self.assertTrue(snapshot['ok'], snapshot)
+        first = self.page('workspace_read', path='snapshot.lua')
+        self.assertTrue(first['truncated']); self.assertGreater(first['nextOffset'], 0)
+        tail = self.page('workspace_read', path='snapshot.lua', offset=len(self.rpc.source)-40, limit=4096)
+        self.assertEqual(tail['content'], self.rpc.source[-40:])
+        self.assertEqual(tail['sha256'], checksum(self.rpc.source))
+        self.assertEqual(self.rpc.pending, ['issued-before-edit'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_large_spell_index_pages_but_exact_learned_mechanics_are_complete(self):
+        original = self.rpc.call
+        rows = [dict(spellId=1000+i, metadataKnown=True, name='Learned '+str(i)+'x'*80,
+                     genericCastSupported=True, mechanics=dict(effects=[dict(effect=6, rawFact='full')])) for i in range(500)]
+        def call(method, params, **kwargs):
+            result = original(method, params, **kwargs)
+            if method == 'buddy-actions.spell_toolkit': result['spells'] = copy.deepcopy(rows)
+            return result
+        self.rpc.call = call
+        default = self.page('spell_inspect')
+        self.assertTrue(next(row for row in default['rows'] if row['key'] == 'spells')['omitted'])
+        page = self.page('spell_inspect', path=['spells'], offset=499)
+        self.assertEqual(page['rows'][0]['value']['spellId'], 1499)
+        exact = self.tools.dispatch('spell_inspect', dict(spell_id=1499))
+        self.assertTrue(exact['ok'], exact)
+        self.assertEqual(exact['result']['spell'], rows[-1])
+        self.assertFalse(self.rpc.writes)
 
     def test_authority_and_cancellation_hide_and_refuse_mutations(self):
         for value in (False, True):
