@@ -48,12 +48,12 @@ class FakeChildren:
                 self.native = True
             elif command == "stop":
                 self.native = False
-            return "Running: " + ("yes" if self.native else "no") + "\nReadiness: " + ("matching ready event observed" if self.native else "not observed") + "\n"
+            return "Running: " + ("yes" if self.native else "no") + "\nBoot ready event: " + ("observed (historical)" if self.native else "not observed") + "\nRealm connection: unverified\n"
         if command == "stop":
             self.chat = False
             return "Conversation stop requested"
         return json.dumps(dict(running=self.chat, coreSessionId=self.sid, coreCharacterGuid=str(actor["guid"]),
-            chatSessionId="chat-module-session", phase="listening", modelSelection=self.selection,
+            chatSessionId="chat-module-session", phase="listening", updated=10, modelSelection=self.selection,
             character_identity=dict(profile=actor["profile"], name=actor["name"], **{"class": actor["class"]},
                                     guid=actor["guid"], owner_guid=3, rpc_url=f"http://127.0.0.1:{actor['native_port']}/rpc")))
 
@@ -148,7 +148,12 @@ class LauncherTests(unittest.TestCase):
     def test_start_once_then_repeated_start_reuses_both_owners(self):
         first = app.operate(self.actor, "start", self.runner)
         second = app.operate(self.actor, "start", self.runner)
-        self.assertTrue(first["nativeReady"] and second["listenerReady"])
+        self.assertTrue(first["launcherInitialized"] and first["controlPlaneAttached"] and second["listenerInitialized"])
+        self.assertNotIn("nativeReady", first)
+        self.assertNotIn("listenerReady", second)
+        self.assertEqual(first["realmConnection"], "unverified")
+        self.assertEqual(second["chatDelivery"], "unverified")
+        self.assertEqual(second["modelInference"], "unverified")
         self.assertFalse(first["inferenceVerified"])
         self.assertEqual(len(self.runner.commands("buddy", "start")), 1)
         self.assertEqual(len(self.runner.spawns), 1)
@@ -298,7 +303,7 @@ class LauncherTests(unittest.TestCase):
                     return json.dumps(value)
                 return output
             self.runner.run = status
-            with self.subTest(change=change), self.assertRaisesRegex(app.Error, "readiness/exit"):
+            with self.subTest(change=change), self.assertRaisesRegex(app.Error, "initialization/exit"):
                 app.wait_chat(self.actor, self.runner, True, "aw-fake", timeout=0)
             with self.assertRaisesRegex(app.Error, "older native session"):
                 app.operate(self.actor, "restart-chat", self.runner)
@@ -309,7 +314,8 @@ class LauncherTests(unittest.TestCase):
         self.identity.stop()
         methods = [dict(name=value) for value in body()["methods"]]
         catalog = dict(sessionId="aw-fake", characterGuid="4", revision="b"*64, methods=methods)
-        values = {"session.describe": catalog, "buddy-world.snapshot": dict(self=dict(guid="4", present=True)),
+        values = {"session.describe": catalog, "buddy-world.snapshot": dict(self=dict(guid="4", present=True,
+                  observationAgeMs="900000", positionAgeMs="800000")),
                   "buddy-party.state": dict(sessionId="aw-fake"),
                   "session.attach": dict(catalog, policy=dict(revision="a"*64))}
         observed = []
@@ -319,6 +325,12 @@ class LauncherTests(unittest.TestCase):
         with mock.patch.object(app, "get_json", side_effect=reply):
             result = app.native_identity(self.actor)
             self.assertEqual(result["sessionId"], "aw-fake")
+            self.assertTrue(result["rpcIdentityAvailable"])
+            self.assertIsInstance(result["rpcIdentityReadAtUnixMs"], int)
+            self.assertEqual(result["identityEvidence"], "retained_world_party_and_attached_policy")
+            self.assertEqual(result["worldObservation"]["observationAgeMs"], "900000")
+            self.assertEqual(result["worldObservation"]["positionAgeMs"], "800000")
+            self.assertEqual(result["realmConnection"], "unverified")
             self.assertEqual(observed[-1], ("session.attach", dict(sessionId="aw-fake", characterGuid="4")))
             values["buddy-party.state"]["sessionId"] = "foreign"
             with self.assertRaisesRegex(app.Error, "identity changed"):
@@ -327,6 +339,44 @@ class LauncherTests(unittest.TestCase):
             values["session.describe"]["methods"] = methods[:1]
             with self.assertRaisesRegex(app.Error, "missing required"):
                 app.native_identity(self.actor)
+
+    def test_old_and_new_boot_event_formats_are_initialization_not_connection_proof(self):
+        for line in ("Readiness: matching ready event observed", "Boot ready event: observed (historical)"):
+            runner = mock.Mock()
+            runner.run.return_value = "Running: yes\n" + line + "\n"
+            with self.subTest(line=line):
+                result = app.native_status(self.actor, runner)
+                self.assertTrue(result["running"] and result["readyEventObserved"] and result["launcherInitialized"])
+                self.assertEqual(result["realmConnection"], "unverified")
+                self.assertNotIn("ready", result)
+
+    def test_stale_listener_and_retained_identity_never_claim_delivery_or_inference(self):
+        self.runner.native = self.runner.chat = True
+        with mock.patch.object(app.time, "time", return_value=3610):
+            result = app.operate(self.actor, "status", self.runner)
+        self.assertTrue(result["native"]["running"] and result["native"]["readyEventObserved"])
+        self.assertTrue(result["controlPlaneAttached"] and result["listenerInitialized"])
+        self.assertTrue(result["modelConfigMatches"])
+        self.assertEqual(result["listener"]["phase"], "listening")
+        self.assertEqual(result["listener"]["phaseSource"], "saved_listener_status")
+        self.assertEqual(result["listener"]["statusAgeSeconds"], 3600)
+        for key in ("realmConnection", "chatDelivery", "modelInference"):
+            self.assertEqual(result[key], "unverified")
+        self.assertFalse(self.runner.spawns)
+        self.assertTrue(all(argv[3] == "status" for argv, _ in self.runner.calls))
+
+    def test_unavailable_rpc_reports_identity_failure_without_inventing_realm_failure(self):
+        self.runner.native = self.runner.chat = True
+        with mock.patch.object(app, "native_identity", side_effect=app.Error(
+                "Configured endpoint is unavailable or returned invalid JSON; no fallback")):
+            result = app.operate(self.actor, "status", self.runner)
+        self.assertTrue(result["native"]["running"] and result["native"]["launcherInitialized"])
+        self.assertFalse(result["controlPlaneAttached"] or result["listenerInitialized"])
+        self.assertIsNone(result["body"])
+        self.assertIn("endpoint is unavailable", result["identityReadError"])
+        self.assertEqual(result["realmConnection"], "unverified")
+        self.assertFalse(self.runner.spawns)
+        self.assertTrue(all(argv[3] == "status" for argv, _ in self.runner.calls))
 
     def test_busy_real_body_lock_and_foreign_journal_never_spawn(self):
         with app.journal(self.actor):

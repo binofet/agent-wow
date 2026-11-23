@@ -483,6 +483,7 @@ def scan_log(record, offset, predicate):
 
 
 def readiness(record):
+    """Historical startup evidence only; this does not inspect the live transport."""
     offset = record.get("ready_offset")
     found, _ = scan_log(record, 0 if offset is None else offset,
                         lambda line: ready_line(line, record["pid"]))
@@ -591,7 +592,7 @@ def start(*, deadline=None):
                              "no signal or restart sent. Stop this profile before starting in another mode.")
         if readiness(record):
             remaining_time(deadline, f"Startup deadline expired; PID {record['pid']} was preserved without restart")
-            print(f"Already running: PID {record['pid']}; matching world session ready event observed.\nLog: {LOG_FILE}")
+            print(f"Already running: PID {record['pid']}; historical world session ready event observed.\nRealm connection: unverified\nLog: {LOG_FILE}")
             return 0
         raise BuddyError(f"PID {record['pid']} is already running without a verified ready event; left untouched. Log: {LOG_FILE}")
     for path in (BINARY, CONFIG):
@@ -644,7 +645,7 @@ def start(*, deadline=None):
             record["ready_offset"] = found
             save_record(record)
             remaining_time(deadline, f"Startup deadline expired; PID {child.pid} was preserved. Log: {LOG_FILE}")
-            print(f"Started: PID {child.pid}; matching world session ready event observed.\nLog: {LOG_FILE}")
+            print(f"Started: PID {child.pid}; world session ready event observed at startup.\nRealm connection: unverified\nLog: {LOG_FILE}")
             return 0
         time.sleep(min(0.25, max(0, deadline - time.monotonic())))
     raise BuddyError(f"Startup deadline expired without readiness; PID {child.pid} was preserved. Use dev/buddy status or stop. Log: {LOG_FILE}")
@@ -704,12 +705,12 @@ def stop(*, deadline=None):
 def status():
     record = load_record()
     if record is None:
-        print(f"PID: none\nRunning: no\nReadiness: not observed\nLog: {LOG_FILE}")
+        print(f"PID: none\nRunning: no\nBoot ready event: not observed\nRealm connection: unverified\nLog: {LOG_FILE}")
         return 0
     running = running_owned(record)
-    ready = running and readiness(record)
+    ready_event = readiness(record)
     mode = "independent" if recorded_independent(record) else "companion"
-    print(f"PID: {record['pid']}\nRunning: {'yes' if running else 'no'}\nMode: {mode}\nReadiness: {'matching ready event observed' if ready else 'not observed for a running body'}\nLog: {LOG_FILE}")
+    print(f"PID: {record['pid']}\nRunning: {'yes' if running else 'no'}\nMode: {mode}\nBoot ready event: {'observed (historical)' if ready_event else 'not observed'}\nRealm connection: unverified\nLog: {LOG_FILE}")
     return 0
 
 
