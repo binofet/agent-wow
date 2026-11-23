@@ -23,6 +23,7 @@ class RPC:
 
     def __init__(self, guid="4"):
         self.sid, self.guid, self.revision = "aw-123", guid, "catalog-1"
+        self.chat_sid = "chat-distinct-456"
         self.source = "return {decide=function(f) return {output={value=f.value}} end}\n"
         self.pending = ["issued-before-edit"]
         self.calls, self.writes = [], []
@@ -33,6 +34,7 @@ class RPC:
     def catalog(self):
         rows = [dict(name=n, effect=e, inputType="request", outputType="response") for n, e in [
             ("buddy-actions.status", "read"), ("buddy-actions.behavior", "read"),
+            ("buddy-chat.poll", "read"),
             ("buddy-actions.spell_toolkit", "read"), ("buddy-world.snapshot", "read"),
             ("buddy-actions.cast_spell", "mutation"), ("buddy-trade.state", "unspecified")]]
         host = [dict(name=n, effect=e, input=dict(properties=dict(sessionId={}, characterGuid={})))
@@ -48,6 +50,8 @@ class RPC:
         self.calls.append((method, copy.deepcopy(params)))
         if method == "session.describe":
             result = self.catalog()
+        elif method == "buddy-chat.poll":
+            result = dict(sessionId=self.chat_sid, messages=[dict(text="Actual system feedback", channel="SYSTEM")])
         elif method == "session.policy_source":
             result = dict(sessionId=self.sid, characterGuid=self.guid, revision=checksum(self.source),
                           source=self.source, sourceLimitBytes=8 * 1024 * 1024)
@@ -113,6 +117,58 @@ class DirectToolTests(unittest.TestCase):
         self.assertEqual(self.rpc.writes, [])
         selected = self.tools.dispatch("session_catalog", dict(method="buddy-actions.cast_spell"))['result']
         self.assertEqual(set(selected['messages']), {'request', 'response'})
+
+    def chat_tools(self, chat_session_id):
+        return DirectTools(self.rpc, self.rpc.sid, self.rpc.guid, self.workspace, self.host,
+            allowed=lambda: self.allowed, cancelled=lambda: self.cancelled,
+            helpers={"self-edit": self.edit}, chat_session_id=chat_session_id)
+
+    def test_chat_poll_uses_trusted_distinct_chat_session_and_keeps_core_reads_bound(self):
+        tools = self.chat_tools(self.rpc.chat_sid)
+        result = tools.dispatch("read_observation", dict(method="buddy-chat.poll", params=dict(afterSequence="9", limit=20)))
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["result"]["sessionId"], self.rpc.chat_sid)
+        self.assertEqual(result["result"]["messages"][0]["text"], "Actual system feedback")
+        calls = [params for method, params in self.rpc.calls if method == "buddy-chat.poll"]
+        self.assertEqual(calls, [dict(afterSequence="9", limit=20, sessionId=self.rpc.chat_sid)])
+        self.assertNotEqual(self.rpc.sid, self.rpc.chat_sid)
+        native = tools.dispatch("read_observation", dict(method="session.policy_state", params={}))
+        self.assertTrue(native["ok"], native)
+        self.assertEqual(next(params for method, params in self.rpc.calls if method == "session.policy_state"),
+                         dict(sessionId=self.rpc.sid, characterGuid=self.rpc.guid))
+        self.assertEqual(native["result"]["sessionId"], self.rpc.sid)
+        self.assertFalse(self.rpc.writes)
+
+    def test_chat_poll_requires_binding_and_refuses_caller_foreign_or_core_session_before_call(self):
+        for trusted, supplied in ((None, None), (self.rpc.chat_sid, self.rpc.sid),
+                                  (self.rpc.chat_sid, "chat-foreign")):
+            with self.subTest(trusted=trusted, supplied=supplied):
+                self.rpc.calls.clear()
+                params = {} if supplied is None else dict(sessionId=supplied)
+                result = self.chat_tools(trusted).dispatch("read_observation", dict(method="buddy-chat.poll", params=params))
+                self.assertFalse(result["ok"], result)
+                self.assertFalse(any(method == "buddy-chat.poll" for method, _ in self.rpc.calls))
+        self.assertFalse(self.rpc.writes)
+
+    def test_chat_poll_refuses_replacement_chat_or_native_body_and_missing_response_identity(self):
+        for mode in ("chat", "core", "missing"):
+            with self.subTest(mode=mode):
+                self.rpc.sid, self.rpc.chat_sid = "aw-123", "chat-distinct-456"
+                tools = self.chat_tools(self.rpc.chat_sid)
+                original = self.rpc.call
+                def call(method, params, **kwargs):
+                    result = original(method, params, **kwargs)
+                    if method == "buddy-chat.poll":
+                        if mode == "chat": result["sessionId"] = "chat-replacement"
+                        elif mode == "core": self.rpc.sid = "aw-replacement"
+                        else: result.pop("sessionId")
+                    return result
+                with mock.patch.object(self.rpc, "call", side_effect=call):
+                    result = tools.dispatch("read_observation", dict(method="buddy-chat.poll", params={}))
+                self.assertFalse(result["ok"], result)
+                self.assertIn("read_result_chat_body_changed" if mode != "core" else "current_body_changed",
+                              result["error"]["error"])
+        self.assertFalse(self.rpc.writes)
 
     def test_read_detects_body_and_contract_replacement(self):
         for mode in ("body", "catalog"):

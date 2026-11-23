@@ -632,6 +632,26 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                         self.assertEqual(brain.last_development_result["outcome"], "completed")
                     self.assertEqual(len(http.requests), 2)
 
+    def test_live_facade_passes_actual_chat_session_to_feedback_read(self):
+        responses = [chat(("feedback", "read_observation", dict(method="buddy-chat.poll",
+            params=dict(afterSequence="0", limit=20)))), chat(("final", "final_reply", REPLY))]
+        original = self.rpc.call
+        def call(method, params, timeout=None):
+            result = original(method, params, timeout)
+            if method == "session.describe":
+                result["methods"].append(dict(name="buddy-chat.poll", effect="read", inputType="PollRequest"))
+                result["messages"]["PollRequest"] = dict(fields=[dict(name="sessionId")])
+            return result
+        with patch.object(self.rpc, "call", side_effect=call), self.rig(responses) as (loop, brain, state, http):
+            self.assertNotEqual(self.rpc.core, self.rpc.chat)
+            self.assertEqual(loop.generate_reply([], state), REPLY)
+            feedback = [params for method, params in self.rpc.calls
+                        if method == "buddy-chat.poll" and params.get("limit") == 20]
+            self.assertEqual(feedback, [dict(afterSequence="0", limit=20, sessionId=self.rpc.chat)])
+            read_result = json.loads(http.requests[1]["body"]["messages"][-1]["content"])
+            self.assertEqual(read_result["result"]["sessionId"], self.rpc.chat)
+            self.assertFalse(self.rpc.commands)
+
     def test_actual_tools_reject_replaced_body_before_a_policy_command(self):
         self.rpc.catalog_guid = "8"
         with self.rig([chat(("foreign", "policy_input", dict(value=dict(task="fixture", id="foreign")))),

@@ -2720,7 +2720,7 @@ class DirectBrain(AgentBrain):
                 development["selfGuid"], self.developer_workspace, ROOT,
                 allowed=lambda: self.development_enabled(state) and not interrupted(),
                 cancelled=interrupted, request_id=self.last_request_id, context=full_context,
-                gm_allowed=gm_authorised)
+                gm_allowed=gm_authorised, chat_session_id=self._generation.get("chatSessionId"))
         record["promptMetrics"] = dict(contextBytes=len(encode(prompt_state)),
             historyBytes=len(encode(history)), fullCapturedContextBytes=len(encode(full_context)))
         def dispatch(name, arguments):
