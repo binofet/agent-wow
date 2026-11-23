@@ -4462,6 +4462,180 @@ class ConversationReadinessTests(unittest.TestCase):
                                 for m, _ in rpc.calls))
 
 
+class RetainedOwnerContinuationTests(unittest.TestCase):
+    def setUp(self):
+        folder = real_temp_directory(); self.addCleanup(folder.cleanup)
+        self.folder = Path(folder.name) / 'listener'
+        self.binding = ['aw-42','chat-current','109','a'*32]
+        self.rows = [message(109,'Please finish the original recovery',channel='WHISPER',receiverGuid='87'),
+                     message(110,'Got it—give me a moment.',channel='WHISPER_INFORM',self=True)]
+        outer = self
+        class RPC:
+            url = 'http://127.0.0.1:8090/rpc'
+            core, guid, chat, lost, polls, before_poll = 'aw-42','87','chat-current',False,0,None
+            def __init__(rpc):rpc.calls=[]
+            def call(rpc,method,params,timeout=None):
+                rpc.calls.append((method,copy.deepcopy(params)))
+                if method == 'buddy-chat.poll':
+                    rpc.polls += 1
+                    if rpc.before_poll:rpc.before_poll(rpc)
+                    if params.get('sessionId',rpc.chat) != rpc.chat:raise converse.CursorReset('Chat body changed')
+                    return poll([copy.deepcopy(row) for row in outer.rows if int(row['sequence'])>int(params.get('afterSequence','0'))],
+                                latest=int(outer.rows[-1]['sequence']),sessionId=rpc.chat,cursorLost=rpc.lost)
+                if method == 'session.describe':return dict(sessionId=rpc.core,characterGuid=rpc.guid)
+                if method == 'buddy-chat.send':return dict(transportWritten=True)
+                raise AssertionError('Unexpected gameplay/tool RPC: '+method)
+        self.rpc = RPC()
+        class Controls:
+            def __init__(controls):controls.events=[];controls.executed=[];controls.on_refresh=None
+            def refresh(controls):
+                if controls.on_refresh:controls.on_refresh()
+            def context(controls):return {}
+            def execute(controls,action,**kw):controls.executed.append(action)
+        self.controls = Controls()
+        self.brain = converse.DirectBrain(self.folder,character_name='Lotharen',character_class='paladin',
+            model='fixture',provider='local',base_url='http://127.0.0.1:18765/v1')
+        self.requests=[]
+        def generate(system,messages,*args,**kwargs):
+            self.assertFalse(kwargs['cancelled']())
+            self.requests.append(dict(system=system,messages=copy.deepcopy(messages),kwargs=kwargs,
+                requestId=self.brain.last_request_id,toolRequestId=self.brain._generation['toolCustodyRequestId']))
+            return dict(text='I will inspect the retained state before doing more.',action='NONE',emote='NONE')
+        self.brain.client.generate = generate # Real DirectBrain; no HTTP/model inference.
+        self.brain.client.last_receipt = {}
+        self.events=[]
+        self.receipt_path=self.folder/'brain-failures'/('a'*32+'.json')
+        self.receipt_path.parent.mkdir(parents=True,mode=0o700)
+        converse.write_json(self.receipt_path,dict(version=1,requestId='a'*32,sessionId='aw-42',
+            chatSessionId='chat-current',selfGuid='87',cursor=109,requestSource='owner',execution='direct_api',
+            receiptStored=True,outcome='failed',pendingTools=[]))
+
+    def loop(self, **kw):
+        return converse.Conversation(self.rpc,self.brain,character_name='Lotharen',character_class='paladin',
+            character_guid=87,controls=self.controls,status=lambda **v:self.events.append(v),**kw)
+
+    def test_exact_retained_request_after_ack_enters_real_direct_brain_without_rewinding_or_rewriting(self):
+        identity=dict(characterGuid='87',ownerGuid='3',rpcUrl=self.rpc.url)
+        converse.owner_acknowledgement(self.folder,identity,'chat-current',109)
+        converse.owner_acknowledgement(self.folder,identity,'chat-current',109,'transport_written')
+        ack=self.folder/'owner-acknowledgements/state.json'; before=ack.read_bytes()
+        retained=self.receipt_path.read_bytes(); original=copy.deepcopy(self.rows)
+        loop=self.loop(continue_owner_whisper=self.binding);loop.tick()
+        self.assertEqual(loop.cursor,110)
+        self.assertEqual(self.requests[0]['messages'],[{'role':'user','content':self.rows[0]['text']}])
+        self.assertIn('"continuation"',self.requests[0]['system'])
+        self.assertEqual(self.requests[0]['toolRequestId'],'a'*32)
+        self.assertNotEqual(self.requests[0]['requestId'],'a'*32) # A fresh API turn retains the original tool namespace.
+        self.assertEqual(self.controls.executed,['NONE'])
+        sends=[p for m,p in self.rpc.calls if m=='buddy-chat.send']
+        self.assertEqual(len(sends),1);self.assertNotEqual(sends[0]['text'],self.rows[1]['text'])
+        self.assertEqual(ack.read_bytes(),before);self.assertEqual(self.receipt_path.read_bytes(),retained)
+        self.assertEqual(self.rows,original)
+        self.assertEqual([p['afterSequence'] for m,p in self.rpc.calls if m=='buddy-chat.poll'][0],'0')
+        self.assertTrue(all(p['afterSequence']=='110' for m,p in self.rpc.calls[1:] if m=='buddy-chat.poll'))
+        loop.tick();self.assertEqual(len(self.requests),1) # No ordinary-tick continuation replay.
+
+    def test_default_resume_still_does_not_replay_an_acknowledged_request(self):
+        loop=self.loop(resume_whispers=True);loop.tick()
+        self.assertEqual(self.requests,[])
+        self.assertEqual(loop.cursor,110)
+
+    def test_continued_tool_namespace_preserves_real_gm_alias_and_new_task_custody(self):
+        from test_gm_command_evidence import GMCommandEvidenceTests
+        import direct_tools
+        rig=GMCommandEvidenceTests();rig.setUp();self.addCleanup(rig.doCleanups)
+        rig.rpc.sid='aw-42';rig.rpc.chat_sid='chat-current';rig.rpc.life['3']=False
+        rig.tools=rig.make_tools();rig.tools.request_id='a'*32
+        first=rig.execute('.revive Joel',operation='original:1')
+        self.assertTrue(first['ok'],first);self.assertTrue(first['result']['commandTransportWritten'])
+        self.assertFalse(first['result']['gameEffectClaimed'])
+        count=len(rig.rpc.packets);results=[];forwarded=[]
+        actual_dispatch=rig.tools.dispatch
+        def dispatch(name,args,**kw):
+            if name=='gm_inspect':return {'ok':True,'result':{'clients':[]}} # Read-only primer fixture.
+            return actual_dispatch(name,args,**kw)
+        rig.tools.dispatch=dispatch
+        def factory(*args,**kw):
+            forwarded.append(kw['request_id']);rig.tools.request_id=kw['request_id'];return rig.tools
+        self.brain.developer_workspace=rig.workspace
+        self.controls.actions_available=self.controls.party_available=True
+        self.controls.actions={'sessionId':'aw-42','selfGuid':'87'};self.controls.party_session='aw-42'
+        original_generate=self.brain.client.generate
+        def generate(system,messages,schema,tools,call,**kw):
+            results.append(call('gm_execute',{'command':'.revive','select_guid':'3'}))
+            results.append(call('gm_task_start',{'goal':{'members':[],'destination':{}}}))
+            return original_generate(system,messages,schema,tools,call,**kw)
+        self.brain.client.generate=generate
+        with patch.object(direct_tools,'DirectTools',side_effect=factory), \
+             patch.object(converse,'companion_role_context',return_value={}), \
+             patch.object(converse,'mission_runtime_context',return_value={}):
+            self.loop(continue_owner_whisper=self.binding).tick()
+        self.assertEqual(forwarded,['a'*32]) # Actual DirectBrain constructor forwarding, not a manually rebound retry.
+        self.assertNotEqual(self.requests[0]['requestId'],'a'*32)
+        self.assertTrue(results[0]['ok'],results[0]);self.assertFalse(results[0]['result']['commandTransportWritten'])
+        self.assertEqual(results[0]['result']['repeatAdmission']['priorOperationId'],'original:1')
+        self.assertTrue(results[1]['ok'],results[1]);self.assertFalse(results[1]['result']['started'])
+        self.assertIn('same_request_direct_intent_unsettled',results[1]['result']['completion'])
+        self.assertEqual(len(rig.rpc.packets),count)
+        self.assertEqual(rig.rpc.commands,['.revive Joel']) # Only the synthetic original write; zero continuation writes.
+
+    def test_original_receipt_must_bind_this_owner_work_before_model(self):
+        original=self.receipt_path.read_bytes()
+        for field,value in (('sessionId','aw-other'),('chatSessionId','chat-other'),('selfGuid','4'),
+                ('cursor',108),('requestSource','party_agent'),('requestId','b'*32)):
+            row=json.loads(original);row[field]=value;converse.write_json(self.receipt_path,row)
+            with self.subTest(field=field),self.assertRaisesRegex(converse.ConversationError,'receipt binding'):
+                self.loop(continue_owner_whisper=self.binding).tick()
+        self.receipt_path.unlink()
+        with self.assertRaisesRegex(converse.ConversationError,'receipt is unavailable'):
+            self.loop(continue_owner_whisper=self.binding).tick()
+        self.assertEqual(self.requests,[])
+        self.assertFalse(any(m=='buddy-chat.send' for m,_ in self.rpc.calls))
+
+    def test_exact_window_rejects_missing_lost_foreign_or_newer_owner_input(self):
+        original=copy.deepcopy(self.rows)
+        for kind in ('missing','gap','lost','foreign_sender','foreign_recipient','newer_owner','chat','core','guid'):
+            self.rows=copy.deepcopy(original);self.rpc.chat='chat-current';self.rpc.core='aw-42';self.rpc.guid='87';self.rpc.lost=False
+            if kind=='missing':self.rows=self.rows[1:]
+            elif kind=='gap':self.rows[-1]['sequence']='111'
+            elif kind=='lost':self.rpc.lost=True
+            elif kind=='foreign_sender':self.rows[0]['senderGuid']='4'
+            elif kind=='foreign_recipient':self.rows[0]['receiverGuid']='99'
+            elif kind=='newer_owner':self.rows.append(message(111,'Stop that; wait here.',channel='WHISPER'))
+            elif kind=='chat':self.rpc.chat='chat-replaced'
+            elif kind=='core':self.rpc.core='aw-replaced'
+            elif kind=='guid':self.rpc.guid='4'
+            with self.subTest(kind=kind),self.assertRaises(converse.ConversationError):
+                self.loop(continue_owner_whisper=self.binding).tick()
+        self.assertEqual(self.requests,[])
+        self.assertFalse(any(m=='buddy-chat.send' for m,_ in self.rpc.calls))
+
+    def test_later_owner_before_inference_preempts_without_consuming_new_input(self):
+        def arrived(rpc):
+            if rpc.polls==2:self.rows.append(message(111,'Stop and wait.',channel='WHISPER'))
+        self.rpc.before_poll=arrived
+        loop=self.loop(continue_owner_whisper=self.binding)
+        with self.assertRaises(converse.OwnerInputPending):loop.tick()
+        self.assertEqual(loop.cursor,110);self.assertEqual(self.requests,[])
+        self.assertFalse(any(m=='buddy-chat.send' for m,_ in self.rpc.calls))
+
+    def test_core_change_during_refresh_refuses_before_model_and_preserves_cursor(self):
+        self.controls.on_refresh=lambda:setattr(self.rpc,'core','aw-replaced')
+        loop=self.loop(continue_owner_whisper=self.binding)
+        with self.assertRaisesRegex(converse.ConversationError,'body changed'):loop.tick()
+        self.assertEqual(loop.cursor,110);self.assertEqual(self.requests,[])
+        self.assertFalse(any(m=='buddy-chat.send' for m,_ in self.rpc.calls))
+
+    def test_cli_rejects_invalid_binding_before_starting_a_listener(self):
+        for value in (['aw','chat','0','a'*32],['aw','chat','01','a'*32],['aw','chat',str(2**64),'a'*32],['bad session','chat','109','a'*32],['aw','chat','109','bad']):
+            with self.subTest(value=value),self.assertRaises(converse.ConversationError):
+                converse.owner_whisper_continuation(value)
+        with patch.object(converse,'ensure_state') as ensure,patch('sys.stderr'):
+            with self.assertRaises(SystemExit):
+                converse.main(['run','--model-provider','codex','--continue-owner-whisper',*self.binding])
+            ensure.assert_not_called()
+
+
 from test_companions import LauncherTests
 
 

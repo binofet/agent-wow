@@ -2519,6 +2519,7 @@ class AgentBrain:
         pid=getattr(process,'pid',None)
         now=time.monotonic()
         return dict(version=1,requestId=generation.get('requestId') or uuid.uuid4().hex,
+            toolCustodyRequestId=generation.get('toolCustodyRequestId'),
             sessionId=generation.get('sessionId',development.get('sessionId')),
             chatSessionId=generation.get('chatSessionId'),
             selfGuid=generation.get('selfGuid',str(development.get('selfGuid'))),
@@ -2578,6 +2579,7 @@ class AgentBrain:
         request=state.get('current_request') if isinstance(state.get('current_request'),dict) else {}
         source=request.get('source')
         self._generation=dict(requestId=self.last_request_id,started=time.monotonic(),stage='binding_check',
+            toolCustodyRequestId=context.get('toolCustodyRequestId') or self.last_request_id,
             sessionId=sid if isinstance(sid,str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid) else None,
             chatSessionId=receipt_identifier(context.get('chatSessionId')),
             selfGuid=guid if re.fullmatch(r'[0-9]{1,20}',guid) and 0<int(guid)<2**64 else None,
@@ -2737,7 +2739,7 @@ class DirectBrain(AgentBrain):
             tools = DirectTools(RPC(development["rpcUrl"]), development["sessionId"],
                 development["selfGuid"], self.developer_workspace, ROOT,
                 allowed=lambda: self.development_enabled(state) and not interrupted(),
-                cancelled=interrupted, request_id=self.last_request_id, context=full_context,
+                cancelled=interrupted, request_id=self._generation['toolCustodyRequestId'], context=full_context,
                 gm_allowed=gm_authorised, chat_session_id=self._generation.get("chatSessionId"),
                 chat_cursor=str(self._generation["cursor"]) if self._generation.get("cursor") is not None else None)
         if tools is not None and gm_authorised():
@@ -4307,7 +4309,7 @@ class BuddyControls:
 
 
 class Conversation:
-    def __init__(self, rpc, brain, player_guid=3, status=lambda **kw: None, stopped=lambda: False, player_name="Joel", controls=None, banter_seconds=0, character_name="Arlen", character_class="priest", character_guid=1, party_agents=None, resume_whispers=False):
+    def __init__(self, rpc, brain, player_guid=3, status=lambda **kw: None, stopped=lambda: False, player_name="Joel", controls=None, banter_seconds=0, character_name="Arlen", character_class="priest", character_guid=1, party_agents=None, resume_whispers=False, continue_owner_whisper=None):
         self.rpc, self.brain, self.player_guid, self._status_callback = rpc, brain, player_guid, status
         self.cursor = 0
         self.session_id = ""
@@ -4324,6 +4326,8 @@ class Conversation:
         self.replies = 0
         self.initialized = False
         self.resume_whispers = resume_whispers
+        self.continue_owner_whisper = owner_whisper_continuation(continue_owner_whisper)
+        self.active_owner_continuation = None
         self.stopped = stopped
         self.shared_quest_attempts = set()
         self.reply_emotes = dict(LEGACY_EMOTES)
@@ -4488,10 +4492,40 @@ class Conversation:
         # The server's body-specific chat feed already supplies the routing.
         return integer(message.get("receiverGuid", "0")) in (0, self.player_guid, self.character_guid)
 
-    def retained_owner_whisper(self, result):
+    def retained_owner_whisper(self, result, continuation=None):
         messages = result.get("messages", [])
         if not isinstance(messages, list) or len(messages) > 256:
             raise ConversationError("Chat poll messages are invalid")
+        if continuation is not None:
+            latest = integer(result.get("latestSequence", "0"))
+            if (result.get("sessionId") != continuation['chatSessionId'] or result.get('cursorLost', False)
+                    or not continuation['sequence'] <= latest < 2**64
+                    or integer(result.get('nextSequence', '0')) != latest):
+                raise ConversationError("Explicit owner continuation requires the complete current chat window")
+            retained, previous = None, 0
+            for message in messages:
+                if not isinstance(message, dict):raise ConversationError("Chat poll message is invalid")
+                sequence = integer(message.get('sequence', '0'))
+                if not previous < sequence <= latest:raise ConversationError("Chat poll sequences are not increasing")
+                if previous >= continuation['sequence'] and sequence != previous + 1:
+                    raise ConversationError('Explicit owner continuation chat window has a gap')
+                previous = sequence
+                owner = (integer(message.get('senderGuid', '0')) == self.player_guid
+                    and message.get('self', False) is False)
+                channel = message.get('channel')
+                if sequence == continuation['sequence']:
+                    if not owner or channel != 'WHISPER' or not self.owner_whisper_recipient(message):
+                        raise ConversationError("Explicit continuation is not this body's retained owner whisper")
+                    plain_text(message.get('text'))
+                    retained = message
+                elif sequence > continuation['sequence'] and owner and channel in ('SAY','PARTY','PARTY_LEADER','WHISPER'):
+                    if channel == 'WHISPER' and not self.owner_whisper_recipient(message):continue
+                    addressed = addressed_names(plain_text(message.get('text')), [self.character_name, *self.party_agents.values()])
+                    if not addressed or self.character_name.casefold() in addressed:
+                        raise ConversationError("Newer owner input supersedes the explicit continuation")
+            if retained is None or previous != latest:
+                raise ConversationError("Exact owner whisper is missing from the current retained chat window")
+            return retained  # A later ACK/private reply is not an action-completion receipt.
         for message in reversed(messages):
             if not isinstance(message, dict):
                 continue
@@ -4510,16 +4544,26 @@ class Conversation:
         return None
 
     def baseline(self):
-        result = self.rpc.call("buddy-chat.poll", {"afterSequence": "0", "limit": 256})
+        continuation, self.continue_owner_whisper = self.continue_owner_whisper, None
+        params = {"afterSequence": "0", "limit": 256}
+        if continuation is not None:
+            if not isinstance(self.brain, DirectBrain):raise ConversationError("Explicit owner continuation requires the direct model path")
+            params['sessionId'] = continuation['chatSessionId']
+        result = self.rpc.call("buddy-chat.poll", params)
         latest = integer(result.get("latestSequence", "0"))
         session = result.get("sessionId", "")
         if not isinstance(session, str) or len(session) > 128:
             raise ConversationError("Chat module session identifier is invalid")
-        retained = self.retained_owner_whisper(result) if self.resume_whispers and session else None
+        retained = self.retained_owner_whisper(result, continuation) if continuation is not None or self.resume_whispers and session else None
         self.resume_whispers = False
         self.session_id = session
         self.cursor = latest
         self.initialized = True
+        if continuation is not None:
+            self.check_owner_continuation_body(continuation)
+            self.check_owner_continuation_receipt(continuation)
+            self.active_owner_continuation = continuation
+            return dict(result, messages=[retained]) # Keep the actual latest cursor; never rewind it.
         if retained:
             sequence = integer(retained.get("sequence", "0"))
             if 0 < sequence <= latest:
@@ -4528,7 +4572,37 @@ class Conversation:
         self.status(phase="listening", cursor=self.cursor)
         return None
 
+    def check_owner_continuation_body(self, continuation):
+        if self.stopped():raise Stopped('Conversation stop requested')
+        catalog = self.rpc.call('session.describe', {})
+        if (catalog.get('sessionId') != continuation['sessionId']
+                or catalog.get('characterGuid') != str(self.character_guid)
+                or self.session_id != continuation['chatSessionId']):
+            raise ConversationError('Explicit owner continuation body changed')
+        if not self.same_body():raise OwnerInputPending('Explicit owner continuation was superseded')
+
+    def check_owner_continuation_receipt(self, continuation):
+        folder = Path(self.brain.state_dir) / 'brain-failures'
+        try:
+            if folder.is_symlink() or not folder.is_dir() or folder.stat().st_uid != os.getuid():
+                raise ConversationError('Original owner receipt directory is unavailable')
+            with os.fdopen(private_open(folder / (continuation['requestId'] + '.json'), os.O_RDONLY), 'rb') as source:
+                raw = source.read(8193)
+            if len(raw) > 8192:raise ConversationError('Original owner receipt exceeds its private limit')
+            receipt = json.loads(raw)
+        except (OSError, ValueError) as error:
+            raise ConversationError('Original owner continuation receipt is unavailable') from error
+        if (not isinstance(receipt, dict) or receipt.get('requestId') != continuation['requestId']
+                or receipt.get('sessionId') != continuation['sessionId']
+                or receipt.get('chatSessionId') != continuation['chatSessionId']
+                or receipt.get('selfGuid') != str(self.character_guid)
+                or type(receipt.get('cursor')) is not int or receipt['cursor'] != continuation['sequence']
+                or receipt.get('requestSource') != 'owner' or receipt.get('execution') != 'direct_api'
+                or receipt.get('receiptStored') is not True):
+            raise ConversationError('Original owner continuation receipt binding differs')
+
     def reset_body(self):
+        self.continue_owner_whisper = self.active_owner_continuation = None
         self.initialized = False
         self.session_id = ""
         self.peer_remaining = 0
@@ -4579,7 +4653,7 @@ class Conversation:
     def publish_brain_failure(self, context, previous_request):
         self.publish_brain_evidence(context,previous_request,getattr(self.brain,'last_failure_receipt',None),'brainFailure')
 
-    def generate_reply(self, history, state, still_current=None):
+    def generate_reply(self, history, state, still_current=None, *, tool_request_id=None):
         # One synchronous model process remains; a cheap read interrupts it
         # without advancing the chat cursor or undoing already-written code.
         next_poll = [0.0]
@@ -4611,6 +4685,7 @@ class Conversation:
         sid=development.get('sessionId') if isinstance(development,dict) else None
         context=dict(sessionId=sid if isinstance(sid,str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid) else self.session_id,
             chatSessionId=self.session_id,selfGuid=str(self.character_guid),cursor=self.cursor)
+        if tool_request_id is not None:context['toolCustodyRequestId'] = tool_request_id
         previous_request=getattr(self.brain,'last_request_id',None)
         previous_context=getattr(self.brain,'_generation_context',None)
         previous_progress=getattr(self.brain,'_generation_progress',None)
@@ -4732,6 +4807,7 @@ class Conversation:
                 # ring rather than interpreting stale history as new player input.
                 self.reset_body()
                 return
+        continuation, self.active_owner_continuation = self.active_owner_continuation, None
         latest = integer(result.get("latestSequence", "0"))
         next_sequence = integer(result.get("nextSequence", str(self.cursor)))
         if latest < self.cursor or next_sequence < self.cursor or next_sequence > latest:
@@ -4746,7 +4822,8 @@ class Conversation:
             if not isinstance(message, dict):
                 raise ConversationError("Chat poll message is invalid")
             sequence = integer(message.get("sequence", "0"), "sequence")
-            if not previous < sequence <= next_sequence:
+            if (continuation is None and not previous < sequence <= next_sequence
+                    or continuation is not None and (sequence != continuation['sequence'] or sequence > next_sequence)):
                 raise ConversationError("Chat poll sequences are not increasing")
             previous = sequence
             if message.get("self", False) is not False:
@@ -4843,12 +4920,18 @@ class Conversation:
         request_text = selected[-1]["text"].strip()
         address = re.match(re.escape(self.character_name) + r"[\s,]+", request_text, re.IGNORECASE)
         request = request_text[address.end():] if address else request_text
-        acknowledged=self.acknowledge_owner_request(selected[-1],channel,history_key,
-            current=not resumed and not result.get('cursorLost',False),directly_addressed=address is not None,
-            retained=resumed and channel=='WHISPER' and not result.get('cursorLost',False))
+        if continuation is not None:
+            self.check_owner_continuation_body(continuation)
+            acknowledged = 'explicit_continuation' # Preserve the original ACK reservation; do not send another ACK.
+            self.status(ownerContinuation=dict(continuation, outcome='selected_retained_input'), cursor=self.cursor)
+        else:
+            acknowledged=self.acknowledge_owner_request(selected[-1],channel,history_key,
+                current=not resumed and not result.get('cursorLost',False),directly_addressed=address is not None,
+                retained=resumed and channel=='WHISPER' and not result.get('cursorLost',False))
         if acknowledged is False:return
         if not self.refresh_controls():return
-        allow_gm = (not peer and not resumed and self.session_id and self.character_guid == 87
+        if continuation is not None:self.check_owner_continuation_body(continuation)
+        allow_gm = (not peer and (not resumed or continuation is not None) and self.session_id and self.character_guid == 87
                     and self.player_guid == 3 and self.character_name.casefold() == "lotharen")
         if allow_gm and not isinstance(self.brain, DirectBrain):
             literal_gm_request = re.fullmatch(r"gm\s+(\..+)", request, re.IGNORECASE)
@@ -4893,10 +4976,12 @@ class Conversation:
         if isinstance(self.brain, DirectBrain):
             state["current_request"].update(channel=channel, conversationScope=history_key,
                 messages=[dict(entry) for entry in selected])
+            if continuation is not None:state['current_request']['continuation'] = dict(continuation)
         if allow_gm:
             state["gm_controls_available"] = True
         try:
-            reply = validate_reply(self.generate_reply(self.history[history_key], state),self.reply_emotes,
+            reply = validate_reply(self.generate_reply(self.history[history_key], state,
+                tool_request_id=continuation['requestId'] if continuation is not None else None),self.reply_emotes,
                 allow_silent=development_whisper and development.get("enabled") is True, allow_gm=bool(allow_gm),
                 natural=isinstance(self.brain, DirectBrain))
         except OwnerInputPending:
@@ -5601,6 +5686,18 @@ def conversation_profile(args):
     return path, identity, roster
 
 
+def owner_whisper_continuation(value):
+    if value is None:return None
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise ConversationError('Owner continuation requires Core session, Chat session, exact sequence and original request ID')
+    core, chat, sequence, request_id = value
+    if (any(not isinstance(sid, str) or re.fullmatch(r'[A-Za-z0-9._-]{1,128}', sid) is None for sid in (core, chat))
+            or not isinstance(sequence, str) or re.fullmatch(r'[1-9][0-9]{0,19}', sequence) is None
+            or int(sequence) >= 2**64 or not isinstance(request_id, str) or re.fullmatch(r'[a-f0-9]{32}', request_id) is None):
+        raise ConversationError('Owner continuation identity or sequence is invalid')
+    return dict(sessionId=core, chatSessionId=chat, sequence=int(sequence), requestId=request_id)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=("run", "status", "stop"))
@@ -5629,6 +5726,8 @@ def main(argv=None):
                         help="Override the registered in-game Lua development worktree")
     parser.add_argument("--resume-whispers", action="store_true",
                         help="Handle the latest unanswered owner whisper in the current live chat body once")
+    parser.add_argument("--continue-owner-whisper", nargs=4, metavar=("CORE_SESSION", "CHAT_SESSION", "SEQUENCE", "ORIGINAL_REQUEST_ID"),
+                        help="Explicitly continue one genuine retained owner whisper on this exact body; preserve prior tool outcomes")
     parser.add_argument("--poll-seconds", type=float, default=1)
     parser.add_argument("--reply-timeout", type=float, default=None,
         help="explicit total reply deadline; ordinary chat defaults to 120s, authorized development remains interruptible")
@@ -5638,6 +5737,11 @@ def main(argv=None):
     parser.add_argument("--banter-seconds", type=float, default=180,
                         help="Minimum gap for occasional initiated conversation; 0 disables it (default 180)")
     args = parser.parse_args(argv)
+    if args.continue_owner_whisper is not None:
+        try:owner_whisper_continuation(args.continue_owner_whisper)
+        except ConversationError as error:parser.error(str(error))
+        if args.command != 'run' or args.resume_whispers or args.model_provider not in ('local','openai','claude','gemini'):
+            parser.error('Explicit owner continuation requires direct-model run without --resume-whispers')
     if args.model_provider in ("local", "openai", "claude", "gemini"):
         from direct_model import DirectModel
         DirectModel(args.model_provider, args.model, args.model_base_url, args.model_api_key_env, args.reply_timeout)
@@ -5716,7 +5820,7 @@ def main(argv=None):
         controls = BuddyControls(rpc, args.player_name, args.character_class, args.owner_quest_context, args.character_guid,
                                  supply_state_dir=state, profile_identity=identity)
         conversation = Conversation(rpc, brain, args.player_guid, status, stopped,
-                                    controls=controls, banter_seconds=args.banter_seconds, player_name=args.player_name, character_name=args.character_name, character_class=args.character_class, character_guid=args.character_guid, party_agents=roster, resume_whispers=args.resume_whispers)
+                                    controls=controls, banter_seconds=args.banter_seconds, player_name=args.player_name, character_name=args.character_name, character_class=args.character_class, character_guid=args.character_guid, party_agents=roster, resume_whispers=args.resume_whispers, continue_owner_whisper=args.continue_owner_whisper)
         deadline = time.monotonic() + args.max_hours * 3600
         status()
         print(f"{args.character_name} ({args.character_class}) is listening for {args.player_name} and addressed roster party messages.", flush=True)
