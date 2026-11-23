@@ -563,9 +563,22 @@ class DirectTools:
 
     def _gm(self, name, args):
         require(self.self_guid == "87", "authenticated_gm_actor_required")
-        if name not in ("gm_task_status", "gm_current_task"):
+        if name not in ("gm_task_status", "gm_current_task", "gm_inspect"):
             self._authorise_gm()
         gm = self._helper("gm_tasks")
+        if name == "gm_inspect":
+            observed = gm.inspect_clients(self.rpc.url, self.root)
+            rows = []
+            for row in [observed["gm"], *observed["bindings"]]:
+                facts = row.get("observations", {})
+                actions, party = facts.get("actions", {}), facts.get("party", {})
+                rows.append(dict(guid=row["guid"], name=row["name"], rpcUrl=row["rpcUrl"],
+                    identityMatches=row.get("identityMatches", False), errors=row.get("errors", []),
+                    self=gm.normalized(facts.get("world", {}).get("self", {}), actions),
+                    rawSelf=facts.get("world", {}).get("self", {}), group=party.get("group"),
+                    partySessionId=party.get("sessionId")))
+            self._catalog()
+            return dict(observedAtUnixMs=observed["observedAtUnixMs"], clients=rows, gameEffectClaimed=False)
         if name == "gm_execute":
             return self._gm_execute(gm, args)
         if name == "gm_current_task":
@@ -679,7 +692,8 @@ class DirectTools:
                           ("gm_task_resume", "Resume only gm_current_task's same stored goal/invocation and receipts. Runner started is not a GM effect; no new task or replay of uncertain actions.", {"task_id": string}, ["task_id"]),
                           ("gm_execute", "Send one native dot command through this exact GM session, optionally with an exact observed selection GUID. The realm decides permissions. The existing active task writer blocks competing commands. Inspect public observations afterward; transport is not effect.", {"command": string, "select_guid": string}, ["command"])]
         if self.self_guid == "87":
-            specs += [("gm_current_task", "Discover only this GM session's maintained active writer-owned task and actual retained status. No caller path, new task or execution. Page large observations/memory with JSON path/offset/limit.", paging, []),
+            specs += [("gm_inspect", "Read fresh configured public GM/companion clients in parallel: their own life, pose, session and group, including offscreen companions. No caller URL, game write or task. JSON path/offset/limit pages large facts.", paging, []),
+                      ("gm_current_task", "Discover only this GM session's maintained active writer-owned task and actual retained status. No caller path, new task or execution. Page large observations/memory with JSON path/offset/limit.", paging, []),
                       ("gm_task_status", "Read this body's retained direct task or exact gm_current_task ID; no arbitrary task path or execution. JSON path/offset/limit expand and page large observations or memory.", {"task_id": string, **paging}, ["task_id"])]
         return [context_tool_schema(), *[{"type": "function", "function": {"name": name, "description": description,
                  "parameters": {"type": "object", "properties": properties,
@@ -781,14 +795,14 @@ class DirectTools:
                 result = self._policy_apply(args)
             elif name == "policy_input":
                 result = self._policy_input(args)
-            elif name.startswith("gm_task_") or name in ("gm_current_task", "gm_execute"):
+            elif name.startswith("gm_task_") or name in ("gm_current_task", "gm_execute", "gm_inspect"):
                 result = self._gm(name, args)
-                if name in ("gm_task_status", "gm_current_task"):
+                if name in ("gm_task_status", "gm_current_task", "gm_inspect"):
                     result = self._project(result, args)
             else:
                 raise ToolError("tool_not_implemented")
             require(len(packed(result)) <= self.max_bytes, "tool_result_size_bound")
-            if name in ("context_read", "session_catalog", "read_observation", "policy_show", "workspace_read", "spell_inspect", "gm_task_status", "gm_current_task"):
+            if name in ("context_read", "session_catalog", "read_observation", "policy_show", "workspace_read", "spell_inspect", "gm_task_status", "gm_current_task", "gm_inspect"):
                 require(len(packed(dict(ok=True, result=result))) <= READ_PAGE_BYTES, "read_page_size_bound")
             self.last_receipt = dict(tool=name, sessionId=self.session_id, characterGuid=self.self_guid,
                                      outcome="completed", gameEffectClaimed=False)

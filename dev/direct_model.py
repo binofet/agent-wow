@@ -4,14 +4,18 @@ The caller supplies the persona, reply schema and actor-bound dispatcher. This
 module owns no game connection, shell, task scheduler or persistent action state.
 """
 import copy
+import fcntl
 import hashlib
 import http.client
 import json
 import math
 import os
+from pathlib import Path
 import queue
 import re
 import socket
+import stat
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -36,6 +40,67 @@ class Cancelled(ModelError):
 class ToolOutcomeUnknown(RuntimeError):
     """The caller cannot safely repeat an attempted tool operation."""
     outcome_unknown = True
+
+
+class _Transcript:
+    """Private API conversation, not a queue of actions to execute."""
+    def __init__(self, path, binding, limit, memory):
+        self.path, self.binding, self.limit = Path(path) if path is not None else None, binding, limit
+        self.memory, self.lock = memory, None
+
+    def __enter__(self):
+        if self.path is None:
+            self.state = self.memory.setdefault(self.binding, {})
+        else:
+            if self.path.is_symlink(): raise ModelError("conversation_symlink_refused")
+            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            self.path = self.path.parent.resolve() / self.path.name
+            info = self.path.parent.stat()
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise ModelError("private_conversation_directory_required")
+            fd = os.open(str(self.path)+".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            self.lock = os.fdopen(fd, "r+")
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077 or info.st_nlink != 1:
+                    raise ModelError("private_conversation_lock_required")
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                try:
+                    with os.fdopen(os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as source:
+                        info = os.fstat(source.fileno())
+                        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                            raise ModelError("private_conversation_file_required")
+                        raw = source.read(self.limit+1)
+                    if len(raw) > self.limit: raise ModelError("conversation_storage_bound")
+                    self.state = _decode(raw)
+                except FileNotFoundError:
+                    self.state = {}
+                if not isinstance(self.state, dict): raise ModelError("invalid_conversation_state")
+            except BaseException:
+                self.lock.close(); self.lock = None
+                raise
+        if self.state and self.state.get("binding") != self.binding:
+            self.__exit__(); raise ModelError("conversation_binding_changed")
+        if not self.state:
+            self.state.update(version=1, binding=self.binding, messages=[], requests={}, seen={}, unknown={}, pending=None)
+        return self
+
+    def save(self):
+        raw = _packed(self.state, self.limit)
+        if self.path is None: return
+        fd, name = tempfile.mkstemp(prefix=".conversation-", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "wb") as output:
+                output.write(raw); output.flush(); os.fsync(output.fileno())
+            os.replace(name, self.path)
+            directory = os.open(self.path.parent, os.O_RDONLY)
+            try: os.fsync(directory)
+            finally: os.close(directory)
+        finally:
+            if os.path.exists(name): os.unlink(name)
+
+    def __exit__(self, *_):
+        if self.lock: self.lock.close(); self.lock = None
 
 
 def _safe(value, limit=384):
@@ -135,7 +200,7 @@ def _schema(value, schema, depth=0):
 
 class DirectModel:
     def __init__(self, provider, model, base_url, api_key_env=None, timeout=None, *,
-                 max_tool_rounds=16, max_request_bytes=8*1024*1024, max_response_bytes=1024*1024,
+                 max_tool_rounds=None, max_request_bytes=8*1024*1024, max_response_bytes=1024*1024,
                  max_output_tokens=8192):
         if provider not in ("local", "openai", "claude", "gemini"):
             raise ModelError("unsupported_provider")
@@ -160,10 +225,12 @@ class DirectModel:
             raise ModelError("api_key_environment_name_required")
         if timeout is not None and (type(timeout) not in (int,float) or not math.isfinite(timeout) or timeout <= 0):
             raise ModelError("invalid_timeout")
-        if any(type(v) is not int or v <= 0 for v in (max_tool_rounds,max_request_bytes,max_response_bytes,max_output_tokens)):
+        if (max_tool_rounds is not None and (type(max_tool_rounds) is not int or max_tool_rounds <= 0)
+                or any(type(v) is not int or v <= 0 for v in (max_request_bytes,max_response_bytes,max_output_tokens))):
             raise ModelError("positive_limits_required")
         self.provider, self.model, self.base_url, self.api_key_env = provider, model, base_url.rstrip("/"), api_key_env
-        self.timeout, self.max_tool_rounds = timeout, max_tool_rounds
+        self.timeout, self.max_tool_rounds = timeout, max_tool_rounds if max_tool_rounds is not None else 16
+        self.natural_tool_rounds, self._conversations = max_tool_rounds, {}
         self.max_request_bytes, self.max_response_bytes = max_request_bytes, max_response_bytes
         self.max_output_tokens, self.last_receipt = max_output_tokens, None
 
@@ -252,18 +319,20 @@ class DirectModel:
             raise ModelError("provider_invalid_response")
         return value
 
-    def _payload(self, system, conversation, tools):
+    def _payload(self, system, conversation, tools, *, natural=False):
         if self.provider in ("local", "openai"):
-            return dict(model=self.model, messages=[dict(role="system",content=system),*conversation],
-                tools=[dict(type="function",function=t) for t in tools], tool_choice="required",
-                max_tokens=self.max_output_tokens, stream=False)
+            result = dict(model=self.model, messages=[dict(role="system",content=system),*conversation],
+                tools=[dict(type="function",function=t) for t in tools], tool_choice="auto" if natural else "required", stream=False)
+            if not natural: result["max_tokens"] = self.max_output_tokens
+            return result
         if self.provider == "claude":
             return dict(model=self.model, system=system, messages=conversation,
                 tools=[dict(name=t["name"],description=t.get("description",""),input_schema=t["parameters"]) for t in tools],
-                tool_choice=dict(type="any"), max_tokens=self.max_output_tokens)
+                tool_choice=dict(type="auto" if natural else "any"), max_tokens=self.max_output_tokens)
         return dict(systemInstruction=dict(parts=[dict(text=system)]), contents=conversation,
             tools=[dict(functionDeclarations=[dict(name=t["name"],description=t.get("description",""),parametersJsonSchema=t["parameters"]) for t in tools])],
-            toolConfig=dict(functionCallingConfig=dict(mode="ANY")), generationConfig=dict(maxOutputTokens=self.max_output_tokens))
+            toolConfig=dict(functionCallingConfig=dict(mode="AUTO" if natural else "ANY")),
+            **({} if natural else dict(generationConfig=dict(maxOutputTokens=self.max_output_tokens))))
 
     def _parse(self, value, round_index):
         usage = value.get("usageMetadata" if self.provider == "gemini" else "usage", {})
@@ -296,7 +365,7 @@ class DirectModel:
             return copy.deepcopy(native), calls
         if self.provider == "claude":
             native = value.get("content")
-            if value.get("stop_reason")!="tool_use" or not isinstance(native,list):
+            if value.get("stop_reason") not in ("tool_use", "end_turn") or not isinstance(native,list):
                 raise ModelError("provider_incomplete_response")
             return dict(role="assistant",content=copy.deepcopy(native)), [dict(id=r.get("id"),name=r.get("name"),arguments=r.get("input"))
                 for r in native if isinstance(r,dict) and r.get("type")=="tool_use"]
@@ -316,8 +385,8 @@ class DirectModel:
         # Preserve opaque thoughtSignature and all original model parts verbatim.
         return copy.deepcopy(native), calls
 
-    def _append_results(self, conversation, native, results):
-        conversation.append(native)
+    def _append_results(self, conversation, native, results, *, append_native=True):
+        if append_native: conversation.append(native)
         if self.provider in ("local", "openai"):
             conversation.extend(dict(role="tool",tool_call_id=c["id"],content=_packed(v,self.max_request_bytes).decode()) for c,v in results)
         elif self.provider == "claude":
@@ -330,7 +399,185 @@ class DirectModel:
                 parts.append(dict(functionResponse=reply))
             conversation.append(dict(role="user",parts=parts))
 
-    def generate(self, system, messages, reply_schema, tools, dispatch, *, cancelled=None, request_id=None, progress=None):
+    def _text(self, native):
+        if self.provider in ("local", "openai"):
+            value = native.get("content")
+            return value if isinstance(value, str) else ""
+        parts = native.get("content", []) if self.provider == "claude" else native.get("parts", [])
+        return "".join(part["text"] for part in parts
+                       if isinstance(part, dict) and isinstance(part.get("text"), str)
+                       and (part.get("type")=="text" if self.provider=="claude" else part.get("thought") is not True))
+
+    def _generate_natural(self, system, messages, reply_schema, tools, dispatch, *, cancelled,
+                          request_id, progress, transcript_path, conversation_key, assistant_text, read_only_tools):
+        identifier = request_id or uuid.uuid4().hex
+        self.last_receipt = dict(requestId=identifier, execution="direct_api", provider=self.provider,
+            requestedModel=self.model, baseURL=self.base_url, outcome="in_progress", httpRequests=0,
+            toolCalls=0, tools=[], omittedTools=0, usage={}, naturalConversation=True)
+        deadline = None if self.timeout is None else time.monotonic()+self.timeout
+        try:
+            if (not isinstance(system, str) or not isinstance(messages, list) or not isinstance(tools, list)
+                    or len(tools)>64 or not callable(dispatch)):
+                raise ModelError("invalid_generation_input")
+            if not isinstance(identifier, str) or re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", identifier) is None:
+                raise ModelError("invalid_request_id")
+            if conversation_key is None and transcript_path is None: conversation_key = "in-memory"
+            if not isinstance(conversation_key, str) or not 0 < len(conversation_key) <= 4096:
+                raise ModelError("conversation_identity_required")
+            functions = {}
+            if read_only_tools is None: read_only_tools = frozenset()
+            if not isinstance(read_only_tools, (list, tuple, set, frozenset)) or not all(isinstance(name, str) for name in read_only_tools):
+                raise ModelError("invalid_read_only_tool_declaration")
+            read_only_tools = frozenset(read_only_tools)
+            for row in copy.deepcopy(tools):
+                function = row.get("function") if isinstance(row, dict) and row.get("type")=="function" else None
+                if (not isinstance(function, dict) or not isinstance(function.get("name"), str)
+                        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,63}", function["name"]) is None
+                        or function["name"] in functions or function["name"]==FINAL_REPLY
+                        or not isinstance(function.get("parameters"), dict)):
+                    raise ModelError("invalid_tool_schema")
+                functions[function["name"]] = {k:function[k] for k in ("name", "description", "parameters") if k in function}
+            # Optional compatibility for existing explicit control actions;
+            # ordinary conversation is normal assistant text, never forced JSON.
+            if reply_schema is not None:
+                functions[FINAL_REPLY] = dict(name=FINAL_REPLY, description=
+                    "Optional structured game control reply. Ordinary conversation needs no tool.", parameters=copy.deepcopy(reply_schema))
+            incoming = []
+            for message in copy.deepcopy(messages):
+                if (not isinstance(message, dict) or message.get("role") not in ("user", "assistant")
+                        or not isinstance(message.get("content"), str)):
+                    raise ModelError("invalid_message")
+                incoming.append(dict(role="model" if message["role"]=="assistant" else "user", parts=[dict(text=message["content"])])
+                    if self.provider=="gemini" else dict(role=message["role"], content=message["content"]))
+            binding = json.dumps([self.provider, self.model, self.base_url, conversation_key], separators=(",", ":"))
+            with _Transcript(transcript_path, binding, self.max_request_bytes*8, self._conversations) as journal:
+                state = journal.state
+                conversation = state["messages"]
+                # Recover an interrupted tool exchange as factual results, not
+                # commands waiting to be retried by this or the next listener.
+                if state["pending"]:
+                    pending = state["pending"]
+                    recovered = []
+                    for row in pending["calls"]:
+                        call = row["call"]
+                        result = row.get("result")
+                        if result is None:
+                            if row.get("readOnly", False):
+                                result = dict(ok=False, readOnly=True, refreshAllowed=True, reason="read_interrupted")
+                            else:
+                                result = dict(ok=False, outcomeUnknown=row["phase"]=="entered", replayAllowed=False,
+                                              reason="interrupted_tool_exchange" if row["phase"]=="entered" else "not_dispatched")
+                        if isinstance(result, dict) and result.get("outcomeUnknown") is True and not row.get("readOnly", False):
+                            state["unknown"][call["fingerprint"]] = copy.deepcopy(result)
+                        recovered.append((call, result))
+                    self._append_results(conversation, None, recovered, append_native=False)
+                    state["pending"] = None
+                    journal.save()
+                digest = hashlib.sha256(_packed(incoming, self.max_request_bytes)).hexdigest()
+                prior = state["requests"].get(identifier)
+                if prior is not None:
+                    if prior["inputSHA256"] != digest: raise ModelError("conversation_request_identity_changed")
+                    raise ModelError("conversation_request_already_entered")
+                state["requests"][identifier] = dict(inputSHA256=digest)
+                conversation.extend(incoming)
+                state["seen"][identifier] = {}
+                seen = state["seen"][identifier]
+                journal.save()
+                index = 0
+                while self.natural_tool_rounds is None or index < self.natural_tool_rounds:
+                    self._check(cancelled, deadline)
+                    value = self._http(self._payload(system, conversation, list(functions.values()), natural=True),
+                                       cancelled, deadline, progress)
+                    native, calls = self._parse(value, index)
+                    self._check(cancelled, deadline)
+                    if not calls:
+                        text = self._text(native)
+                        if not text: raise ModelError("provider_empty_reply")
+                        conversation.append(native)
+                        journal.save()
+                        self.last_receipt["outcome"] = "completed"
+                        return dict(text=text, emote="NONE", action="NONE")
+                    if len(calls)>16: raise ModelError("unbounded_tool_calls")
+                    identifiers = set()
+                    for call in calls:
+                        if (not isinstance(call["id"], str) or not 1 <= len(call["id"]) <= 256 or call["id"] in identifiers
+                                or call["name"] not in functions or not isinstance(call["arguments"], dict)):
+                            raise ModelError("invalid_tool_call")
+                        identifiers.add(call["id"])
+                        _schema(call["arguments"], functions[call["name"]]["parameters"])
+                        call["fingerprint"] = hashlib.sha256(_packed([call["name"], call["arguments"]], self.max_request_bytes)).hexdigest()
+                        if call["id"] in seen and seen[call["id"]][0] != call["fingerprint"]:
+                            raise ModelError("tool_call_identity_changed")
+                    if any(call["name"]==FINAL_REPLY for call in calls):
+                        if len(calls)!=1: raise ModelError("mixed_final_reply")
+                        conversation.append(native)
+                        self._append_results(conversation, None, [(calls[0], dict(replyReturned=True))], append_native=False)
+                        journal.save()
+                        self.last_receipt["outcome"] = "completed"
+                        return copy.deepcopy(calls[0]["arguments"])
+                    conversation.append(native)
+                    state["pending"] = dict(calls=[dict(call=call, phase="not_entered", readOnly=call["name"] in read_only_tools) for call in calls])
+                    journal.save()
+                    text = self._text(native)
+                    if text and assistant_text is not None:
+                        self._check(cancelled, deadline)
+                        assistant_text(text)
+                    results = []
+                    for row in state["pending"]["calls"]:
+                        call = row["call"]
+                        self._check(cancelled, deadline)
+                        fingerprint = call["fingerprint"]
+                        if call["id"] in seen:
+                            returned = copy.deepcopy(seen[call["id"]][1])
+                        elif fingerprint in state["unknown"]:
+                            returned = copy.deepcopy(state["unknown"][fingerprint])
+                        else:
+                            row["phase"] = "entered"
+                            journal.save()  # Written before the caller can enter a mutation.
+                            try:
+                                self._check(cancelled, deadline)
+                            except Cancelled:
+                                row["phase"], row["result"] = "returned", dict(ok=False, reason="not_dispatched", outcomeUnknown=False)
+                                journal.save()
+                                raise
+                            self.last_receipt["toolCalls"] += 1
+                            try:
+                                returned = dispatch(call["name"], copy.deepcopy(call["arguments"]))
+                                _packed(returned, self.max_request_bytes)
+                            except BaseException as error:
+                                if row["readOnly"]:
+                                    returned = dict(ok=False, readOnly=True, refreshAllowed=True,
+                                        reason="read_failed", errorType=type(error).__name__)
+                                else:
+                                    row["result"] = dict(ok=False, outcomeUnknown=True, replayAllowed=False,
+                                        reason="tool_outcome_unknown", receipt=copy.deepcopy(getattr(error, "receipt", {})))
+                                    state["unknown"][fingerprint] = copy.deepcopy(row["result"])
+                                    journal.save()
+                                    raise ModelError("tool_outcome_unknown") from error
+                        row["phase"], row["result"] = "returned", copy.deepcopy(returned)
+                        seen[call["id"]] = [fingerprint, copy.deepcopy(returned)]
+                        journal.save()
+                        results.append((call, returned))
+                        if isinstance(returned, dict) and returned.get("outcomeUnknown") is True:
+                            raise ModelError("tool_outcome_unknown")
+                        self._check(cancelled, deadline)
+                    self._append_results(conversation, None, results, append_native=False)
+                    state["pending"] = None
+                    journal.save()
+                    index += 1
+                raise ModelError("tool_round_bound")
+        except BaseException as error:
+            reason = error.reason if isinstance(error, ModelError) else type(error).__name__
+            self.last_receipt.update(outcome="cancelled" if isinstance(error, Cancelled) else "failed", reason=reason)
+            if isinstance(error, Cancelled): raise Cancelled(reason, self.last_receipt) from None
+            raise ModelError(reason, self.last_receipt) from error
+
+    def generate(self, system, messages, reply_schema, tools, dispatch, *, cancelled=None, request_id=None, progress=None,
+                 natural=False, transcript_path=None, conversation_key=None, assistant_text=None, read_only_tools=None):
+        if natural:
+            return self._generate_natural(system, messages, reply_schema, tools, dispatch, cancelled=cancelled,
+                request_id=request_id, progress=progress, transcript_path=transcript_path, conversation_key=conversation_key,
+                assistant_text=assistant_text, read_only_tools=read_only_tools)
         identifier = request_id or uuid.uuid4().hex
         self.last_receipt = dict(requestId=identifier,execution="direct_api",provider=self.provider,
             requestedModel=self.model,baseURL=self.base_url,outcome="in_progress",httpRequests=0,

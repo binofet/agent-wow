@@ -127,7 +127,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                     brain = converse.DirectBrain(self.state, developer_workspace=self.workspace,
                         character_name="Lotharen", character_class="paladin", model="fixture-requested-model",
                         provider="local", base_url="http://127.0.0.1:1/v1")
-                    brain.gm_instructions += '\nExisting local realm command reference fixture.'
+                    brain.gm_reference += '\nExisting local realm command reference fixture.'
                     self.assertTrue(brain.development_enabled(state))
                     requests = []
                     def capture(payload, *_):
@@ -140,10 +140,33 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                 self.assertEqual({"gm_task_start", "gm_task_cancel", "gm_task_resume", "gm_execute"} <= names, expected)
                 prompt = requests[0]['messages'][0]['content']
                 self.assertEqual('Existing local realm command reference fixture.' in prompt, expected)
-                if expected:
-                    self.assertLess(prompt.index('Existing local realm command reference fixture.'),
-                                    prompt.index('Direct API tool mapping'))
+                self.assertNotIn('Do not replace that lifecycle with a lone revive', prompt)
+                self.assertNotIn('Only with no current task use gm_task_start', prompt)
                 self.assertFalse(rpc.commands or rpc.replies)
+
+    def test_direct_gm_reference_keeps_actual_private_file_loader_without_task_mandate(self):
+        reference = "Realm command .fixture has this local syntax."
+        actual_read = Path.read_text
+        def read(path, *args, **kwargs):
+            return reference if path.name == "lotharen-gm-commands.txt" else actual_read(path, *args, **kwargs)
+        with patch.object(Path, "read_text", read):
+            brain = converse.DirectBrain(self.state, character_name="Lotharen", character_class="paladin",
+                model="fixture-requested-model", provider="local", base_url="http://127.0.0.1:1/v1")
+        self.assertEqual(brain.gm_reference, reference)
+        self.assertIn(reference, brain.gm_instructions)  # Legacy path retains its existing instructions.
+        captured = []
+        def capture(payload, *_):
+            captured.append(payload)
+            return dict(choices=[dict(finish_reason="stop", message=dict(role="assistant", content="Understood."))])
+        with patch.object(brain.client, "_http", side_effect=capture):
+            brain.generate([dict(text="What GM tools can you use?")], dict(character=dict(guid="87"),
+                current_request=dict(source="owner", senderGuid="3"), gm_controls_available=True,
+                development=dict(gmTasks=dict(instructions="FORCED OLD TASK LIFECYCLE", currentTaskId="retained-task"))))
+        system = captured[0]["messages"][0]["content"]
+        self.assertIn(reference, system)
+        self.assertIn("retained-task", system)
+        self.assertNotIn("FORCED OLD TASK LIFECYCLE", system)
+        self.assertNotIn("first read gm_current_task", system)
 
     def test_new_gm_mutation_tools_cannot_append_a_second_final_command(self):
         for name, arguments in (('gm_task_resume', dict(task_id='joel-to-lotharen-existing')),
@@ -286,13 +309,14 @@ class DirectBrainIntegrationTests(unittest.TestCase):
              patch.object(converse, "RPC", side_effect=AssertionError("Captured context needs no game RPC")):
             self.assertEqual(brain.generate(history, state), REPLY)
         self.assertEqual(early[0]["childPhase"], "api.request")
-        content = requests[0]["messages"][1]["content"]
-        context_raw, history_raw = content.split("Current observations and control state JSON:\n", 1)[1].split("\nConversation JSON:\n", 1)
-        self.assertLessEqual(len(context_raw.encode()), CONTEXT_BYTES)
-        self.assertLessEqual(len(history_raw.encode()), HISTORY_BYTES)
-        self.assertEqual(json.loads(history_raw)[-1], latest)
+        system = requests[0]["messages"][0]["content"]
+        context_raw = system.split("Current observations and control state JSON:\n", 1)[1]
+        self.assertGreater(len(context_raw.encode()), 170*1024)
+        self.assertEqual(requests[0]["messages"][1], dict(role="user", content=latest["text"]))
+        self.assertEqual(json.loads(context_raw)["spell_toolkit"], state["spell_toolkit"])
         self.assertEqual(early[0]["promptMetrics"]["contextBytes"], len(context_raw.encode()))
-        self.assertEqual(early[0]["promptMetrics"]["historyBytes"], len(history_raw.encode()))
+        self.assertEqual(early[0]["promptMetrics"]["historyBytes"], len(json.dumps(history,
+            ensure_ascii=False, separators=(",", ":")).encode()))
         self.assertGreater(early[0]["promptMetrics"]["fullCapturedContextBytes"], 170*1024)
         page = json.loads(requests[1]["messages"][-1]["content"])["result"]
         self.assertEqual(page["path"], ["spell_toolkit", "spells"])
@@ -348,9 +372,8 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             reply = brain.generate([dict(speaker="Joel", text="Hello")], state)
         self.assertEqual(reply["emote"], rows[-1]["name"])
         self.assertEqual(len(requests), 1)
-        content = requests[0]["messages"][1]["content"]
-        actual = json.loads(content.split("Current observations and control state JSON:\n", 1)[1]
-                            .split("\nConversation JSON:\n", 1)[0])
+        content = requests[0]["messages"][0]["content"]
+        actual = json.loads(content.split("Current observations and control state JSON:\n", 1)[1])
         expected = copy.deepcopy(state)
         expected["emote_catalog"] = dict(available=True, revision="emotes-observed",
                                          source="installed-chat", count=512)
@@ -363,6 +386,104 @@ class DirectBrainIntegrationTests(unittest.TestCase):
         self.assertEqual(state, original)
         self.assertLess(len(json.dumps(actual)), len(json.dumps(dict(state,
             model_selection=expected["model_selection"]))))
+
+    def test_natural_owner_turns_preserve_actual_tool_transcript_and_new_raw_input(self):
+        def said(text):
+            return dict(model="fixture-served-model", choices=[dict(finish_reason="stop",
+                message=dict(role="assistant", content=text))])
+        first = "Mira, inspect your current body"
+        second = "And what did that exact read say?"
+        responses = [chat(("body-read", "read_observation", dict(method="buddy-actions.status", params={}))),
+                     said("I read my current body."), said("That read identified body 4.")]
+        with self.rig(responses) as (loop, brain, state, http):
+            state["current_request"].update(channel="WHISPER", conversationScope="WHISPER",
+                messages=[dict(speaker="Joel", text=first)])
+            acknowledgement = dict(speaker="Mira", text="Got it. I'm checking that now.")
+            self.assertEqual(loop.generate_reply([dict(speaker="Joel", text=first), acknowledgement], state)["text"],
+                             "I read my current body.")
+            # A listener restart creates a new model client but retains the same bound API transcript.
+            brain.client = direct_model.DirectModel("local", brain.model, http.base)
+            state["current_request"]["messages"] = [dict(speaker="Joel", text=second)]
+            state["observations"] = dict(freshMarker="current-turn-only")
+            reply = loop.generate_reply([dict(speaker="Joel", text=first), acknowledgement,
+                                         dict(speaker="Joel", text=second)], state)
+            self.assertEqual(reply["text"], "That read identified body 4.")
+            actual = http.requests[2]["body"]["messages"]
+            self.assertEqual([row["content"] for row in actual if row["role"] == "user"], [first, second])
+            self.assertTrue(any(row.get("tool_calls", [{}])[0].get("id") == "body-read"
+                                for row in actual if row["role"] == "assistant"))
+            result = next(row for row in actual if row["role"] == "tool")
+            self.assertEqual(json.loads(result["content"])["result"]["selfGuid"], "4")
+            self.assertIn("current-turn-only", actual[0]["content"])
+            self.assertNotIn(acknowledgement["text"], json.dumps(actual))
+            self.assertNotIn(first, actual[0]["content"])
+            self.assertNotIn(second, actual[0]["content"])
+            self.assertEqual(http.requests[0]["body"]["tool_choice"], "auto")
+            self.assertNotIn("max_tokens", http.requests[0]["body"])
+            self.assertEqual(sum(method == "buddy-actions.status" for method, _ in self.rpc.calls), 2)
+
+    def test_natural_chat_chunks_stop_on_new_owner_before_the_next_packet(self):
+        brain = converse.DirectBrain(self.state, character_name="Mira", character_class="mage",
+            model="fixture-requested-model", provider="local", base_url="http://127.0.0.1:1/v1")
+        loop = converse.Conversation(self.rpc, brain, character_name="Mira", character_class="mage", character_guid=4)
+        loop.initialized, loop.session_id, loop.cursor = True, self.rpc.chat, 1
+        original = self.rpc.call
+        def call(method, params, timeout=None):
+            value = original(method, params, timeout)
+            if method == "buddy-chat.send": self.rpc.new_owner = True
+            return value
+        with patch.object(self.rpc, "call", side_effect=call):
+            with self.assertRaises(converse.OwnerInputPending):
+                loop.send_reply(dict(text="Long natural reply "*50, emote="NONE"), "WHISPER", target_guid=3)
+        self.assertEqual(len(self.rpc.replies), 1)
+        self.assertLessEqual(len(self.rpc.replies[0]["text"].encode()), 255)
+
+    def test_natural_context_isolated_by_private_peer_chat_and_body(self):
+        requests = []
+        brain = converse.DirectBrain(self.state, character_name="Mira", character_class="mage",
+            model="fixture-requested-model", provider="local", base_url="http://127.0.0.1:1/v1")
+        def capture(payload, *_):
+            requests.append(copy.deepcopy(payload))
+            return dict(choices=[dict(finish_reason="stop", message=dict(role="assistant", content="Understood."))])
+        with patch.object(brain.client, "_http", side_effect=capture):
+            for sender, channel, chat_id, sid, text in (("3", "WHISPER", "chat-a", "aw-a", "Owner private"),
+                    ("8", "WHISPER", "chat-a", "aw-a", "Peer private"),
+                    ("3", "PARTY", "chat-a", "aw-a", "Owner party"),
+                    ("3", "WHISPER", "chat-b", "aw-b", "Replacement body")):
+                brain._generation_context = dict(sessionId=sid, selfGuid="4", chatSessionId=chat_id, cursor=1)
+                state = dict(character=dict(guid="4"), current_request=dict(source="owner", senderGuid=sender,
+                    channel=channel, messages=[dict(text=text)]))
+                brain.generate([], state)
+        self.assertEqual([[row["content"] for row in request["messages"] if row["role"] == "user"]
+                          for request in requests], [["Owner private"], ["Peer private"], ["Owner party"], ["Replacement body"]])
+        self.assertEqual(len(list((self.state/"api-conversations").glob("*.json"))), 4)
+
+    def test_visible_assistant_text_precedes_tool_work_and_long_final_is_chunked(self):
+        progress = "I'll read the actual observation first."
+        long_text = "é"*180 + "\nThen I can explain the observed result without clipping it."
+        tool = chat(("read", "read_observation", dict(method="buddy-actions.status", params={})))
+        tool["choices"][0]["message"]["content"] = progress
+        final = dict(choices=[dict(finish_reason="stop", message=dict(role="assistant", content=long_text))])
+        with self.rig([tool, final]) as (loop, brain, state, http):
+            state["current_request"].update(channel="WHISPER", conversationScope="WHISPER",
+                messages=[dict(text="Tell me what you observe")])
+            order = []
+            original = self.rpc.call
+            def call(method, params, timeout=None):
+                if method in ("buddy-chat.send", "buddy-actions.status"): order.append((method, dict(params)))
+                return original(method, params, timeout)
+            with patch.object(self.rpc, "call", side_effect=call):
+                reply = loop.generate_reply([], state)
+                self.assertEqual(reply["text"], long_text)
+                loop.send_reply(reply, "WHISPER", target_guid=3, history_key="WHISPER")
+            self.assertEqual(order[0], ("buddy-chat.send", dict(channel="WHISPER", language="COMMON",
+                text=progress, recipient="Joel")))
+            self.assertEqual(order[1][0], "buddy-actions.status")
+            chunks = [row["text"] for row in self.rpc.replies[1:]]
+            self.assertGreater(len(chunks), 1)
+            self.assertTrue(all(len(row.encode()) <= 255 for row in chunks))
+            self.assertEqual("".join(chunks), " ".join(long_text.split()))
+            self.assertEqual(loop.history["WHISPER"][-1]["text"], long_text)
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve())
@@ -544,8 +665,8 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             self.assertFalse(self.rpc.commands)
             self.assertIn("No repair was queued", self.rpc.replies[-1]["text"])
             request = http.requests[0]["body"]
-            prepared = json.loads(request["messages"][1]["content"].split(
-                "Current observations and control state JSON:\n", 1)[1].split("\nConversation JSON:\n", 1)[0])
+            prepared = json.loads(request["messages"][0]["content"].split(
+                "Current observations and control state JSON:\n", 1)[1])
             self.assertIs(prepared["current_request"]["repair_requests_allowed"], False)
             tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
             self.assertEqual(set(tools), {"final_reply", "context_read"})
@@ -564,6 +685,9 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                 "--poll-seconds", ".2", "--max-hours", ".002", "--model-provider", "local", "--model-base-url", http.base,
                 "--model", "fixture-requested-model"]), 0)
             self.assertEqual(len(http.requests), 1)
+            user_rows = [row for row in http.requests[0]["body"]["messages"] if row["role"] == "user"]
+            self.assertEqual(user_rows, [dict(role="user", content="Mira, hello")])
+            self.assertNotIn("Got it.", json.dumps(user_rows))
             self.assertEqual(self.rpc.replies[-1]["text"], REPLY["text"])
             self.assertFalse(self.rpc.commands)
             status = json.loads((self.state / "status.json").read_text())
