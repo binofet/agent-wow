@@ -665,12 +665,21 @@ class DirectTools:
         require(current is not None and current[0] == task_id, "current_writer_gm_task_required")
         return current[1], current[2]
 
+    @staticmethod
+    def _gm_read_query(command, selected):
+        # Pinned cs_lookup/HandleLookupTeleCommand and cs_group/HandleGroupListCommand
+        # only report facts. An explicit selection remains a separate mutation.
+        if selected is not None or not isinstance(command, str):return False
+        words=command.split()
+        return (len(words)>=3 and [word.lower() for word in words[:2]]==['.lookup','teleport']
+            or len(words) in (2,3) and [word.lower() for word in words[:2]]==['.group','list'])
+
     def _gm_command_intent(self, gm, command, selected, evidence, phase):
         """Bound known aliases and substantive facts, not a general GM parser."""
         words=command.split();verb=words[0].lower()
         # These public handlers only report facts. Their packets still use
         # exact-operation/unknown custody; no other command is presumed pure.
-        if verb in ('.help','.commands','.gps','.pinfo') or [word.lower() for word in words[:2]]==['.instance','listbinds']:
+        if self._gm_read_query(command,selected) or verb in ('.help','.commands','.gps','.pinfo') or [word.lower() for word in words[:2]]==['.instance','listbinds']:
             return None
         world=self.rpc.call('buddy-world.snapshot',{})
         party=self.rpc.call('buddy-party.state',{})
@@ -790,6 +799,13 @@ class DirectTools:
                         or row.get('requestId')!=self.request_id or row.get('knownNotDispatched') is True:continue
                 previous=row.get('commandIntent')
                 if not previous or (row.get('result') or {}).get('commandTransportWritten') is False:continue
+                # Old hosts recorded these read queries as raw mutation intents.
+                # Require explicit no-selection evidence; keep the receipt and
+                # its exact-operation/unknown latch intact.
+                retained=row.get('result') if isinstance(row.get('result'),dict) else row
+                if previous.get('family')=='raw' and self._gm_read_query(
+                        previous.get('command'),retained.get('selectedGuid',False)):
+                    continue
                 world=self.rpc.call('buddy-world.snapshot',{})
                 party=self.rpc.call('buddy-party.state',{})
                 require(str(world.get('self',{}).get('guid'))=='87' and world.get('self',{}).get('present') is True
