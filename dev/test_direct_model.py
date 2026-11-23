@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import threading
+import tempfile
 import time
 import unittest
 from unittest.mock import patch
@@ -73,6 +74,111 @@ class DirectModelTests(unittest.TestCase):
     def generate(self, client, dispatch=lambda name,args: {}, **kwargs):
         return client.generate("Read-only fixture. Never invent game effects.",copy.deepcopy(MESSAGES),
                                copy.deepcopy(SCHEMA),copy.deepcopy(TOOLS),dispatch,**kwargs)
+
+    def test_natural_text_and_full_native_tool_history_survive_next_owner_and_client_restart(self):
+        def text(value):
+            return dict(model='fixture-served-model', choices=[dict(finish_reason='stop',
+                message=dict(role='assistant', content=value))])
+        with tempfile.TemporaryDirectory() as directory, FakeHTTP([
+                chat(('read-native','observe',dict(what='self'))), text('I see your exact state.'), text('Yes, I remember.')]) as server:
+            path = Path(directory)/'conversation.json'
+            first_user = 'Joel raw request: '+('unaltered owner words '*700)
+            facts = 'Current full observed facts: '+('raw fact '*25000)
+            client = DirectModel('local','fixture',server.base+'/v1')
+            first = client.generate(facts, [dict(role='user', content=first_user)], SCHEMA, TOOLS,
+                lambda *_:dict(exactObservedFact='original tool result'), natural=True,
+                transcript_path=path, conversation_key='aw-1:87:chat-1:WHISPER:3', request_id='owner-1')
+            self.assertEqual(first,dict(text='I see your exact state.', emote='NONE', action='NONE'))
+            recreated = DirectModel('local','another-local-model',server.base+'/v1')
+            recreated.generate('Fresh current facts', [dict(role='user', content='And now?')], SCHEMA, TOOLS,
+                lambda *_: self.fail('Old tools must never be replayed'), natural=True,
+                transcript_path=path, conversation_key='aw-1:87:chat-1:WHISPER:3', request_id='owner-2')
+            first_payload = server.requests[0]['body']
+            self.assertEqual(first_payload['tool_choice'],'auto')
+            self.assertNotIn('max_tokens', first_payload)
+            self.assertEqual(first_payload['messages'][0]['content'],facts)
+            self.assertEqual(first_payload['messages'][1]['content'],first_user)
+            self.assertNotIn('Finish using final_reply',first_payload['messages'][0]['content'])
+            last = server.requests[-1]['body']['messages']
+            self.assertEqual(last[0],dict(role='system',content='Fresh current facts'))
+            self.assertEqual(last[1],dict(role='user',content=first_user))
+            self.assertEqual(last[2]['tool_calls'][0]['id'],'read-native')
+            self.assertEqual(last[3],dict(role='tool',tool_call_id='read-native',content='{"exactObservedFact":"original tool result"}'))
+            self.assertEqual(last[4],dict(role='assistant',content='I see your exact state.'))
+            self.assertEqual(last[5],dict(role='user',content='And now?'))
+            self.assertEqual(path.stat().st_mode & 0o777,0o600)
+
+    def test_natural_tool_exchange_has_no_implicit_sixteen_round_cutoff(self):
+        final=dict(choices=[dict(finish_reason='stop',message=dict(role='assistant',content='Done observing.'))])
+        calls=[chat((f'observe-{index}','observe',dict(what='self'))) for index in range(17)]
+        calls[0]['choices'][0]['message']['content']='Let me check that.'
+        with FakeHTTP([*calls,final]) as server:
+            client=DirectModel('local','fixture',server.base+'/v1')
+            dispatched,visible=[],[]
+            result=self.generate(client,lambda name,args:dispatched.append(name) or dict(observed=True),
+                natural=True,conversation_key='owner',assistant_text=visible.append)
+            self.assertEqual(result['text'],'Done observing.')
+            self.assertEqual(len(dispatched),17)
+            self.assertEqual(visible,['Let me check that.'])
+            self.assertEqual(len(server.requests),18)
+
+    def test_natural_unknown_and_interruption_keep_actual_results_without_replay(self):
+        text=dict(choices=[dict(finish_reason='stop',message=dict(role='assistant',content='I see the uncertain receipt.'))])
+        with tempfile.TemporaryDirectory() as directory, FakeHTTP([
+                chat(('entered','observe',dict(what='self'))),text,chat(('new-id','observe',dict(what='self')))]) as server:
+            path=Path(directory)/'conversation.json'
+            calls=[]
+            def unknown(name,args):
+                calls.append(name)
+                error=ToolOutcomeUnknown('lost response')
+                error.receipt=dict(sessionId='aw-1',replayAllowed=False,operationId='issued-once')
+                raise error
+            client=DirectModel('local','fixture',server.base+'/v1')
+            with self.assertRaisesRegex(ModelError,'tool_outcome_unknown'):
+                self.generate(client,unknown,natural=True,transcript_path=path,conversation_key='same-body',request_id='one')
+            fresh=DirectModel('local','fixture',server.base+'/v1')
+            self.generate(fresh,unknown,natural=True,transcript_path=path,conversation_key='same-body',request_id='two')
+            rows=server.requests[1]['body']['messages']
+            uncertain=json.loads(next(row['content'] for row in rows if row['role']=='tool'))
+            self.assertTrue(uncertain['outcomeUnknown']);self.assertFalse(uncertain['replayAllowed'])
+            self.assertEqual(uncertain['receipt']['operationId'],'issued-once')
+            with self.assertRaisesRegex(ModelError,'tool_outcome_unknown'):
+                self.generate(fresh,unknown,natural=True,transcript_path=path,conversation_key='same-body',request_id='three')
+            self.assertEqual(calls,['observe'])
+            with self.assertRaisesRegex(ModelError,'conversation_binding_changed'):
+                self.generate(fresh,unknown,natural=True,transcript_path=path,conversation_key='replacement-body',request_id='four')
+            self.assertEqual(len(server.requests),3)
+
+    def test_natural_cancel_after_returned_tool_preserves_result_for_next_turn(self):
+        stop=[False]
+        final=dict(choices=[dict(finish_reason='stop',message=dict(role='assistant',content='I have the prior result.'))])
+        with tempfile.TemporaryDirectory() as directory, FakeHTTP([chat(('observed','observe',dict(what='self'))),final]) as server:
+            path=Path(directory)/'conversation.json'
+            client=DirectModel('local','fixture',server.base+'/v1')
+            def dispatch(*_): stop[0]=True;return dict(actualResult='retained')
+            with self.assertRaises(Cancelled):
+                self.generate(client,dispatch,natural=True,transcript_path=path,conversation_key='owner',
+                              request_id='old',cancelled=lambda:stop[0])
+            stop[0]=False
+            result=self.generate(client,lambda *_:self.fail('No replay after owner interruption'),natural=True,
+                transcript_path=path,conversation_key='owner',request_id='new')
+            self.assertEqual(result['text'],'I have the prior result.')
+            rows=server.requests[1]['body']['messages']
+            self.assertEqual(json.loads(next(row['content'] for row in rows if row['role']=='tool')),dict(actualResult='retained'))
+
+    def test_claude_and_gemini_natural_text_use_native_auto_tool_choices(self):
+        examples=[('claude',dict(stop_reason='end_turn',content=[dict(type='text',text='Hello naturally.')]),'/v1'),
+            ('gemini',dict(candidates=[dict(finishReason='STOP',content=dict(role='model',parts=[
+                dict(thought=True,text='Private reasoning must stay private.',thoughtSignature='opaque'),
+                dict(text='Hello naturally.')]))]),'/v1beta')]
+        for provider,response,suffix in examples:
+            with self.subTest(provider=provider),FakeHTTP([response]) as server,patch.dict(os.environ,{'FIXTURE_KEY':'fixture'}):
+                client=DirectModel(provider,'fixture',server.base+suffix,api_key_env='FIXTURE_KEY')
+                result=self.generate(client,natural=True,conversation_key='owner')
+                self.assertEqual(result['text'],'Hello naturally.')
+                body=server.requests[0]['body']
+                if provider=='claude':self.assertEqual(body['tool_choice'],dict(type='auto'))
+                else:self.assertEqual(body['toolConfig']['functionCallingConfig']['mode'],'AUTO')
 
     def test_local_http_tool_roundtrip_final_schema_usage_and_no_caller_mutation(self):
         observed = []
