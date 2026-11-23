@@ -665,6 +665,108 @@ class DirectTools:
         require(current is not None and current[0] == task_id, "current_writer_gm_task_required")
         return current[1], current[2]
 
+    def _gm_command_intent(self, gm, command, selected, evidence, phase):
+        """Bound known aliases and substantive facts, not a general GM parser."""
+        words=command.split();verb=words[0].lower()
+        # These public handlers only report facts. Their packets still use
+        # exact-operation/unknown custody; no other command is presumed pure.
+        if verb in ('.help','.commands','.gps','.pinfo') or [word.lower() for word in words[:2]]==['.instance','listbinds']:
+            return None
+        world=self.rpc.call('buddy-world.snapshot',{})
+        party=self.rpc.call('buddy-party.state',{})
+        require(str(world.get('self',{}).get('guid'))=='87' and world.get('self',{}).get('present') is True
+                and party.get('sessionId')==self.session_id,
+                'current_gm_command_context_required')
+        if selected is not None and phase=='before_command':
+            require(world.get('self',{}).get('targetKnown') is True and
+                    str(world['self'].get('targetGuid',0))==selected,'observed_selection_changed_during_command_context')
+        self._catalog();self._authorise_gm()
+        group=party.get('group') or {}
+        identities=[]
+        identities.extend(group.get('members',[]))
+        identities.extend(gm.bindings(self.root))
+        # The captured primer supplies observed name/GUID identities even if
+        # the GM is now outside the original party. It is not fresh life/pose.
+        primer=(self.context or {}).get('gm_observation_primer',{}).get('observation',{}).get('result',{})
+        for row in primer.get('clients',[]):
+            identities.append(row)
+            identities.extend((row.get('group') or {}).get('members',[]))
+        names={}
+        for row in identities:
+            name,guid=row.get('name'),str(row.get('guid',''))
+            if isinstance(name,str) and name and guid.isdigit() and int(guid)>0:
+                names.setdefault(name.casefold(),set()).add(guid)
+        target=selected
+        if target is None and evidence.get('observedTargetKnown'):target=evidence.get('observedTargetGuid')
+        family=verb[1:] if verb in ('.revive','.summon','.groupsummon','.appear') else \
+            'transport' if verb=='.go' and len(words)>1 and words[1].lower()=='xyz' or verb=='.tele' else \
+            'roster' if verb=='.group' else 'raw'
+        subject=dict(guid=target,name=None)
+        normalized=' '.join(words)
+        if family in ('revive','summon','groupsummon','appear'):
+            normalized=verb
+            if len(words)>1:
+                argument=command.split(maxsplit=1)[1]
+                link=re.fullmatch(r'(?:\|c[0-9a-fA-F]{8})?\|Hplayer:([^:|]+)(?::[^|]*)?\|h\[[^\]]*\]\|h(?:\|r)?',argument)
+                name=(link[1] if link else argument).casefold()
+                player_name=bool(name) and name.isalpha()
+                subject=dict(guid=name if name.isdigit() else next(iter(names[name]))
+                    if len(names.get(name,()))==1 else None,name=name if player_name else None)
+            elif subject['guid']=='0':subject['guid']='87'  # PlayerIdentifier::FromTargetOrSelf.
+        else:normalized=verb+(' '+' '.join(words[1:]) if len(words)>1 else '')
+        if family=='transport' and verb=='.go':subject=dict(guid='87',name=None)
+        if family=='roster':subject=dict(guid='group:'+str(group.get('groupGuid',0)),name=None)
+        if subject['guid'] is not None:
+            matched=[name for name,guids in names.items() if guids=={subject['guid']}]
+            if len(matched)==1:subject['name']=matched[0]
+        players=[world.get('self',{}),world.get('owner',{}),*world.get('nearbyPlayers',[])]
+        target_row=next((row for row in players if str(row.get('guid'))==subject['guid'] and row.get('present') is True),{})
+        def pose(row):
+            known=row.get('mapKnown') is True and row.get('positionKnown') is True
+            return dict(known=known,**({key:row.get(key,0) for key in ('mapId','x','y','z')} if known else {}))
+        roster=dict(known=group.get('known') is True,inGroup=group.get('inGroup',False),
+            leaderGuid=str(group.get('leaderGuid',0)),members=sorted(str(row['guid']) for row in group.get('members',[]) if row.get('guid')))
+        context=dict(life=dict(known=target_row.get('aliveKnown') is True,
+            alive=target_row.get('alive',False) if target_row.get('aliveKnown') is True else None)) if family=='revive' else \
+            dict(roster=roster,destination=pose(world.get('self',{})),subject=pose(target_row)) if family in ('summon','groupsummon','appear','transport','roster') else {}
+        return dict(family=family,command=normalized,subject=subject,context=context)
+
+    @staticmethod
+    def _same_gm_intent(left, right):
+        if left.get('family')!=right.get('family') or left.get('command')!=right.get('command'):return False
+        a,b=left.get('subject',{}),right.get('subject',{})
+        if a.get('guid') is not None and b.get('guid') is not None:return a['guid']==b['guid']
+        if a.get('name') and b.get('name'):return a['name']==b['name']
+        return True  # Unresolved identities cannot prove these are different subjects.
+
+    @staticmethod
+    def _gm_context_changed(previous, current):
+        for key,now in current.get('context',{}).items():
+            before=previous.get('context',{}).get(key,{})
+            if before.get('known') is True and now.get('known') is True and before!=now:return True
+        return False
+
+    def _gm_prior_intent(self, gm, intent, folder):
+        if intent is None:return None
+        root=folder.parent
+        for candidate in sorted(root.iterdir()):
+            if candidate==folder or not re.fullmatch('[a-f0-9]{64}',candidate.name):continue
+            row=gm.task_store(candidate).load()
+            if not row or row.get('identity')!=dict(sessionId=self.session_id,guid='87',rpcUrl=self.rpc.url) \
+                    or row.get('requestId')!=self.request_id or row.get('knownNotDispatched') is True:continue
+            previous=row.get('commandIntent')
+            if not previous or not self._same_gm_intent(previous,intent):continue
+            result=row.get('result') or {}
+            if result.get('commandTransportWritten') is False:continue
+            if result.get('commandTransportWritten') is True and self._gm_context_changed(previous,intent):continue
+            return dict(allowed=False,reason='same_request_intent_has_no_observed_new_context',
+                priorOperationId=row.get('operationId'),priorStateDir=str(candidate),
+                priorCommandTransportWritten=result.get('commandTransportWritten'),
+                priorFeedbackStatus=result.get('feedback',{}).get('status'),
+                gameEffectClaimed=False,context=intent.get('context'),
+                guidance='Read current facts and retain the original receipt. ACK, SYSTEM text, selection, ages and revisions do not authorize repeating the effect.')
+        return None
+
     def _gm_execute(self, gm, args, operation_id=None):
         self._authorise_gm()
         command = args.get("command")
@@ -693,12 +795,23 @@ class DirectTools:
                     self._unknown("gm_execute", dict(stateDir=str(folder), commandSHA256=digest,
                         selectedGuid=selected), ToolError("retained_native_command_outcome_unconfirmed"))
             entered = False
+            command_intent=None
+            def record(**values):
+                return dict(identity=dict(sessionId=self.session_id,guid='87',rpcUrl=self.rpc.url),
+                    requestId=self.request_id,operationId=operation_id,commandIntent=command_intent,**values)
+            def command_guard(out,phase):
+                nonlocal command_intent
+                command_intent=self._gm_command_intent(gm,command,selected,out.get('selection',{}),phase)
+                blocked=self._gm_prior_intent(gm,command_intent,folder)
+                if blocked is not None:return blocked
+                if phase=='before_command':
+                    store.save(record(commandSHA256=digest,selectedGuid=selected,reserved=True))
+                    self._catalog();self._authorise_gm()
             def before_send():
                 nonlocal entered
                 self._catalog()
                 self._authorise_gm()
-                store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url),
-                    commandSHA256=digest, selectedGuid=selected, operationId=operation_id, reserved=True))
+                store.save(record(commandSHA256=digest, selectedGuid=selected,reserved=True))
                 self._catalog()
                 self._authorise_gm()
                 entered = True
@@ -706,7 +819,7 @@ class DirectTools:
             try:
                 result = gm.execute_command(self.rpc, config, command, self.root,
                     select_guid=selected, expected_session=self.session_id, before_send=before_send,
-                    feedback_reader=self._chat_read, final_authorise=self._authorise_gm)
+                    feedback_reader=self._chat_read, final_authorise=self._authorise_gm,command_guard=command_guard)
                 if result.get("transportWritten") is False:
                     entered=False  # A final guard can refuse after the durable reservation, before any packet.
                 if not result.get("commandTransportWritten"):
@@ -715,7 +828,7 @@ class DirectTools:
                 # acknowledged write. Still bind its terminal receipt to this body.
                 self._catalog(settling_written=result.get("commandTransportWritten") is True)
                 result = dict(result, operationId=operation_id, commandSHA256=digest, gameEffectClaimed=False)
-                store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url), result=result))
+                store.save(record(result=result))
             except Exception as error:
                 if entered:
                     transport = getattr(error,"gm_receipt",None) or result or {}

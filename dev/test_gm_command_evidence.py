@@ -34,6 +34,8 @@ class NativeRPC(fixtures.RPC):
         self.selected='87';self.settle_selection=True;self.packets=[];self.commands=[]
         self.post_failure=None;self.feedback_enabled=True;self.cursor_lost=False;self.stale=False
         self.group_revision=1;self.after_selection_read_error=False
+        self.group_members=['1','3','4','5','87'];self.group_leader='1'
+        self.life={};self.life_known={};self.vitals_age=284517;self.world_revision=1
         self.allow_gm=True;self.cancelled=False
         self.corpses=[]
         self.local=['3','4','5'];self.on_read=None
@@ -46,13 +48,18 @@ class NativeRPC(fixtures.RPC):
         if method=='buddy-actions.status':
             value=dict(sessionId=self.sid,selfGuid='87',position=dict(known=True,mapKnown=True,mapId=349,
                 x=12,y=34,z=56,estimated=True,inferred=True,revision='pose-7'))
-        elif method=='buddy-party.state':value=dict(sessionId=self.sid,group=dict(revision=self.group_revision))
+        elif method=='buddy-party.state':value=dict(sessionId=self.sid,group=dict(known=True,inGroup=True,
+            groupGuid='777',leaderGuid=self.group_leader,revision=self.group_revision,
+            members=[dict(guid=guid,name={'1':'Arlen','3':'Joel','4':'Mira','5':'Rook','8':'Nixwick','87':'Lotharen'}[guid],online=True)
+                for guid in self.group_members]))
         elif method=='buddy-world.snapshot':
             if self.after_selection_read_error and any(code==0x13d for code,_ in self.packets):
                 raise TimeoutError('World read unavailable after selection ACK')
-            players=[dict(guid=guid,present=True,mapKnown=True,mapId=349,x=int(guid),aliveKnown=True,alive=True) for guid in self.local]
+            players=[dict(guid=guid,present=True,mapKnown=True,mapId=349,positionKnown=True,x=int(guid),
+                aliveKnown=self.life_known.get(guid,True),alive=self.life.get(guid,True),
+                health=100 if self.life.get(guid,True) else 0,vitalsAgeMs=str(self.vitals_age),positionRevision=str(self.world_revision)) for guid in self.local]
             value=dict(visitRevision='visit-1',self=dict(guid='87',present=True,mapKnown=True,mapId=349,
-                targetKnown=True,targetGuid=self.selected,x=12,y=34,z=56),
+                positionKnown=True,targetKnown=True,targetGuid=self.selected,x=12,y=34,z=56),
                 owner=next((row for row in players if row['guid']=='3'),dict(guid='3',present=False)),
                 nearbyPlayers=[row for row in players if row['guid']!='3'],nearbyCreatures=[],playerCorpses=self.corpses)
         else:
@@ -308,12 +315,88 @@ class GMCommandEvidenceTests(unittest.TestCase):
         repeated=self.execute('.groupsummon Arlen',operation='request:1')
         self.assertTrue(repeated['result']['historicalReceipt']);self.assertEqual(len(self.rpc.commands),1)
         self.rpc.group_revision+=1
+        unchanged=self.execute('.groupsummon Arlen',operation='request:2')
+        self.assertFalse(unchanged['result']['commandTransportWritten'])
+        self.assertEqual(len(self.rpc.commands),1)
+        self.rpc.group_members=['1','3','4','8','87']
         fresh=self.execute('.groupsummon Arlen',operation='request:3')
         self.assertTrue(fresh['result']['commandTransportWritten']);self.assertEqual(len(self.rpc.commands),2)
         self.assertEqual(fresh['result']['feedback']['afterSequence'],'11')
         self.assertFalse(self.execute('.summon Arlen',operation='request:1')['ok'])
         self.assertEqual(len(self.rpc.commands),2)
         self.assertFalse(self.tools.dispatch('gm_execute',dict(command='.gps',operation_id='model-chosen'))['ok'])
+
+    def test_named_then_selected_revive_with_only_ack_blocks_before_second_selection(self):
+        self.rpc.selected='8';self.rpc.life['3']=False;self.rpc.feedback_enabled=False
+        first=self.execute('.revive Joel',operation='request:2')
+        self.assertTrue(first['result']['commandTransportWritten'])
+        self.assertEqual(first['result']['feedback']['status'],'no_reply_yet')
+        with mock.patch.object(self.gm,'bindings',return_value=[]),mock.patch.object(self.gm,'task_rpc',return_value=self.rpc):
+            facts=self.tools.dispatch('gm_inspect',{})
+        self.assertIs(facts['result']['clients'][0]['observations']['world']['owner']['alive'],False)
+        count=len(self.rpc.packets)
+        # A new tool instance/call ID does not discard the durable intent.
+        self.tools=self.make_tools()
+        alias=self.execute('.revive',selected='3',operation='request:4')
+        self.assertTrue(alias['ok'],alias);row=alias['result']
+        self.assertFalse(row['commandTransportWritten']);self.assertFalse(row['selectionTransportWritten'])
+        self.assertEqual(row['repeatAdmission']['priorOperationId'],'request:2')
+        self.assertIs(row['repeatAdmission']['priorCommandTransportWritten'],True)
+        self.assertEqual(len(self.rpc.packets),count);self.assertEqual(self.rpc.commands,['.revive Joel'])
+        self.assertFalse(row['gameEffectClaimed']);self.assertIsNone(self.tools.unknown_receipt)
+
+    def test_same_request_revive_ignores_age_revision_selection_and_unknown_life_churn(self):
+        self.rpc.selected='8';self.rpc.life['3']=False
+        self.assertTrue(self.execute('.revive Joel')['result']['commandTransportWritten'])
+        self.rpc.vitals_age+=100;self.rpc.world_revision+=1;self.rpc.group_revision+=1;self.rpc.selected='3'
+        for index,args in enumerate((dict(command='.revive Joel'),dict(command='.revive 3'),
+                dict(command='.revive |Hplayer:Joel|h[Joel]|h'),dict(command='.revive',select_guid='3'))):
+            if index==3:self.rpc.life_known['3']=False
+            result=self.tools.dispatch('gm_execute',args,operation_id='retry:'+str(index))
+            self.assertTrue(result['ok'],result);self.assertFalse(result['result']['commandTransportWritten'])
+        self.assertEqual(self.rpc.commands,['.revive Joel']);self.assertEqual(len(self.rpc.packets),1)
+
+    def test_changed_known_life_or_fresh_owner_intent_is_separate_from_old_receipt(self):
+        self.rpc.life['3']=False
+        first=self.execute('.revive Joel',operation='old:1')
+        self.rpc.life['3']=True
+        changed=self.execute('.revive',selected='3',operation='old:2')
+        self.assertTrue(changed['result']['commandTransportWritten'])
+        self.tools=self.make_tools();self.tools.request_id='fresh-owner-intent'
+        fresh=self.execute('.revive Joel',operation='fresh:1')
+        self.assertTrue(fresh['result']['commandTransportWritten'])
+        self.assertTrue(first['result']['commandTransportWritten']);self.assertFalse(first['result']['gameEffectClaimed'])
+        self.assertEqual(len(self.rpc.commands),3)
+
+    def test_unknown_revive_does_not_reopen_from_alias_or_new_life_context(self):
+        self.rpc.selected='8';self.rpc.life['3']=False;self.rpc.post_failure='transport'
+        with self.assertRaises(direct_tools.ToolOutcomeUnknown):self.execute('.revive Joel')
+        count=len(self.rpc.packets);self.rpc.post_failure=None;self.rpc.life['3']=True
+        self.tools=self.make_tools()
+        repeat=self.execute('.revive',selected='3',operation='unknown:2')
+        self.assertTrue(repeat['ok'],repeat);self.assertFalse(repeat['result']['commandTransportWritten'])
+        self.assertEqual(len(self.rpc.packets),count)
+        self.assertIsNone(repeat['result']['repeatAdmission']['priorCommandTransportWritten'])
+
+    def test_known_no_command_send_does_not_reserve_the_effect(self):
+        self.rpc.life['3']=False;self.rpc.settle_selection=False
+        first=self.execute('.revive',selected='3')
+        self.assertFalse(first['result']['commandTransportWritten'])
+        self.rpc.selected='3'
+        next_call=self.execute('.revive Joel',operation='nosend:2')
+        self.assertTrue(next_call['result']['commandTransportWritten'])
+        self.assertEqual(self.rpc.commands,['.revive Joel'])
+
+    def test_pure_diagnostics_stay_refreshable_and_arbitrary_first_commands_stay_available(self):
+        self.rpc.life['3']=False
+        self.assertTrue(self.execute('.revive Joel')['result']['commandTransportWritten'])
+        for index,command in enumerate(('.help revive','.help revive','.gps Joel','.gps Joel','.pinfo Joel',
+                '.commands','.instance listbinds','.unfamiliar arbitrary arguments')):
+            result=self.execute(command,operation='read:'+str(index))
+            self.assertTrue(result['result']['commandTransportWritten'],result)
+        repeat=self.execute('.unfamiliar arbitrary arguments',operation='raw:2')
+        self.assertFalse(repeat['result']['commandTransportWritten'])
+        self.assertEqual(len(self.rpc.commands),9)
 
     def test_no_reply_stale_cursor_lost_and_read_failure_are_separate_from_known_write(self):
         for mode in ('none','stale','lost','read','chat','regressed'):
@@ -375,6 +458,7 @@ class GMCommandEvidenceTests(unittest.TestCase):
         def next_group(_):
             self.assertEqual(len(self.rpc.commands),1)
             self.rpc.group_revision+=1
+            self.rpc.group_members=['1','3','4','8','87']
             return chat(('second','gm_execute',dict(command='.groupsummon Arlen')))
         state=dict(character=dict(guid='87'),gm_controls_available=True,
             development=dict(enabled=True,directDevelopment=True,workspace=str(self.workspace),rpcUrl=self.rpc.url,
