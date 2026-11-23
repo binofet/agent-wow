@@ -260,7 +260,12 @@ func TestInvalidInputDoesNotQuarantinePolicy(t *testing.T) {
 		"null_array": {"x": []any{1, nil, 3}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := New()
+			// Invalid-input rejection is a structural semantic test; separate
+			// tests retain the actual default execution limit and watchdog.
+			r, err := NewWithOptions(SessionOptions{ExecutionLimit: time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
 			first := load(t, r, goodPolicy)
 			if _, err := r.Evaluate(input); err == nil || r.Status().Revision != first || r.Status().Failures != 0 {
 				t.Fatal(err, r.Status())
