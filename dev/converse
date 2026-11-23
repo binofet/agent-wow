@@ -2720,7 +2720,30 @@ class DirectBrain(AgentBrain):
                 development["selfGuid"], self.developer_workspace, ROOT,
                 allowed=lambda: self.development_enabled(state) and not interrupted(),
                 cancelled=interrupted, request_id=self.last_request_id, context=full_context,
-                gm_allowed=gm_authorised, chat_session_id=self._generation.get("chatSessionId"))
+                gm_allowed=gm_authorised, chat_session_id=self._generation.get("chatSessionId"),
+                chat_cursor=str(self._generation["cursor"]) if self._generation.get("cursor") is not None else None)
+        if tools is not None and gm_authorised():
+            read_started = int(time.time()*1000)
+            observed = tools.dispatch("gm_inspect", {})
+            read_completed = int(time.time()*1000)
+            tools._catalog()  # A failed read must not hide a replaced current body.
+            if interrupted():
+                raise OwnerInputPending("Fresh owner input is waiting")
+            if not gm_authorised():
+                raise ConversationError("GM request authority changed during observation preparation")
+            primer = dict(readStartedAtUnixMs=read_started, readCompletedAtUnixMs=read_completed,
+                sessionId=development["sessionId"], selfGuid=str(development["selfGuid"]),
+                outcome="read" if observed.get("ok") is True else "unavailable", observation=observed,
+                semantics="Read times are not server-observation times. Keep each fact's knownness, age, identity and errors. "
+                    "Positions in the retained conversation are historical; unavailable current facts remain unknown.")
+            prompt_state["gm_observation_primer"] = primer
+            full_context["gm_observation_primer"] = json.loads(encode(primer))
+            captured = encode(full_context)
+            if len(captured) > tools.max_bytes:
+                raise ConversationError("Captured context exceeds the installed tool byte bound")
+            tools.context = json.loads(captured)  # Complete detached snapshot, fixed before the API turn.
+            record["gmObservationPrimer"] = {key:primer[key] for key in (
+                "readStartedAtUnixMs", "readCompletedAtUnixMs", "sessionId", "selfGuid", "outcome")}
         record["promptMetrics"] = dict(contextBytes=len(encode(prompt_state)),
             historyBytes=len(encode(history)), fullCapturedContextBytes=len(encode(full_context)))
         def dispatch(name, arguments):

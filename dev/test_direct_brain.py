@@ -122,6 +122,178 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             current_request=dict(source="owner", senderGuid="3", channel="WHISPER", conversationScope="WHISPER"))
         return rpc, state
 
+    @contextlib.contextmanager
+    def gm_primer_fixture(self):
+        rpc, state = self.gm_guide_fixture()
+        gm = converse.gm_tasks
+        clients = {"87":rpc}
+        members = [dict(guid=guid, name=name, online=True) for guid,name in
+                   (("1","Arlen"),("3","Joel"),("4","Mira"),("5","Rook"),("8","Nixwick"))]
+        for guid in ("1","4","5","8"):
+            peer = PublicRPC(); peer.guid = peer.catalog_guid = guid
+            peer.core, peer.url = "aw-peer-"+guid, "http://127.0.0.1:"+str(8100+int(guid))+"/rpc"
+            clients[guid] = peer
+        for guid, peer in clients.items():
+            original = peer.call
+            def read(method, params, timeout=None, *, peer=peer, guid=guid, original=original):
+                if method not in ("buddy-actions.status","buddy-world.snapshot","buddy-party.state"):
+                    return original(method,params,timeout)
+                peer.calls.append((method,copy.deepcopy(params)))
+                if method == "buddy-actions.status":
+                    return dict(sessionId=peer.core,selfGuid=guid,
+                        position=dict(known=True,mapKnown=True,mapId=349,x=int(guid)+10,y=2,z=3,
+                                      estimated=True,ageMs="430",revision="16"))
+                if method == "buddy-party.state":
+                    return dict(sessionId=peer.core,revision="9",group=dict(known=True,inGroup=True,
+                        leaderGuid="1",members=copy.deepcopy(members)))
+                return dict(self=dict(guid=guid,present=True,mapKnown=True,mapId=349,
+                    positionKnown=True,x=int(guid)+9,y=2,z=3,positionAgeMs="2300",positionRevision="15",
+                    aliveKnown=True,alive=True,healthKnown=True,health=100,maxHealth=100,vitalsAgeMs="2100",
+                    unitFlagsKnown=True,observationAgeMs="2900"),visitRevision="12",
+                    owner=dict(guid="3",present=False,positionKnown=False,aliveKnown=False))
+            peer.call = read
+        configured = [dict(guid=guid,name=next(row["name"] for row in members if row["guid"]==guid),
+                           rpc_url=peer.url) for guid,peer in clients.items() if guid!="87"]
+        with patch.object(converse,"ROOT",self.workspace), patch.object(converse,"RPC",return_value=rpc), \
+                patch.object(gm,"bindings",return_value=configured), \
+                patch.object(gm,"task_rpc",side_effect=lambda url:next(peer for peer in clients.values() if peer.url==url)), \
+                patch.object(direct_tools.DirectTools,"_helper",return_value=gm):
+            brain = converse.DirectBrain(self.state,developer_workspace=self.workspace,character_name="Lotharen",
+                character_class="paladin",model="fixture-model",provider="local",base_url="http://127.0.0.1:1/v1")
+            brain._generation_context = dict(sessionId=rpc.core,selfGuid="87",chatSessionId=rpc.chat,cursor=261)
+            yield brain, state, clients
+
+    def test_owner_gm_first_api_has_current_all_client_facts_and_keeps_retained_history(self):
+        with self.gm_primer_fixture() as (brain,state,clients):
+            payloads, instances = [], []
+            original_init = direct_tools.DirectTools.__init__
+            def capture_init(tools,*args,**kwargs):
+                original_init(tools,*args,**kwargs);instances.append(tools)
+            def api(payload,*_):
+                payloads.append(copy.deepcopy(payload));return spoken("I have the current observed facts.")
+            with patch.object(direct_tools.DirectTools,"__init__",capture_init),patch.object(brain.client,"_http",side_effect=api):
+                state["current_request"]["messages"]=[dict(text="An earlier party position was outdoors.")]
+                brain.generate([],state)
+                path=next((self.state/"api-conversations").glob("*.json"))
+                retained=json.loads(path.read_text())
+                old=[dict(role="user" if i%2==0 else "assistant",content="Historical position outdoors: "+str(i)) for i in range(236)]
+                retained["messages"]=copy.deepcopy(old)
+                retained["unknown"]={"old-mutation":dict(outcome="unknown",replayAllowed=False)}
+                path.write_text(json.dumps(retained))
+                state["party"]=dict(historicalPosition="outdoors")
+                state["current_request"]["messages"]=[dict(text="Where is everyone now? Read only.")]
+                original=copy.deepcopy(state)
+                brain.generate([dict(text=row["content"]) for row in old],state)
+            messages=payloads[-1]["messages"]
+            prepared=json.loads(messages[0]["content"].split("Current observations and control state JSON:\n",1)[1])
+            primer=prepared["gm_observation_primer"]
+            self.assertEqual(primer["outcome"],"read")
+            self.assertLessEqual(primer["readStartedAtUnixMs"],primer["readCompletedAtUnixMs"])
+            rows=primer["observation"]["result"]["clients"]
+            self.assertEqual([row["guid"] for row in rows],["87","1","4","5","8"])
+            self.assertTrue(all(row["identityMatches"] and row["group"]["leaderGuid"]=="1" for row in rows))
+            self.assertEqual(rows[1]["rawSelf"]["positionAgeMs"],"2300")
+            self.assertEqual(rows[1]["rawSelf"]["vitalsAgeMs"],"2100")
+            self.assertEqual(rows[1]["observations"]["actions"]["position"]["ageMs"],"430")
+            self.assertTrue(rows[1]["observations"]["actions"]["position"]["estimated"])
+            self.assertFalse(rows[0]["observations"]["world"]["owner"]["positionKnown"])
+            self.assertIn("historical",primer["semantics"])
+            self.assertEqual(messages[1:237],old)
+            self.assertEqual(messages[-1],dict(role="user",content="Where is everyone now? Read only."))
+            self.assertEqual(json.loads(path.read_text())["unknown"],retained["unknown"])
+            self.assertEqual(instances[-1].context["gm_observation_primer"],primer)
+            self.assertEqual(instances[-1].chat_cursor,"261")
+            self.assertEqual(state,original)
+            self.assertEqual(messages[0]["content"].count(brain.gm_reference),1)
+            self.assertFalse(any(peer.commands or peer.replies for peer in clients.values()))
+            self.assertTrue(all(method in ("session.describe","buddy-actions.status","buddy-world.snapshot","buddy-party.state")
+                                for peer in clients.values() for method,_ in peer.calls))
+
+    def test_gm_primer_partial_and_whole_read_failures_are_explicit_not_history_fallback(self):
+        for failure in ("one_client","whole_read"):
+            with self.subTest(failure=failure),self.gm_primer_fixture() as (brain,state,clients):
+                original=clients["4"].call
+                def unavailable(method,*args,**kwargs):
+                    if method=="buddy-world.snapshot":raise TimeoutError("current world unavailable")
+                    return original(method,*args,**kwargs)
+                clients["4"].call=unavailable
+                payloads=[]
+                def api(payload,*_):payloads.append(copy.deepcopy(payload));return spoken("Those current facts are unavailable.")
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(patch.object(brain.client,"_http",side_effect=api))
+                    if failure=="whole_read":stack.enter_context(patch.object(converse.gm_tasks,"inspect_clients",side_effect=TimeoutError("fresh inspection failed")))
+                    brain.generate([dict(text="Historically Mira was alive at x=999")],state)
+                view=json.loads(payloads[0]["messages"][0]["content"].split("Current observations and control state JSON:\n",1)[1])["gm_observation_primer"]
+                if failure=="whole_read":
+                    self.assertEqual(view["outcome"],"unavailable");self.assertFalse(view["observation"]["ok"])
+                else:
+                    row=next(row for row in view["observation"]["result"]["clients"] if row["guid"]=="4")
+                    self.assertFalse(row["identityMatches"]);self.assertTrue(row["errors"])
+                    self.assertIsNone(row["rawSelf"]["alive"]);self.assertIsNone(row["rawSelf"]["x"])
+                self.assertFalse(any(peer.commands or peer.replies for peer in clients.values()))
+
+    def test_gm_primer_body_owner_and_cancel_changes_abort_before_any_model_request(self):
+        for changed in ("body","owner","cancel"):
+            with self.subTest(changed=changed),self.gm_primer_fixture() as (brain,state,clients):
+                cancelled=[False];original=converse.gm_tasks.inspect_clients
+                def inspect(*args,**kwargs):
+                    value=original(*args,**kwargs)
+                    if changed=="body":clients["87"].catalog_guid="4"
+                    elif changed=="owner":state["current_request"]["senderGuid"]="8"
+                    else:cancelled[0]=True
+                    return value
+                with patch.object(converse.gm_tasks,"inspect_clients",side_effect=inspect), \
+                        patch.object(brain.client,"_http") as api:
+                    with self.assertRaises((converse.ConversationError,direct_tools.ToolError)):
+                        brain.generate([dict(text="Read current party facts")],state,cancelled=lambda:cancelled[0])
+                api.assert_not_called()
+                self.assertFalse(any(peer.commands or peer.replies for peer in clients.values()))
+
+    def test_non_gm_and_peer_requests_do_not_trigger_the_owner_gm_primer(self):
+        for kind in ("companion","peer"):
+            with self.subTest(kind=kind),self.gm_primer_fixture() as (brain,state,clients):
+                if kind=="companion":brain.character_name="Mira"
+                else:state["current_request"].update(source="party_agent",senderGuid="8",verifiedPeer=True)
+                with patch.object(converse.gm_tasks,"inspect_clients") as inspect, \
+                        patch.object(brain.client,"_http",return_value=spoken()):
+                    brain.generate([dict(text="Hello")],state)
+                inspect.assert_not_called()
+
+    def test_actual_conversation_cursor_seeds_default_chat_read_and_old_reads_cannot_regress_it(self):
+        from test_direct_tools import DirectToolTests, RPC as CatalogRPC
+        with self.gm_primer_fixture() as (brain,state,clients), FakeHTTP([
+                chat(("current","chat_read",dict(limit=50))),
+                chat(("history","chat_read",dict(after_sequence="0",limit=50))),
+                chat(("later","chat_read",dict(limit=50))),spoken()]) as http:
+            rpc=clients["87"];original=rpc.call
+            # Reuse the independently proto-derived canonical fixture.
+            catalog=DirectToolTests.legacy_poll_catalog(types.SimpleNamespace(rpc=CatalogRPC(guid="87")))
+            catalog.update(sessionId=rpc.core,characterGuid="87",revision="a"*64)
+            def read(method,params,timeout=None):
+                if method=="session.describe":
+                    rpc.calls.append((method,copy.deepcopy(params)));return copy.deepcopy(catalog)
+                if method=="buddy-chat.poll":
+                    rpc.calls.append((method,copy.deepcopy(params)))
+                    after=params["afterSequence"]
+                    sequence,text=("50","Historical help") if after=="0" else (
+                        ("262","Current help feedback") if after=="261" else ("263","Later feedback"))
+                    return dict(sessionId=rpc.chat,oldestSequence="6",latestSequence="264",nextSequence=sequence,
+                        messages=[dict(sequence=sequence,channel="CHANNEL_UNSPECIFIED",senderGuid="0",text=text)])
+                return original(method,params,timeout)
+            rpc.call=read
+            brain.client=direct_model.DirectModel("local",brain.model,http.base)
+            loop=converse.Conversation(rpc,brain,character_name="Lotharen",character_class="paladin",character_guid=87)
+            loop.initialized,loop.session_id,loop.cursor=True,rpc.chat,261
+            state["current_request"]["messages"]=[dict(text="Read the current system feedback.")]
+            self.assertEqual(loop.generate_reply([],state),REPLY)
+            calls=[params for method,params in rpc.calls if method=="buddy-chat.poll" and params.get("limit")==50]
+            self.assertEqual([params["afterSequence"] for params in calls],["261","0","262"])
+            self.assertTrue(all(params["sessionId"]==rpc.chat for params in calls))
+            rows=[json.loads(row["content"])["result"] for row in http.requests[-1]["body"]["messages"] if row["role"]=="tool"]
+            self.assertEqual([row["messages"][0]["sequence"] for row in rows],["262","50","263"])
+            self.assertNotEqual(rpc.chat,rpc.core)
+            self.assertFalse(rpc.commands or rpc.replies)
+
     def test_loaded_gm_guide_preserves_full_catalog_and_native_tool_contract(self):
         reference = Path(__file__).with_name("lotharen-gm-commands.txt").read_text()
         catalog = reference.split("FULL COMMAND HELP AND SOURCE SIGNATURES\n", 1)[1].split(
@@ -275,7 +447,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                         with self.assertRaises(converse.ConversationError) as refused:
                             brain.generate([dict(speaker='Joel', text='Continue my recovery')], state)
                     self.assertIn('invalid_tool_call', str(refused.exception))
-                    self.assertEqual(tool.call_count, 1)
+                    self.assertEqual(sum(call.args[0] != "gm_inspect" for call in tool.call_args_list), 1)
                     self.assertTrue(brain.last_failure_receipt['mutationToolEntered'])
                     self.assertFalse(rpc.commands or rpc.replies)
 
