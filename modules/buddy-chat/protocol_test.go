@@ -119,7 +119,7 @@ func TestDecodeChatRejectsTruncatedOrMalformedPackets(t *testing.T) {
 
 func TestDecodeChatIgnoresUnsupportedTypesAndAddons(t *testing.T) {
 	for _, packet := range [][]byte{
-		{0},  // SYSTEM has another purpose; no parsing of its body is attempted.
+		{3},  // GUILD remains outside this module's supported player channels.
 		{12}, // MONSTER_SAY has a different, variable-length layout.
 		{17}, // CHANNEL also has a different layout.
 		makePlayerChat(chatv1.Channel_SAY, 0, 0, "system"),
@@ -138,6 +138,7 @@ func TestDecodeChatIgnoresUnsupportedTypesAndAddons(t *testing.T) {
 
 func FuzzDecodeChat(f *testing.F) {
 	f.Add(makePlayerChat(chatv1.Channel_SAY, 42, 0, "hello"))
+	f.Add(systemPacket("Player not found."))
 	f.Add([]byte{12})
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, packet []byte) {
