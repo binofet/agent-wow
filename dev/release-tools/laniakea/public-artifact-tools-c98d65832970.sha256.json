@@ -1,0 +1,69 @@
+{
+  "archive": "public-artifact-tools-c98d65832970.tar.gz",
+  "bytes": 28839,
+  "sha256": "945ae80c87ca98847a42c97c73f327ac099e1e522be4ed9f298834453c03842d",
+  "sourceCommit": "c98d658329706640bb5e9251f581413c33570512",
+  "sourceTree": "a60e1fb280ac79e27fac458803824baef64c12bd",
+  "packageManifestSHA256": "011c0e1453c4e7c79a4dd506f3d7a28ad0c39fc688942f14de8d592c2aa32cef",
+  "files": {
+    "README.json": {
+      "bytes": 3953,
+      "sha256": "46be5ef8079d8b10aab751cf4d6ef96a12c3c8d4ade5ffa8e7206248e34aced0"
+    },
+    "artifact_qualification_test.go": {
+      "bytes": 31437,
+      "sha256": "fbebe80d9aa5df6f0a156dcc59990d030540e35112569391ded1d1d1255e144e"
+    },
+    "input.plan.example.json": {
+      "bytes": 3589,
+      "sha256": "8ff5a1bb610c26ecfe96d0d43e990caf0f8f04c06d867224c48b3f84d94ccb1f"
+    },
+    "overlay.example.json": {
+      "bytes": 245,
+      "sha256": "a4e5fc0771e46f3944bbeb15d4edea3b910e70b172fe1e9b5f3e238af242a356"
+    },
+    "phase1-c98d65832970/build-public.sh": {
+      "bytes": 345,
+      "sha256": "02d96d39b5b78339d8358f59d54a33ae45a861fb44dcb323a5d27a8d242c765c"
+    },
+    "phase1-c98d65832970/freeze.json": {
+      "bytes": 2912,
+      "sha256": "9a26cbe34b3e50cc49f6a807dcaf54834c4d840775ad07c054cf69c26ed22e49"
+    },
+    "phase1-c98d65832970/prepare_overlay.py": {
+      "bytes": 7090,
+      "sha256": "725c8758f10aac436ae469c37d3eeebd6c919251cfa8fa688e33db0f0374b193"
+    },
+    "phase1-c98d65832970/public-build-once.sh": {
+      "bytes": 8120,
+      "sha256": "cdbe776ffb559f89ea0b2ced58fa3f6093e9aa6bdb9bae78168ae7ad7777d598"
+    },
+    "phase1-c98d65832970/source-handoff.json": {
+      "bytes": 846,
+      "sha256": "b8134cc7c4c129511f6cd845a58907dbdf9dec50bbc1f16cd7c4a9d3d2da0da3"
+    },
+    "plan.json": {
+      "bytes": 10662,
+      "sha256": "4640754853fdaa18ac1eaf87d0632ef6cfee9190fb02cac06dc7930af5013941"
+    },
+    "prepare_image_inputs.py": {
+      "bytes": 10838,
+      "sha256": "695fde9115dd0d6e29e909fae773c582a1738004a8cd380207bdc359e5292a01"
+    },
+    "prepare_overlay.py": {
+      "bytes": 7090,
+      "sha256": "725c8758f10aac436ae469c37d3eeebd6c919251cfa8fa688e33db0f0374b193"
+    },
+    "source-receipt.json": {
+      "bytes": 3387,
+      "sha256": "9706c46c079fdb267c844ae7d14c61405386123361ee1fe80f81809242524b71"
+    },
+    "package-manifest.json": {
+      "bytes": 2260,
+      "sha256": "011c0e1453c4e7c79a4dd506f3d7a28ad0c39fc688942f14de8d592c2aa32cef"
+    }
+  },
+  "qualification": "Public helper source pin/path update only; unexecuted. Prior whole-harness clear carries for byte-identical code; bounded source/pin delta review is separate.",
+  "privatePayloadIncluded": false,
+  "runtimeReady": false
+}
