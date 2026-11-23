@@ -3810,14 +3810,9 @@ class BuddyControls:
             raise ConversationError("Quest reward choices are invalid")
         if any(not isinstance(item, dict) or integer(item.get("itemId", "0")) == 0 for item in choices):
             raise ConversationError("Quest reward choice is invalid")
-        if len(choices) > 1 and not item_entry and self.actions.get("classKnown") is True:
-            actual_class = integer(self.actions.get("classId", "0"))
-            if actual_class == CLASS_IDS[self.character_class]:
-                preferred = quest_rewards.preferred_reward(choices, quest_id, actual_class)
-                if preferred is not None:
-                    item_entry = integer(preferred["itemId"])
+        accepted_policy = None
         if len(choices) > 1 and not item_entry:
-            selected, message = self.automatic_reward_choice(offer)
+            selected, message, accepted_policy = self.automatic_reward_choice(offer)
             if selected is None:
                 return message
             item_entry = selected["itemId"]
@@ -3833,6 +3828,8 @@ class BuddyControls:
                    "choiceIndex":integer(selected.get("index", "0")) if selected else 0,
                    "expectedItemId":integer(selected["itemId"]) if selected else 0,
                    "noChoice":not choices}
+        if accepted_policy is not None and not accepted_policy.current():
+            return "My accepted reward policy changed or is unavailable; I'll need its current choice."
         result = self.rpc.call("buddy-quests.claim_reward", request)
         self.quests = result.get("state", {})
         receipt = self.quests.get("lastReward", {}) if isinstance(self.quests, dict) else {}
@@ -3857,36 +3854,56 @@ class BuddyControls:
     def automatic_reward_choice(self, offer):
         binding = self.reward_binding(self.quests)
         player = self.rpc.call("buddy-world.snapshot", {}).get("self", {})
+        body = self.rpc.call("buddy-actions.status", {})
+        known_classes = [integer(view.get("classId", 0)) for view in (player, body)
+                         if isinstance(view, dict) and view.get("classKnown") is True]
         if (not isinstance(player, dict) or integer(player.get("guid", 0)) != self.character_guid
-                or player.get("classKnown") is not True
-                or integer(player.get("classId", 0)) != CLASS_IDS[self.character_class]):
-            return None, "I'm waiting for my character details before choosing a reward."
-        decision = {"status": "pending"}
+                or not isinstance(body, dict) or body.get("sessionId") != binding[0]
+                or str(body.get("selfGuid")) != str(self.character_guid)
+                or not known_classes or any(value != CLASS_IDS[self.character_class] for value in known_classes)):
+            return None, "I'm waiting for my character details before choosing a reward.", None
+        class_id = known_classes[0]
+        try:
+            accepted_policy = quest_rewards.AcceptedRewardPolicy(self.rpc, binding[0], self.character_guid)
+            decision = quest_rewards.select_reward(offer["choices"], None, class_id,
+                level=integer(player.get("level", 0)) if player.get("levelKnown") is True else None,
+                quest_id=binding[1], evaluate=accepted_policy.evaluate)
+        except Exception:
+            return None, "I'm waiting for my accepted Lua reward policy before choosing.", None
+        self.reward_items = dict(questId=binding[1], offerRevision=str(binding[3]))
         deadline = time.monotonic() + 1.8
         for attempt in range(3):
+            if decision["status"] != "pending":
+                break
             try:
                 response = self.rpc.call("buddy-trade.lookup_items", {"itemIds": [integer(row["itemId"]) for row in offer["choices"]]})
-                self.bound(response)  # Require an actual lookup-module identity.
-                decision = quest_rewards.select_reward(offer["choices"], response, integer(player["classId"]),
-                    level=integer(player.get("level", 0)) if player.get("levelKnown") is True else None)
+                if self.bound(response)["sessionId"] != binding[0]:
+                    raise ConversationError("Reward item lookup belongs to another session")
+                decision = quest_rewards.select_reward(offer["choices"], response, class_id,
+                    level=integer(player.get("level", 0)) if player.get("levelKnown") is True else None,
+                    quest_id=binding[1], evaluate=accepted_policy.evaluate)
                 self.reward_items = dict(reward_metadata_snapshot(response), questId=integer(offer["questId"]),
                                          offerRevision=str(integer(offer.get("revision", 0))))
             except (ConversationError, ValueError, TypeError):
-                return None, "I'm waiting for the reward's item details."
+                return None, "I'm waiting for the reward's item details and accepted Lua choice.", None
             if decision["status"] != "pending" or attempt == 2 or time.monotonic() + .15 >= deadline:
                 break
             time.sleep(.15)
         if decision["status"] != "selected":
-            return None, "I'm waiting for complete reward item details before choosing."
+            return None, "I'm waiting for complete reward item details before choosing.", None
+        body = self.rpc.call("buddy-actions.status", {})
+        if (body.get("sessionId") != binding[0] or str(body.get("selfGuid")) != str(self.character_guid)):
+            return None, "My character session changed while I checked the reward.", None
         fresh = self.rpc.call("buddy-quests.state", {})
         current = fresh.get("turnInOffer", {})
         if (self.reward_binding(fresh) != binding or self.ambiguous_quest_reward(fresh, binding[1])
                 or current.get("source") != "reward_offer" or current.get("canComplete") is not True
                 or current.get("rewardRequested") is True or integer(current.get("expiresInMs", 0)) == 0):
-            return None, "The reward offer changed while I checked it; I'll need its current offer."
+            return None, "The reward offer changed while I checked it; I'll need its current offer.", None
         self.quests = fresh
-        self.reward_items.update(selectionReason=decision["reason"], selectedItemId=decision["choice"]["itemId"])
-        return decision["choice"], ""
+        self.reward_items.update(selectionReason=decision["reason"], selectedItemId=decision["choice"]["itemId"],
+                                 policySHA256=accepted_policy.revision, policyGeneration=accepted_policy.generation)
+        return decision["choice"], "", accepted_policy
 
     @staticmethod
     def ambiguous_quest_reward(state, quest_id):

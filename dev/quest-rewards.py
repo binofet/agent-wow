@@ -9,11 +9,13 @@ Enums and use restrictions follow AzerothCore ItemTemplate.h / PlayerStorage.cpp
 https://github.com/azerothcore/azerothcore-wotlk/tree/master/src/server/game/Entities
 """
 
+import hashlib
 import importlib.machinery
 import importlib.util
 import math
 import os
 from pathlib import Path
+import re
 
 
 _UINT32 = (1 << 32) - 1
@@ -108,6 +110,71 @@ def _evaluate(facts):
         return {"status": "pending", "reason": "Waiting for the shared Lua reward policy."}
 
 
+class AcceptedRewardPolicy:
+    """Read one actor publication; current() is a bounded dispatch preflight."""
+
+    def __init__(self, rpc, session_id, character_guid, *, bridge=None):
+        self.rpc = rpc
+        self.identity = dict(sessionId=session_id, characterGuid=str(character_guid))
+        if (not isinstance(session_id, str) or not 1 <= len(session_id) <= 128
+                or re.fullmatch('[1-9][0-9]{0,19}', self.identity['characterGuid']) is None
+                or int(self.identity['characterGuid']) > 2**64-1):
+            raise ValueError('current_reward_policy_body_required')
+        loader = importlib.machinery.SourceFileLoader('quest_reward_accepted_runtime', str(Path(__file__).with_name('task-runtime')))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.runtime = importlib.util.module_from_spec(spec)
+        loader.exec_module(self.runtime)
+        self.source, self.revision, self.generation, limit = self._accepted()
+        self.wrapped = ('local policy=(function()\n'+self.source+'\nend)()\n'
+            'return {decide=function(input) '
+            'if type(policy.quest_reward_choice)~="function" then return {available=false} end '
+            'return {available=true,decision=policy.quest_reward_choice(input)} end}\n')
+        root = Path(__file__).resolve().parent.parent
+        self.bridge = bridge or self.runtime.Bridge(os.environ.get('BUDDY_LUAPOLICY_BINARY',
+            os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY', root/'data/bin/luapolicy')), root/'modules',
+            source_bytes=max(limit, len(self.wrapped.encode())), execution_ms=1000)
+
+    def _accepted(self):
+        view = self.rpc.call('session.policy_source', self.identity)
+        source, revision = view.get('source'), view.get('revision')
+        generation = str(view.get('generation', ''))
+        limit = view.get('sourceLimitBytes', self.runtime.MAX_SOURCE)
+        if (view.get('sessionId') != self.identity['sessionId']
+                or str(view.get('characterGuid')) != self.identity['characterGuid']
+                or not isinstance(source, str) or not source or not isinstance(revision, str)
+                or re.fullmatch('[a-f0-9]{64}', revision) is None
+                or hashlib.sha256(source.encode()).hexdigest() != revision
+                or re.fullmatch('[1-9][0-9]{0,19}', generation) is None or int(generation) > 2**64-1
+                or type(limit) is not int or limit <= 0 or len(source.encode()) > limit):
+            raise ValueError('current_reward_policy_source_required')
+        return source, revision, generation, limit
+
+    def evaluate(self, facts):
+        try:
+            result = self.bridge.evaluate(self.wrapped, facts)
+        except (self.runtime.Error, OSError, UnicodeError) as error:
+            raise ValueError('accepted_reward_policy_unavailable') from error
+        if (not isinstance(result, dict) or result.get('available') is not True
+                or not isinstance(result.get('decision'), dict)):
+            raise ValueError('quest_reward_choice_export_required')
+        return result['decision']
+
+    def current(self):
+        # Native ClaimReward still atomically validates the offer, not a policy
+        # revision. Keep this publication check nearest the host write boundary.
+        try:
+            _, revision, generation, _ = self._accepted()
+            attached = self.rpc.call('session.attach', self.identity)
+            policy = attached.get('policy', {})
+            return (revision == self.revision and generation == self.generation
+                    and attached.get('sessionId') == self.identity['sessionId']
+                    and str(attached.get('characterGuid')) == self.identity['characterGuid']
+                    and policy.get('faulted', False) is False
+                    and policy.get('revision') == revision and str(policy.get('generation')) == generation)
+        except Exception:
+            return False
+
+
 def preferred_reward(choices, quest_id, class_id):
     """Resolve the Lua policy's exact offered preference without item inference."""
     decision = _evaluate(dict(mode="offer_preference", choices=choices, questId=quest_id, classId=class_id))
@@ -124,11 +191,14 @@ def starter_handoff(facts):
     return _evaluate(dict(facts, mode="starter_handoff"))
 
 
-def select_reward(choices, items, class_id, *, level=None, race_id=None, weapon_subclasses=()):
+def select_reward(choices, items, class_id, *, level=None, race_id=None, weapon_subclasses=(),
+                  quest_id=None, evaluate=None):
     """Return {status, choice, reason}; choice is an unchanged actual offer row.
 
     ``items`` accepts a lookup response, its items list, or an item-ID keyed map.
-    Any unavailable offered item pauses selection. ``weapon_subclasses`` must be
+    Useful ranking requires every offered item's metadata. An accepted evaluator
+    may first choose an exact quest preference with ``items=None``; no equipment
+    or value claim is accepted from that frame. ``weapon_subclasses`` must be
     actual learned proficiencies. No absent baseline is treated as an empty slot.
     """
     if not isinstance(choices, (list, tuple)) or not 1 <= len(choices) <= 6:
@@ -143,11 +213,12 @@ def select_reward(choices, items, class_id, *, level=None, race_id=None, weapon_
             return _result("invalid", "Reward choice indices, item IDs, or counts are invalid.")
         indices.add(index)
         ids.add(item_id)
+    offer_only = items is None and evaluate is not None
     try:
-        metadata = _metadata_rows(items)
+        metadata = {} if offer_only else _metadata_rows(items)
     except (ValueError, TypeError, OverflowError):
         return _result("invalid", "Malformed server item lookup response.")
-    for item_id in sorted(ids):
+    for item_id in (() if offer_only else sorted(ids)):
         item = metadata.get(item_id)
         if item is None or item.get("available") is not True or item.get("pending", False) is not False:
             return _result("pending", f"Waiting for complete server item details for item {item_id}.")
@@ -164,7 +235,7 @@ def select_reward(choices, items, class_id, *, level=None, race_id=None, weapon_
     # The existing evaluator accepts only bounded facts. Display names and
     # unoffered metadata stay outside the decision input.
     rows = []
-    for item_id in sorted(ids):
+    for item_id in (() if offer_only else sorted(ids)):
         item = metadata[item_id]
         damages = []
         for damage in item.get("damages", []):
@@ -181,9 +252,15 @@ def select_reward(choices, items, class_id, *, level=None, race_id=None, weapon_
         rows.append(dict(itemId=item_id, available=True,
                          **{key: item.get(key, 0) for key in _UINT_FIELDS},
                          stats=item.get("stats", []), damages=damages))
-    facts = dict(mode="useful", choices=list(choices), items=rows, classId=class_id if type(class_id) is int else None,
+    facts = dict(mode="useful", choices=list(choices), items=None if offer_only else rows, classId=class_id if type(class_id) is int else None,
                  level=level, raceId=race_id, weaponSubclasses=list(weapon_subclasses))
-    decision = _evaluate(facts)
+    if quest_id is not None:
+        if not _uint(quest_id) or quest_id == 0:
+            return _result("invalid", "Invalid observed quest identity.")
+        facts['questId'] = quest_id
+    decision = (evaluate or _evaluate)(facts)
+    if not isinstance(decision, dict):
+        return _result("invalid", "Invalid Lua reward decision.")
     if decision.get("status") != "selected":
         status = decision.get("status")
         return _result(status if status in ("pending", "invalid") else "invalid", str(decision.get("reason", "Invalid Lua reward decision.")))
@@ -191,8 +268,14 @@ def select_reward(choices, items, class_id, *, level=None, race_id=None, weapon_
     if type(position) is not int or not 1 <= position <= len(choices):
         return _result("invalid", "Lua reward decision does not identify an actual offered choice.")
     choice = choices[position - 1]
-    if decision.get("itemId") != choice["itemId"] or decision.get("choiceIndex") != choice.get("index", 0):
+    if (not _uint(decision.get("itemId")) or not _uint(decision.get("choiceIndex"), 5)
+            or decision["itemId"] != choice["itemId"] or decision["choiceIndex"] != choice.get("index", 0)):
         return _result("invalid", "Lua reward decision differs from the actual offered choice.")
+    if decision.get("reason") == "quest_preference":
+        label = _label(metadata.get(choice['itemId'], dict(itemId=choice['itemId'])))
+        return _result("selected", f"Choose {label} from the accepted quest preference.", choice)
+    if offer_only:
+        return _result("pending", "Waiting for complete item facts for useful or value ranking.")
     if decision.get("reason") == "useful":
         return _result("selected", f"Choose {_label(metadata[choice['itemId']])} for useful equipment and stats.", choice)
     if decision.get("reason") != "vendor":

@@ -18,6 +18,7 @@ def main():
         ("encounter_disposal", behaviors / "item-disposal.lua"),
         ("encounter_trade_consent", behaviors / "trade-consent.lua"),
         ("encounter_stipend_selection", behaviors / "stipend-selection.lua"),
+        ("encounter_quest_rewards", behaviors / "quest-rewards.lua"),
         ("encounter_corpse_loot", behaviors / "corpse-loot.lua"),
         ("encounter_spells", behaviors / "encounter-spells.lua"),
         ("encounter_healing", behaviors / "healing.lua"),

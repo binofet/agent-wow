@@ -987,6 +987,9 @@ class QuestJournalRewardTests(unittest.TestCase):
             self.assertFalse(converse.owner_quest_snapshot(path)["available"])
 
     def reward_controls(self, choices=(), receipt=None):
+        if not hasattr(QuestJournalRewardTests, '_accepted_reward_source'):
+            QuestJournalRewardTests._accepted_reward_source = subprocess.check_output(
+                [sys.executable, '-B', str(Path(__file__).with_name('encounter-bundle'))], text=True)
         npc="17379390962878382081"
         discovery={"sessionId":"quest-session","revision":"4","questLogKnown":True,"questLogRevision":"7",
                    "questLog":[{"questId":783,"complete":True}],
@@ -996,9 +999,19 @@ class QuestJournalRewardTests(unittest.TestCase):
         state={"sessionId":"quest-session","revision":"8","turnInOffer":offer}
         result=receipt if receipt is not None else {"questId":783,"status":"REWARD_CONFIRMED","serverRewardObserved":True,"logRemovalConfirmed":True}
         class RPC:
-            def __init__(self):self.calls=[]
+            def __init__(self):
+                self.calls=[]
+                self.policy_source=QuestJournalRewardTests._accepted_reward_source
+                self.policy_generation='1'
             def call(self,method,params):
                 self.calls.append((method,params))
+                if method=='session.policy_source':
+                    return dict(sessionId='quest-session',characterGuid='1',source=self.policy_source,
+                                revision=hashlib.sha256(self.policy_source.encode()).hexdigest(),
+                                generation=self.policy_generation,sourceLimitBytes=8*1024*1024)
+                if method=='session.attach':
+                    return dict(sessionId='quest-session',characterGuid='1',policy=dict(
+                        revision=hashlib.sha256(self.policy_source.encode()).hexdigest(),generation=self.policy_generation))
                 if method=="buddy-quests.discover":return discovery
                 if method=="buddy-actions.status":return QuestApproachCandidateTests.safe_scene()[0]
                 if method=="buddy-world.snapshot":return QuestApproachCandidateTests.safe_scene()[1]
@@ -1098,9 +1111,22 @@ class QuestJournalRewardTests(unittest.TestCase):
     def test_delegated_quest21_choice_uses_actual_confirmed_role_and_offered_id(self):
         for role,cls,wanted in (("priest",5,11192),("mage",8,11192),("rogue",4,2186)):
             controls,rpc,discovery,offer=self.reward_controls([
-                {"index":1,"itemId":2186},{"index":0,"itemId":2691},{"index":5,"itemId":11192}])
+                {"index":1,"itemId":2186,"count":1},{"index":0,"itemId":2691,"count":1},{"index":5,"itemId":11192,"count":1}])
             controls.character_class=role;controls.actions={"classKnown":True,"classId":cls}
             discovery["questLog"]=[{"questId":21,"complete":True}];offer["questId"]=21
+            original=rpc.call
+            def call(method,params,timeout=None):
+                if method=='buddy-world.snapshot':
+                    rpc.calls.append((method,params))
+                    return dict(self=dict(guid='1',classKnown=True,classId=cls))
+                if method=='buddy-actions.status':
+                    rpc.calls.append((method,params))
+                    return dict(sessionId='quest-session',selfGuid='1')
+                if method=='buddy-trade.lookup_items':
+                    rpc.calls.append((method,params))
+                    return dict(sessionId='quest-session',items=[dict(itemId=row['itemId'],available=True) for row in offer['choices']])
+                return original(method,params)
+            rpc.call=call
             controls.execute("CLAIM_QUEST_REWARD",quest_id=21)
             claim=next(params for method,params in rpc.calls if method=="buddy-quests.claim_reward")
             self.assertEqual(claim["expectedItemId"],wanted)
@@ -1117,12 +1143,15 @@ class QuestJournalRewardTests(unittest.TestCase):
               {"itemId":3070,"name":"Ensign Cloak","available":True,"itemClass":4,"subclass":1,"inventoryType":16,"armor":6,"allowableClass":0xffffffff,"allowableRace":0xffffffff}]
         original=rpc.call
         def call(method,params,timeout=None):
+            if method=='buddy-actions.status':
+                rpc.calls.append((method,params))
+                return dict(sessionId='quest-session',selfGuid='1')
             if method=="buddy-world.snapshot":
                 rpc.calls.append((method,params))
                 return {"self":{"guid":"1","classKnown":True,"classId":8,"levelKnown":True,"level":8}}
             if method=="buddy-trade.lookup_items":
                 rpc.calls.append((method,params))
-                return {"sessionId":"trade-body","items":rows}
+                return {"sessionId":"quest-session","items":rows}
             result=original(method,params)
             if method=="buddy-quests.claim_reward":result["state"]["lastReward"]["questId"]=6
             return result
@@ -1137,7 +1166,7 @@ class QuestJournalRewardTests(unittest.TestCase):
             result=original(method,params)
             if method=="buddy-trade.lookup_items":
                 reads.append(params)
-                if len(reads)==1:return {"sessionId":"trade-body","items":[{"itemId":row["itemId"],"pending":True} for row in result["items"]]}
+                if len(reads)==1:return {"sessionId":"quest-session","items":[{"itemId":row["itemId"],"pending":True} for row in result["items"]]}
             return result
         rpc.call=call
         with patch.object(converse.time,"sleep"):
@@ -3384,7 +3413,7 @@ from test_lua_control_bridge import LuaControlBridgeTests
 
 def load_tests(loader, tests, pattern):
     # Keep the existing CI entry point, including private combat evidence checks.
-    for name in ("test_combat_context", "test_combat_review", "test_converse_host_mechanics", "test_converse_mana_driver", "test_direct_model", "test_direct_tools", "test_direct_brain", "test_gm_command_evidence", "test_gm_goal_admission"):
+    for name in ("test_combat_context", "test_combat_review", "test_converse_host_mechanics", "test_converse_mana_driver", "test_converse_reward_policy", "test_direct_model", "test_direct_tools", "test_direct_brain", "test_gm_command_evidence", "test_gm_goal_admission"):
         extra_spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + ".py"))
         module = importlib.util.module_from_spec(extra_spec)
         extra_spec.loader.exec_module(module)
