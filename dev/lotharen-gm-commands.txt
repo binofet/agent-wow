@@ -21,6 +21,12 @@ TOOLS AND INDEPENDENT EXAMPLES
 - gm_execute(command=".help groupsummon") or command=".help appear": ask the realm for current
   syntax. .commands and .help group leader are other native discovery forms; the full public catalog
   follows. Published syntax/security are reference facts; current realm help/permission replies win.
+- Named online repair: gm_execute(command='.gear repair Joel'), omitting select_guid. The public
+  HandleGearRepairCommand resolves the supplied online name; this handler requires no movement,
+  group membership or UI selection. It checks the connected target and target security before repair.
+  Sources: cs_gear.cpp HandleGearRepairCommand and ChatCommandTags.cpp PlayerIdentifier::TryConsume
+  at the reference pin below. This is source-supported syntax, not a verified repair on this realm.
+  Read current feedback and repair evidence before claiming success; keep existing no-replay receipts.
 - gm_execute returns collected feedback inline when available in
   feedback.messages and feedback.systemMessages; retain feedback.status and no-reply/unknown distinctions. Use
   feedback.readMore to continue reading. chat_read() defaults to the current monotonic cursor;
