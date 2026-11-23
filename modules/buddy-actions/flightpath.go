@@ -49,6 +49,7 @@ func (s *Service) FlightpathObservation(ctx context.Context, _ *emptypb.Empty) (
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reconcileFlightpathTransferLocked(ctx)
 	return s.flightpathObservationLocked(), nil
 }
 
@@ -66,6 +67,12 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 	}
 	if !s.ownsExploration(r.Token) || s.interactionUntil.Sub(now) < time.Second {
 		return "flightpath_exploration_lease_changed_or_expiring"
+	}
+	if r.Mode == "arrival" && s.flightpathActivation.operation.GetCurrentSegment() != nil {
+		binding := s.idleInteraction
+		if binding.sessionID != r.SessionId || binding.selfGUID != r.SelfGuid || binding.visit != r.VisitId || binding.token != r.Token {
+			return "flightpath_adopted_arrival_current_idle_parent_lease_required"
+		}
 	}
 	if s.state.Moving || s.bodyMoving || s.state.MotionUnconfirmed || s.clientControlLost || s.clientControlRestoring ||
 		s.state.CastPending || s.state.AutoAttackRequested || s.state.AutoAttacking || s.state.AutoAttackUnconfirmed ||

@@ -7,6 +7,7 @@ import (
 	"math"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -18,12 +19,18 @@ import (
 // This separate monotonic slot retains one exact activation attempt. Expiry,
 // policy edits and visit changes never clear an uncertain or accepted flight.
 type flightpathActivationTracker struct {
-	revision          uint64
-	request           *actionsv1.FlightpathActivationRequest
-	operation         *actionsv1.FlightpathActivationOperation
-	menu              *actionsv1.FlightpathOperation
-	settlementRequest *actionsv1.SettleFlightpathRequest
-	settlementResult  *actionsv1.FlightpathObservationResponse
+	revision           uint64
+	request            *actionsv1.FlightpathActivationRequest
+	operation          *actionsv1.FlightpathActivationOperation
+	menu               *actionsv1.FlightpathOperation
+	settlementRequest  *actionsv1.SettleFlightpathRequest
+	settlementResult   *actionsv1.FlightpathObservationResponse
+	transferRequest    *actionsv1.AdoptFlightpathTransferRequest
+	transferInvoked    bool
+	transferResult     *actionsv1.FlightpathObservationResponse
+	transferAdoption   *worldv1.SplineTransferAdoption
+	transferActivation *actionsv1.FlightpathActivationOperation
+	transferAttempt    *actionsv1.FlightpathTransferAttempt
 }
 
 func (s *Service) flightpathActivationObservationLocked(out *actionsv1.FlightpathObservationResponse) {
@@ -33,6 +40,9 @@ func (s *Service) flightpathActivationObservationLocked(out *actionsv1.Flightpat
 	}
 	if menu := s.flightpathActivation.menu; menu != nil {
 		out.ActivationMenu = proto.Clone(menu).(*actionsv1.FlightpathOperation)
+	}
+	if attempt := s.flightpathActivation.transferAttempt; attempt != nil {
+		out.TransferAttempt = proto.Clone(attempt).(*actionsv1.FlightpathTransferAttempt)
 	}
 }
 
@@ -102,6 +112,10 @@ func (s *Service) ActivateFlightpath(ctx context.Context, request *actionsv1.Fli
 	f.request = r
 	f.menu = proto.Clone(baselineMenu).(*actionsv1.FlightpathOperation)
 	f.settlementRequest, f.settlementResult = nil, nil
+	f.transferRequest, f.transferInvoked, f.transferResult = nil, false, nil
+	f.transferAdoption = nil
+	f.transferActivation = nil
+	f.transferAttempt = nil
 	f.operation = &actionsv1.FlightpathActivationOperation{Revision: f.revision, SessionId: r.SessionId,
 		SelfGuid: r.SelfGuid, VisitId: r.VisitId, NpcGuid: r.NpcGuid, MenuRevision: r.MenuRevision,
 		SourceNode: r.SourceNode, DestinationNode: r.DestinationNode, Pending: true, Phase: "reserved"}

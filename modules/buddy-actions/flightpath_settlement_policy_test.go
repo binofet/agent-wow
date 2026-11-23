@@ -127,6 +127,8 @@ func (p *settlementPolicyFixture) dispatch(action map[string]any) {
 		request = &actionsv1.FlightpathQueryRequest{}
 	case "buddy-actions.settle_flightpath":
 		request = &actionsv1.SettleFlightpathRequest{}
+	case "buddy-actions.adopt_flightpath_transfer":
+		request = &actionsv1.AdoptFlightpathTransferRequest{}
 	default:
 		t.Fatal("settlement policy issued unrelated method", action)
 	}
@@ -146,6 +148,8 @@ func (p *settlementPolicyFixture) dispatch(action map[string]any) {
 		response, err = p.f.base.x.s.QueryFlightpath(context.Background(), r)
 	case *actionsv1.SettleFlightpathRequest:
 		response, err = p.f.base.x.s.SettleFlightpath(context.Background(), r)
+	case *actionsv1.AdoptFlightpathTransferRequest:
+		response, err = p.f.base.x.s.AdoptFlightpathTransfer(context.Background(), r)
 	}
 	if err != nil {
 		t.Fatal("actual native settlement action refused its fixture", method, err)

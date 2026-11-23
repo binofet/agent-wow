@@ -22,6 +22,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	BuddyWorld_RetireSplineCompletion_FullMethodName = "/warcraftbuddy.world.v1.BuddyWorld/RetireSplineCompletion"
+	BuddyWorld_AdoptSplineTransfer_FullMethodName    = "/warcraftbuddy.world.v1.BuddyWorld/AdoptSplineTransfer"
 	BuddyWorld_CompleteSpline_FullMethodName         = "/warcraftbuddy.world.v1.BuddyWorld/CompleteSpline"
 	BuddyWorld_CombatEvents_FullMethodName           = "/warcraftbuddy.world.v1.BuddyWorld/CombatEvents"
 	BuddyWorld_Snapshot_FullMethodName               = "/warcraftbuddy.world.v1.BuddyWorld/Snapshot"
@@ -34,6 +35,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyWorldClient interface {
 	RetireSplineCompletion(ctx context.Context, in *RetireSplineCompletionRequest, opts ...grpc.CallOption) (*SplineCompletionObservation, error)
+	AdoptSplineTransfer(ctx context.Context, in *AdoptSplineTransferRequest, opts ...grpc.CallOption) (*SplineCompletionObservation, error)
 	CompleteSpline(ctx context.Context, in *CompleteSplineRequest, opts ...grpc.CallOption) (*SplineCompletionObservation, error)
 	CombatEvents(ctx context.Context, in *CombatEventsRequest, opts ...grpc.CallOption) (*CombatEventsResponse, error)
 	Snapshot(ctx context.Context, in *SnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error)
@@ -53,6 +55,16 @@ func (c *buddyWorldClient) RetireSplineCompletion(ctx context.Context, in *Retir
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SplineCompletionObservation)
 	err := c.cc.Invoke(ctx, BuddyWorld_RetireSplineCompletion_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyWorldClient) AdoptSplineTransfer(ctx context.Context, in *AdoptSplineTransferRequest, opts ...grpc.CallOption) (*SplineCompletionObservation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SplineCompletionObservation)
+	err := c.cc.Invoke(ctx, BuddyWorld_AdoptSplineTransfer_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +126,7 @@ func (c *buddyWorldClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opt
 // for forward compatibility.
 type BuddyWorldServer interface {
 	RetireSplineCompletion(context.Context, *RetireSplineCompletionRequest) (*SplineCompletionObservation, error)
+	AdoptSplineTransfer(context.Context, *AdoptSplineTransferRequest) (*SplineCompletionObservation, error)
 	CompleteSpline(context.Context, *CompleteSplineRequest) (*SplineCompletionObservation, error)
 	CombatEvents(context.Context, *CombatEventsRequest) (*CombatEventsResponse, error)
 	Snapshot(context.Context, *SnapshotRequest) (*SnapshotResponse, error)
@@ -131,6 +144,9 @@ type UnimplementedBuddyWorldServer struct{}
 
 func (UnimplementedBuddyWorldServer) RetireSplineCompletion(context.Context, *RetireSplineCompletionRequest) (*SplineCompletionObservation, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RetireSplineCompletion not implemented")
+}
+func (UnimplementedBuddyWorldServer) AdoptSplineTransfer(context.Context, *AdoptSplineTransferRequest) (*SplineCompletionObservation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AdoptSplineTransfer not implemented")
 }
 func (UnimplementedBuddyWorldServer) CompleteSpline(context.Context, *CompleteSplineRequest) (*SplineCompletionObservation, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CompleteSpline not implemented")
@@ -182,6 +198,24 @@ func _BuddyWorld_RetireSplineCompletion_Handler(srv interface{}, ctx context.Con
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyWorldServer).RetireSplineCompletion(ctx, req.(*RetireSplineCompletionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyWorld_AdoptSplineTransfer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdoptSplineTransferRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyWorldServer).AdoptSplineTransfer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyWorld_AdoptSplineTransfer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyWorldServer).AdoptSplineTransfer(ctx, req.(*AdoptSplineTransferRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -286,6 +320,10 @@ var BuddyWorld_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RetireSplineCompletion",
 			Handler:    _BuddyWorld_RetireSplineCompletion_Handler,
+		},
+		{
+			MethodName: "AdoptSplineTransfer",
+			Handler:    _BuddyWorld_AdoptSplineTransfer_Handler,
 		},
 		{
 			MethodName: "CompleteSpline",

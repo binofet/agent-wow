@@ -12,6 +12,7 @@ rpc:
   observe_client_movement: /warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement
   complete_spline: /warcraftbuddy.world.v1.BuddyWorld/CompleteSpline
   retire_spline_completion: /warcraftbuddy.world.v1.BuddyWorld/RetireSplineCompletion
+  adopt_spline_transfer: /warcraftbuddy.world.v1.BuddyWorld/AdoptSplineTransfer
 packets:
   SMSG_LOGIN_VERIFY_WORLD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_NEW_WORLD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
@@ -83,3 +84,6 @@ script_api:
   retire_spline_completion:
     effect: mutation
     description: Retain ACK delivery uncertainty while retiring its reservation against exact new actual ground observations; proves no destination arrival.
+  adopt_spline_transfer:
+    effect: mutation
+    description: Supersede one completion slot from an exact observed adjacent transfer while retaining its original delivery uncertainty; no packet or arrival claim.

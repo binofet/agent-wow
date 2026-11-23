@@ -21,68 +21,69 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyActions_TalentState_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/TalentState"
-	BuddyActions_LearnTalent_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/LearnTalent"
-	BuddyActions_CastSpell_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/CastSpell"
-	BuddyActions_CancelSpell_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/CancelSpell"
-	BuddyActions_FlightpathReference_FullMethodName    = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathReference"
-	BuddyActions_FlightpathObservation_FullMethodName  = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation"
-	BuddyActions_QueryFlightpath_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/QueryFlightpath"
-	BuddyActions_ActivateFlightpath_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/ActivateFlightpath"
-	BuddyActions_SettleFlightpath_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/SettleFlightpath"
-	BuddyActions_SelectTarget_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/SelectTarget"
-	BuddyActions_ApproachTarget_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/ApproachTarget"
-	BuddyActions_MoveBody_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/MoveBody"
-	BuddyActions_InterruptCast_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/InterruptCast"
-	BuddyActions_BreakControl_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/BreakControl"
-	BuddyActions_SetFollowFormation_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/SetFollowFormation"
-	BuddyActions_SetPortalCatchup_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/SetPortalCatchup"
-	BuddyActions_Follow_FullMethodName                 = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
-	BuddyActions_Assist_FullMethodName                 = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
-	BuddyActions_EngageNPC_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC"
-	BuddyActions_HealOnce_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
-	BuddyActions_Status_FullMethodName                 = "/warcraftbuddy.actions.v1.BuddyActions/Status"
-	BuddyActions_Buffs_FullMethodName                  = "/warcraftbuddy.actions.v1.BuddyActions/Buffs"
-	BuddyActions_SpellToolkit_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/SpellToolkit"
-	BuddyActions_ReloadBehavior_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/ReloadBehavior"
-	BuddyActions_Behavior_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Behavior"
-	BuddyActions_AcquireMovement_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/AcquireMovement"
-	BuddyActions_ReleaseMovement_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseMovement"
-	BuddyActions_AcquireInteraction_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
-	BuddyActions_AcquireIdleInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcquireIdleInteraction"
-	BuddyActions_ReleaseInteraction_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
-	BuddyActions_ApproachLoot_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
-	BuddyActions_ApproachQuest_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ApproachQuest"
-	BuddyActions_TravelQuest_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/TravelQuest"
-	BuddyActions_TravelTrainer_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/TravelTrainer"
-	BuddyActions_TravelVendor_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/TravelVendor"
-	BuddyActions_TravelTo_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/TravelTo"
-	BuddyActions_PlanRouteLeg_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/PlanRouteLeg"
-	BuddyActions_ExitCrypt_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/ExitCrypt"
-	BuddyActions_Practice_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
-	BuddyActions_FargodeepEncounter_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter"
-	BuddyActions_Recovery_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
-	BuddyActions_ReleaseSpirit_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseSpirit"
-	BuddyActions_QueryCorpse_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/QueryCorpse"
-	BuddyActions_ApproachCorpse_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/ApproachCorpse"
-	BuddyActions_ReclaimCorpse_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ReclaimCorpse"
-	BuddyActions_OnPacket_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
-	BuddyActions_BeforeLogout_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
-	BuddyActions_ResurrectOnce_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce"
-	BuddyActions_AcceptResurrection_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection"
-	BuddyActions_PickLock_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/PickLock"
-	BuddyActions_CreateItem_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/CreateItem"
-	BuddyActions_Polymorph_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/Polymorph"
-	BuddyActions_Sap_FullMethodName                    = "/warcraftbuddy.actions.v1.BuddyActions/Sap"
-	BuddyActions_CastSelf_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/CastSelf"
-	BuddyActions_HealingOptions_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/HealingOptions"
-	BuddyActions_EncounterObservation_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/EncounterObservation"
-	BuddyActions_CastHeal_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/CastHeal"
-	BuddyActions_CastOffense_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/CastOffense"
-	BuddyActions_CastCleanse_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/CastCleanse"
-	BuddyActions_CastBuff_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/CastBuff"
-	BuddyActions_Melee_FullMethodName                  = "/warcraftbuddy.actions.v1.BuddyActions/Melee"
-	BuddyActions_SelfManaObservation_FullMethodName    = "/warcraftbuddy.actions.v1.BuddyActions/SelfManaObservation"
+	BuddyActions_TalentState_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/TalentState"
+	BuddyActions_LearnTalent_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/LearnTalent"
+	BuddyActions_CastSpell_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/CastSpell"
+	BuddyActions_CancelSpell_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/CancelSpell"
+	BuddyActions_FlightpathReference_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathReference"
+	BuddyActions_FlightpathObservation_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation"
+	BuddyActions_QueryFlightpath_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/QueryFlightpath"
+	BuddyActions_ActivateFlightpath_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ActivateFlightpath"
+	BuddyActions_SettleFlightpath_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/SettleFlightpath"
+	BuddyActions_AdoptFlightpathTransfer_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AdoptFlightpathTransfer"
+	BuddyActions_SelectTarget_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/SelectTarget"
+	BuddyActions_ApproachTarget_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ApproachTarget"
+	BuddyActions_MoveBody_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/MoveBody"
+	BuddyActions_InterruptCast_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/InterruptCast"
+	BuddyActions_BreakControl_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/BreakControl"
+	BuddyActions_SetFollowFormation_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/SetFollowFormation"
+	BuddyActions_SetPortalCatchup_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/SetPortalCatchup"
+	BuddyActions_Follow_FullMethodName                  = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
+	BuddyActions_Assist_FullMethodName                  = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
+	BuddyActions_EngageNPC_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC"
+	BuddyActions_HealOnce_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
+	BuddyActions_Status_FullMethodName                  = "/warcraftbuddy.actions.v1.BuddyActions/Status"
+	BuddyActions_Buffs_FullMethodName                   = "/warcraftbuddy.actions.v1.BuddyActions/Buffs"
+	BuddyActions_SpellToolkit_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/SpellToolkit"
+	BuddyActions_ReloadBehavior_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ReloadBehavior"
+	BuddyActions_Behavior_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/Behavior"
+	BuddyActions_AcquireMovement_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/AcquireMovement"
+	BuddyActions_ReleaseMovement_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseMovement"
+	BuddyActions_AcquireInteraction_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
+	BuddyActions_AcquireIdleInteraction_FullMethodName  = "/warcraftbuddy.actions.v1.BuddyActions/AcquireIdleInteraction"
+	BuddyActions_ReleaseInteraction_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
+	BuddyActions_ApproachLoot_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
+	BuddyActions_ApproachQuest_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/ApproachQuest"
+	BuddyActions_TravelQuest_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/TravelQuest"
+	BuddyActions_TravelTrainer_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/TravelTrainer"
+	BuddyActions_TravelVendor_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/TravelVendor"
+	BuddyActions_TravelTo_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/TravelTo"
+	BuddyActions_PlanRouteLeg_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/PlanRouteLeg"
+	BuddyActions_ExitCrypt_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/ExitCrypt"
+	BuddyActions_Practice_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
+	BuddyActions_FargodeepEncounter_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter"
+	BuddyActions_Recovery_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
+	BuddyActions_ReleaseSpirit_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseSpirit"
+	BuddyActions_QueryCorpse_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/QueryCorpse"
+	BuddyActions_ApproachCorpse_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ApproachCorpse"
+	BuddyActions_ReclaimCorpse_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/ReclaimCorpse"
+	BuddyActions_OnPacket_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
+	BuddyActions_BeforeLogout_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
+	BuddyActions_ResurrectOnce_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce"
+	BuddyActions_AcceptResurrection_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection"
+	BuddyActions_PickLock_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/PickLock"
+	BuddyActions_CreateItem_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/CreateItem"
+	BuddyActions_Polymorph_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Polymorph"
+	BuddyActions_Sap_FullMethodName                     = "/warcraftbuddy.actions.v1.BuddyActions/Sap"
+	BuddyActions_CastSelf_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/CastSelf"
+	BuddyActions_HealingOptions_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/HealingOptions"
+	BuddyActions_EncounterObservation_FullMethodName    = "/warcraftbuddy.actions.v1.BuddyActions/EncounterObservation"
+	BuddyActions_CastHeal_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/CastHeal"
+	BuddyActions_CastOffense_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/CastOffense"
+	BuddyActions_CastCleanse_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/CastCleanse"
+	BuddyActions_CastBuff_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/CastBuff"
+	BuddyActions_Melee_FullMethodName                   = "/warcraftbuddy.actions.v1.BuddyActions/Melee"
+	BuddyActions_SelfManaObservation_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/SelfManaObservation"
 )
 
 // BuddyActionsClient is the client API for BuddyActions service.
@@ -98,6 +99,7 @@ type BuddyActionsClient interface {
 	QueryFlightpath(ctx context.Context, in *FlightpathQueryRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
 	ActivateFlightpath(ctx context.Context, in *FlightpathActivationRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
 	SettleFlightpath(ctx context.Context, in *SettleFlightpathRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
+	AdoptFlightpathTransfer(ctx context.Context, in *AdoptFlightpathTransferRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
 	SelectTarget(ctx context.Context, in *SelectTargetRequest, opts ...grpc.CallOption) (*SelectTargetResponse, error)
 	ApproachTarget(ctx context.Context, in *ApproachTargetRequest, opts ...grpc.CallOption) (*State, error)
 	MoveBody(ctx context.Context, in *BodyMovementRequest, opts ...grpc.CallOption) (*State, error)
@@ -247,6 +249,16 @@ func (c *buddyActionsClient) SettleFlightpath(ctx context.Context, in *SettleFli
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FlightpathObservationResponse)
 	err := c.cc.Invoke(ctx, BuddyActions_SettleFlightpath_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) AdoptFlightpathTransfer(ctx context.Context, in *AdoptFlightpathTransferRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FlightpathObservationResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_AdoptFlightpathTransfer_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -796,6 +808,7 @@ type BuddyActionsServer interface {
 	QueryFlightpath(context.Context, *FlightpathQueryRequest) (*FlightpathObservationResponse, error)
 	ActivateFlightpath(context.Context, *FlightpathActivationRequest) (*FlightpathObservationResponse, error)
 	SettleFlightpath(context.Context, *SettleFlightpathRequest) (*FlightpathObservationResponse, error)
+	AdoptFlightpathTransfer(context.Context, *AdoptFlightpathTransferRequest) (*FlightpathObservationResponse, error)
 	SelectTarget(context.Context, *SelectTargetRequest) (*SelectTargetResponse, error)
 	ApproachTarget(context.Context, *ApproachTargetRequest) (*State, error)
 	MoveBody(context.Context, *BodyMovementRequest) (*State, error)
@@ -887,6 +900,9 @@ func (UnimplementedBuddyActionsServer) ActivateFlightpath(context.Context, *Flig
 }
 func (UnimplementedBuddyActionsServer) SettleFlightpath(context.Context, *SettleFlightpathRequest) (*FlightpathObservationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleFlightpath not implemented")
+}
+func (UnimplementedBuddyActionsServer) AdoptFlightpathTransfer(context.Context, *AdoptFlightpathTransferRequest) (*FlightpathObservationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AdoptFlightpathTransfer not implemented")
 }
 func (UnimplementedBuddyActionsServer) SelectTarget(context.Context, *SelectTargetRequest) (*SelectTargetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SelectTarget not implemented")
@@ -1226,6 +1242,24 @@ func _BuddyActions_SettleFlightpath_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).SettleFlightpath(ctx, req.(*SettleFlightpathRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_AdoptFlightpathTransfer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdoptFlightpathTransferRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).AdoptFlightpathTransfer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_AdoptFlightpathTransfer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).AdoptFlightpathTransfer(ctx, req.(*AdoptFlightpathTransferRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2226,6 +2260,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SettleFlightpath",
 			Handler:    _BuddyActions_SettleFlightpath_Handler,
+		},
+		{
+			MethodName: "AdoptFlightpathTransfer",
+			Handler:    _BuddyActions_AdoptFlightpathTransfer_Handler,
 		},
 		{
 			MethodName: "SelectTarget",

@@ -1,7 +1,7 @@
 -- A parent owns the finite exploration lease and supplies explorationToken.
 -- This child composes the maintained planner and selects ONE normal hop.
 -- An activation receipt never establishes flight start, arrival or a fare.
-local M = {tuning={accept_unknown_fare=true,complete_hops=true,continue_hops=true,retry_refused_queries=false}}
+local M = {tuning={accept_unknown_fare=true,complete_hops=true,continue_hops=true,retry_refused_queries=false,adopt_transfers=true,retry_refused_adoptions=false}}
 local method="buddy-actions.activate_flightpath"
 local maximum="18446744073709551615"
 local function uint(n) return type(n)=="number" and n==n and n>=0 and n<=4294967295 and n==math.floor(n) end
@@ -52,6 +52,7 @@ local function status(context,frame,phase,op)
         pending=op and op.pending==true or false,replyKnown=op and op.replyKnown==true or false,
         replyCode=op and op.replyKnown==true and (op.replyCode or 0) or nil,
         activationAccepted=op and op.activationAccepted==true or false,
+        currentVisitId=frame.currentVisitId,adoptionRevision=frame.adoptionRevision,
         liveFareKnown=false,liveRouteKnown=false,flightStartedKnown=false,arrivalKnown=false}
 end
 local function finish(context,frame,reason,op)
@@ -97,8 +98,9 @@ local function complete_match(op,request,expected)
     return true
 end
 local methods={complete="buddy-world.complete_spline",retire="buddy-world.retire_spline_completion",
-               probe="buddy-actions.query_flightpath",settle="buddy-actions.settle_flightpath"}
-local after={complete="ground",retire="ground",probe="menu",settle="settled"}
+               probe="buddy-actions.query_flightpath",settle="buddy-actions.settle_flightpath",
+               adopt="buddy-actions.adopt_flightpath_transfer"}
+local after={complete="ground",retire="ground",probe="menu",settle="settled",adopt="adopted"}
 local function issue(frame,kind,params,expected)
     frame.effect={kind=kind,params=params,revision=expected};frame.stage="effect"
 end
@@ -131,21 +133,85 @@ local function flightmaster(w)
     end
     return best
 end
+local function adopted_segment(w,op,frame,request,expected)
+    local segment=op.currentSegment;local receipt=(w.splineCompletion or {}).transferAdoption
+    if type(segment)~="table" or type(receipt)~="table" or not identifier(segment.worldAdoptionRevision) or
+       segment.worldAdoptionRevision~=receipt.revision or receipt.selfGuid~=frame.request.selfGuid or
+       receipt.fromVisitRevision~=frame.request.visitId or receipt.toVisitRevision~=w.visitRevision or
+       segment.visitId~=w.visitRevision or segment.parentLeaseRequired~=true then return end
+    local edge=receipt.transfer or {};local core=edge.core or {}
+    if edge.known~=true or edge.continuationKnown~=true or edge.predecessorQualified~=true or
+       segment.worldTransferRevision~=edge.revision or segment.coreTransferRevision~=core.revision or
+       not same(segment.sourceScope,edge.currentScope) or
+       not source(segment.sourceScope,(w.selfMotionAuthority or {}).transportScope) then return end
+    if request and (receipt.revision~=expected or request.activationRevision~=op.revision or
+       request.visitId~=receipt.toVisitRevision or request.worldTransferRevision~=edge.revision or
+       request.coreTransferRevision~=core.revision or not same(request.transportScope,edge.currentScope) or
+       request.authorityRevision~=edge.currentAuthorityRevision or request.movementRevision~=edge.currentMovementRevision or
+       request.splineRevision~=edge.currentSplineRevision or request.unitFlagsRevision~=edge.currentUnitFlagsRevision) then return end
+    return segment,receipt
+end
+local function propose_adoption(context,frame,op,w,previous)
+    local edge=w.worldTransfer or {};local core=edge.core or {};local old=edge.predecessorCompletion or {}
+    local a=w.selfMotionAuthority or {};local c=w.splineCompletion or {}
+    if M.tuning.adopt_transfers~=true or op.currentSegment~=nil or op.pending~=true or op.activationAccepted~=true or
+       op.replyKnown~=true or (op.replyCode or 0)~=0 or not op.acceptanceScope or edge.known~=true or
+       (context.observations.flightpath or {}).visitId~=w.visitRevision or
+       edge.continuationKnown~=true or edge.predecessorQualified~=true or edge.fromVisitRevision~=frame.request.visitId or
+       edge.toVisitRevision~=w.visitRevision or edge.selfGuid~=frame.request.selfGuid or a.known~=true or
+       not same(edge.currentScope,a.transportScope) or not identifier(edge.revision) or not identifier(core.revision) or
+       not frame.completion or not complete_match(old,frame.completion,frame.completionRevision) or
+       (old.transportWritten~=true and old.transportUnknown~=true) or old.retired==true or
+       not source(old.transportScope,edge.predecessorAuthority and edge.predecessorAuthority.transportScope) then
+        return tasks.await(context,"waiting_for_adjacent_accepted_transfer")
+    end
+    local expected=revision(c.revision);local next_revision=expected and successor(expected)
+    if not next_revision then return tasks.await(context,"transfer_adoption_revision_unavailable") end
+    local request={sessionId=frame.request.sessionId,selfGuid=frame.request.selfGuid,visitId=w.visitRevision,
+        activationRevision=frame.request.revision,worldTransferRevision=edge.revision,expectedCompletionRevision=expected,
+        authorityRevision=a.revision,movementRevision=(w.selfMovementFacts or {}).revision,splineRevision=a.splineRevision,
+        unitFlagsRevision=a.unitFlagsRevision,transportScope=a.transportScope,coreTransferRevision=core.revision}
+    if previous and same(request,previous) then return tasks.await(context,"waiting_for_fresh_transfer_evidence") end
+    issue(frame,"adopt",request,next_revision)
+end
 local function progress(context,frame,flight,op)
     local w=context.observations.world or {};local a=w.selfMotionAuthority or {};local c=w.splineCompletion or {}
     local proof=c.operation or {};local binding=world_binding(w)
     status(context,frame,frame.stage,op);context.memory.activation.flightStartedKnown=frame.completion~=nil
-    if w.visitRevision~=frame.request.visitId or (w.self or {}).guid~=frame.request.selfGuid or
+    if (w.self or {}).guid~=frame.request.selfGuid or
        (context.state.body or {}).sessionId~=frame.request.sessionId then return tasks.await(context,"flight_scope_replaced") end
+    -- Consume an existing effect's matching reply before changing the visit or
+    -- effect kind. A transfer may reach observations before the next decision.
     if frame.stage=="effect" then
         local e=frame.effect;local _,out=tasks.call(context,frame,methods[e.kind],e.params,"flight_"..e.kind)
         if out then return out end;frame.stage=after[e.kind]
+        local attempt=flight.transferAttempt or {}
+        if e.kind=="adopt" and attempt.phase=="not_invoked" and attempt.worldInvoked~=true and
+           same(attempt.request,e.params) then frame.stage="adoption_refused" end
+    end
+    if frame.stage=="adoption_refused" then
+        if M.tuning.retry_refused_adoptions~=true then return tasks.await(context,"transfer_adoption_not_invoked") end
+        return propose_adoption(context,frame,op,w,frame.effect.params)
+    end
+    if frame.stage=="adopted" then
+        local segment,receipt=adopted_segment(w,op,frame,frame.effect and frame.effect.params,frame.effect and frame.effect.revision)
+        if not segment then return tasks.await(context,"waiting_for_native_transfer_binding") end
+        frame.currentVisitId,frame.currentSource=segment.visitId,segment.sourceScope
+        frame.adoptionRevision=receipt.revision;frame.completion,frame.completionRevision=nil,nil
+        frame.effect=nil;frame.stage="flight"
+    end
+    if w.visitRevision~=(frame.currentVisitId or frame.request.visitId) then
+        if frame.currentVisitId then return tasks.await(context,"additional_transfer_history_unavailable") end
+        if frame.waiting then return tasks.await(context,"waiting_for_previous_flight_effect") end
+        return propose_adoption(context,frame,op,w)
     end
     if frame.stage=="flight" then
+        local acceptance=frame.currentSource or op.acceptanceScope
         if M.tuning.complete_hops~=true or a.known~=true or not a.transportScope or
-           a.transportScope.connectionId~=op.acceptanceScope.connectionId or
-           a.transportScope.visitRevision~=op.acceptanceScope.visitRevision or
-           not newer(a.transportScope.splineSourceRevision,op.acceptanceScope.motionRevision) or
+           not acceptance or a.transportScope.connectionId~=acceptance.connectionId or
+           a.transportScope.visitRevision~=acceptance.visitRevision or
+           (frame.currentSource and not source(a.transportScope,frame.currentSource)) or
+           (not frame.currentSource and not newer(a.transportScope.splineSourceRevision,acceptance.motionRevision)) or
            revision(a.durationRemainingMs)~="0" then return tasks.await(context,"waiting_for_qualified_normal_spline") end
         binding.unitFlagsRevision=nil;binding.splineRevision=a.splineRevision;binding.expectedRevision=revision(c.revision)
         frame.completion=binding;frame.completionRevision=successor(binding.expectedRevision)
@@ -170,7 +236,10 @@ local function progress(context,frame,flight,op)
         local params=context.state.goal.params or {};local npc=flightmaster(w);local age=revision((w.self or {}).positionAgeMs)
         if c.retirementCurrent~=true or not quiet(context) or not age or newer(age,"2000") or not npc or not valid_token(params.explorationToken) or
            (context.observations.actions or {}).interactionOwner~="exploration" then return tasks.await(context,"waiting_for_arrival_menu_authority") end
-        local request={sessionId=frame.request.sessionId,selfGuid=frame.request.selfGuid,visitId=frame.request.visitId,
+        if frame.currentVisitId and params.explorationToken==frame.parentToken then
+            return tasks.await(context,"fresh_parent_visit_lease_required")
+        end
+        local request={sessionId=frame.request.sessionId,selfGuid=frame.request.selfGuid,visitId=frame.currentVisitId or frame.request.visitId,
             token=params.explorationToken,npcGuid=npc,mode="arrival",expectedRevision=revision(flight.revision),
             activationRevision=frame.request.revision,completionRevision=c.revision}
         issue(frame,"probe",request,successor(request.expectedRevision));return
@@ -201,8 +270,18 @@ local function effect_receipt(context,frame)
     local e=frame.effect;if not e then return end
     local w=context.observations.world or {};local c=w.splineCompletion or {}
     local f=context.observations.flightpath or {};local op=c.operation
+    local attempt=f.transferAttempt or {}
+    if e.kind=="adopt" and attempt.phase=="not_invoked" and attempt.worldInvoked~=true and
+       same(attempt.request,e.params) then return "flightpath","transferAttempt",attempt end
+    if e.kind=="adopt" and matches(f.activation,frame.request) and
+       adopted_segment(w,f.activation,frame,e.params,e.revision) then return "flightpath","activation",f.activation end
     if e.kind=="complete" and complete_match(op,e.params,e.revision) and
        (op.transportWritten==true or op.transportUnknown==true or op.phase=="not_dispatched") then return "world","splineCompletion.operation",op end
+    local predecessor=((c.transferAdoption or {}).transfer or {}).predecessorCompletion
+    if e.kind=="complete" and complete_match(predecessor,e.params,e.revision) and
+       (predecessor.transportWritten==true or predecessor.transportUnknown==true) then
+        return "world","splineCompletion.transferAdoption.transfer.predecessorCompletion",predecessor
+    end
     if e.kind=="retire" and op and op.retired==true and op.retirementRevision==e.revision and
        op.retiredMovementRevision==e.params.movementRevision and op.retiredUnitFlagsRevision==e.params.unitFlagsRevision and
        same(op.retirementScope,e.params.transportScope) then return "world","splineCompletion.operation",op end
@@ -329,7 +408,7 @@ function M.decide(state)
             if e and row.method==methods[e.kind] and frame.waiting.method==row.method and effect_parameters(row.params,e.params) then
                 local observation,path,receipt=effect_receipt(context,frame)
                 if observation then
-                    frame.stage=after[e.kind]
+                    frame.stage=path=="transferAttempt" and "adoption_refused" or after[e.kind]
                     return tasks.resolve(context,frame,observation,path,receipt,"native_receipt_delivery_state_retained")
                 end
             end

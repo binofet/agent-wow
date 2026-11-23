@@ -248,6 +248,10 @@ message SplineCompletionObservation {
   bool retirement_current = 5;
   // Current mechanical evidence admission, including sticky invalidation.
   bool retirement_available = 6;
+  // Retained mechanical supersession receipt; old delivery uncertainty remains.
+  SplineTransferAdoption transfer_adoption = 7;
+  // Live unused handoff admission, separate from its historical receipt.
+  bool transfer_adoption_current = 8;
 }
 
 // Independently paired Core/World visit domains and current flight evidence.
@@ -275,6 +279,31 @@ message WorldTransferObservation {
   uint32 current_unit_flags = 19;
   bool arrival_known = 20;
   bool booking_causality_known = 21;
+}
+
+// Explicitly replace one completion slot with its observed adjacent segment.
+// No packet is sent, and neither booking acceptance nor arrival is inferred.
+message AdoptSplineTransferRequest {
+  uint64 self_guid = 1;
+  uint64 visit_revision = 2;
+  uint64 expected_revision = 3;
+  uint64 transfer_revision = 4;
+  uint64 core_transfer_revision = 5;
+  uint64 authority_revision = 6;
+  uint64 movement_revision = 7;
+  uint64 spline_revision = 8;
+  uint64 unit_flags_revision = 9;
+  agentwow.module.v1.TransportScope transport_scope = 10;
+}
+
+// Detached witness and original predecessor receipt, including UNKNOWN. This
+// authorizes a distinct observed segment, never replay of the predecessor.
+message SplineTransferAdoption {
+  uint64 revision = 1;
+  uint64 self_guid = 2;
+  uint64 from_visit_revision = 3;
+  uint64 to_visit_revision = 4;
+  WorldTransferObservation transfer = 5;
 }
 
 // Private own equipment slots0..18; bags and bank slots are excluded.
@@ -667,6 +696,7 @@ message CombatEventsResponse {
 
 service BuddyWorld {
   rpc RetireSplineCompletion(RetireSplineCompletionRequest) returns (SplineCompletionObservation);
+  rpc AdoptSplineTransfer(AdoptSplineTransferRequest) returns (SplineCompletionObservation);
   rpc CompleteSpline(CompleteSplineRequest) returns (SplineCompletionObservation);
   rpc CombatEvents(CombatEventsRequest) returns (CombatEventsResponse);
   rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
