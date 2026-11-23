@@ -31,6 +31,8 @@ VALUE_BYTES=8*1024*1024
 EXECUTION_MS=1000
 STATE_BYTES=64*1024*1024
 RPC_BYTES=6*SOURCE_BYTES+64*1024
+COMMAND_FEEDBACK_SECONDS=.75
+COMMAND_FEEDBACK_POLL_SECONDS=.05
 
 def task_rpc(url):
     return runtime.RPC(url,request_bytes=RPC_BYTES,response_bytes=RPC_BYTES)
@@ -258,7 +260,7 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
             targetIdentityKnown=False,messages=[],systemMessages=[])
         if feedback_reader is not None:
             try:
-                view=feedback_reader(dict(after_sequence='0',limit=1))
+                view=feedback_reader(dict(after_sequence='0',limit=1),latest_baseline=True)
                 baseline=_feedback_cursor(view)
                 out['feedback'].update(chatSessionId=view['sessionId'],afterSequence=baseline,status='no_reply_yet')
             except Exception as error:out['feedback']['error']=str(error)
@@ -286,21 +288,44 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
             raise
         out.update(transportWritten=True,commandTransportWritten=True,completion='effect_not_yet_verified')
         if feedback_reader is not None and baseline is not None:
-            try:
-                view=feedback_reader(dict(after_sequence=baseline,limit=256))
+            deadline=time.monotonic()+COMMAND_FEEDBACK_SECONDS
+            cursor=baseline
+            out['feedback'].update(collectionWaitMs=int(COMMAND_FEEDBACK_SECONDS*1000),
+                readMore=dict(after_sequence=cursor,limit=256))
+            while time.monotonic()<deadline:
+              try:
+                if final_authorise is not None:final_authorise()
+              except Exception as error:
+                out['feedback'].update(status='interrupted_after_written',error=str(error))
+                break
+              try:
+                view=feedback_reader(dict(after_sequence=cursor,limit=256),deadline=deadline)
                 if view.get('sessionId')!=out['feedback']['chatSessionId']:raise ValueError('chat session changed after command write')
                 latest=_feedback_cursor(view)
-                if int(latest)<int(baseline):raise ValueError('chat feedback counter regressed after command baseline')
+                if int(latest)<int(cursor):raise ValueError('chat feedback counter regressed after command baseline')
                 messages=view.get('messages',[])
                 if not isinstance(messages,list) or any(not isinstance(row,dict) or not str(row.get('sequence','')).isdigit()
-                    or not int(baseline)<int(row['sequence'])<=int(latest) for row in messages):
+                    or not int(cursor)<int(row['sequence'])<=int(latest) for row in messages):
                     raise ValueError('feedback cursor/window mismatch after command write')
+                next_cursor=str(view.get('nextSequence',cursor))
+                if not next_cursor.isdigit() or not int(cursor)<=int(next_cursor)<=int(latest) or \
+                    (messages and next_cursor!=str(messages[-1]['sequence'])) or (not messages and next_cursor!=cursor):
+                    raise ValueError('feedback next cursor/window mismatch after command write')
                 system=[row for row in messages if row.get('channel',0) in (0,'CHANNEL_UNSPECIFIED')
                     and str(row.get('senderGuid',0))=='0' and row.get('language',0)==0 and not row.get('self',False)]
+                cursor=next_cursor
+                out['feedback']['messages'].extend(messages)
+                out['feedback']['systemMessages'].extend(system)
                 out['feedback'].update(status='cursor_lost' if view.get('cursorLost') else 'observed' if system else 'no_reply_yet',
-                    latestSequence=latest,nextSequence=str(view.get('nextSequence',baseline)),
-                    cursorLost=view.get('cursorLost',False),messages=messages,systemMessages=system)
-            except Exception as error:out['feedback'].update(status='unavailable_after_written',error=str(error))
+                    latestSequence=latest,nextSequence=cursor,cursorLost=view.get('cursorLost',False),
+                    readMore=dict(after_sequence=cursor,limit=256))
+              except Exception as error:
+                out['feedback'].update(status='unavailable_after_written',error=str(error))
+                break
+              if system or view.get('cursorLost'):break
+              remaining=deadline-time.monotonic()
+              if remaining<=0:break
+              time.sleep(min(COMMAND_FEEDBACK_POLL_SECONDS,remaining))
     return out
 
 
