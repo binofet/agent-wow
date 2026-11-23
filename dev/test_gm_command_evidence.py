@@ -100,11 +100,18 @@ class GMCommandEvidenceTests(unittest.TestCase):
         config.write_text('{}')
         self.tools=self.make_tools()
         self.transport=mock.patch.object(self.gm.subprocess,'run',side_effect=self.rpc.send);self.transport.start();self.addCleanup(self.transport.stop)
+        self.now=100.;self.on_wait=None
+        def wait(seconds):
+            self.now+=seconds
+            if self.on_wait:self.on_wait()
+        for name,side_effect in (('monotonic',lambda:self.now),('sleep',wait)):
+            patch=mock.patch.object(self.gm.time,name,side_effect=side_effect)
+            patch.start();self.addCleanup(patch.stop)
 
-    def make_tools(self):
+    def make_tools(self, chat_cursor=None):
         return direct_tools.DirectTools(self.rpc,self.rpc.sid,'87',self.workspace,self.host,
             allowed=lambda:True,gm_allowed=lambda:self.rpc.allow_gm,cancelled=lambda:self.rpc.cancelled,
-            request_id='one-owner-request',chat_session_id=self.rpc.chat_sid,
+            request_id='one-owner-request',chat_session_id=self.rpc.chat_sid,chat_cursor=chat_cursor,
             helpers={'gm_tasks':self.gm})
 
     def execute(self,command='.gps Joel',selected=None,operation='owner:1'):
@@ -122,6 +129,83 @@ class GMCommandEvidenceTests(unittest.TestCase):
         self.assertFalse(feedback['commandSuccessKnown']);self.assertFalse(row['gameEffectClaimed'])
         self.assertEqual([params for method,params in self.rpc.calls if method=='buddy-chat.poll'],[
             dict(afterSequence='0',limit=1,sessionId=self.rpc.chat_sid),dict(afterSequence='10',limit=256,sessionId=self.rpc.chat_sid)])
+
+    def test_delayed_system_collects_after_empty_and_other_chat_without_resending_command(self):
+        self.rpc.feedback_enabled=False
+        waits=[];timeouts=[]
+        def later():
+            waits.append(self.now)
+            if len(waits)==1:
+                self.rpc.messages.append(dict(sequence='11',channel='WHISPER',senderGuid='3',text='Unrelated owner chat'))
+            elif len(waits)==2:
+                self.rpc.messages.append(dict(sequence='12',channel=0,language=0,senderGuid='0',text='Usage: go xyz'))
+        self.on_wait=later
+        original=self.rpc.call
+        def read(method,params,**kwargs):
+            if method=='buddy-chat.poll' and self.rpc.commands:
+                timeouts.append(kwargs['timeout'])
+                self.assertTrue(self.gm.task_store(self.gm.writer_folder(self.host,self.rpc.sid,{})).held())
+            return original(method,params,**kwargs)
+        with mock.patch.object(self.rpc,'call',side_effect=read):result=self.execute('.help go')
+        self.assertTrue(result['ok'],result);row=result['result'];feedback=row['feedback']
+        self.assertTrue(row['commandTransportWritten']);self.assertIsNone(self.tools.unknown_receipt)
+        self.assertEqual(feedback['status'],'observed')
+        self.assertEqual([message['sequence'] for message in feedback['messages']],['11','12'])
+        self.assertEqual([message['text'] for message in feedback['systemMessages']],['Usage: go xyz'])
+        self.assertEqual(feedback['readMore'],dict(after_sequence='12',limit=256))
+        self.assertEqual([params['afterSequence'] for method,params in self.rpc.calls if method=='buddy-chat.poll'],['0','10','10','11'])
+        self.assertTrue(all(0<timeout<=.75 for timeout in timeouts))
+        self.assertEqual(len(waits),2);self.assertEqual(self.rpc.commands,['.help go'])
+        self.assertEqual([code for code,_ in self.rpc.packets],[0x95])
+        self.assertFalse(feedback['commandSuccessKnown']);self.assertFalse(feedback['targetIdentityKnown'])
+
+    def test_no_reply_is_bounded_and_machine_ready_read_more_fetches_later_feedback(self):
+        self.rpc.feedback_enabled=False
+        started=self.now;result=self.execute('.help go')
+        self.assertTrue(result['ok'],result);feedback=result['result']['feedback']
+        self.assertEqual(feedback['status'],'no_reply_yet');self.assertEqual(feedback['systemMessages'],[])
+        self.assertAlmostEqual(self.now-started,.75)
+        self.assertEqual(feedback['readMore'],dict(after_sequence='10',limit=256))
+        self.rpc.messages.append(dict(sequence='11',language=0,senderGuid='0',text='Late help response'))
+        later=self.tools.dispatch('chat_read',feedback['readMore'])
+        self.assertTrue(later['ok'],later)
+        self.assertEqual([row['text'] for row in later['result']['messages']],['Late help response'])
+        self.assertEqual(self.rpc.commands,['.help go']);self.assertIsNone(self.tools.unknown_receipt)
+
+    def test_owner_interrupt_after_ack_stops_collection_but_settles_known_written_receipt(self):
+        self.rpc.feedback_enabled=False
+        def interrupt():self.rpc.cancelled=True
+        self.on_wait=interrupt
+        result=self.execute('.help go')
+        self.assertTrue(result['ok'],result);row=result['result']
+        self.assertTrue(row['commandTransportWritten']);self.assertTrue(row['transportWritten'])
+        self.assertEqual(row['feedback']['status'],'interrupted_after_written')
+        self.assertIn('request_cancelled',row['feedback']['error'])
+        self.assertIsNone(self.tools.unknown_receipt);self.assertEqual(self.rpc.commands,['.help go'])
+        self.assertLess(self.now-100.,.1)
+        self.rpc.cancelled=False
+        historical=self.execute('.help go')
+        self.assertTrue(historical['result']['historicalReceipt']);self.assertEqual(self.rpc.commands,['.help go'])
+
+    def test_host_current_cursor_default_is_fresh_and_explicit_history_cannot_regress_it(self):
+        self.rpc.messages=[dict(sequence=str(i),text='Historical '+str(i)) for i in range(1,262)]
+        self.tools=self.make_tools(chat_cursor='261')
+        first=self.tools.dispatch('chat_read',dict(limit=50))
+        self.assertTrue(first['ok'],first);self.assertEqual(first['result']['messages'],[])
+        row=self.execute('.help go')['result']
+        self.assertEqual(row['feedback']['afterSequence'],'261')
+        self.assertEqual([message['sequence'] for message in row['feedback']['systemMessages']],['262'])
+        self.assertEqual(self.tools.chat_cursor,'262')
+        self.rpc.messages.append(dict(sequence='263',channel=0,text='New realm feedback'))
+        fresh=self.tools.dispatch('chat_read',{})
+        self.assertEqual([message['sequence'] for message in fresh['result']['messages']],['263'])
+        old=self.tools.dispatch('chat_read',dict(after_sequence='0',limit=50))
+        self.assertEqual(old['result']['messages'][0]['sequence'],'1')
+        self.assertEqual(self.tools.chat_cursor,'263')
+        self.assertEqual(self.tools.dispatch('chat_read',{})['result']['messages'],[])
+        self.assertEqual(self.rpc.commands,['.help go'])
+        for invalid in (261,'-1','01',str(2**64)):
+            with self.assertRaises(direct_tools.ToolError):self.make_tools(chat_cursor=invalid)
 
     def test_offscreen_selection_is_not_banned_but_gps_self_fallback_remains_unproven(self):
         result=self.execute(selected='1')
