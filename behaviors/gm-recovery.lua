@@ -145,6 +145,10 @@ local function move_command(m)
 end
 local function initialize(frame)
     local g,obs=frame.goal or {},frame.observations or {}
+    if type(g)~="table" then return nil,"goal_object_required" end
+    if g.id and type(g.id)~="string" and type(g.id)~="number" then return nil,"invalid_task_id" end
+    if g.hostileFactions and type(g.hostileFactions)~="table" or
+       g.friendlyFactions and type(g.friendlyFactions)~="table" then return nil,"invalid_task_tuning" end
     local gm=obs.gm or {}
     if not same(gm.guid,"87") or type(gm.sessionId)~="string" or gm.sessionId=="" then
         return nil,"verified_lotharen_session_required"
@@ -157,7 +161,7 @@ local function initialize(frame)
     if g.destination then
         m.destination=g.destination
         if not pose(m.destination) and type(m.destination)=="table" then m.destination.positionKnown=true end
-        if not pose(m.destination) or num(m.destination.mapId)%1~=0 or num(m.destination.mapId)<0 then return nil,"invalid_destination" end
+        if not pose(m.destination) or not finite(m.destination.mapId) or num(m.destination.mapId)%1~=0 or num(m.destination.mapId)<0 then return nil,"invalid_destination" end
         m.tolerance=num(m.destination.tolerance) or 7
     elseif g.player and name(g.player.name) and num(g.player.guid) and num(g.player.guid)>0 then
         m.player=g.player;m.tolerance=num(g.player.tolerance) or 7
@@ -388,6 +392,13 @@ local function decide(frame)
         else return result(m,"blocked","unknown_recovery_phase") end
     end
     return result(m,"local_transitions")
+end
+-- The same initializer admits a fresh goal before the host can claim a writer
+-- or install holds. This pure entry never advances the FSM or proposes actions.
+policy.admit=function(frame)
+    local m,err=initialize(frame)
+    if not m then return {accepted=false,error=err} end
+    return {accepted=true}
 end
 policy.decide=decide
 return policy

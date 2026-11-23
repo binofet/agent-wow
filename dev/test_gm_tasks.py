@@ -206,7 +206,9 @@ class TestGMTaskHost(unittest.TestCase):
     blocked=self.evaluate_unobserved_transport(frame,[]if change=='revoke'else['3'])
     self.assertEqual(blocked['error'],'unobserved_transport_not_admitted:Joel');self.assertNotIn('action',blocked)
  def host(self,path,transport=None,bridge=None):
-  return gm.Host(Store(path),Mock(),transport or Mock(),bridge or Mock(),{'id':'test','members':[]},Path(path)/'policy.lua',Path(path)/'hold.lua')
+  h=gm.Host(Store(path),Mock(),transport or Mock(),bridge or Mock(),{'id':'test','members':[]},Path(path)/'policy.lua',Path(path)/'hold.lua')
+  h.admission=Mock(return_value=None) # These existing executor fixtures isolate post-admission custody.
+  return h
  def test_reservation_persisted_before_write_and_not_replayed(self):
   with tempfile.TemporaryDirectory() as folder:
    h=self.host(folder);action={'id':'test:1','kind':'gm_command','command':'.revive Joel'}
@@ -266,7 +268,7 @@ class TestGMTaskHost(unittest.TestCase):
     if refusal=='foreign_writer':
      with writer:gm.claim_writer(writer,root/'other-task')
      writer_before=(writer.folder/'state.json').read_bytes()
-    with patch.object(gm,'task_rpc',return_value=rpc),patch.object(gm,'SessionTransport'),patch.object(gm,'task_bridge'),patch.object(gm.Host,'run') as run:
+    with patch.object(gm,'task_rpc',return_value=rpc),patch.object(gm,'SessionTransport'),patch.object(gm,'task_bridge'),patch.object(gm.Host,'admission',return_value=None),patch.object(gm.Host,'run') as run:
      with self.assertRaisesRegex(ValueError,{'changed_goal':'explicit task goal','changed_body':'another GM body','foreign_writer':'already owns'}[refusal]):
       gm.main(['run','--state-dir',str(state),'--goal',str(goal_path),'--transport',str(transport),'--rpc-url','http://127.0.0.1:8090/rpc'])
     run.assert_not_called()

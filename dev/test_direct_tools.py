@@ -617,6 +617,10 @@ class DirectToolTests(unittest.TestCase):
         self.assertEqual(self.rpc.writes, [])
 
     def gm_tools(self, runner):
+        # Existing writer/authority unit fixtures isolate execution after admission.
+        # Real pure-Lua rejection and zero-side-effect checks live in test_gm_goal_admission.
+        admission=mock.patch.object(self.gm,'admit_goal',return_value=dict(accepted=True))
+        admission.start();self.addCleanup(admission.stop)
         self.rpc = RPC('87')
         return DirectTools(self.rpc, self.rpc.sid, '87', self.workspace, self.host,
             allowed=lambda: self.allowed, gm_allowed=lambda: self.gm_allowed,

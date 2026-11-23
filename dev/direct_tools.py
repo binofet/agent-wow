@@ -673,6 +673,7 @@ class DirectTools:
                     "host_request_identity_required")
             goal = copy.deepcopy(args["goal"])
             require(isinstance(goal, dict), "gm_goal_object_required")
+            gm.goal_containers(goal)
             task_id = "direct-" + sha((self.session_id + "\0" + self.request_id).encode())[:24]
             folder = self._gm_folder(task_id)
             require(not folder.exists() and not folder.is_symlink(), "gm_request_already_reserved")
@@ -686,6 +687,12 @@ class DirectTools:
                             "current_observed_member_binding_required")
             goal["id"] = task_id
             require(len(packed(goal)) <= self.max_bytes, "gm_goal_size_bound")
+            admission=gm.admit_goal(self.rpc,goal,gm.task_bridge(self._policy_binary(),self.root/"modules"),
+                self.root/"behaviors/gm-recovery.lua",self.root/"behaviors/gm-recovery-hold.lua",
+                expected_session=self.session_id)
+            require(admission is not None and admission.get("accepted") is True,
+                "gm_goal_not_admitted: "+str((admission or {}).get("error","admission_unavailable"))
+                +("; "+str(admission["detail"]) if admission and admission.get("detail") else ""))
             self._catalog()
             self._authorise_gm()
             folder.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -766,7 +773,7 @@ class DirectTools:
                 ("policy_input", "Deliver one structured command to an already-present Lua handler. Delivery is not game success; no arbitrary receipt/event injection.", {"value": obj}, ["value"]),
             ]
             if self.self_guid == "87" and self.request_id and self.gm_allowed() is True:
-                specs += [("gm_task_start", "Start the whole commissioned GM recovery/regroup using the existing ordered Lua task. Goal uses current observed roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": obj}, ["goal"]),
+                specs += [("gm_task_start", "Start the whole commissioned GM recovery/regroup using the existing ordered Lua task. Goal uses current observed roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": {"type":"object", "description":"Recovery goal: members=[{guid,name,rpcUrl?}] for the currently observed original party, plus destination={mapId,x,y,z,tolerance?} OR player={guid,name,tolerance?}. Companion rpcUrl must match current bindings. The shared Lua initializer validates admission before any hold or child starts."}}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),
                           ("gm_task_resume", "Resume only gm_current_task's same stored goal/invocation and receipts. Runner started is not a GM effect; no new task or replay of uncertain actions.", {"task_id": string}, ["task_id"]),
                           ("gm_execute", "Send one native dot command through this exact GM session. Optional select_guid binds the observed server target GUID; zero clears UI selection. Local visibility/resolution is reported separately because command families resolve selected units differently. A command is sent only when that target GUID is actually observed at the final packet boundary. If selection was written but not observed, no command is queued: inspect facts before a fresh tool invocation. Each actual tool call has its own host operation identity; exact-operation receipt/unknown is never replayed. Returns a fresh Chat baseline/window within the same writer, with explicit no-reply/cursor loss/read failure; SYSTEM text is temporal evidence, never target/effect proof. Active task writers still block competing commands; realm permissions apply. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]

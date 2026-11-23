@@ -15,6 +15,7 @@ import signal
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -328,6 +329,38 @@ def normalized(world, actions=None):
     return result
 
 
+class HoldAdmissionError(ValueError):
+    """An observed GM mismatch before any hold RPC was entered."""
+
+def goal_containers(goal):
+    """Only protect host container access; goal semantics remain in Lua."""
+    if not isinstance(goal,dict):raise ValueError('goal_object_required')
+    members=goal.get('members',[])
+    if not isinstance(members,list):raise ValueError('goal_members_array_required')
+    for member in members:
+        if not isinstance(member,dict) or 'guid' not in member or 'name' not in member:
+            raise ValueError('goal_members_require_guid_and_name')
+        url=member.get('rpcUrl')
+        if url is not None and url is not False and not isinstance(url,str):
+            raise ValueError('goal_member_rpc_url_string_required')
+    for key in ('destination','player','walkTarget'):
+        value=goal.get(key)
+        if value is not None and value is not False and not isinstance(value,dict):
+            raise ValueError('goal_'+key+'_object_required')
+
+
+def admit_goal(rpc,goal,bridge,policy,hold,*,expected_session=None):
+    """Read-only preview: no durable task state, writer, hold or transport."""
+    goal_containers(goal)
+    with tempfile.TemporaryDirectory(prefix='gm-goal-admission-') as folder:
+        class Preview:
+            def __init__(self):self.folder=Path(folder)
+            def load(self):return None
+            def save(self,value):raise RuntimeError('admission_must_not_persist_task_state')
+        host=Host(Preview(),rpc,None,bridge,goal,policy,hold)
+        return host.admission(expected_session=expected_session)
+
+
 class Host:
     def __init__(self,store,rpc,transport,bridge,goal,policy,hold,*,sleep=time.sleep,clock=time.time):
         self.store,self.rpc,self.transport,self.bridge=store,rpc,transport,bridge
@@ -396,6 +429,34 @@ class Host:
     def hold_rpcs(self):
         # The GM is a writer too, but is not part of the requested roster.
         return dict({'87':self.rpc},**{g:r for g,r in self.member_rpcs.items() if g!='87'})
+    def admission(self,*,expected_session=None):
+        # A resumed/uncertain task and its cancellation are never reinitialized.
+        if (self.stopping or (self.store.folder/'cancel.json').exists() or self.data.get('memory')
+                or self.data.get('last') is not None or self.data.get('reservations') or self.data.get('holds')):
+            return None
+        try:
+            goal_containers(self.goal)
+            observations=self.observe()
+            bound=expected_session or (self.data.get('identity') or {}).get('sessionId')
+            if bound is not None and observations['gm']['sessionId']!=bound:
+                return dict(accepted=False,error='gm_session_changed_before_admission')
+            code='local p=(function()\n'+self.policy.read_text()+'\nend)()\nreturn {decide=function(f) if type(p.admit)~="function" then return {accepted=false,error="policy_goal_admission_unavailable"} end return p.admit(f) end}'
+            result=self.bridge.evaluate(code,dict(goal=self.goal,observations=observations,now=self.clock()))
+            if not isinstance(result,dict) or type(result.get('accepted')) is not bool:
+                return dict(accepted=False,error='invalid_goal_admission_result')
+            current=self.rpc.call('buddy-actions.status',{})
+            if str(current.get('selfGuid'))!='87' or current.get('sessionId')!=observations['gm']['sessionId']:
+                return dict(accepted=False,error='gm_session_changed_before_admission')
+            if not result['accepted']:
+                return dict(accepted=False,error=str(result.get('error') or 'goal_not_admitted')[:256],
+                    detail=str(result.get('detail') or '')[:256])
+            return dict(accepted=True)
+        except Exception as error:
+            return dict(accepted=False,error='goal_admission_unavailable',detail=str(error)[:256])
+    def reject_admission(self,admission):
+        result=dict(memory=self.data['memory'],phase='not_admitted',done=False,success=False,
+            outcome='not_dispatched',error=admission.get('error'),admission=admission,resumable=False)
+        self.data.update(result);self.persist();return result
     def install_holds(self):
         wrapper=self.hold.read_text()
         for guid,rpc in self.hold_rpcs().items():
@@ -403,6 +464,9 @@ class Host:
             if record and record.get('restored'):continue
             state=rpc.call('buddy-actions.status',{})
             identity=dict(characterGuid=guid,sessionId=state['sessionId'])
+            bound=(self.data.get('identity') or {}).get('sessionId')
+            if guid=='87' and bound is not None and (str(state.get('selfGuid'))!='87' or state['sessionId']!=bound):
+                raise HoldAdmissionError('gm_session_changed_before_holds')
             if str(state.get('selfGuid'))!=guid:raise ValueError('hold member identity changed')
             current=rpc.call('session.policy_source',identity)
             if record is None:
@@ -505,7 +569,12 @@ class Host:
         try:
             out=self.cancel_before_dispatch()
             if out is not None:return out
+            admission=self.admission()
+            if admission is not None and not admission['accepted']:return self.reject_admission(admission)
             try:self.install_holds()
+            except HoldAdmissionError as error:
+                if self.data.get('memory') or self.data.get('last') is not None or self.data.get('reservations') or self.data.get('holds'):raise
+                return self.reject_admission(dict(accepted=False,error=str(error)))
             except Exception:
                 # An explicit abort can arrive during partial installation.
                 out=self.cancel_before_dispatch()
@@ -669,7 +738,7 @@ def request_resume(state_dir):
 
 
 def public_status(data):
-    return dict({k:data.get(k) for k in ('version','goal','phase','done','success','error','memory','last','lastObservations','restoreErrors','updatedAt','resumable','cancelled','cleanupComplete')},heldMembers=[dict(guid=g,heldRevision=r.get('heldRevision'),restored=r.get('restored',False),followPaused=r.get('followPaused',False)) for g,r in data.get('holds',{}).items()])
+    return dict({k:data.get(k) for k in ('version','goal','phase','done','success','error','memory','last','lastObservations','restoreErrors','updatedAt','resumable','cancelled','cleanupComplete')},**{k:data[k] for k in ('outcome','admission') if k in data},heldMembers=[dict(guid=g,heldRevision=r.get('heldRevision'),restored=r.get('restored',False),followPaused=r.get('followPaused',False)) for g,r in data.get('holds',{}).items()])
 
 
 def main(argv=None):
@@ -711,19 +780,26 @@ def main(argv=None):
             process=json.loads((args.state_dir/'process.json').read_text());print(json.dumps(dict(phase='starting',done=False,process=process)));return 0
         print(json.dumps(public_status(data)));return 0
     if not args.goal or not args.transport or not args.rpc_url:parser.error('run requires --goal, --transport and --rpc-url')
-    goal=json.loads(args.goal.read_text());config=json.loads(args.transport.read_text())
+    goal=json.loads(args.goal.read_text());config=json.loads(args.transport.read_text());goal_containers(goal)
     with task_store(args.state_dir.absolute()) as store:
         rpc=task_rpc(args.rpc_url);sid=rpc.call('buddy-actions.status',{}).get('sessionId')
         host=Host(store,rpc,SessionTransport(rpc,config),task_bridge(args.policy_binary,ROOT/'modules'),goal,args.policy,ROOT/'behaviors/gm-recovery-hold.lua')
         identity=dict(sessionId=sid,guid='87',rpcUrl=args.rpc_url)
         prior=host.data.get('identity')
         if prior is not None and prior!=identity:raise ValueError('task belongs to another GM body; inspect before recovery')
+        admission=host.admission(expected_session=sid)
+        if admission is not None and not admission['accepted']:
+            host.reject_admission(admission);print(json.dumps(public_status(host.data)));return 1
         with task_store(writer_folder(ROOT,sid,config).absolute()) as owner:
             owned=claim_writer(owner,store.folder)
             store.write('invocation.json',json.dumps(invocation_from_args(args)).encode(),runtime.MAX_INPUT)
             host.data['identity']=identity;host.persist()
             for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:setattr(host,'stopping',True))
             result=host.run()
-            if result.get('done') or result.get('cancelled') and result.get('cleanupComplete'):
+            rejected_empty=(result.get('phase')=='not_admitted' and result.get('outcome')=='not_dispatched'
+                and not host.data.get('memory') and host.data.get('last') is None
+                and not host.data.get('reservations') and not host.data.get('holds')
+                and owned.get('stateDir')==str(store.folder.absolute()))
+            if result.get('done') or result.get('cancelled') and result.get('cleanupComplete') or rejected_empty:
                 owned['active']=False;owner.save(owned)
             print(json.dumps(public_status(host.data)));return 0 if result.get('success') else 1
