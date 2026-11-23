@@ -186,13 +186,16 @@ class DirectTools:
     def __init__(self, rpc, session_id, self_guid, workspace, root, *,
                  allowed=lambda: False, cancelled=lambda: False, request_id=None,
                  helpers=None, runner=None, max_bytes=8 * 1024 * 1024, execution_ms=1000, context=None,
-                 gm_allowed=lambda: False):
+                 gm_allowed=lambda: False, chat_session_id=None):
         require(isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", session_id),
                 "explicit_session_required")
         require(str(self_guid).isdigit() and 0 < int(self_guid) < 2**48, "explicit_actor_required")
         require(type(max_bytes) is int and max_bytes > 0 and type(execution_ms) is int and
                 0 < execution_ms <= 60000, "bounded_tool_options_required")
+        require(chat_session_id is None or isinstance(chat_session_id, str)
+                and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", chat_session_id), "invalid_chat_session_binding")
         self.rpc, self.session_id, self.self_guid = rpc, session_id, str(self_guid)
+        self.chat_session_id = chat_session_id
         self.workspace, self.root = Path(workspace).absolute(), Path(root).absolute()
         self.allowed, self.cancelled, self.request_id = allowed, cancelled, request_id
         self.gm_allowed = gm_allowed
@@ -246,21 +249,28 @@ class DirectTools:
         require(metadata is not None and metadata.get("effect") == "read",
                 "installed_read_effect_required")
         params = copy.deepcopy(params)
+        read_session = self.session_id
+        if method == "buddy-chat.poll":
+            require(self.chat_session_id is not None, "explicit_chat_session_required")
+            read_session = self.chat_session_id
         shape = before.get("messages", {}).get(metadata.get("inputType"), {})
         fields = {f.get("name") for f in shape.get("fields", []) if isinstance(f, dict)}
         fields.update(metadata.get("input", {}).get("properties", {}))
-        for key, expected in (("sessionId", self.session_id), ("selfGuid", self.self_guid),
+        for key, expected in (("sessionId", read_session), ("selfGuid", self.self_guid),
                               ("characterGuid", self.self_guid)):
             if key in params:
                 require(str(params[key]) == expected, "foreign_read_identity_refused")
-            if key in fields:
+            if key in fields or method == "buddy-chat.poll" and key == "sessionId":
                 params[key] = expected
         value = self.rpc.call(method, params)
         after = self._catalog()
         require(after["revision"] == before["revision"], "catalog_changed_during_read")
         require(len(packed(value)) <= self.max_bytes, "read_result_size_bound")
+        if method == "buddy-chat.poll":
+            require(isinstance(value, dict) and value.get("sessionId") == read_session,
+                    "read_result_chat_body_changed")
         if isinstance(value, dict):
-            for key, expected in (("sessionId", self.session_id), ("selfGuid", self.self_guid),
+            for key, expected in (("sessionId", read_session), ("selfGuid", self.self_guid),
                                   ("characterGuid", self.self_guid)):
                 if key in value:
                     require(str(value[key]) == expected, "read_result_body_changed")

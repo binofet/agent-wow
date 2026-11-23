@@ -26,14 +26,18 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 converse = importlib.util.module_from_spec(spec)
 loader.exec_module(converse)
 
-REPLY = dict(text="I checked the observed result.", emote="NONE", action="NONE",
-             quest_id=0, item_entry=0, gold_copper=0)
+REPLY = dict(text="I checked the observed result.", emote="NONE", action="NONE")
 
 
 def chat(*calls):
     return dict(model="fixture-served-model", choices=[dict(finish_reason="tool_calls", message=dict(
         role="assistant", content=None, tool_calls=[dict(id=identifier, type="function", function=dict(
             name=name, arguments=json.dumps(arguments))) for identifier, name, arguments in calls]))])
+
+
+def spoken(text=REPLY["text"]):
+    return dict(model="fixture-served-model", choices=[dict(finish_reason="stop",
+        message=dict(role="assistant", content=text))])
 
 
 class FakeHTTP:
@@ -132,7 +136,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                     requests = []
                     def capture(payload, *_):
                         requests.append(copy.deepcopy(payload))
-                        return chat(("final", "final_reply", dict(REPLY, gm_command="") if expected else REPLY))
+                        return spoken()
                     with patch.object(brain.client, "_http", side_effect=capture):
                         brain.generate([dict(speaker="Joel" if source == "owner" else "Nixwick", text="Inspect your Lua")], state)
                 names = {row["function"]["name"] for row in requests[0]["tools"]}
@@ -188,7 +192,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                             patch.object(brain.client, '_http', side_effect=responses):
                         with self.assertRaises(converse.ConversationError) as refused:
                             brain.generate([dict(speaker='Joel', text='Continue my recovery')], state)
-                    self.assertIn('second reply action was refused', str(refused.exception.__cause__))
+                    self.assertIn('invalid_tool_call', str(refused.exception))
                     self.assertEqual(tool.call_count, 1)
                     self.assertTrue(brain.last_failure_receipt['mutationToolEntered'])
                     self.assertFalse(rpc.commands or rpc.replies)
@@ -304,7 +308,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             if len(requests) == 1:
                 early.append(json.loads((self.state/"development-events-last.json").read_text()))
                 return chat(("full-facts", "context_read", dict(path=["spell_toolkit", "spells"], offset=79, limit=1)))
-            return chat(("final", "final_reply", REPLY))
+            return spoken()
         with patch.object(brain.client, "_http", side_effect=capture), \
              patch.object(converse, "RPC", side_effect=AssertionError("Captured context needs no game RPC")):
             self.assertEqual(brain.generate(history, state), REPLY)
@@ -344,7 +348,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                 self.assertEqual(observed[0]["api"]["requestPhase"], "prepared")
                 self.assertEqual(observed[0]["api"]["requestIndex"], 1)
             def getresponse(inner):
-                return types.SimpleNamespace(status=200, read=lambda _: json.dumps(chat(("final", "final_reply", REPLY))).encode())
+                return types.SimpleNamespace(status=200, read=lambda _: json.dumps(spoken()).encode())
             def close(inner): pass
         with patch.object(direct_model.http.client, "HTTPConnection", return_value=Connection()):
             self.assertEqual(brain.generate([dict(speaker="Joel", text="Hello")],
@@ -352,7 +356,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
         self.assertEqual(len(observed), 1)
         self.assertEqual(observed[0]["actionOutcome"], "unknown")
 
-    def test_direct_request_compacts_only_redundant_emote_table_and_keeps_schema_names(self):
+    def test_direct_request_compacts_redundant_emote_table_without_advertising_reply_tool(self):
         rows = [dict(id=1000+index, name="EMOTE_%03d" % index) for index in range(512)]
         state = dict(character=dict(guid="4"), current_request=dict(source="owner", senderGuid="3"),
             emote_catalog=dict(available=True, revision="emotes-observed", source="installed-chat",
@@ -367,10 +371,10 @@ class DirectBrainIntegrationTests(unittest.TestCase):
         requests = []
         def capture(payload, *_):
             requests.append(copy.deepcopy(payload))
-            return chat(("final", "final_reply", dict(REPLY, emote=rows[-1]["name"])))
+            return spoken()
         with patch.object(brain.client, "_http", side_effect=capture):
             reply = brain.generate([dict(speaker="Joel", text="Hello")], state)
-        self.assertEqual(reply["emote"], rows[-1]["name"])
+        self.assertEqual(reply["emote"], "NONE")
         self.assertEqual(len(requests), 1)
         content = requests[0]["messages"][0]["content"]
         actual = json.loads(content.split("Current observations and control state JSON:\n", 1)[1])
@@ -379,10 +383,8 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                                          source="installed-chat", count=512)
         expected["model_selection"] = selection
         self.assertEqual(actual, expected)
-        final = next(row["function"] for row in requests[0]["tools"]
-                     if row["function"]["name"] == "final_reply")
-        self.assertEqual(final["parameters"]["properties"]["emote"]["enum"],
-                         ["NONE", *sorted(row["name"] for row in rows)])
+        self.assertNotIn("final_reply", {row["function"]["name"] for row in requests[0]["tools"]})
+        self.assertEqual(len(original["emote_catalog"]["emotes"]), 512)
         self.assertEqual(state, original)
         self.assertLess(len(json.dumps(actual)), len(json.dumps(dict(state,
             model_selection=expected["model_selection"]))))
@@ -524,7 +526,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
         responses = [chat(("write", "workspace_write", dict(path="candidate.lua", content=source, expected_sha256=""))),
                      chat(("read", "read_observation", dict(method="buddy-actions.status", params={}))),
                      chat(("input", "policy_input", dict(value=intent))),
-                     chat(("final", "final_reply", REPLY))]
+                     spoken()]
         with self.rig(responses) as (loop, brain, state, http):
             self.assertEqual(loop.generate_reply([], state), REPLY)
             self.assertIsInstance(brain.client, direct_model.DirectModel)
@@ -533,7 +535,8 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             self.assertEqual(len(http.requests), 4)
             self.assertTrue(all(request["path"] == "/v1/chat/completions" for request in http.requests))
             tools = {tool["function"]["name"] for tool in http.requests[0]["body"]["tools"]}
-            self.assertTrue({"workspace_write", "read_observation", "policy_input", "final_reply"} <= tools)
+            self.assertTrue({"workspace_write", "read_observation", "policy_input"} <= tools)
+            self.assertNotIn("final_reply", tools)
             self.assertNotIn("Authorization", http.requests[0]["headers"])
             read_result = json.loads(http.requests[2]["body"]["messages"][-1]["content"])
             self.assertEqual(read_result["result"]["selfGuid"], "4")
@@ -555,12 +558,12 @@ class DirectBrainIntegrationTests(unittest.TestCase):
 
     def test_invalid_final_schema_retains_failed_api_receipt_without_fallback(self):
         with self.rig([chat(("invalid-final", "final_reply", dict(text="Incomplete reply")))]) as (loop, brain, state, http):
-            with self.assertRaisesRegex(converse.ConversationError, "json_schema_mismatch"):
+            with self.assertRaisesRegex(converse.ConversationError, "invalid_tool_call"):
                 loop.generate_reply([], state)
             self.assertEqual(len(http.requests), 1)
             self.assertFalse(self.rpc.commands or self.rpc.replies)
             receipt = brain.last_failure_receipt
-            self.assertEqual(receipt["reason"], "json_schema_mismatch")
+            self.assertEqual(receipt["reason"], "invalid_tool_call")
             self.assertEqual(receipt["api"]["execution"], "direct_api")
             self.assertEqual(receipt["api"]["requestId"], receipt["requestId"])
             self.assertEqual(receipt["api"]["httpRequests"], 1)
@@ -597,7 +600,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             self.assertNotIn("value", unknown)
             self.assertTrue(any(value.get("brainFailure", {}).get("pendingToolCount") == 1 for value in self.statuses))
 
-    def test_mutating_tool_cannot_append_legacy_follow_but_read_only_tool_can(self):
+    def test_neither_mutating_nor_read_tool_can_append_unadvertised_legacy_follow(self):
         helper_dir = self.workspace / "dev"
         helper_dir.mkdir()
         (helper_dir / "task-runtime").write_bytes(Path(__file__).with_name("task-runtime").read_bytes())
@@ -616,26 +619,39 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                     loop.controls.refresh = lambda: None
                     loop.controls.context = lambda: {}
                     loop.controls.execute = lambda action, **kw: legacy_actions.append(action)
-                    if mutation:
-                        with self.assertRaises(converse.ConversationError) as refused:
-                            loop.tick()
-                        self.assertIn("second reply action was refused", str(refused.exception.__cause__))
-                        self.assertEqual(len(self.rpc.commands), 1)
-                        self.assertFalse(legacy_actions)
-                        self.assertTrue(brain.last_failure_receipt["mutationToolEntered"])
-                        self.assertEqual(brain.last_failure_receipt["counts"]["completedTools"], 1)
-                        self.assertEqual(brain.last_failure_receipt["outcome"], "failed")
-                    else:
+                    with self.assertRaisesRegex(converse.ConversationError, "invalid_tool_call"):
                         loop.tick()
-                        self.assertFalse(self.rpc.commands)
-                        self.assertEqual(legacy_actions, ["FOLLOW"])
-                        self.assertEqual(brain.last_development_result["outcome"], "completed")
+                    self.assertEqual(len(self.rpc.commands), 1 if mutation else 0)
+                    self.assertFalse(legacy_actions)
+                    self.assertEqual(brain.last_failure_receipt.get("mutationToolEntered", False), mutation)
+                    self.assertEqual(brain.last_failure_receipt["counts"]["completedTools"], 1)
+                    self.assertEqual(brain.last_failure_receipt["outcome"], "failed")
                     self.assertEqual(len(http.requests), 2)
+
+    def test_live_facade_passes_actual_chat_session_to_feedback_read(self):
+        responses = [chat(("feedback", "read_observation", dict(method="buddy-chat.poll",
+            params=dict(afterSequence="0", limit=20)))), spoken()]
+        original = self.rpc.call
+        def call(method, params, timeout=None):
+            result = original(method, params, timeout)
+            if method == "session.describe":
+                result["methods"].append(dict(name="buddy-chat.poll", effect="read", inputType="PollRequest"))
+                result["messages"]["PollRequest"] = dict(fields=[dict(name="sessionId")])
+            return result
+        with patch.object(self.rpc, "call", side_effect=call), self.rig(responses) as (loop, brain, state, http):
+            self.assertNotEqual(self.rpc.core, self.rpc.chat)
+            self.assertEqual(loop.generate_reply([], state), REPLY)
+            feedback = [params for method, params in self.rpc.calls
+                        if method == "buddy-chat.poll" and params.get("limit") == 20]
+            self.assertEqual(feedback, [dict(afterSequence="0", limit=20, sessionId=self.rpc.chat)])
+            read_result = json.loads(http.requests[1]["body"]["messages"][-1]["content"])
+            self.assertEqual(read_result["result"]["sessionId"], self.rpc.chat)
+            self.assertFalse(self.rpc.commands)
 
     def test_actual_tools_reject_replaced_body_before_a_policy_command(self):
         self.rpc.catalog_guid = "8"
         with self.rig([chat(("foreign", "policy_input", dict(value=dict(task="fixture", id="foreign")))),
-                       chat(("final", "final_reply", REPLY))]) as (loop, _, state, http):
+                       spoken()]) as (loop, _, state, http):
             loop.generate_reply([], state)
             self.assertFalse(self.rpc.commands)
             result = json.loads(http.requests[1]["body"]["messages"][-1]["content"])
@@ -659,23 +675,23 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             loop.controls.execute = refused
             with patch.object(loop.controls, "report_problem", create=True,
                               side_effect=AssertionError("No repair worker may be queued")) as repair:
-                loop.tick()
+                with self.assertRaisesRegex(converse.ConversationError, "invalid_tool_call"):
+                    loop.tick()
                 repair.assert_not_called()
-            self.assertEqual(attempted, ["FOLLOW"])
+            self.assertEqual(attempted, [])
             self.assertFalse(self.rpc.commands)
-            self.assertIn("No repair was queued", self.rpc.replies[-1]["text"])
             request = http.requests[0]["body"]
             prepared = json.loads(request["messages"][0]["content"].split(
                 "Current observations and control state JSON:\n", 1)[1])
             self.assertIs(prepared["current_request"]["repair_requests_allowed"], False)
             tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
-            self.assertEqual(set(tools), {"final_reply", "context_read"})
-            self.assertNotIn("REPAIR_CONTROLLER", tools["final_reply"]["parameters"]["properties"]["action"]["enum"])
+            self.assertEqual(set(tools), {"context_read"})
+            self.assertNotIn("final_reply", tools)
             self.assertFalse(brain.model_selection()["codexInvoked"])
 
     def test_actual_converse_main_local_config_uses_direct_brain_and_emits_reply(self):
         self.rpc.owner_request = True
-        with FakeHTTP([chat(("reply", "final_reply", REPLY))]) as http, \
+        with FakeHTTP([spoken()]) as http, \
              patch.object(converse, "RPC", return_value=self.rpc), \
              patch.object(converse, "registered_developer_workspace", return_value=None), \
              patch.object(converse.signal, "signal"), contextlib.redirect_stdout(io.StringIO()):

@@ -2618,7 +2618,7 @@ class DirectBrain(AgentBrain):
             "Owner input takes priority; peer development does not authorize unrelated gameplay. "
             "Gameplay decisions and tuning belong in your accepted editable Lua; native tools execute "
             "and validate mechanics. Tools enforce current body, permission and action-specific limits. "
-            "Speak normally; a structured final_reply is optional when an explicit game control is needed.")
+            "Reply with ordinary assistant text; use the advertised tools for requested actions.")
         if character_name.casefold() == "lotharen":
             self.persona += " You are Joel's authenticated rank 2 GM character, GUID 87; the realm validates command permissions."
         self.developer_persona = self.persona
@@ -2720,7 +2720,7 @@ class DirectBrain(AgentBrain):
                 development["selfGuid"], self.developer_workspace, ROOT,
                 allowed=lambda: self.development_enabled(state) and not interrupted(),
                 cancelled=interrupted, request_id=self.last_request_id, context=full_context,
-                gm_allowed=gm_authorised)
+                gm_allowed=gm_authorised, chat_session_id=self._generation.get("chatSessionId"))
         record["promptMetrics"] = dict(contextBytes=len(encode(prompt_state)),
             historyBytes=len(encode(history)), fullCapturedContextBytes=len(encode(full_context)))
         def dispatch(name, arguments):
@@ -2796,7 +2796,7 @@ class DirectBrain(AgentBrain):
             record["requestPreparedAtUnixMs"] = int(time.time()*1000)
             publish()  # Prepared bytes/phase only; no HTTP write or effect inferred.
             value = self.client.generate(
-                system, messages, schema, schemas, dispatch,
+                system, messages, None, schemas, dispatch,
                 cancelled=interrupted, request_id=self.last_request_id, progress=api_progress,
                 natural=True, transcript_path=transcript_path, conversation_key=conversation_key,
                 assistant_text=getattr(self, "_assistant_text", None),
