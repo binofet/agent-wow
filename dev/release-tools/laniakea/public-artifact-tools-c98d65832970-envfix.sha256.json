@@ -1,0 +1,76 @@
+{
+  "archive": "public-artifact-tools-c98d65832970-envfix.tar.gz",
+  "bytes": 32488,
+  "sha256": "fcc87f3780ae2148e6dbb405d7e9571d2acddb236d3bc9888bd378a8e2b6368c",
+  "sourceCommit": "c98d658329706640bb5e9251f581413c33570512",
+  "sourceTree": "a60e1fb280ac79e27fac458803824baef64c12bd",
+  "packageManifestSHA256": "79b9bef6dee76324af4c02246a1b00ea4f44e8d5712fd0e72f731e55877b95e6",
+  "files": {
+    "README.json": {
+      "bytes": 5027,
+      "sha256": "3eb3ff4d390f58ffcbbec028368f43d7f2ec66e54e7207d16154fba3bc598040"
+    },
+    "artifact_qualification_test.go": {
+      "bytes": 31437,
+      "sha256": "fbebe80d9aa5df6f0a156dcc59990d030540e35112569391ded1d1d1255e144e"
+    },
+    "input.plan.example.json": {
+      "bytes": 3589,
+      "sha256": "8ff5a1bb610c26ecfe96d0d43e990caf0f8f04c06d867224c48b3f84d94ccb1f"
+    },
+    "overlay.example.json": {
+      "bytes": 245,
+      "sha256": "a4e5fc0771e46f3944bbeb15d4edea3b910e70b172fe1e9b5f3e238af242a356"
+    },
+    "phase1-c98d65832970/build-public.sh": {
+      "bytes": 345,
+      "sha256": "02d96d39b5b78339d8358f59d54a33ae45a861fb44dcb323a5d27a8d242c765c"
+    },
+    "phase1-c98d65832970/freeze.json": {
+      "bytes": 2912,
+      "sha256": "9a26cbe34b3e50cc49f6a807dcaf54834c4d840775ad07c054cf69c26ed22e49"
+    },
+    "phase1-c98d65832970/prepare_overlay.py": {
+      "bytes": 7090,
+      "sha256": "725c8758f10aac436ae469c37d3eeebd6c919251cfa8fa688e33db0f0374b193"
+    },
+    "phase1-c98d65832970/public-build-once.sh": {
+      "bytes": 8120,
+      "sha256": "cdbe776ffb559f89ea0b2ced58fa3f6093e9aa6bdb9bae78168ae7ad7777d598"
+    },
+    "phase1-c98d65832970/source-handoff.json": {
+      "bytes": 846,
+      "sha256": "b8134cc7c4c129511f6cd845a58907dbdf9dec50bbc1f16cd7c4a9d3d2da0da3"
+    },
+    "plan.json": {
+      "bytes": 11734,
+      "sha256": "0ff59956778fab4b1c622d7256f2dbec6f8c2747a0f4c8ee92eb414438b68d8d"
+    },
+    "prepare_image_inputs.py": {
+      "bytes": 11036,
+      "sha256": "c9faca8bd98ed07f0f7bac530d5dfb3972b9d3bb3b46ce9d6185995556f0c3f2"
+    },
+    "prepare_overlay.py": {
+      "bytes": 7090,
+      "sha256": "725c8758f10aac436ae469c37d3eeebd6c919251cfa8fa688e33db0f0374b193"
+    },
+    "source-receipt.json": {
+      "bytes": 4577,
+      "sha256": "0b90772d47aab8163473d453470c0ff5939e1b75ec160185b11ebd09b126db5c"
+    },
+    "test_prepare_image_inputs.py": {
+      "bytes": 8328,
+      "sha256": "a32805ca4f86ea8367596e492a0ece40790cb2d085042f354784712b55dd7626"
+    },
+    "package-manifest.json": {
+      "bytes": 2512,
+      "sha256": "79b9bef6dee76324af4c02246a1b00ea4f44e8d5712fd0e72f731e55877b95e6"
+    }
+  },
+  "qualification": "Exact observed Env-only preparer fix independently source-clear; four local mocked-Docker tests passed. Final package hash/metadata review follows; changed helper has not run on target. Existing c98 native build PASS unchanged.",
+  "localMockedPythonTestsPassed": 4,
+  "nativeRebuilt": false,
+  "targetExecuted": false,
+  "privatePayloadIncluded": false,
+  "runtimeReady": false
+}
