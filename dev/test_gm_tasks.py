@@ -90,6 +90,87 @@ class TestDirectGMCommands(unittest.TestCase):
    self.assertEqual(json.loads(out.getvalue())['completion'],'effect_not_yet_verified')
 
 class TestGMTaskHost(unittest.TestCase):
+ def unobserved_transport_frame(self):
+  names=[('1','Arlen'),('3','Joel'),('4','Mira'),('5','Rook'),('8','Nixwick')]
+  members=[dict(guid=g,name=n,**({'rpcUrl':'http://127.0.0.1:8086/rpc'}if g!='3'else{}))for g,n in names]
+  rows=[dict(guid=g,name=n,sessionId='body-'+g,positionKnown=True,mapId=349,x=1000,y=0,z=0,
+   visibleToGm=False,aliveKnown=True,alive=False,combatKnown=True,inCombat=False,hp=0,maxHp=100,manaUser=False)for g,n in names]
+  rows[1]=dict(guid='3',name='Joel',known=False,positionKnown=False,visibleToGm=False,aliveKnown=False,combatKnown=False,inCombat=False)
+  return dict(goal=dict(id='same-owner-task',destination=dict(mapId=349,x=10,y=20,z=0),members=members),
+   memory={},last=None,pending=[],now=1,observations=dict(gm=dict(guid='87',sessionId='same-gm',positionKnown=True,mapId=349,x=10,y=20,z=0),
+   members=rows,threats=[],group=dict(known=True,inGroup=True,leaderGuid='1',members=[dict(guid=g,name=n,online=True)for g,n in names])))
+ def evaluate_unobserved_transport(self,frame,guids=None):
+  source=(gm.ROOT/'behaviors/gm-recovery.lua').read_text()
+  if guids is not None:
+   source='local p=(function()\n'+source+'\nend)();p.transportUnobservedGuids='+json.dumps(guids).replace('[','{').replace(']','}')+';return p'
+  binary=os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY',str(gm.ROOT/'data/bin/luapolicy'))
+  return gm.task_bridge(binary,gm.ROOT/'modules').evaluate(source,frame)
+ def test_unobserved_transport_default_blocks_and_explicit_source_resumes_same_memory(self):
+  frame=self.unobserved_transport_frame();goal=json.loads(json.dumps(frame['goal']))
+  blocked=self.evaluate_unobserved_transport(frame)
+  self.assertEqual(blocked['error'],'combat_state_unknown:Joel');self.assertNotIn('action',blocked)
+  frame.update(memory=blocked['memory'],now=2)
+  out=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertEqual(out['action']['command'],'.group remove Nixwick')
+  self.assertEqual(out['memory']['taskId'],blocked['memory']['taskId']);self.assertEqual(frame['goal'],goal)
+  self.assertFalse(frame['observations']['members'][1]['combatKnown']);self.assertFalse(frame['observations']['members'][1]['aliveKnown'])
+  self.assertFalse(out['done']);self.assertNotIn('success',out)
+  self.assertEqual(out['memory']['unobservedTransport'],{'3':True})
+ def test_unobserved_transport_requires_exact_online_original_member_and_offscreen_no_rpc(self):
+  changes=[lambda f:f['observations']['group']['members'][1].update(online=False),
+   lambda f:f['observations']['group']['members'][1].pop('online'),
+   lambda f:f['observations']['group']['members'][1].update(name='Other'),
+   lambda f:f['observations']['group'].update(known=False),
+   lambda f:f['observations']['members'][1].update(visibleToGm=True),
+   lambda f:f['goal']['members'][1].update(rpcUrl='http://127.0.0.1:8089/rpc')]
+  for mutate in changes:
+   with self.subTest(mutate=mutate):
+    frame=self.unobserved_transport_frame();mutate(frame)
+    out=self.evaluate_unobserved_transport(frame,['3'])
+    self.assertNotIn('action',out);self.assertFalse(out['done'])
+  frame=self.unobserved_transport_frame()
+  self.assertNotIn('action',self.evaluate_unobserved_transport(frame,['8']))
+  frame['memory']=self.evaluate_unobserved_transport(frame)['memory']
+  frame['observations']['group']['leaderGuid']='3'
+  self.assertNotIn('action',self.evaluate_unobserved_transport(frame,['3']))
+ def test_unobserved_transport_keeps_known_combat_and_body_fences(self):
+  frame=self.unobserved_transport_frame();frame['observations']['members'][1].update(combatKnown=True,inCombat=True)
+  out=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertEqual(out['action']['command'],'.combatstop Joel')
+  frame.update(memory=out['memory'],last=dict(id=out['action']['id'],outcome='unconfirmed'),now=2)
+  frame['observations']['members'][1]['combatKnown']=False
+  waiting=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertNotIn('action',waiting);self.assertEqual(waiting['memory']['waiting'],out['memory']['waiting'])
+  frame['observations']['gm']['sessionId']='replacement-gm'
+  self.assertEqual(self.evaluate_unobserved_transport(frame,['3'])['error'],'gm_session_changed')
+  frame['observations']['gm']['sessionId']='same-gm';frame['observations']['members'][0]['sessionId']='replacement-arlen'
+  self.assertEqual(self.evaluate_unobserved_transport(frame,['3'])['error'],'member_session_changed:Arlen')
+ def test_unobserved_transport_never_claims_arrival_or_replays_unknown_summon(self):
+  frame=self.unobserved_transport_frame();out=self.evaluate_unobserved_transport(frame,['3'])
+  memory=out['memory'];memory.update(stage='summon_first',waiting=None)
+  group=frame['observations']['group'];group.update(leaderGuid='87')
+  group['members']=[m for m in group['members']if m['guid']!='8']+[dict(guid='87',name='Lotharen',online=True)]
+  frame.update(memory=memory,now=2)
+  summon=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertEqual(summon['action']['command'],'.groupsummon Arlen')
+  frame.update(memory=summon['memory'],last=dict(id=summon['action']['id'],outcome='unconfirmed'),now=3)
+  waiting=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertNotIn('action',waiting);self.assertFalse(waiting['done']);self.assertEqual(waiting['memory']['waiting'],summon['memory']['waiting'])
+  frame['memory'].update(stage='revive',waiting=None)
+  frame['observations']['group']=dict(known=True,inGroup=True,leaderGuid='1',members=[dict(guid=p['guid'],name=p['name'],online=True)for p in frame['goal']['members']])
+  blocked=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertEqual(blocked['error'],'party_left_verified_destination');self.assertNotIn('action',blocked)
+ def test_unobserved_transport_rechecks_online_permission_before_departure(self):
+  for change in ('offline','revoke','quiet_but_offline'):
+   with self.subTest(change=change):
+    frame=self.unobserved_transport_frame();out=self.evaluate_unobserved_transport(frame,['3'])
+    frame['memory']=out['memory'];frame['memory'].update(stage='summon_first',waiting=None)
+    group=frame['observations']['group'];group.update(leaderGuid='87')
+    group['members']=[m for m in group['members']if m['guid']!='8']+[dict(guid='87',name='Lotharen',online=True)]
+    if change in ('offline','quiet_but_offline'):next(p for p in group['members']if p['guid']=='3')['online']=False
+    if change=='quiet_but_offline':frame['observations']['members'][1].update(combatKnown=True,inCombat=False)
+    blocked=self.evaluate_unobserved_transport(frame,[]if change=='revoke'else['3'])
+    self.assertEqual(blocked['error'],'unobserved_transport_not_admitted:Joel');self.assertNotIn('action',blocked)
  def host(self,path,transport=None,bridge=None):
   return gm.Host(Store(path),Mock(),transport or Mock(),bridge or Mock(),{'id':'test','members':[]},Path(path)/'policy.lua',Path(path)/'hold.lua')
  def test_reservation_persisted_before_write_and_not_replayed(self):
