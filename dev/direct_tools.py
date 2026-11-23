@@ -629,6 +629,15 @@ class DirectTools:
         require(status_method.get('module') == 'buddy-actions' and status_method.get('effect') == 'read'
                 and status_method.get('path') == '/warcraftbuddy.actions.v1.BuddyActions/Status'
                 and status_method.get('outputType') == prefix+'State', 'canonical_control_status_required')
+        state_shape = catalog.get('messages', {}).get(prefix+'State', {})
+        state_fields = {row.get('name'):row for row in state_shape.get('fields', []) if isinstance(row, dict)}
+        require(state_shape.get('protobufName') == 'warcraftbuddy.actions.v1.State' and
+                state_shape.get('syntax') == 'proto3', 'canonical_control_state_required')
+        for field, number, kind in (('following', 1, 'bool'), ('sessionId', 106, 'string'), ('selfGuid', 107, 'uint64')):
+            row = state_fields.get(field, {})
+            require(row.get('number') == number and row.get('kind') == kind and row.get('type') == kind
+                    and not any(row.get(key) for key in ('repeated', 'map', 'required', 'optional', 'oneof')),
+                    'canonical_control_state_required')
         if name == 'gameplay_command':
             require(methods.get('session.send_event', {}).get('effect') == 'mutation',
                     'installed_policy_input_required')
@@ -740,7 +749,9 @@ class DirectTools:
                         require(isinstance(result, dict) and result.get('sessionId') == self.session_id and
                                 str(result.get('selfGuid')) == self.self_guid, 'control_result_body_changed')
                         if name == 'follow':
-                            require(type(result.get('following')) is bool, 'follow_result_unconfirmed')
+                            require(type(result.get('following', False)) is bool, 'follow_result_unconfirmed')
+                            # Canonical proto3 State omits a false scalar on the wire.
+                            result = dict(result, following=result.get('following', False))
                             result = dict(state=result, requestedEnabled=args['enabled'], followDispatched=True,
                                 completion='controller_state_returned; physical_movement_unverified', gameEffectClaimed=False)
                         else:

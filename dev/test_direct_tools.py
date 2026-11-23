@@ -1531,7 +1531,9 @@ class OwnerControlToolTests(unittest.TestCase):
                     path='/warcraftbuddy.actions.v1.BuddyActions/'+route,effect='unspecified',
                     inputType=prefix+'ToggleRequest',outputType=prefix+'State'))
             catalog['messages'][prefix+'ToggleRequest']=dict(fields=[dict(name='enabled',number=1,kind='bool',type='bool')])
-            catalog['messages'][prefix+'State']=dict(fields=[])
+            catalog['messages'][prefix+'State']=dict(protobufName='warcraftbuddy.actions.v1.State',syntax='proto3',
+                fields=[dict(name=name,number=number,kind=kind,type=kind) for name,number,kind in
+                        (('following',1,'bool'),('sessionId',106,'string'),('selfGuid',107,'uint64'))])
             if self.catalog_edit:self.catalog_edit(catalog)
             return catalog
 
@@ -1599,6 +1601,29 @@ class OwnerControlToolTests(unittest.TestCase):
         result=self.tools.dispatch('follow',dict(enabled=True))
         self.assertTrue(result['ok'],result);self.assertFalse(result['result']['followDispatched'])
         self.assertIn('uncertain',result['result']['reason']);self.assertEqual(self.rpc.writes,[])
+
+    def test_proto3_omitted_false_is_known_stop_and_durable_without_resend(self):
+        original=self.rpc.call
+        def omit(method,params,**kwargs):
+            result=original(method,params,**kwargs)
+            if method=='buddy-actions.follow':result.pop('following',None)
+            return result
+        self.rpc.call=omit
+        result=self.tools.dispatch('follow',dict(enabled=False),operation_id='stop')
+        self.assertTrue(result['ok'],result);self.assertIs(result['result']['state']['following'],False)
+        self.assertFalse(result['result']['gameEffectClaimed'])
+        again=self.make_tools().dispatch('follow',dict(enabled=False),operation_id='another-stop')
+        self.assertTrue(again['ok'],again);self.assertTrue(again['result']['historicalReceipt'])
+        self.assertEqual(self.rpc.writes,[('buddy-actions.follow',dict(enabled=False))])
+        # An explicit invalid value is not the protobuf default.
+        other=self.make_tools(request='new-owner')
+        def invalid(method,params,**kwargs):
+            result=original(method,params,**kwargs)
+            if method=='buddy-actions.follow':result['following']='false'
+            return result
+        self.rpc.call=invalid
+        with self.assertRaises(ToolOutcomeUnknown):other.dispatch('follow',dict(enabled=False),operation_id='bad-result')
+        self.assertEqual(len(self.rpc.writes),2)
 
     def test_lua_command_and_buff_use_fixed_installed_routes_with_delivery_only(self):
         value=dict(task='wait_for_pull',id='wait-1',ownerGuid='3',responseYards=10)
