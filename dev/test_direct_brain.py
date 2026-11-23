@@ -110,6 +110,35 @@ class PublicRPC:
 
 
 class DirectBrainIntegrationTests(unittest.TestCase):
+    def test_live_gm_facade_separates_owner_gm_tools_from_verified_peer_development(self):
+        for source, gm_available, expected in (("owner", True, True), ("party_agent", True, False),
+                                               ("owner", False, False)):
+            with self.subTest(source=source, gm_available=gm_available):
+                rpc = PublicRPC()
+                rpc.guid = rpc.catalog_guid = "87"
+                rpc.url = "http://127.0.0.1:8090/rpc"
+                development = dict(enabled=True, directDevelopment=True, workspace=str(self.workspace),
+                    rpcUrl=rpc.url, sessionId=rpc.core, selfGuid="87", ownerGuid="3")
+                request = dict(source=source, senderGuid="3" if source == "owner" else "8",
+                               verifiedPeer=source == "party_agent", developmentWhisper=source == "party_agent")
+                state = dict(character=dict(guid="87"), development=development,
+                             current_request=request, gm_controls_available=gm_available)
+                with patch.object(converse, "ROOT", self.workspace), patch.object(converse, "RPC", return_value=rpc):
+                    brain = converse.DirectBrain(self.state, developer_workspace=self.workspace,
+                        character_name="Lotharen", character_class="paladin", model="fixture-requested-model",
+                        provider="local", base_url="http://127.0.0.1:1/v1")
+                    self.assertTrue(brain.development_enabled(state))
+                    requests = []
+                    def capture(payload, *_):
+                        requests.append(copy.deepcopy(payload))
+                        return chat(("final", "final_reply", dict(REPLY, gm_command="") if expected else REPLY))
+                    with patch.object(brain.client, "_http", side_effect=capture):
+                        brain.generate([dict(speaker="Joel" if source == "owner" else "Nixwick", text="Inspect your Lua")], state)
+                names = {row["function"]["name"] for row in requests[0]["tools"]}
+                self.assertTrue({"policy_apply", "workspace_write", "policy_input", "gm_task_status"} <= names)
+                self.assertEqual({"gm_task_start", "gm_task_cancel"} <= names, expected)
+                self.assertFalse(rpc.commands or rpc.replies)
+
     def test_nonterminal_trade_and_pending_prefix_remain_exact_in_large_initial_view(self):
         from direct_context import CONTEXT_BYTES, encode, project_context
         for phase in ("CANCEL_SENT", "ACCEPT_SENT", "OPENING", "REQUESTED", "INVITED", "OPEN"):

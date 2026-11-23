@@ -2669,6 +2669,12 @@ without observations. Keep final action NONE after performing a tool action.
         mutation_entered = [False]
         def interrupted():
             return self.stopped() or bool(cancelled and cancelled())
+        def gm_authorised():
+            current = state.get("current_request", {})
+            return (allow_gm and isinstance(current, dict) and current.get("source") == "owner"
+                and current.get("senderGuid") == str(development.get("ownerGuid"))
+                and state.get("gm_controls_available") is True
+                and self.development_enabled(state) and not interrupted())
         def api_metadata():
             raw = self.client.last_receipt or {}
             keys = ("requestId", "execution", "provider", "requestedModel", "providerReportedModel",
@@ -2716,7 +2722,8 @@ without observations. Keep final action NONE after performing a tool action.
             tools = DirectTools(RPC(development["rpcUrl"]), development["sessionId"],
                 development["selfGuid"], self.developer_workspace, ROOT,
                 allowed=lambda: self.development_enabled(state) and not interrupted(),
-                cancelled=interrupted, request_id=self.last_request_id, context=full_context)
+                cancelled=interrupted, request_id=self.last_request_id, context=full_context,
+                gm_allowed=gm_authorised)
         record["promptMetrics"] = dict(context_metrics, **history_metrics,
             fullCapturedContextBytes=len(encode(full_context)))
         def dispatch(name, arguments):

@@ -95,6 +95,7 @@ class DirectToolTests(unittest.TestCase):
         self.host.mkdir(mode=0o700)
         self.rpc = RPC()
         self.allowed = True
+        self.gm_allowed = True  # These GM fixtures explicitly represent a current owner commission.
         self.cancelled = False
         self.edit.DATA = self.folder / "self-edit-cache"
         self.tools = DirectTools(self.rpc, self.rpc.sid, self.rpc.guid, self.workspace, self.host,
@@ -441,9 +442,68 @@ class DirectToolTests(unittest.TestCase):
     def gm_tools(self, runner):
         self.rpc = RPC('87')
         return DirectTools(self.rpc, self.rpc.sid, '87', self.workspace, self.host,
-            allowed=lambda: self.allowed, request_id='actual-owner:seq9', runner=runner,
+            allowed=lambda: self.allowed, gm_allowed=lambda: self.gm_allowed,
+            request_id='actual-owner:seq9', runner=runner,
             helpers={'gm_tasks': self.gm, 'policy_binary': '/fixed/luapolicy',
                      'gm_bindings': lambda: [dict(guid='4', rpc_url='http://127.0.0.1:8087/rpc')]})
+
+    def test_gm_mutations_default_deny_while_peer_lua_development_and_status_remain(self):
+        self.rpc = RPC('87')
+        runner = mock.Mock(side_effect=AssertionError('Peer development cannot start a GM helper'))
+        tools = DirectTools(self.rpc, self.rpc.sid, '87', self.workspace, self.host,
+            allowed=lambda: True, request_id='verified-peer:9', runner=runner,
+            helpers={'gm_tasks': self.gm})
+        names = {row['function']['name'] for row in tools.tool_schemas()}
+        self.assertTrue({'workspace_write', 'policy_apply', 'policy_input', 'gm_task_status'} <= names)
+        self.assertFalse({'gm_task_start', 'gm_task_cancel'} & names)
+        self.assertFalse(tools.dispatch('gm_task_start', dict(goal=dict(members=[])))['ok'])
+        self.assertFalse(tools.dispatch('gm_task_cancel', dict(task_id='direct-'+'a'*24))['ok'])
+        for name, args in (('gm_task_start', dict(goal=dict(members=[]))),
+                           ('gm_task_cancel', dict(task_id='direct-'+'a'*24))):
+            with self.assertRaisesRegex(ValueError, 'current_owner_gm_authority_required'):
+                tools._gm(name, args)  # The execution guard also refuses a bypass of schema filtering.
+        self.assertFalse((self.host/'data/converse/lotharen/gm-tasks').exists())
+        self.assertFalse(self.rpc.writes)
+        runner.assert_not_called()
+
+    def test_gm_owner_authority_lost_during_final_catalog_preserves_journal_without_child(self):
+        runner = mock.Mock(side_effect=AssertionError('Lost GM authority cannot enter helper'))
+        tools = self.gm_tools(runner)
+        observed = []
+        def hook(method):
+            state_root = self.host/'data/converse/lotharen/gm-tasks'
+            if method == 'session.describe' and list(state_root.glob('direct-*/state.json')):
+                self.gm_allowed = False
+                observed.append(method)
+        self.rpc.hook = hook
+        result = tools.dispatch('gm_task_start', dict(goal=dict(members=[])))
+        self.assertFalse(result['ok'], result)
+        self.assertIn('current_owner_gm_authority_required', result['error']['error'])
+        self.assertTrue(observed)
+        self.assertTrue(self.allowed)  # General Lua development was not revoked.
+        retained = next((self.host/'data/converse/lotharen/gm-tasks').glob('direct-*/state.json'))
+        self.assertEqual(json.loads(retained.read_text())['reservations'], {})
+        self.assertIsNone(tools.unknown_receipt)
+        self.assertFalse(self.rpc.writes)
+        runner.assert_not_called()
+
+    def test_gm_cancel_needs_current_owner_but_status_preserves_unknown_task(self):
+        runner = mock.Mock(return_value=subprocess.CompletedProcess([], 0, b'{"started":true}', b''))
+        tools = self.gm_tools(runner)
+        started = tools.dispatch('gm_task_start', dict(goal=dict(members=[])))
+        task_id = started['result']['taskId']
+        folder = tools._gm_folder(task_id)
+        with self.gm.task_store(folder) as store:
+            data = store.load()
+            data['reservations']['exact-unknown'] = dict(outcome='unknown', id='original-no-replay')
+            store.save(data)
+        before = self.gm.task_store(folder).load()
+        self.gm_allowed = False
+        self.assertFalse(tools.dispatch('gm_task_cancel', dict(task_id=task_id))['ok'])
+        self.assertTrue(tools.dispatch('gm_task_status', dict(task_id=task_id))['ok'])
+        self.assertEqual(self.gm.task_store(folder).load(), before)
+        self.assertEqual(runner.call_count, 1)
+        self.assertFalse(self.rpc.writes)
 
     def test_gm_whole_task_uses_existing_journal_and_exact_one_helper(self):
         calls = []

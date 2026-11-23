@@ -185,7 +185,8 @@ class _PolicyRPC:
 class DirectTools:
     def __init__(self, rpc, session_id, self_guid, workspace, root, *,
                  allowed=lambda: False, cancelled=lambda: False, request_id=None,
-                 helpers=None, runner=None, max_bytes=8 * 1024 * 1024, execution_ms=1000, context=None):
+                 helpers=None, runner=None, max_bytes=8 * 1024 * 1024, execution_ms=1000, context=None,
+                 gm_allowed=lambda: False):
         require(isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", session_id),
                 "explicit_session_required")
         require(str(self_guid).isdigit() and 0 < int(self_guid) < 2**48, "explicit_actor_required")
@@ -194,6 +195,7 @@ class DirectTools:
         self.rpc, self.session_id, self.self_guid = rpc, session_id, str(self_guid)
         self.workspace, self.root = Path(workspace).absolute(), Path(root).absolute()
         self.allowed, self.cancelled, self.request_id = allowed, cancelled, request_id
+        self.gm_allowed = gm_allowed
         self.helpers, self.runner = dict(helpers or {}), runner or subprocess.run
         self.max_bytes, self.execution_ms = max_bytes, execution_ms
         self.last_receipt = None
@@ -212,6 +214,11 @@ class DirectTools:
         require(not self.cancelled(), "request_cancelled_before_dispatch")
         require(self.allowed() is True, "current_owner_development_authority_required")
         require(self.unknown_receipt is None, "unconfirmed_tool_requires_observation_not_retry")
+
+    def _authorise_gm(self):
+        self._authorise()
+        require(self.self_guid == "87" and self.gm_allowed() is True,
+                "current_owner_gm_authority_required")
 
     def _catalog(self):
         require(not self.cancelled(), "request_cancelled_before_dispatch")
@@ -468,9 +475,11 @@ class DirectTools:
 
     def _gm(self, name, args):
         require(self.self_guid == "87", "authenticated_gm_actor_required")
+        if name != "gm_task_status":
+            self._authorise_gm()
         gm = self._helper("gm_tasks")
         if name == "gm_task_start":
-            self._authorise()
+            self._authorise_gm()
             require(isinstance(self.request_id, str) and 0 < len(self.request_id) <= 512,
                     "host_request_identity_required")
             goal = copy.deepcopy(args["goal"])
@@ -489,7 +498,7 @@ class DirectTools:
             goal["id"] = task_id
             require(len(packed(goal)) <= self.max_bytes, "gm_goal_size_bound")
             self._catalog()
-            self._authorise()
+            self._authorise_gm()
             folder.mkdir(mode=0o700, parents=True, exist_ok=False)
             goal_path = folder / "goal.json"
             with goal_path.open("xb") as output:
@@ -519,12 +528,12 @@ class DirectTools:
             if name == "gm_task_status":
                 self._catalog()
                 return dict(taskId=task_id, result=gm.public_status(data), gameEffectClaimed=False)
-            self._authorise()
+            self._authorise_gm()
             command = [sys.executable, "-B", str(self.root / "dev/gm-task"), "cancel",
                        "--state-dir", str(folder)]
-        self._authorise()
+        self._authorise_gm()
         self._catalog()
-        self._authorise()
+        self._authorise_gm()
         try:
             reply = self.runner(command, cwd=self.root, capture_output=True, timeout=15, check=False)
             require(reply.returncode == 0, "gm_task_helper_return_unconfirmed")
@@ -553,7 +562,7 @@ class DirectTools:
                 ("policy_apply", "CAS-apply owned Lua through maintained self-edit on this exact body, preserving pending state. Unknown reply halts, never retries.", {"path": string, "expected_revision": string}, ["path", "expected_revision"]),
                 ("policy_input", "Deliver one structured command to an already-present Lua handler. Delivery is not game success; no arbitrary receipt/event injection.", {"value": obj}, ["value"]),
             ]
-            if self.self_guid == "87" and self.request_id:
+            if self.self_guid == "87" and self.request_id and self.gm_allowed() is True:
                 specs += [("gm_task_start", "Start the whole commissioned GM recovery/regroup using the existing ordered Lua task. Goal uses current observed roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": obj}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup; this is not a completion receipt.", {"task_id": string}, ["task_id"])]
         if self.self_guid == "87":
