@@ -44,6 +44,7 @@ def sha(value):
 READ_PAGE_BYTES = 12 * 1024
 _PAGE_BYTES = READ_PAGE_BYTES - 1024  # Reserve the outer tool/identity envelope.
 GM_INSPECT_BYTES = 128 * 1024  # Compact all-client facts; explicit raw pages retain the 12 KiB bound.
+_CONTEXT_DEFAULT_LIMIT = object()
 
 GM_COMMAND_REFERENCE = (
     "Public command syntax: .go xyz <x> <y> <z> [mapId] [orientation] teleports this GM; "
@@ -94,7 +95,7 @@ def _summary(value, *, force=False):
     return result
 
 
-def _page(value, path=None, offset=0, limit=20, *, metadata=None, force_keys=()):
+def _page(value, path=None, offset=0, limit=20, *, metadata=None, force_keys=(), default_text_page=False):
     path = [] if path is None else path
     require(isinstance(path, list) and len(path) <= 64 and
             all(isinstance(key, str) or type(key) is int and key >= 0 for key in path),
@@ -117,6 +118,7 @@ def _page(value, path=None, offset=0, limit=20, *, metadata=None, force_keys=())
                 nextOffset=offset, truncated=offset < total, omitted=total-offset, viewSHA256=full_hash,
                 **(metadata or {}))
     if kind == "string":
+        if default_text_page: limit = 4096
         chunk = value[offset:offset+limit]
         while True:
             page.update(value=chunk, nextOffset=offset+len(chunk),
@@ -204,14 +206,16 @@ def _gm_inspect_view(observed):
             rawAccess="gm_inspect(path=<nonempty rawPath or field path>, offset=0, limit=20). All explicit paths address the original unprojected tree."))
 
 
-def context_page(context, path=None, offset=0, limit=20):
+def context_page(context, path=None, offset=0, limit=_CONTEXT_DEFAULT_LIMIT):
     """Read a captured JSON tree; nested summaries have explicit child paths.
 
-    String offset/limit count characters. Object/array pages count entries;
+    String offset/limit count characters, defaulting to up to 4096 characters.
+    Object/array pages default to 20 entries;
     append str(row.key) to path to expand an omitted value. No RPC/eval occurs.
     """
     require(isinstance(context, dict), "captured_context_not_present")
-    return _page(context, path, offset, limit)
+    default_limit = limit is _CONTEXT_DEFAULT_LIMIT
+    return _page(context, path, offset, 20 if default_limit else limit, default_text_page=default_limit)
 
 
 def _page_properties():
@@ -222,8 +226,10 @@ def _page_properties():
 def context_tool_schema():
     return dict(type="function", function=dict(name="context_read", description=
         "Read the full immutable captured control state by JSON path (string object keys, decimal strings for array indices). "
-        "Defaults path=[],offset=0,limit=20. Rows expose key/value or explicit omitted summaries; append str(row.key) "
-        "to path to expand. nextOffset continues entries, or characters for a string. No RPC/action.",
+        "Defaults path=[],offset=0; omitted limit reads up to 4096 characters for text or 20 entries for objects/arrays. "
+        "Explicit offset/limit use characters for text and entries for objects/arrays. The byte bound may shorten a page; "
+        "continue with nextOffset. Rows expose key/value or explicit omitted summaries; append str(row.key) "
+        "to path to expand. No RPC/action.",
         parameters=dict(type="object", properties=_page_properties(), required=[], additionalProperties=False)))
 
 
@@ -1070,7 +1076,7 @@ class DirectTools:
                     set(schema["required"]) <= set(args), "tool_argument_fields_invalid")
             self._catalog()
             if name == "context_read":
-                result = context_page(self.context, args.get("path"), args.get("offset", 0), args.get("limit", 20))
+                result = context_page(self.context, args.get("path"), args.get("offset", 0), args.get("limit", _CONTEXT_DEFAULT_LIMIT))
                 result.update(sessionId=self.session_id, characterGuid=self.self_guid)
                 self._catalog()
             elif name == "chat_read":
