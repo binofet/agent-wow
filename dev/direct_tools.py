@@ -40,6 +40,112 @@ def sha(value):
     return hashlib.sha256(value).hexdigest()
 
 
+READ_PAGE_BYTES = 12 * 1024
+_PAGE_BYTES = READ_PAGE_BYTES - 1024  # Reserve the outer tool/identity envelope.
+
+
+def _kind(value):
+    if value is None: return "null"
+    if type(value) is bool: return "boolean"
+    if isinstance(value, str): return "string"
+    if isinstance(value, dict): return "object"
+    if isinstance(value, list): return "array"
+    if type(value) in (int, float): return "number"
+    raise ToolError("json_fact_required")
+
+
+def _summary(value, *, force=False):
+    kind = _kind(value)
+    if kind not in ("string", "object", "array") or not force and len(packed(value)) <= 768:
+        return dict(type=kind, value=copy.deepcopy(value), omitted=False)
+    result = dict(type=kind, total=len(value), omitted=True)
+    if isinstance(value, str):
+        result.update(bytes=len(value.encode()), sha256=sha(value.encode()))
+    elif isinstance(value, dict):
+        # A bounded label preview makes object rows useful without copying
+        # their nested inventory/schema/source arrays into the model context.
+        preview = {}
+        for key, item in value.items():
+            if not isinstance(item, (dict, list)) and len(packed({key:item})) <= 128:
+                preview[key] = item
+            if len(preview) == 4: break
+        result["preview"] = preview
+    return result
+
+
+def _page(value, path=None, offset=0, limit=20, *, metadata=None, force_keys=()):
+    path = [] if path is None else path
+    require(isinstance(path, list) and len(path) <= 64 and
+            all(isinstance(key, str) or type(key) is int and key >= 0 for key in path),
+            "json_path_must_be_string_keys_or_nonnegative_array_indices")
+    require(type(offset) is int and offset >= 0 and type(limit) is int and 0 < limit <= 4096,
+            "page_offset_and_limit_invalid")
+    full_hash = sha(packed(value))
+    for key in path:
+        if isinstance(value, dict):
+            require(isinstance(key, str) and key in value, "json_path_not_found")
+        else:
+            if isinstance(key, str) and re.fullmatch(r"0|[1-9][0-9]*", key):
+                key = int(key)
+            require(isinstance(value, list) and type(key) is int and key < len(value), "json_path_not_found")
+        value = value[key]
+    kind = _kind(value)
+    total = len(value) if isinstance(value, (dict, list, str)) else 1
+    require(offset <= total, "page_offset_exceeds_total")
+    page = dict(path=copy.deepcopy(path), type=kind, total=total, offset=offset, rows=[],
+                nextOffset=offset, truncated=offset < total, omitted=total-offset, viewSHA256=full_hash,
+                **(metadata or {}))
+    if kind == "string":
+        chunk = value[offset:offset+limit]
+        while True:
+            page.update(value=chunk, nextOffset=offset+len(chunk),
+                        truncated=offset+len(chunk) < total, omitted=total-offset-len(chunk))
+            if len(packed(dict(ok=True, result=page))) <= _PAGE_BYTES: break
+            require(bool(chunk), "projection_metadata_exceeds_page_bound")
+            chunk = chunk[:len(chunk)//2]
+        require(page["nextOffset"] > offset or offset == total, "projection_metadata_exceeds_page_bound")
+    elif kind in ("object", "array"):
+        keys = list(value) if kind == "object" else range(len(value))
+        for index in range(offset, min(total, offset+limit)):
+            key = keys[index]
+            row = dict(key=key, **_summary(value[key], force=not path and key in force_keys))
+            page["rows"].append(row)
+            page.update(nextOffset=index+1, truncated=index+1 < total, omitted=total-index-1)
+            if len(packed(dict(ok=True, result=page))) > _PAGE_BYTES:
+                page["rows"].pop()
+                page.update(nextOffset=index, truncated=True, omitted=total-index)
+                break
+        require(bool(page["rows"]) or offset == total, "projection_row_exceeds_page_bound")
+    else:
+        page.update(value=copy.deepcopy(value) if offset == 0 else None,
+                    nextOffset=total, truncated=False, omitted=0)
+    require(len(packed(dict(ok=True, result=page))) <= _PAGE_BYTES, "projection_metadata_exceeds_page_bound")
+    return page
+
+
+def context_page(context, path=None, offset=0, limit=20):
+    """Read a captured JSON tree; nested summaries have explicit child paths.
+
+    String offset/limit count characters. Object/array pages count entries;
+    append str(row.key) to path to expand an omitted value. No RPC/eval occurs.
+    """
+    require(isinstance(context, dict), "captured_context_not_present")
+    return _page(context, path, offset, limit)
+
+
+def _page_properties():
+    return dict(path=dict(type="array", maxItems=64, items=dict(type="string")), offset=dict(type="integer", minimum=0),
+                limit=dict(type="integer", minimum=1, maximum=4096))
+
+
+def context_tool_schema():
+    return dict(type="function", function=dict(name="context_read", description=
+        "Read the full immutable captured control state by JSON path (string object keys, decimal strings for array indices). "
+        "Defaults path=[],offset=0,limit=20. Rows expose key/value or explicit omitted summaries; append str(row.key) "
+        "to path to expand. nextOffset continues entries, or characters for a string. No RPC/action.",
+        parameters=dict(type="object", properties=_page_properties(), required=[], additionalProperties=False)))
+
+
 def require(value, reason):
     if not value:
         raise ToolError(reason)
@@ -79,7 +185,7 @@ class _PolicyRPC:
 class DirectTools:
     def __init__(self, rpc, session_id, self_guid, workspace, root, *,
                  allowed=lambda: False, cancelled=lambda: False, request_id=None,
-                 helpers=None, runner=None, max_bytes=8 * 1024 * 1024, execution_ms=1000):
+                 helpers=None, runner=None, max_bytes=8 * 1024 * 1024, execution_ms=1000, context=None):
         require(isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", session_id),
                 "explicit_session_required")
         require(str(self_guid).isdigit() and 0 < int(self_guid) < 2**48, "explicit_actor_required")
@@ -92,6 +198,15 @@ class DirectTools:
         self.max_bytes, self.execution_ms = max_bytes, execution_ms
         self.last_receipt = None
         self.unknown_receipt = None
+        require(context is None or isinstance(context, dict), "captured_context_object_required")
+        self.context = copy.deepcopy(context)
+        require(context is None or len(packed(context)) <= max_bytes, "captured_context_size_bound")
+
+    def _project(self, value, args, *, force=False, metadata=None, force_keys=()):
+        if not force and not {"path", "offset", "limit"} & args.keys() and len(packed(dict(ok=True, result=value))) <= _PAGE_BYTES:
+            return copy.deepcopy(value)
+        return _page(value, args.get("path"), args.get("offset", 0), args.get("limit", 20),
+                     metadata=metadata, force_keys=force_keys)
 
     def _authorise(self):
         require(not self.cancelled(), "request_cancelled_before_dispatch")
@@ -285,7 +400,7 @@ class DirectTools:
             return dict(sessionId=self.session_id, characterGuid=self.self_guid,
                         revision=sha(result["source"].encode()), saved=saved,
                         sourceKnown=True, gameplayDispatched=False)
-        return result
+        return self._project(result, args, force=True, force_keys=("source",))
 
     def _policy_apply(self, args):
         self._authorise()
@@ -422,12 +537,13 @@ class DirectTools:
     def tool_schemas(self):
         string = {"type": "string"}
         obj = {"type": "object"}
+        paging = _page_properties()
         specs = [
-            ("session_catalog", "Inspect this body's current reflected actions/read inputs. Filter by method to include its schema.", {"method": string}, []),
-            ("read_observation", "Call only an installed effect=read RPC on this exact actor; no arbitrary endpoint or mutation.", {"method": string, "params": obj}, ["method", "params"]),
-            ("policy_show", "Read the actual accepted Lua. save_as snapshots it into owned Lua workspace without retranscribing the bundle; empty expected_sha256 means a new file.", {"save_as": string, "expected_sha256": string}, []),
-            ("spell_inspect", "Inspect an actual learned spell and generic casting mechanics; effect classification is not cast availability.", {"spell_id": {"type": "integer", "minimum": 0}}, []),
-            ("workspace_read", "Read bounded owned Lua/JSON text and its full SHA256; optional literal find locates a source section.", {"path": string, "start_line": {"type": "integer", "minimum": 1}, "max_lines": {"type": "integer", "minimum": 1, "maximum": 1000}, "find": string}, ["path"]),
+            ("session_catalog", "Default: bounded method index. method selects its exact contract/dependencies; message selects any exact message type. JSON path/offset/limit expand/page large schemas; row.key appends to path.", {"method": string, "message": string, **paging}, []),
+            ("read_observation", "Read only an installed effect=read RPC on this exact actor. Optional JSON path/offset/limit project and page its result, never a new endpoint. Large results return explicit expandable summaries.", {"method": string, "params": obj, **paging}, ["method", "params"]),
+            ("policy_show", "Default: accepted-source metadata, not the full bundle. save_as snapshots into owned workspace; use workspace_read to inspect it. Or path=['source'] with character offset/limit reads exact source pages. Empty expected_sha256 requires a new file.", {"save_as": string, "expected_sha256": string, **paging}, []),
+            ("spell_inspect", "Exact spell_id returns complete raw learned mechanics. spell_id=0 lists the book with bounded JSON path/offset/limit paging; classification is not cast availability.", {"spell_id": {"type": "integer", "minimum": 0}, **paging}, []),
+            ("workspace_read", "Read owned Lua/JSON text and full SHA256; literal find/start_line locates a section. Large windows page content by character offset/limit; nextOffset continues without losing a long source line.", {"path": string, "start_line": {"type": "integer", "minimum": 1}, "max_lines": {"type": "integer", "minimum": 1, "maximum": 1000}, "find": string, "offset": paging["offset"], "limit": paging["limit"]}, ["path"]),
         ]
         if self.allowed() is True:
             specs += [
@@ -442,10 +558,10 @@ class DirectTools:
                           ("gm_task_cancel", "Request existing task's observed cleanup; this is not a completion receipt.", {"task_id": string}, ["task_id"])]
         if self.self_guid == "87":
             specs += [("gm_task_status", "Read this body's retained task phase and actual receipts; no task execution.", {"task_id": string}, ["task_id"])]
-        return [{"type": "function", "function": {"name": name, "description": description,
+        return [context_tool_schema(), *[{"type": "function", "function": {"name": name, "description": description,
                  "parameters": {"type": "object", "properties": properties,
                                 "required": required, "additionalProperties": False}}}
-                for name, description, properties, required in specs]
+                for name, description, properties, required in specs]]
 
     def dispatch(self, name, args):
         self.last_receipt = None
@@ -458,10 +574,19 @@ class DirectTools:
             require(not set(args) - set(schema["properties"]) and
                     set(schema["required"]) <= set(args), "tool_argument_fields_invalid")
             self._catalog()
-            if name == "session_catalog":
+            if name == "context_read":
+                result = context_page(self.context, args.get("path"), args.get("offset", 0), args.get("limit", 20))
+                result.update(sessionId=self.session_id, characterGuid=self.self_guid)
+                self._catalog()
+            elif name == "session_catalog":
                 catalog = self._catalog()
                 methods = self._methods(catalog)
-                if args.get("method"):
+                require(not (args.get("method") and args.get("message")), "select_method_or_message")
+                if args.get("message"):
+                    shape = catalog.get("messages", {}).get(args["message"])
+                    require(isinstance(shape, dict), "message_type_not_installed")
+                    result = self._project(dict(messageType=args["message"], message=shape, revision=catalog["revision"]), args)
+                elif args.get("method"):
                     method = methods.get(args["method"])
                     require(method is not None, "method_not_installed")
                     selected = {}
@@ -477,18 +602,23 @@ class DirectTools:
                                 include(field.get("type"))
                     include(method.get("inputType"))
                     include(method.get("outputType"))
-                    result = dict(method=method, messages=selected, revision=catalog["revision"])
+                    result = self._project(dict(method=method, messages=selected, revision=catalog["revision"]), args)
                 else:
-                    result = dict(methods=list(methods.values()), revision=catalog["revision"],
-                                  sessionId=self.session_id, characterGuid=self.self_guid)
+                    index = [{k:row[k] for k in ("name", "effect", "inputType", "outputType") if k in row}
+                             for row in methods.values()]
+                    result = self._project(index, args, force=True, metadata=dict(revision=catalog["revision"],
+                        sessionId=self.session_id, characterGuid=self.self_guid,
+                        messageTypeCount=len(catalog.get("messages", {}))))
             elif name == "read_observation":
-                result = self._read(args["method"], args["params"])
+                result = self._project(self._read(args["method"], args["params"]), args)
             elif name == "policy_show":
                 result = self._policy_show(args)
             elif name == "spell_inspect":
                 result = self._helper("self-edit").inspect_spell(int(self.self_guid), self.session_id,
                                                                  _PolicyRPC(self), args.get("spell_id", 0))
                 self._catalog()
+                if not args.get("spell_id", 0) or {"path", "offset", "limit"} & args.keys():
+                    result = self._project(result, args)
             elif name == "workspace_read":
                 data = self._read_file(args["path"])
                 lines = data.decode().splitlines(True)
@@ -504,6 +634,10 @@ class DirectTools:
                     start = data.decode()[:offset].count("\n") + 1
                 result = dict(path=args["path"], sha256=sha(data), bytes=len(data), start_line=start,
                               content="".join(lines[start - 1:start - 1 + count]), total_lines=len(lines))
+                if {"offset", "limit"} & args.keys() or len(packed(dict(ok=True, result=result))) > _PAGE_BYTES:
+                    page = _page(result["content"], offset=args.get("offset", 0), limit=args.get("limit", 4096))
+                    result.update(content=page["value"], contentChars=page["total"], offset=page["offset"],
+                                  nextOffset=page["nextOffset"], truncated=page["truncated"], omitted=page["omitted"])
             elif name == "workspace_write":
                 result = self._write_file(args["path"], args["content"], args["expected_sha256"])
             elif name == "workspace_patch":
@@ -530,6 +664,8 @@ class DirectTools:
             else:
                 raise ToolError("tool_not_implemented")
             require(len(packed(result)) <= self.max_bytes, "tool_result_size_bound")
+            if name in ("context_read", "session_catalog", "read_observation", "policy_show", "workspace_read") or name == "spell_inspect" and not args.get("spell_id", 0):
+                require(len(packed(dict(ok=True, result=result))) <= READ_PAGE_BYTES, "read_page_size_bound")
             self.last_receipt = dict(tool=name, sessionId=self.session_id, characterGuid=self.self_guid,
                                      outcome="completed", gameEffectClaimed=False)
             return dict(ok=True, result=result)
