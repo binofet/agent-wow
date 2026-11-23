@@ -27,10 +27,32 @@ func (s *Service) flightpathAcceptedOriginalLocked(revision uint64) bool {
 		flightpathScopeBound(a.AcceptanceScope, s.selfGUID, a.AcceptanceScope.MapId)
 }
 
-func (s *Service) flightpathTransferBookingMatchesLocked(receipt *worldv1.SplineTransferAdoption) bool {
+// Only settled exact RPC results are archived. Public observations retain one
+// current attempt and segment; historical calls never restore that segment.
+type flightpathTransferResult struct {
+	request *actionsv1.AdoptFlightpathTransferRequest
+	result  *actionsv1.FlightpathObservationResponse
+}
+
+func (f *flightpathActivationTracker) archiveTransferResult() {
+	if f.transferRequest == nil || f.transferResult == nil {
+		return
+	}
+	for _, old := range f.transferHistory {
+		if proto.Equal(old.request, f.transferRequest) {
+			return
+		}
+	}
+	f.transferHistory = append(f.transferHistory, flightpathTransferResult{
+		request: proto.Clone(f.transferRequest).(*actionsv1.AdoptFlightpathTransferRequest),
+		result:  proto.Clone(f.transferResult).(*actionsv1.FlightpathObservationResponse),
+	})
+}
+
+func (s *Service) flightpathTransferReceiptFactsLocked(receipt *worldv1.SplineTransferAdoption) bool {
 	a := s.flightpathActivation.operation
 	if a == nil || receipt == nil || receipt.Revision == 0 || receipt.SelfGuid != a.SelfGuid ||
-		receipt.FromVisitRevision != a.VisitId || receipt.ToVisitRevision == 0 || receipt.FromVisitRevision == math.MaxUint64 ||
+		receipt.FromVisitRevision == 0 || receipt.ToVisitRevision == 0 || receipt.FromVisitRevision == math.MaxUint64 ||
 		receipt.ToVisitRevision != receipt.FromVisitRevision+1 || receipt.Transfer == nil {
 		return false
 	}
@@ -41,9 +63,9 @@ func (s *Service) flightpathTransferBookingMatchesLocked(receipt *worldv1.Spline
 		core != nil && core.Known && core.WorldportAckWritten && !core.WorldportAckUnknown && core.CompletionReportWritten &&
 		core.SelfGuid == a.SelfGuid && core.TargetMapKnown && core.ToMapId == core.TargetMapId &&
 		core.FromVisitRevision != math.MaxUint64 && core.ToVisitRevision == core.FromVisitRevision+1 &&
-		old != nil && old.SelfGuid == a.SelfGuid && old.VisitRevision == a.VisitId && old.Revision != 0 && !old.Retired && !old.ArrivalKnown &&
-		(old.TransportWritten || old.TransportUnknown) && sameFlightpathVisit(old.TransportScope, a.AcceptanceScope) &&
-		old.TransportScope.SplineSourceRevision > a.AcceptanceScope.MotionRevision && old.TransportScope.SplineIdKnown &&
+		old != nil && old.SelfGuid == a.SelfGuid && old.VisitRevision == receipt.FromVisitRevision && old.Revision != 0 && !old.Retired && !old.ArrivalKnown &&
+		(old.TransportWritten || old.TransportUnknown) && old.TransportScope != nil &&
+		flightpathScopeBound(old.TransportScope, a.SelfGuid, old.TransportScope.MapId) && old.TransportScope.SplineIdKnown &&
 		old.SplineIdKnown && old.SplineId == old.TransportScope.SplineId &&
 		core.FromVisitRevision == old.TransportScope.VisitRevision && core.FromMapId == old.TransportScope.MapId &&
 		core.ConnectionId == old.TransportScope.ConnectionId && core.FromSplineIdKnown && core.FromSplineId == old.SplineId &&
@@ -60,6 +82,34 @@ func (s *Service) flightpathTransferBookingMatchesLocked(receipt *worldv1.Spline
 		t.CurrentUnitFlagsMotionRevision <= t.CurrentScope.MotionRevision
 }
 
+func (s *Service) flightpathTransferBookingMatchesLocked(receipt *worldv1.SplineTransferAdoption) bool {
+	if !s.flightpathTransferReceiptFactsLocked(receipt) {
+		return false
+	}
+	a, old := s.flightpathActivation.operation, receipt.Transfer.PredecessorCompletion
+	if segment := a.CurrentSegment; segment != nil {
+		return s.flightpathSegmentAssociatedLocked() && receipt.FromVisitRevision == segment.VisitId &&
+			receipt.Revision > segment.WorldAdoptionRevision && receipt.Transfer.Revision > segment.WorldTransferRevision &&
+			receipt.Transfer.Core.Revision > segment.CoreTransferRevision &&
+			sameFlightpathSource(old.TransportScope, segment.SourceScope) && old.TransportScope.MotionRevision >= segment.SourceScope.MotionRevision
+	}
+	return receipt.FromVisitRevision == a.VisitId && sameFlightpathVisit(old.TransportScope, a.AcceptanceScope) &&
+		old.TransportScope.SplineSourceRevision > a.AcceptanceScope.MotionRevision
+}
+
+func (s *Service) flightpathSegmentAssociatedLocked() bool {
+	f := &s.flightpathActivation
+	a, receipt := f.operation, f.transferAdoption
+	if a == nil || a.CurrentSegment == nil || f.transferBooking != a.Revision || !s.flightpathTransferReceiptFactsLocked(receipt) {
+		return false
+	}
+	segment := a.CurrentSegment
+	return segment.ParentLeaseRequired && segment.VisitId == receipt.ToVisitRevision &&
+		flightpathScopeBound(segment.SourceScope, a.SelfGuid, segment.SourceScope.GetMapId()) &&
+		segment.WorldAdoptionRevision == receipt.Revision && segment.WorldTransferRevision == receipt.Transfer.Revision &&
+		segment.CoreTransferRevision == receipt.Transfer.Core.Revision && proto.Equal(segment.SourceScope, receipt.Transfer.CurrentScope)
+}
+
 func (s *Service) flightpathSegmentCurrentLocked() bool {
 	a := s.flightpathActivation.operation
 	if a == nil || !s.encounterVisit.bound {
@@ -69,13 +119,8 @@ func (s *Service) flightpathSegmentCurrentLocked() bool {
 	if segment == nil {
 		return a.VisitId == s.encounterVisit.revision && flightpathScopeBound(a.AcceptanceScope, s.selfGUID, s.encounterVisit.mapID)
 	}
-	receipt := s.flightpathActivation.transferAdoption
-	return segment.ParentLeaseRequired && segment.VisitId == s.encounterVisit.revision &&
-		flightpathScopeBound(segment.SourceScope, s.selfGUID, s.encounterVisit.mapID) &&
-		s.flightpathTransferBookingMatchesLocked(receipt) && receipt.ToVisitRevision == segment.VisitId &&
-		segment.WorldAdoptionRevision == receipt.Revision && segment.WorldTransferRevision == receipt.Transfer.Revision &&
-		segment.CoreTransferRevision == receipt.Transfer.Core.Revision &&
-		proto.Equal(segment.SourceScope, receipt.Transfer.CurrentScope)
+	return s.flightpathSegmentAssociatedLocked() && segment.VisitId == s.encounterVisit.revision &&
+		flightpathScopeBound(segment.SourceScope, s.selfGUID, s.encounterVisit.mapID)
 }
 
 // After adoption, use the exact new source instead of comparing revision
@@ -140,6 +185,7 @@ func (s *Service) consumeFlightpathTransferLocked(r *actionsv1.AdoptFlightpathTr
 		return false
 	}
 	f.transferAdoption = proto.Clone(c.TransferAdoption).(*worldv1.SplineTransferAdoption)
+	f.transferBooking = op.Revision
 	op.CurrentSegment = &actionsv1.FlightpathCurrentSegment{VisitId: r.VisitId,
 		SourceScope:           cloneFlightpathScope(c.TransferAdoption.Transfer.CurrentScope),
 		WorldAdoptionRevision: c.TransferAdoption.Revision, WorldTransferRevision: r.WorldTransferRevision,
@@ -150,6 +196,7 @@ func (s *Service) consumeFlightpathTransferLocked(r *actionsv1.AdoptFlightpathTr
 	}
 	f.transferAttempt.Phase, f.transferAttempt.Error = "adopted", ""
 	f.transferResult = s.flightpathObservationLocked()
+	f.archiveTransferResult()
 	return true
 }
 
@@ -159,7 +206,7 @@ func (s *Service) consumeFlightpathTransferLocked(r *actionsv1.AdoptFlightpathTr
 func (s *Service) reconcileFlightpathTransferLocked(ctx context.Context) {
 	f := &s.flightpathActivation
 	if !f.transferInvoked || f.transferRequest == nil || f.transferResult != nil || f.transferActivation == nil ||
-		!s.flightpathAcceptedOriginalLocked(f.transferRequest.ActivationRevision) || f.operation.CurrentSegment != nil ||
+		!s.flightpathAcceptedOriginalLocked(f.transferRequest.ActivationRevision) ||
 		!proto.Equal(f.operation, f.transferActivation) || ctx.Err() != nil {
 		return
 	}
@@ -187,29 +234,50 @@ func (s *Service) AdoptFlightpathTransfer(ctx context.Context, request *actionsv
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f := &s.flightpathActivation
+	for _, old := range f.transferHistory {
+		if proto.Equal(old.request, r) {
+			return proto.Clone(old.result).(*actionsv1.FlightpathObservationResponse), nil
+		}
+	}
 	if f.transferRequest != nil {
 		if !proto.Equal(f.transferRequest, r) {
-			if f.transferInvoked || f.transferAttempt.GetPhase() != "not_invoked" {
+			if f.transferResult == nil || f.transferAttempt.GetPhase() != "not_invoked" && f.transferAttempt.GetPhase() != "adopted" {
 				return nil, status.Error(codes.Aborted, "another flightpath transfer request is retained")
+			}
+			if f.transferAttempt.GetPhase() == "adopted" && r.VisitId <= f.operation.GetCurrentSegment().GetVisitId() {
+				return nil, status.Error(codes.Aborted, "request does not identify a later adjacent handoff")
 			}
 		} else if f.transferResult != nil {
 			return proto.Clone(f.transferResult).(*actionsv1.FlightpathObservationResponse), nil
 		}
 	}
 	if !s.flightpathAcceptedOriginalLocked(r.ActivationRevision) || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID ||
-		!s.encounterVisit.bound || r.VisitId != s.encounterVisit.revision || f.operation.CurrentSegment != nil {
-		return nil, status.Error(codes.FailedPrecondition, "original known accepted booking and current unadopted body visit required")
+		!s.encounterVisit.bound || r.VisitId != s.encounterVisit.revision {
+		return nil, status.Error(codes.FailedPrecondition, "original known accepted booking and current body visit required")
+	}
+	from := f.operation.VisitId
+	if segment := f.operation.CurrentSegment; segment != nil {
+		if !s.flightpathSegmentAssociatedLocked() {
+			return nil, status.Error(codes.FailedPrecondition, "current booking segment association is unavailable")
+		}
+		from = segment.VisitId
+	}
+	if from == math.MaxUint64 || r.VisitId != from+1 {
+		return nil, status.Error(codes.FailedPrecondition, "exact next adjacent booking visit required")
 	}
 	if f.transferRequest != nil && !proto.Equal(f.transferRequest, r) {
-		// Only known-zero-call metadata may be superseded by a new explicit
-		// coherent request. An attempted World mutation never enters this path.
+		// A settled attempt is historical. Preserve its exact result while the
+		// current binding remains the predecessor of the new explicit edge.
+		f.archiveTransferResult()
 		f.transferRequest, f.transferResult, f.transferAttempt, f.transferActivation = nil, nil, nil, nil
+		f.transferInvoked = false
 	}
 	notInvoked := func(reason string) (*actionsv1.FlightpathObservationResponse, error) {
 		f.transferRequest = r
 		f.transferAttempt = &actionsv1.FlightpathTransferAttempt{Request: proto.Clone(r).(*actionsv1.AdoptFlightpathTransferRequest),
 			Phase: "not_invoked", Error: boundedPolicyDiagnostic(reason, 240)}
 		f.transferResult = s.flightpathObservationLocked()
+		f.archiveTransferResult()
 		return proto.Clone(f.transferResult).(*actionsv1.FlightpathObservationResponse), nil
 	}
 	op := f.operation
@@ -234,7 +302,7 @@ func (s *Service) AdoptFlightpathTransfer(ctx context.Context, request *actionsv
 		}
 		return nil, status.Error(codes.FailedPrecondition, "World completion transfer slot unavailable")
 	}
-	if c.TransferAdoption == nil {
+	if !flightpathTransferRequestMatchesReceipt(r, c.TransferAdoption) {
 		if f.transferInvoked {
 			return nil, status.Error(codes.FailedPrecondition, "World transfer adoption outcome remains unconfirmed; no retry")
 		}

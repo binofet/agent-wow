@@ -34,7 +34,9 @@ func transferPolicyAdjacent(p *settlementPolicyFixture, old *worldv1.SplineCompl
 	t := p.f.t
 	t.Helper()
 	from := old.TransportScope
-	edge := &modv1.ObservedWorldTransfer{Revision: 1, Phase: "pending", ConnectionId: from.ConnectionId,
+	fromWorldVisit := p.f.base.x.f.world.VisitRevision
+	nextSplineID := from.SplineId + 1
+	edge := &modv1.ObservedWorldTransfer{Revision: from.GetWorldTransfer().GetRevision() + 1, Phase: "pending", ConnectionId: from.ConnectionId,
 		SelfGuid: from.SelfGuid, FromVisitRevision: from.VisitRevision, FromMapId: from.MapId,
 		FromMotionRevision: from.MotionRevision, FromSplineIdKnown: from.SplineIdKnown, FromSplineId: from.SplineId,
 		FromSplineRevision: from.SplineRevision, FromSplineSourceRevision: from.SplineSourceRevision,
@@ -53,7 +55,7 @@ func transferPolicyAdjacent(p *settlementPolicyFixture, old *worldv1.SplineCompl
 		t.Fatal("pending boundary changed the old receipt or invented continuation")
 	}
 	entry := proto.Clone(edge).(*modv1.ObservedWorldTransfer)
-	entry.Revision, entry.Phase, entry.Known = 3, "ack_written", true
+	entry.Revision, entry.Phase, entry.Known = edge.Revision+2, "ack_written", true
 	entry.ToVisitRevision, entry.ToMapId = from.VisitRevision+1, 0
 	entry.EntryMotionRevision = p.scope.MotionRevision + 1
 	entry.WorldportAckMotionRevision = entry.EntryMotionRevision + 1
@@ -64,7 +66,7 @@ func transferPolicyAdjacent(p *settlementPolicyFixture, old *worldv1.SplineCompl
 	p.scope.MotionRevision++ // Separate post-entry automatic ACK barrier.
 	transferPolicyPacket(p, opcode.SMSGNewWorld,
 		settlementPolicyFloats(binary.LittleEndian.AppendUint32(nil, 0), 0, 0, 0, 0))
-	if w := p.f.base.x.f.world; w.VisitRevision != 2 || w.WorldTransfer.Core.ToVisitRevision != 10 ||
+	if w := p.f.base.x.f.world; w.VisitRevision != fromWorldVisit+1 || w.WorldTransfer.Core.ToVisitRevision != from.VisitRevision+1 ||
 		w.WorldTransfer.ContinuationKnown || w.SelfMovementFacts.Known {
 		t.Fatal("entry conflated World/Core visits or reused old source facts", w)
 	}
@@ -91,13 +93,13 @@ func transferPolicyAdjacent(p *settlementPolicyFixture, old *worldv1.SplineCompl
 	transferPolicyPacket(p, opcode.SMSGUpdateObject, npc)
 	spline := []byte{1, 1, 0}
 	spline = settlementPolicyFloats(spline, 0, 0, 0)
-	spline = binary.LittleEndian.AppendUint32(spline, 1) // Distinct advertised spline ID.
+	spline = binary.LittleEndian.AppendUint32(spline, nextSplineID) // Distinct advertised spline ID.
 	spline = append(spline, 0)
 	spline = binary.LittleEndian.AppendUint32(spline, 0x2000)
 	spline = binary.LittleEndian.AppendUint32(spline, 1)
 	spline = binary.LittleEndian.AppendUint32(spline, 2)
 	spline = settlementPolicyFloats(spline, 0, 0, 0, float32(p.destination.X), float32(p.destination.Y), float32(p.destination.Z))
-	p.scope.SplineIdKnown, p.scope.SplineId, p.scope.SplineActive = true, 1, true
+	p.scope.SplineIdKnown, p.scope.SplineId, p.scope.SplineActive = true, nextSplineID, true
 	p.scope.SplineRevision++
 	p.scope.SplineSourceRevision, p.scope.SplineSourceOpcode = p.scope.MotionRevision+1, opcode.SMSGMonsterMove
 	transferPolicyPacket(p, opcode.SMSGMonsterMove, spline)

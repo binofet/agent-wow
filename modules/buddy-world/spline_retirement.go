@@ -69,6 +69,15 @@ func (s *Service) RetireSplineCompletion(_ context.Context, req *worldv1.RetireS
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := &s.completion
+	// Retirement's expected CAS is the operation's reservation revision;
+	// the archived Complete request expected the immediately preceding CAS.
+	if req.ExpectedRevision != 0 {
+		if old, ok := c.completionArchive[req.ExpectedRevision-1]; ok && old.retirementRequest != nil && proto.Equal(old.retirementRequest, req) {
+			r := completionBoundObservation(old.operation)
+			r.Revision = old.operation.RetirementRevision
+			return r, nil
+		}
+	}
 	if c.retirementRequest != nil && proto.Equal(c.retirementRequest, req) {
 		return s.completionSnapshotLocked(), nil
 	}

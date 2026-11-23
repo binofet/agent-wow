@@ -137,7 +137,7 @@ local function adopted_segment(w,op,frame,request,expected)
     local segment=op.currentSegment;local receipt=(w.splineCompletion or {}).transferAdoption
     if type(segment)~="table" or type(receipt)~="table" or not identifier(segment.worldAdoptionRevision) or
        segment.worldAdoptionRevision~=receipt.revision or receipt.selfGuid~=frame.request.selfGuid or
-       receipt.fromVisitRevision~=frame.request.visitId or receipt.toVisitRevision~=w.visitRevision or
+       receipt.fromVisitRevision~=(frame.currentVisitId or frame.request.visitId) or receipt.toVisitRevision~=w.visitRevision or
        segment.visitId~=w.visitRevision or segment.parentLeaseRequired~=true then return end
     local edge=receipt.transfer or {};local core=edge.core or {}
     if edge.known~=true or edge.continuationKnown~=true or edge.predecessorQualified~=true or
@@ -154,10 +154,16 @@ end
 local function propose_adoption(context,frame,op,w,previous)
     local edge=w.worldTransfer or {};local core=edge.core or {};local old=edge.predecessorCompletion or {}
     local a=w.selfMotionAuthority or {};local c=w.splineCompletion or {}
-    if M.tuning.adopt_transfers~=true or op.currentSegment~=nil or op.pending~=true or op.activationAccepted~=true or
+    local current=op.currentSegment
+    local prior=frame.currentSource
+    if prior then
+        if not current or current.visitId~=frame.currentVisitId or current.worldAdoptionRevision~=frame.adoptionRevision or
+           not same(current.sourceScope,prior) then return tasks.await(context,"waiting_for_current_booking_segment") end
+    elseif current~=nil then return tasks.await(context,"waiting_for_current_booking_segment") end
+    if M.tuning.adopt_transfers~=true or op.pending~=true or op.activationAccepted~=true or
        op.replyKnown~=true or (op.replyCode or 0)~=0 or not op.acceptanceScope or edge.known~=true or
        (context.observations.flightpath or {}).visitId~=w.visitRevision or
-       edge.continuationKnown~=true or edge.predecessorQualified~=true or edge.fromVisitRevision~=frame.request.visitId or
+       edge.continuationKnown~=true or edge.predecessorQualified~=true or edge.fromVisitRevision~=(frame.currentVisitId or frame.request.visitId) or
        edge.toVisitRevision~=w.visitRevision or edge.selfGuid~=frame.request.selfGuid or a.known~=true or
        not same(edge.currentScope,a.transportScope) or not identifier(edge.revision) or not identifier(core.revision) or
        not frame.completion or not complete_match(old,frame.completion,frame.completionRevision) or
@@ -201,7 +207,6 @@ local function progress(context,frame,flight,op)
         frame.effect=nil;frame.stage="flight"
     end
     if w.visitRevision~=(frame.currentVisitId or frame.request.visitId) then
-        if frame.currentVisitId then return tasks.await(context,"additional_transfer_history_unavailable") end
         if frame.waiting then return tasks.await(context,"waiting_for_previous_flight_effect") end
         return propose_adoption(context,frame,op,w)
     end

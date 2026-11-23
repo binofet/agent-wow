@@ -44,6 +44,10 @@ func (s *Service) splineTransferAdoptionWitnessLocked(req *worldv1.AdoptSplineTr
 	return w, true
 }
 
+func transferBoundObservation(a *worldv1.SplineTransferAdoption) *worldv1.SplineCompletionObservation {
+	return &worldv1.SplineCompletionObservation{SelfGuid: a.SelfGuid, VisitRevision: a.ToVisitRevision, Revision: a.Revision, TransferAdoption: proto.Clone(a).(*worldv1.SplineTransferAdoption)}
+}
+
 // AdoptSplineTransfer changes only the active native reservation context. It
 // retains the original report exactly, including Pending/TransportUnknown and
 // its consumed key. Actions owns associating this mechanism with a booking.
@@ -62,10 +66,13 @@ func (s *Service) AdoptSplineTransfer(ctx context.Context, request *worldv1.Adop
 	}
 	c := &s.completion
 	if c.transferRequest != nil && proto.Equal(req, c.transferRequest) {
-		return s.completionSnapshotLocked(), nil
+		if s.splineTransferAdoptionCurrentLocked(s.now()) {
+			return s.completionSnapshotLocked(), nil
+		}
+		return transferBoundObservation(c.transferAdoption), nil
 	}
-	if c.transferAdoption != nil {
-		return nil, status.Error(codes.FailedPrecondition, "a different adjacent handoff cannot replace retained predecessor history")
+	if old, ok := c.transferArchive[req.ExpectedRevision]; ok && proto.Equal(old.request, req) {
+		return transferBoundObservation(old.adoption), nil
 	}
 	if c.revision == ^uint64(0) {
 		return nil, status.Error(codes.ResourceExhausted, "completion revision exhausted")
@@ -73,6 +80,16 @@ func (s *Service) AdoptSplineTransfer(ctx context.Context, request *worldv1.Adop
 	w, ok := s.splineTransferAdoptionWitnessLocked(req, s.now())
 	if !ok {
 		return nil, status.Error(codes.FailedPrecondition, "exact current adjacent transfer and completed predecessor dispatch are unavailable")
+	}
+	// Archive both exact RPC identities before replacing the latest handoff.
+	// Snapshot stays bounded to the latest receipt; replay protection and old
+	// unknown outcomes remain retained for the lifetime of this service.
+	c.archiveOperation()
+	if c.transferRequest != nil {
+		if c.transferArchive == nil {
+			c.transferArchive = make(map[uint64]splineTransferRecord)
+		}
+		c.transferArchive[c.transferRequest.ExpectedRevision] = splineTransferRecord{c.transferRequest, c.transferAdoption}
 	}
 	c.revision++
 	c.transferRequest = req

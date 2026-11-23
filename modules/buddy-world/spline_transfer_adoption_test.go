@@ -116,7 +116,7 @@ func TestAdoptSplineTransferExactRetryIsDetachedAndDifferentHandoffCannotReplace
 		t.Fatal("harmless current-scope advancement invalidated same-source handoff", fresh, err)
 	}
 	replay, err = x.s.AdoptSplineTransfer(context.Background(), original)
-	if err != nil || replay.Revision != 3 || replay.TransferAdoptionCurrent || !proto.Equal(expected, replay.TransferAdoption) || len(x.f.packets) != 2 {
+	if err != nil || replay.SelfGuid != expected.SelfGuid || replay.VisitRevision != expected.ToVisitRevision || replay.Revision != expected.Revision || replay.Operation != nil || replay.RetirementAvailable || replay.RetirementCurrent || replay.TransferAdoptionCurrent || !proto.Equal(expected, replay.TransferAdoption) || len(x.f.packets) != 2 {
 		t.Fatal("historical handoff retry replayed a consumed grant", replay, err)
 	}
 }
