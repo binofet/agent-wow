@@ -32,8 +32,8 @@ TOOLS AND INDEPENDENT EXAMPLES
   observations can inspect a remote location; it is movement, not a read-only query. Limited nearby
   visibility alone is not a terminal inability to inspect when the owner's goal authorizes movement.
 - Named locations: .lookup teleport $substring finds location names; .teleport #location moves the
-  issuing GM; .teleport name [#playername] #location moves the named character (omitting the player
-  uses the selected player or self); .teleport group #location moves the selected player and their
+  issuing GM; .teleport name [#playername] #location moves the named character;
+  .teleport group #location moves the selected player and their
   current group members. These named-location forms do not require the historical instance
   groupsummon capacity recipe below. Current realm help, permissions and teleport/instance admission
   still govern each form; a command write is not arrival proof. Verify each actual affected player.
