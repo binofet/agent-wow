@@ -184,6 +184,16 @@ class FlightpathParentRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runner.data['phase'], 'flight_parent_binding_unavailable')
         self.assertEqual(self.rpc.count('buddy-actions.acquire_idle_interaction'), 0)
 
+    def test_new_task_does_not_adopt_an_existing_native_booking(self):
+        self.rpc.flight['activation'] = dict(pending=True, activationAccepted=True, replyKnown=True,
+                                              revision='3', phase='accepted_unsettled')
+        original = copy.deepcopy(self.rpc.flight['activation'])
+        for _ in range(3): self.runner.tick()
+        self.assertEqual(self.runner.data['phase'], 'flight_parent_existing_booking_requires_its_owner')
+        self.assertEqual(self.rpc.flight['activation'], original)
+        self.assertEqual(self.rpc.count('buddy-actions.acquire_idle_interaction'), 0)
+        self.assertEqual(self.rpc.count('buddy-actions.activate_flightpath'), 0)
+
     def test_unbooked_same_map_visit_replacement_preserves_old_task_and_custody(self):
         self.until('buddy-actions.flightpath_reference')
         before = copy.deepcopy(self.runner.data['memory'])

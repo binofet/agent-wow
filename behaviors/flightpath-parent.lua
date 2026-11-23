@@ -103,6 +103,9 @@ function M.decide(state)
         if memory.stack and #memory.stack>0 or #(state.pending or {})>0 then
             return tasks.await(context,"flight_parent_existing_task_requires_its_owner")
         end
+        if (f.activation or {}).pending==true then
+            return tasks.await(context,"flight_parent_existing_booking_requires_its_owner")
+        end
         if type(goal.id)~="string" or goal.id=="" or not uint(params.destinationNode) or params.destinationNode==0 or
            type(params.acceptUnknownFare)~="boolean" then return tasks.await(context,"flight_parent_explicit_goal_required") end
         p={sessionId=b.sessionId,selfGuid=b.selfGuid,visitId=w.visitRevision,goalId=goal.id,destination=params.destinationNode,
