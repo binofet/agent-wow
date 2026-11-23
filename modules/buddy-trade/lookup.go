@@ -189,6 +189,9 @@ func parseLookupItem(data []byte) (*tradev1.ItemDetails, error) {
 		comparisonKnown = comparisonKnown && tail[i] == 0
 	}
 	item.ArmorComparisonKnown = comparisonKnown && bonding <= 2 && prefix[18] == 0 && prefix[19] == 1
+	// Keep the deployed shared-gear coverage flag for weapons as well as
+	// armor. The additive roll contract also reflects explicit weapon coverage.
+	item.WeaponComparisonKnown = meta.class == 2 && item.ArmorComparisonKnown
 	item.RawTemplateFacts = &tradev1.RawTemplateFacts{
 		ContainerSlots: meta.containerSlots,
 		Bonding:        meta.bonding,

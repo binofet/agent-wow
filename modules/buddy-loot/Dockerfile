@@ -6,6 +6,7 @@ COPY api ./api
 COPY pkg ./pkg
 COPY modules/buddy-world/api ./modules/buddy-world/api
 COPY modules/buddy-actions/api ./modules/buddy-actions/api
+COPY modules/buddy-party/api ./modules/buddy-party/api
 COPY modules/buddy-loot ./modules/buddy-loot
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /buddy-loot ./modules/buddy-loot/cmd
 FROM scratch

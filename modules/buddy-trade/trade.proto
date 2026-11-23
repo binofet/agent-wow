@@ -135,6 +135,8 @@ message ItemDetails {
   // Full normal query proves otherwise unrepresented armor/weapon properties empty.
   // False is unknown/unsupported, never a zero-resistance comparison claim.
   bool armor_comparison_known = 30;
+  // Full normal query proves otherwise unrepresented weapon properties empty.
+  bool weapon_comparison_known = 31;
   RawTemplateFacts raw_template_facts = 32;
 }
 message LookupItemsRequest { repeated uint32 item_ids = 1; }
