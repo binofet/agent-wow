@@ -1,5 +1,6 @@
 -- Ordered GM recovery policy. The host owns identity-bound transport and durable
 -- reservations; a sent command never substitutes for an observed game effect.
+local policy={transportUnobservedGuids={}}
 local function num(v) return tonumber(v) end
 local function same(a,b) return tostring(a or "") == tostring(b or "") end
 local function finite(v) local n=num(v); return n and n==n and n-n==0 end
@@ -34,6 +35,35 @@ local function roster(m,without,withGM)
     local ids={}; for _,p in ipairs(m.members) do if not same(p.guid,without) then ids[#ids+1]=p.guid end end
     if withGM then ids[#ids+1]="87" end
     return ids
+end
+local function unobserved_transport(m,obs,member,p,originalParty)
+    local explicit=false
+    for _,guid in ipairs(policy.transportUnobservedGuids or {}) do
+        if same(guid,member.guid) then explicit=true;break end
+    end
+    if not explicit or member.rpcUrl or p.visibleToGm~=false or p.inCombat==true then return false end
+    local group=obs.group or {}
+    local current=find(group.members,member.guid)
+    if group.known~=true or group.inGroup~=true or not current or
+        current.name~=member.name or current.online~=true then return false end
+    if originalParty and not group_matches(group,roster(m),m.originalLeader) then return false end
+    return true
+end
+local function departure_still_admitted(m,obs,without)
+    for guid in pairs(m.unobservedTransport or {}) do
+        if not same(guid,without) then
+            local member=find(m.members,guid)
+            if not member then return false,tostring(guid) end
+            local p=find(obs.members,guid) or {}
+            local group=obs.group or {};local current=find(group.members,guid)
+            if group.known~=true or group.inGroup~=true or not current or
+                current.name~=member.name or current.online~=true then return false,member.name end
+            -- A fresh observed combat-free member no longer needs the exception.
+            if not (p.combatKnown==true and p.inCombat==false) and
+                not unobserved_transport(m,obs,member,p,false) then return false,member.name end
+        end
+    end
+    return true
 end
 local function target(m,obs)
     if m.destination then return m.destination end
@@ -115,6 +145,10 @@ local function move_command(m)
 end
 local function initialize(frame)
     local g,obs=frame.goal or {},frame.observations or {}
+    if type(g)~="table" then return nil,"goal_object_required" end
+    if g.id and type(g.id)~="string" and type(g.id)~="number" then return nil,"invalid_task_id" end
+    if g.hostileFactions and type(g.hostileFactions)~="table" or
+       g.friendlyFactions and type(g.friendlyFactions)~="table" then return nil,"invalid_task_tuning" end
     local gm=obs.gm or {}
     if not same(gm.guid,"87") or type(gm.sessionId)~="string" or gm.sessionId=="" then
         return nil,"verified_lotharen_session_required"
@@ -127,7 +161,7 @@ local function initialize(frame)
     if g.destination then
         m.destination=g.destination
         if not pose(m.destination) and type(m.destination)=="table" then m.destination.positionKnown=true end
-        if not pose(m.destination) or num(m.destination.mapId)%1~=0 or num(m.destination.mapId)<0 then return nil,"invalid_destination" end
+        if not pose(m.destination) or not finite(m.destination.mapId) or num(m.destination.mapId)%1~=0 or num(m.destination.mapId)<0 then return nil,"invalid_destination" end
         m.tolerance=num(m.destination.tolerance) or 7
     elseif g.player and name(g.player.name) and num(g.player.guid) and num(g.player.guid)>0 then
         m.player=g.player;m.tolerance=num(g.player.tolerance) or 7
@@ -240,7 +274,14 @@ local function decide(frame)
                 local quiet=p.combatKnown==true and p.inCombat==false
                 if m.waiting then out=wait_effect(m,frame,quiet,stage);if out then return out end end
                 if quiet then m.stopIndex=m.stopIndex+1
-                elseif p.combatKnown~=true then return result(m,"observing_combat_"..member.name,"combat_state_unknown:"..member.name)
+                elseif p.combatKnown~=true then
+                    if unobserved_transport(m,obs,member,p,true) then
+                        -- This is permission to depart, not observed life,
+                        -- combat clearance, arrival or a settled prior write.
+                        m.unobservedTransport=m.unobservedTransport or {}
+                        m.unobservedTransport[member.guid]=true
+                        m.stopIndex=m.stopIndex+1
+                    else return result(m,"observing_combat_"..member.name,"combat_state_unknown:"..member.name) end
                 else return command("combatstop_"..member.name,".combatstop "..member.name) end
             end
         elseif stage=="remove_displaced" then
@@ -258,7 +299,11 @@ local function decide(frame)
         elseif stage=="summon_first" then
             out=effect(colocated(m.displaced and m.displaced.guid),m.displaced and "remove_swap" or "restore_leader")
             if out then return out end
-            if m.stage==stage then return command(stage,".groupsummon "..m.leader.name) end
+            if m.stage==stage then
+                local admitted,who=departure_still_admitted(m,obs,m.displaced and m.displaced.guid)
+                if not admitted then return result(m,"blocked_departure","unobserved_transport_not_admitted:"..who) end
+                return command(stage,".groupsummon "..m.leader.name)
+            end
         elseif stage=="remove_swap" then
             local ids={};for _,id in ipairs(roster(m,m.displaced.guid,true)) do if not same(id,m.swap.guid) then ids[#ids+1]=id end end
             out=effect(group_matches(obs.group,ids,"87"),"join_displaced")
@@ -271,7 +316,11 @@ local function decide(frame)
         elseif stage=="summon_second" then
             out=effect(colocated(),"restore_leader")
             if out then return out end
-            if m.stage==stage then return command(stage,".groupsummon "..m.leader.name) end
+            if m.stage==stage then
+                local admitted,who=departure_still_admitted(m,obs)
+                if not admitted then return result(m,"blocked_departure","unobserved_transport_not_admitted:"..who) end
+                return command(stage,".groupsummon "..m.leader.name)
+            end
         elseif stage=="restore_leader" then
             out=effect(group_matches(obs.group,roster(m,m.swap and m.swap.guid,true),m.originalLeader),"remove_gm")
             if out then return out end
@@ -344,4 +393,12 @@ local function decide(frame)
     end
     return result(m,"local_transitions")
 end
-return {decide=decide}
+-- The same initializer admits a fresh goal before the host can claim a writer
+-- or install holds. This pure entry never advances the FSM or proposes actions.
+policy.admit=function(frame)
+    local m,err=initialize(frame)
+    if not m then return {accepted=false,error=err} end
+    return {accepted=true}
+end
+policy.decide=decide
+return policy

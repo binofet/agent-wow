@@ -196,6 +196,8 @@ class PersistentListenerTests(unittest.TestCase):
                 def model_selection(self):return {'requestedModel':self.model,'requestedReasoningEffort':self.reasoning_effort}
             class FakeLoop:
                 def __init__(self,*args,**kwargs):self.replies=0;self.ticks=0;instances.append(self)
+                def status_identity(self):
+                    return dict(coreSessionId=None,coreCharacterGuid=None,chatSessionId=None)
                 def tick(self):
                     self.ticks+=1
                     if cap=='replies':self.replies=1

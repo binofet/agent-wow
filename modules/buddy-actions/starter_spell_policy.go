@@ -258,6 +258,10 @@ func (s *Service) starterSelectionDecisionLocked(ctx context.Context, w *worldv1
 		return starterSpellDecision{}
 	}
 	output := s.starterSpells.decide(ctx, input, s.behavior)
+	if !s.fargodeepSelectionRevisionLocked(ctx) {
+		s.starterSpells.lastError = "Fargodeep policy revision changed after readiness"
+		return starterSpellDecision{}
+	}
 	var selected struct {
 		Kind    string `json:"kind"`
 		SpellID uint32 `json:"spellId"`

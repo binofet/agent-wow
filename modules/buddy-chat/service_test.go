@@ -196,6 +196,14 @@ func TestModuleManifestAndDescriptorLoad(t *testing.T) {
 			t.Fatalf("missing public method %q", alias)
 		}
 	}
+	for _, method := range registry.Catalog().Methods {
+		if method.Name == "buddy-chat.poll" && (method.Effect != moddisc.EffectRead ||
+			method.Path != "/warcraftbuddy.chat.v1.BuddyChat/Poll" ||
+			method.InputType != "buddy-chat::warcraftbuddy.chat.v1.PollRequest" ||
+			method.OutputType != "buddy-chat::warcraftbuddy.chat.v1.PollResponse") {
+			t.Fatalf("Poll must advertise its exact pure-read contract: %+v", method)
+		}
+	}
 	if _, ok := definition.Packet(uint16(opcode.SMSGMessagechat)); !ok {
 		t.Fatal("chat packet handler contract was not installed")
 	}

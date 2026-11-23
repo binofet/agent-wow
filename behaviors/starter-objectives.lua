@@ -1,6 +1,7 @@
 -- Starter mission objectives and practice lifecycle. The caller owns observed
 -- facts, exact native toggles, durable mutation reservations and receipt custody.
 local M = {}
+M.fargodeep_pull={minimum_health=95, minimum_mana=45, minimum_energy=90}
 local function array(v,max)
     if type(v)~="table" or #v>max then return false end
     local n=0
@@ -31,6 +32,45 @@ local function number(v) return type(v)=="number" and v-v==0 and math.abs(v)<=90
 local function wait(phase) return {kind="wait",phase=phase} end
 local function ready(choice) return {status="ready",choice=choice} end
 local function invalid() return {status="invalid"} end
+local function fargodeep_readiness(input)
+    local selection="fargodeep_pull_readiness"
+    local hold={kind="wait",spellId=0,selection=selection}
+    local function uint(value)
+        return type(value)=="number" and value>=0 and value<=4294967295 and value%1==0
+    end
+    local function session(value) return type(value)=="string" and #value>0 and #value<=128 end
+    if type(input)~="table" or not session(input.sessionId) or
+       (input.selfGuid~="1" and input.selfGuid~="4" and input.selfGuid~="5") or
+       type(input.autoAttackKnown)~="boolean" then return hold end
+    local obs,mission=input.observation,input.mission
+    if type(obs)~="table" or obs.sessionId~=input.sessionId or obs.selfGuid~=input.selfGuid or
+       not decimal(obs.visitId) or type(obs.players)~="table" or
+       type(mission)~="table" or not session(mission.partySessionId) or
+       not decimal(mission.targetGuid) or mission.targetGuid=="0" or
+       (mission.engagerGuid~="1" and mission.engagerGuid~="4" and mission.engagerGuid~="5") then return hold end
+    local tuning=M.fargodeep_pull
+    if type(tuning)~="table" or not uint(tuning.minimum_health) or tuning.minimum_health>100 or
+       not uint(tuning.minimum_mana) or tuning.minimum_mana>100 or not uint(tuning.minimum_energy) then return hold end
+    for _,member in ipairs({{guid="1",class=5},{guid="4",class=8},{guid="5",class=4}}) do
+        local player=obs.players[member.guid]
+        if type(player)~="table" or player.guid~=member.guid or player.classKnown~=true or player.classId~=member.class or
+           player.healthKnown~=true or not uint(player.health) or not uint(player.maxHealth) or
+           player.health==0 or player.maxHealth==0 or player.health>player.maxHealth or
+           player.powerKnown~=true or not uint(player.power) or not uint(player.maxPower) or
+           player.maxPower==0 or player.power>player.maxPower or type(player.baseManaKnown)~="boolean" or
+           not uint(player.baseMana) then return hold end
+        if player.health*100<player.maxHealth*tuning.minimum_health then return hold end
+        if member.class==4 then
+            if player.powerType~=3 or player.power<tuning.minimum_energy then return hold end
+        else
+            if player.powerType~=0 then return hold end
+            local pool=player.baseManaKnown and player.baseMana>0 and player.baseMana or player.maxPower
+            local budget=math.floor((pool*tuning.minimum_mana+99)/100)
+            if player.power<budget then return hold end
+        end
+    end
+    return {kind="ready",spellId=0,selection=selection}
+end
 local function practice(input,active)
     local a=input.actions or {}
     if a.practicing==true then
@@ -107,6 +147,7 @@ local function quest_route(input,active,missing,confirmed,known,level,complete)
 end
 function M.decide(input)
     if type(input)~="table" then return invalid() end
+    if input.selection=="fargodeep_pull_readiness" then return fargodeep_readiness(input) end
     local active,desired,confirmed=ids(input.activeQuestIds,25),ids(input.desiredQuestIds,25),ids(input.confirmedQuestIds,3)
     if not active or not desired or not confirmed or not decimal(input.selfGuid) or type(input.autonomous)~="boolean" then return invalid() end
     local missing,exact={},true

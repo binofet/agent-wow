@@ -16,6 +16,28 @@ class Store:
  def load(self):return self.saved
  def save(self,value):self.saved=json.loads(json.dumps(value))
 
+class TestGMObservationNormalization(unittest.TestCase):
+ def test_known_dead_protojson_omission_with_ghost_health_is_false(self):
+  world=json.loads('{"guid":"3","present":true,"aliveKnown":true,"healthKnown":true,"health":1,"maxHealth":3000}')
+  actual=gm.normalized(world)
+  self.assertIs(actual['aliveKnown'],True);self.assertIs(actual['alive'],False)
+  self.assertEqual((actual['hp'],actual['maxHp'],actual['hpKnown']),(1,3000,True))
+  self.assertNotIn('alive',world)
+ def test_explicit_known_life_values_are_preserved(self):
+  for alive in (True,False):
+   with self.subTest(alive=alive):
+    actual=gm.normalized(dict(aliveKnown=True,alive=alive))
+    self.assertIs(actual['alive'],alive);self.assertIs(actual['aliveKnown'],True)
+ def test_unknown_life_is_not_inferred_from_health_or_omitted_flags(self):
+  for known in ({},{'aliveKnown':False}):
+   for life in ({},{'alive':False},{'alive':True}):
+    with self.subTest(known=known,life=life):
+     actual=gm.normalized(dict(known,**life,health=1,maxHealth=3000))
+     self.assertIsNone(actual['alive']);self.assertIsNot(actual['aliveKnown'],True)
+     self.assertIsNone(actual['hp']);self.assertIsNone(actual['maxHp']);self.assertIs(actual['hpKnown'],False)
+     self.assertIs(actual['combatKnown'],False);self.assertIs(actual['inCombat'],False)
+     self.assertIs(actual['manaKnown'],False);self.assertIsNone(actual['mana'])
+
 class TestGMTaskTransport(unittest.TestCase):
  def rpc(self):
   return types.SimpleNamespace(call=lambda method,params: {'sessionId':'aw-123','selfGuid':'87'} if method=='buddy-actions.status' else {'sessionId':'aw-123'})
@@ -38,7 +60,13 @@ class TestGMTaskTransport(unittest.TestCase):
 
 class TestDirectGMCommands(unittest.TestCase):
  def rpc(self):
-  return types.SimpleNamespace(call=lambda method,params: {'sessionId':'aw-123','selfGuid':'87'})
+  rpc=types.SimpleNamespace(target=0)
+  def read(method,params):
+   if method=='buddy-world.snapshot':return dict(self=dict(guid='87',present=True,mapKnown=True,mapId=349,
+    targetKnown=True,targetGuid=str(rpc.target)),nearbyCreatures=[dict(guid='17379391034147995791',present=True,mapKnown=True,mapId=349)])
+   return {'sessionId':'aw-123','selfGuid':'87'}
+  rpc.call=read
+  return rpc
  def test_selected_command_holds_one_body_writer(self):
   with tempfile.TemporaryDirectory() as folder:
    cfg={'writerRoot':str(Path(folder).resolve())};rpc=self.rpc();events=[]
@@ -46,6 +74,7 @@ class TestDirectGMCommands(unittest.TestCase):
     def __init__(self,*args):pass
     def select(self,guid,sid):
      events.append(('select',guid,sid))
+     rpc.target=int(guid)  # A subsequent World read now observes the exact selection.
      with self_test.assertRaises(gm.runtime.Error):
       gm.execute_command(rpc,cfg,'.appear Joel',expected_session=sid)
     def gm(self,command,sid):events.append(('command',command,sid))
@@ -60,14 +89,19 @@ class TestDirectGMCommands(unittest.TestCase):
     gm.execute_command(self.rpc(),{'writerRoot':str(Path(folder).resolve())},'.modify hp 2349',select_guid='3',expected_session='aw-old')
    transport.assert_not_called()
  def test_body_replacement_after_selection_does_not_send_command(self):
-  calls=0
+  replaced=False
   def read(method,params):
-   nonlocal calls
-   if method=='buddy-actions.status':calls+=1
-   return {'sessionId':'aw-new' if calls>=3 else 'aw-123','selfGuid':'87'}
-  with tempfile.TemporaryDirectory() as folder,patch.object(gm.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stdout=b'grpc-status: 0\r\n')) as run:
-   with self.assertRaisesRegex(ValueError,'body changed'):
-    gm.execute_command(types.SimpleNamespace(call=read),{'writerRoot':str(Path(folder).resolve())},'.damage 4000',select_guid='99',expected_session='aw-123')
+   if method=='buddy-world.snapshot':return dict(self=dict(guid='87',present=True,mapKnown=True,mapId=349,targetKnown=True),
+    nearbyCreatures=[dict(guid='99',present=True,mapKnown=True,mapId=349)])
+   return {'sessionId':'aw-new' if replaced else 'aw-123','selfGuid':'87'}
+  def sent(*args,**kwargs):
+   nonlocal replaced
+   replaced=True
+   return types.SimpleNamespace(returncode=0,stdout=b'grpc-status: 0\r\n')
+  with tempfile.TemporaryDirectory() as folder,patch.object(gm.subprocess,'run',side_effect=sent) as run:
+   result=gm.execute_command(types.SimpleNamespace(call=read),{'writerRoot':str(Path(folder).resolve())},'.damage 4000',select_guid='99',expected_session='aw-123')
+   self.assertTrue(result['selectionTransportWritten']);self.assertFalse(result['commandTransportWritten'])
+   self.assertIn('evidence_unavailable',result['completion'])
    self.assertEqual(run.call_count,1)
  def test_existing_ordered_task_keeps_its_writer(self):
   with tempfile.TemporaryDirectory() as folder,patch.object(gm,'SessionTransport') as transport:
@@ -90,8 +124,91 @@ class TestDirectGMCommands(unittest.TestCase):
    self.assertEqual(json.loads(out.getvalue())['completion'],'effect_not_yet_verified')
 
 class TestGMTaskHost(unittest.TestCase):
+ def unobserved_transport_frame(self):
+  names=[('1','Arlen'),('3','Joel'),('4','Mira'),('5','Rook'),('8','Nixwick')]
+  members=[dict(guid=g,name=n,**({'rpcUrl':'http://127.0.0.1:8086/rpc'}if g!='3'else{}))for g,n in names]
+  rows=[dict(guid=g,name=n,sessionId='body-'+g,positionKnown=True,mapId=349,x=1000,y=0,z=0,
+   visibleToGm=False,aliveKnown=True,alive=False,combatKnown=True,inCombat=False,hp=0,maxHp=100,manaUser=False)for g,n in names]
+  rows[1]=dict(guid='3',name='Joel',known=False,positionKnown=False,visibleToGm=False,aliveKnown=False,combatKnown=False,inCombat=False)
+  return dict(goal=dict(id='same-owner-task',destination=dict(mapId=349,x=10,y=20,z=0),members=members),
+   memory={},last=None,pending=[],now=1,observations=dict(gm=dict(guid='87',sessionId='same-gm',positionKnown=True,mapId=349,x=10,y=20,z=0),
+   members=rows,threats=[],group=dict(known=True,inGroup=True,leaderGuid='1',members=[dict(guid=g,name=n,online=True)for g,n in names])))
+ def evaluate_unobserved_transport(self,frame,guids=None):
+  source=(gm.ROOT/'behaviors/gm-recovery.lua').read_text()
+  if guids is not None:
+   source='local p=(function()\n'+source+'\nend)();p.transportUnobservedGuids='+json.dumps(guids).replace('[','{').replace(']','}')+';return p'
+  binary=os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY',str(gm.ROOT/'data/bin/luapolicy'))
+  return gm.task_bridge(binary,gm.ROOT/'modules').evaluate(source,frame)
+ def test_unobserved_transport_default_blocks_and_explicit_source_resumes_same_memory(self):
+  frame=self.unobserved_transport_frame();goal=json.loads(json.dumps(frame['goal']))
+  blocked=self.evaluate_unobserved_transport(frame)
+  self.assertEqual(blocked['error'],'combat_state_unknown:Joel');self.assertNotIn('action',blocked)
+  frame.update(memory=blocked['memory'],now=2)
+  out=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertEqual(out['action']['command'],'.group remove Nixwick')
+  self.assertEqual(out['memory']['taskId'],blocked['memory']['taskId']);self.assertEqual(frame['goal'],goal)
+  self.assertFalse(frame['observations']['members'][1]['combatKnown']);self.assertFalse(frame['observations']['members'][1]['aliveKnown'])
+  self.assertFalse(out['done']);self.assertNotIn('success',out)
+  self.assertEqual(out['memory']['unobservedTransport'],{'3':True})
+ def test_unobserved_transport_requires_exact_online_original_member_and_offscreen_no_rpc(self):
+  changes=[lambda f:f['observations']['group']['members'][1].update(online=False),
+   lambda f:f['observations']['group']['members'][1].pop('online'),
+   lambda f:f['observations']['group']['members'][1].update(name='Other'),
+   lambda f:f['observations']['group'].update(known=False),
+   lambda f:f['observations']['members'][1].update(visibleToGm=True),
+   lambda f:f['goal']['members'][1].update(rpcUrl='http://127.0.0.1:8089/rpc')]
+  for mutate in changes:
+   with self.subTest(mutate=mutate):
+    frame=self.unobserved_transport_frame();mutate(frame)
+    out=self.evaluate_unobserved_transport(frame,['3'])
+    self.assertNotIn('action',out);self.assertFalse(out['done'])
+  frame=self.unobserved_transport_frame()
+  self.assertNotIn('action',self.evaluate_unobserved_transport(frame,['8']))
+  frame['memory']=self.evaluate_unobserved_transport(frame)['memory']
+  frame['observations']['group']['leaderGuid']='3'
+  self.assertNotIn('action',self.evaluate_unobserved_transport(frame,['3']))
+ def test_unobserved_transport_keeps_known_combat_and_body_fences(self):
+  frame=self.unobserved_transport_frame();frame['observations']['members'][1].update(combatKnown=True,inCombat=True)
+  out=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertEqual(out['action']['command'],'.combatstop Joel')
+  frame.update(memory=out['memory'],last=dict(id=out['action']['id'],outcome='unconfirmed'),now=2)
+  frame['observations']['members'][1]['combatKnown']=False
+  waiting=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertNotIn('action',waiting);self.assertEqual(waiting['memory']['waiting'],out['memory']['waiting'])
+  frame['observations']['gm']['sessionId']='replacement-gm'
+  self.assertEqual(self.evaluate_unobserved_transport(frame,['3'])['error'],'gm_session_changed')
+  frame['observations']['gm']['sessionId']='same-gm';frame['observations']['members'][0]['sessionId']='replacement-arlen'
+  self.assertEqual(self.evaluate_unobserved_transport(frame,['3'])['error'],'member_session_changed:Arlen')
+ def test_unobserved_transport_never_claims_arrival_or_replays_unknown_summon(self):
+  frame=self.unobserved_transport_frame();out=self.evaluate_unobserved_transport(frame,['3'])
+  memory=out['memory'];memory.update(stage='summon_first',waiting=None)
+  group=frame['observations']['group'];group.update(leaderGuid='87')
+  group['members']=[m for m in group['members']if m['guid']!='8']+[dict(guid='87',name='Lotharen',online=True)]
+  frame.update(memory=memory,now=2)
+  summon=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertEqual(summon['action']['command'],'.groupsummon Arlen')
+  frame.update(memory=summon['memory'],last=dict(id=summon['action']['id'],outcome='unconfirmed'),now=3)
+  waiting=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertNotIn('action',waiting);self.assertFalse(waiting['done']);self.assertEqual(waiting['memory']['waiting'],summon['memory']['waiting'])
+  frame['memory'].update(stage='revive',waiting=None)
+  frame['observations']['group']=dict(known=True,inGroup=True,leaderGuid='1',members=[dict(guid=p['guid'],name=p['name'],online=True)for p in frame['goal']['members']])
+  blocked=self.evaluate_unobserved_transport(frame,['3'])
+  self.assertEqual(blocked['error'],'party_left_verified_destination');self.assertNotIn('action',blocked)
+ def test_unobserved_transport_rechecks_online_permission_before_departure(self):
+  for change in ('offline','revoke','quiet_but_offline'):
+   with self.subTest(change=change):
+    frame=self.unobserved_transport_frame();out=self.evaluate_unobserved_transport(frame,['3'])
+    frame['memory']=out['memory'];frame['memory'].update(stage='summon_first',waiting=None)
+    group=frame['observations']['group'];group.update(leaderGuid='87')
+    group['members']=[m for m in group['members']if m['guid']!='8']+[dict(guid='87',name='Lotharen',online=True)]
+    if change in ('offline','quiet_but_offline'):next(p for p in group['members']if p['guid']=='3')['online']=False
+    if change=='quiet_but_offline':frame['observations']['members'][1].update(combatKnown=True,inCombat=False)
+    blocked=self.evaluate_unobserved_transport(frame,[]if change=='revoke'else['3'])
+    self.assertEqual(blocked['error'],'unobserved_transport_not_admitted:Joel');self.assertNotIn('action',blocked)
  def host(self,path,transport=None,bridge=None):
-  return gm.Host(Store(path),Mock(),transport or Mock(),bridge or Mock(),{'id':'test','members':[]},Path(path)/'policy.lua',Path(path)/'hold.lua')
+  h=gm.Host(Store(path),Mock(),transport or Mock(),bridge or Mock(),{'id':'test','members':[]},Path(path)/'policy.lua',Path(path)/'hold.lua')
+  h.admission=Mock(return_value=None) # These existing executor fixtures isolate post-admission custody.
+  return h
  def test_reservation_persisted_before_write_and_not_replayed(self):
   with tempfile.TemporaryDirectory() as folder:
    h=self.host(folder);action={'id':'test:1','kind':'gm_command','command':'.revive Joel'}
@@ -151,7 +268,7 @@ class TestGMTaskHost(unittest.TestCase):
     if refusal=='foreign_writer':
      with writer:gm.claim_writer(writer,root/'other-task')
      writer_before=(writer.folder/'state.json').read_bytes()
-    with patch.object(gm,'task_rpc',return_value=rpc),patch.object(gm,'SessionTransport'),patch.object(gm,'task_bridge'),patch.object(gm.Host,'run') as run:
+    with patch.object(gm,'task_rpc',return_value=rpc),patch.object(gm,'SessionTransport'),patch.object(gm,'task_bridge'),patch.object(gm.Host,'admission',return_value=None),patch.object(gm.Host,'run') as run:
      with self.assertRaisesRegex(ValueError,{'changed_goal':'explicit task goal','changed_body':'another GM body','foreign_writer':'already owns'}[refusal]):
       gm.main(['run','--state-dir',str(state),'--goal',str(goal_path),'--transport',str(transport),'--rpc-url','http://127.0.0.1:8090/rpc'])
     run.assert_not_called()

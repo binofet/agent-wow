@@ -1,0 +1,629 @@
+package buddyactions
+
+import (
+	"context"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"reflect"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/agent-wow/agent-wow/behaviors"
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
+)
+
+const fargodeepReadinessTestSelection = "fargodeep_pull_readiness"
+
+func fargodeepReadinessRig(t *testing.T, guid uint64) (*Service, *fakeSession, *worldv1.CreatureState, *actionsv1.FargodeepEncounterRequest, func(time.Duration)) {
+	t.Helper()
+	s, f, target, request, advance := fargodeepRig(t, guid)
+	// Use the existing actual-source semantic rig and a concrete connected body.
+	// The separate production CLI/watchdog checks retain their normal budgets.
+	s.sessionID = request.SessionId
+	f.world.VisitRevision, f.world.ObservedPackets = 7, 11
+	request.EngagerGuid = guid
+	return s, f, target, request, advance
+}
+
+func fargodeepReadinessPlayer(t *testing.T, f *fakeSession, guid uint64) *worldv1.PlayerState {
+	t.Helper()
+	if f.world.Self.Guid == guid {
+		return f.world.Self
+	}
+	for _, player := range f.world.NearbyPlayers {
+		if player.Guid == guid {
+			return player
+		}
+	}
+	t.Fatalf("missing actual party fixture player %d", guid)
+	return nil
+}
+
+func requireFargodeepReadinessFrame(t *testing.T, input map[string]any, s *Service, request *actionsv1.FargodeepEncounterRequest) {
+	t.Helper()
+	observation, observed := input["observation"].(map[string]any)
+	mission, bound := input["mission"].(map[string]any)
+	players, present := observation["players"].(map[string]any)
+	if input["selection"] != fargodeepReadinessTestSelection || input["sessionId"] != s.sessionID ||
+		input["selfGuid"] != fmt.Sprint(s.selfGUID) || !observed || !bound || !present || len(players) != 3 ||
+		mission["partySessionId"] != request.SessionId || mission["targetGuid"] != fmt.Sprint(request.TargetGuid) ||
+		mission["engagerGuid"] != fmt.Sprint(request.EngagerGuid) {
+		t.Fatal("readiness did not use the exact body, mission and three observed players", input)
+	}
+	for _, guid := range []string{"1", "4", "5"} {
+		if _, ok := players[guid].(map[string]any); !ok {
+			t.Fatal("readiness omitted an observed party player", guid, players)
+		}
+	}
+}
+
+func requireNoFargodeepReadinessDispatch(t *testing.T, s *Service, f *fakeSession) {
+	t.Helper()
+	if countPackets(f, opcode.CMSGCastSpell) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 ||
+		countPackets(f, opcode.MSGMoveStartForward) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 ||
+		s.state.AssistAttempts != 0 || s.fargodeep.pulled {
+		t.Fatal("refused readiness dispatched movement/offense or marked a pull", s.stateLocked(), f.packets)
+	}
+}
+
+func requireFargodeepReadinessAttack(t *testing.T, s *Service, f *fakeSession, target uint64) {
+	t.Helper()
+	if countPackets(f, opcode.CMSGAttackswing) != 1 || countPackets(f, opcode.CMSGCastSpell) != 1 ||
+		lastCast(f) != sinisterStrike || s.state.LastCastTargetGuid != target || !s.fargodeep.pulled ||
+		s.state.ServerAssistGo != 0 || s.state.AssistDamageEvents != 0 || s.state.MeleeDamageEvents != 0 {
+		t.Fatal("ready shared policy did not produce the exact ordinary attack without inventing effects", s.stateLocked(), f.packets)
+	}
+	for _, packet := range f.packets {
+		if packet.Opcode == opcode.CMSGAttackswing && (len(packet.Payload) != 8 || binary.LittleEndian.Uint64(packet.Payload) != target) {
+			t.Fatal("ordinary attack did not target the bound observed kobold", packet)
+		}
+	}
+}
+
+func TestFargodeepReadinessLuaDefaultBoundariesReachActualWire(t *testing.T) {
+	type boundary struct {
+		name   string
+		guid   uint64
+		ready  bool
+		change func(*worldv1.PlayerState)
+	}
+	var cases []boundary
+	for _, guid := range []uint64{1, 4, 5} {
+		for _, health := range []uint32{94, 95} {
+			cases = append(cases, boundary{fmt.Sprintf("health/%d/%d", guid, health), guid, health == 95,
+				func(player *worldv1.PlayerState) { player.Health = health }})
+		}
+	}
+	for _, guid := range []uint64{1, 4} {
+		for _, power := range []uint32{57, 58} {
+			cases = append(cases, boundary{fmt.Sprintf("max_power_fallback/%d/%d", guid, power), guid, power == 58,
+				func(player *worldv1.PlayerState) {
+					player.BaseManaKnown, player.BaseMana, player.MaxPower, player.Power = false, 0, 128, power
+				}})
+		}
+		for _, power := range []uint32{45, 46} {
+			cases = append(cases, boundary{fmt.Sprintf("known_base_mana/%d/%d", guid, power), guid, power == 46,
+				func(player *worldv1.PlayerState) {
+					player.BaseManaKnown, player.BaseMana, player.MaxPower, player.Power = true, 102, 128, power
+				}})
+		}
+	}
+	for _, health := range []uint32{93, 94} {
+		cases = append(cases, boundary{fmt.Sprintf("health_ceiling/%d", health), 1, health == 94,
+			func(player *worldv1.PlayerState) { player.MaxHealth, player.Health = 98, health }})
+	}
+	for _, power := range []uint32{89, 90} {
+		cases = append(cases, boundary{fmt.Sprintf("energy/%d", power), 5, power == 90,
+			func(player *worldv1.PlayerState) { player.Power = power }})
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			s, f, target, request, _ := fargodeepReadinessRig(t, 5)
+			armFargodeep(t, s, request)
+			test.change(fargodeepReadinessPlayer(t, f, test.guid))
+			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+			reads := 0
+			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+				if input["selection"] == fargodeepReadinessTestSelection {
+					reads++
+					requireFargodeepReadinessFrame(t, input, s, request)
+				}
+				out, err := runtime.EvaluateContext(ctx, input)
+				return true, runtime.Status().Revision, out, err
+			}
+			s.Tick(context.Background()) // Complete verified route, without walking.
+			s.Tick(context.Background()) // Admit the initial attack from a fresh frame.
+			if reads == 0 {
+				t.Fatal("initial pull bypassed the actual shared readiness mode")
+			}
+			if test.ready {
+				requireFargodeepReadinessAttack(t, s, f, target.Guid)
+			} else {
+				requireNoFargodeepReadinessDispatch(t, s, f)
+				if !s.fargodeep.active || s.fargodeep.route != nil {
+					t.Fatal("initial unready resources retired the mission or acquired a route", s.stateLocked())
+				}
+			}
+		})
+	}
+}
+
+func TestFargodeepReadinessLuaPublicCASChangesAllChecksInSameMission(t *testing.T) {
+	s, f, target, request, _ := fargodeepReadinessRig(t, 5)
+	armFargodeep(t, s, request)
+	fargodeepReadinessPlayer(t, f, 1).Health = 94
+	accepted, err := reloadStarterSemanticBehavior(t, s, context.Background(), &actionsv1.BehaviorReloadRequest{
+		SessionId: s.sessionID, SelfGuid: s.selfGUID, Source: behaviors.StarterSpellSource})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authored, until := s.behavior, s.fargodeep.until
+	observed := proto.Clone(f.world)
+	s.Tick(context.Background())
+	requireNoFargodeepReadinessDispatch(t, s, f)
+	if !s.fargodeep.active || s.fargodeep.route != nil {
+		t.Fatal("default readiness did not keep the same waiting mission", s.stateLocked())
+	}
+	gate := regexp.MustCompile(`(?s)(M\.fargodeep_pull\s*=\s*\{[^}]*\bminimum_health\s*=\s*)95\b`)
+	if len(gate.FindAllStringIndex(behaviors.StarterSpellSource, -1)) != 1 {
+		t.Fatal("actual shared Fargodeep health tuning is missing or ambiguous")
+	}
+	edited := gate.ReplaceAllString(behaviors.StarterSpellSource, "${1}94")
+	change := &actionsv1.BehaviorReloadRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID,
+		ExpectedRevision: accepted.Revision, Source: edited}
+	changed, err := reloadStarterSemanticBehavior(t, s, context.Background(), change)
+	if err != nil || changed.Revision == accepted.Revision || s.behavior != authored {
+		t.Fatal("public CAS did not accept the real edit in the same runtime", changed, err)
+	}
+	change.Source = behaviors.StarterSpellSource
+	if _, err := reloadStarterSemanticBehavior(t, s, context.Background(), change); err == nil || s.behavior.Status().Revision != changed.Revision {
+		t.Fatal("stale CAS replaced accepted Fargodeep readiness", err, s.behavior.Status())
+	}
+	s.Tick(context.Background())
+	s.Tick(context.Background())
+	requireFargodeepReadinessAttack(t, s, f, target.Guid)
+	if s.behavior != authored || s.starterSpells.revision != changed.Revision || s.selfGUID != f.world.Self.Guid ||
+		s.fargodeep.until != until || s.fargodeep.target != request.TargetGuid || !proto.Equal(observed, f.world) {
+		t.Fatal("same-frame tuning used a hidden native threshold or replaced mission/body/source", s.stateLocked())
+	}
+}
+
+func TestFargodeepReadinessLuaRejectsResourcesChangedDuringPlanning(t *testing.T) {
+	for _, resource := range []string{"health", "mana", "energy"} {
+		t.Run(resource, func(t *testing.T) {
+			s, f, _, request, _ := fargodeepReadinessRig(t, 5)
+			armFargodeep(t, s, request)
+			planned := false
+			s.planMapPath = func(_ context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+				planned = true
+				switch resource {
+				case "health":
+					fargodeepReadinessPlayer(t, f, 1).Health = 94
+				case "mana":
+					player := fargodeepReadinessPlayer(t, f, 1)
+					player.BaseManaKnown, player.BaseMana, player.MaxPower, player.Power = false, 0, 128, 57
+				case "energy":
+					f.world.Self.Power = 89
+				}
+				return []position{a, b}, nil
+			}
+			s.Tick(context.Background())
+			s.Tick(context.Background())
+			if !planned {
+				t.Fatal("fixture never crossed the actual planner callback")
+			}
+			requireNoFargodeepReadinessDispatch(t, s, f)
+		})
+	}
+}
+
+func TestFargodeepReadinessLuaFinalChoiceRechecksNativeCustodyAndSource(t *testing.T) {
+	for _, mode := range []string{"health", "mana", "party", "body", "visit", "quest", "task", "source"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, request, _ := fargodeepReadinessRig(t, 4)
+			armFargodeep(t, s, request)
+			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+			reads, changed := 0, false
+			var replacementUntil time.Time
+			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+				readiness := input["selection"] == fargodeepReadinessTestSelection
+				if readiness {
+					reads++
+					if reads == 2 && mode == "source" {
+						if _, err := runtime.Reload(behaviors.StarterSpellSource+"\n-- accepted readiness revision S\n", runtime.Status().Revision); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				out, err := runtime.EvaluateContext(ctx, input)
+				if readiness && reads == 2 {
+					changed = true
+					switch mode {
+					case "health":
+						fargodeepReadinessPlayer(t, f, 1).Health = 94
+					case "mana":
+						player := fargodeepReadinessPlayer(t, f, 1)
+						player.BaseManaKnown, player.BaseMana, player.MaxPower, player.Power = false, 0, 128, 57
+					case "party":
+						f.party.Group.InGroup = false
+					case "body":
+						s.sessionID = "fargodeep-replacement-body"
+					case "visit":
+						f.world.VisitRevision++
+					case "quest":
+						f.world.SelfQuestLogKnown = false
+					case "task":
+						replacementUntil = s.fargodeep.until.Add(time.Minute)
+						s.fargodeep.until = replacementUntil
+					}
+				}
+				return true, runtime.Status().Revision, out, err
+			}
+			s.Tick(context.Background())
+			if !changed || reads < 2 {
+				t.Fatal("fixture did not reach the final actual readiness read", reads, s.stateLocked())
+			}
+			requireNoFargodeepReadinessDispatch(t, s, f)
+			if mode == "task" && (!s.fargodeep.active || s.fargodeep.until != replacementUntil) {
+				t.Fatal("old readiness callback retired replacement mission custody", s.stateLocked())
+			}
+		})
+	}
+}
+
+type fargodeepReadinessFinalWorldSession struct {
+	*fakeSession
+	readinessReads *int
+	after          func()
+}
+
+func (f *fargodeepReadinessFinalWorldSession) InvokeModule(ctx context.Context, request *modv1.InvokeModuleRequest, options ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
+	response, err := f.fakeSession.InvokeModule(ctx, request, options...)
+	if err == nil && *f.readinessReads >= 2 && request.Module == "buddy-world" && request.Method == "snapshot" && f.after != nil {
+		after := f.after
+		f.after = nil
+		after() // Revoke after the encoded World response, before native dispatch.
+	}
+	return response, err
+}
+
+func TestFargodeepReadinessLuaFinalWorldCannotExtendLeaseOrContext(t *testing.T) {
+	for _, mode := range []string{"lease", "context"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, request, advance := fargodeepReadinessRig(t, 4)
+			armFargodeep(t, s, request)
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+			reads, changed := 0, false
+			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+				if input["selection"] == fargodeepReadinessTestSelection {
+					reads++
+				}
+				out, err := runtime.EvaluateContext(ctx, input)
+				return true, runtime.Status().Revision, out, err
+			}
+			s.session = &fargodeepReadinessFinalWorldSession{fakeSession: f, readinessReads: &reads, after: func() {
+				changed = true
+				if mode == "lease" {
+					advance(3 * time.Minute)
+				} else {
+					cancel()
+				}
+			}}
+			s.Tick(ctx)
+			if !changed {
+				t.Fatal("fixture did not reach a World return after final readiness", reads, s.stateLocked())
+			}
+			requireNoFargodeepReadinessDispatch(t, s, f)
+		})
+	}
+}
+
+func TestFargodeepReadinessLuaCurrentMalformedOrMissingPolicyNeverFallsBack(t *testing.T) {
+	for _, mode := range []string{"missing_selection", "foreign_selection", "nonzero_spell", "extra_field", "nil_output", "missing_export", "source_error", "wait"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, request, _ := fargodeepReadinessRig(t, 5)
+			armFargodeep(t, s, request)
+			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+			reads := 0
+			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+				if input["selection"] != fargodeepReadinessTestSelection {
+					out, err := runtime.EvaluateContext(ctx, input)
+					return true, runtime.Status().Revision, out, err
+				}
+				reads++
+				out := map[string]any{"kind": "ready", "spellId": 0, "selection": fargodeepReadinessTestSelection}
+				switch mode {
+				case "missing_selection":
+					delete(out, "selection")
+				case "foreign_selection":
+					out["selection"] = "coldridge_pull_readiness"
+				case "nonzero_spell":
+					out["spellId"] = sinisterStrike
+				case "extra_field":
+					out["unexpected"] = true
+				case "nil_output":
+					out = nil
+				case "missing_export":
+					return false, strings.Repeat("a", 64), nil, nil
+				case "source_error":
+					return true, runtime.Status().Revision, nil, errors.New("current readiness export failed")
+				case "wait":
+					out["kind"] = "wait"
+				}
+				return true, runtime.Status().Revision, out, nil
+			}
+			s.Tick(context.Background())
+			s.Tick(context.Background())
+			if reads == 0 {
+				t.Fatal("fixture bypassed the current readiness export")
+			}
+			requireNoFargodeepReadinessDispatch(t, s, f)
+		})
+	}
+}
+
+func TestFargodeepReadinessLuaAttachedFailureNeverUsesEmbeddedReadySource(t *testing.T) {
+	s, f, _, request, _ := fargodeepReadinessRig(t, 5)
+	armFargodeep(t, s, request)
+	accepted, err := reloadStarterSemanticBehavior(t, s, context.Background(), &actionsv1.BehaviorReloadRequest{
+		SessionId: s.sessionID, SelfGuid: s.selfGUID,
+		Source: `return {decide=function(input) error("authored readiness failed") end}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Tick(context.Background())
+	s.Tick(context.Background())
+	requireNoFargodeepReadinessDispatch(t, s, f)
+	if s.starterSpells.failedAuthored != s.behavior || s.starterSpells.authoredFailedRevision != accepted.Revision {
+		t.Fatal("current authored failure did not retain its exact native refusal fence", s.starterSpells.failure(), s.behavior.Status())
+	}
+}
+
+func TestFargodeepReadinessLuaReadyCannotReplaceNativeKnownness(t *testing.T) {
+	for _, mode := range []string{"health_unknown", "power_unknown", "wrong_power_type", "class_unknown", "combat", "dead", "outside_support_range"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, request, _ := fargodeepReadinessRig(t, 5)
+			armFargodeep(t, s, request)
+			player := fargodeepReadinessPlayer(t, f, 1)
+			switch mode {
+			case "health_unknown":
+				player.HealthKnown = false
+			case "power_unknown":
+				player.PowerKnown = false
+			case "wrong_power_type":
+				player.PowerType = 3
+			case "class_unknown":
+				player.ClassKnown = false
+			case "combat":
+				player.UnitFlags |= 0x80000
+			case "dead":
+				player.Alive = false
+			case "outside_support_range":
+				player.X += 40
+			}
+			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+				if input["selection"] == fargodeepReadinessTestSelection {
+					return true, runtime.Status().Revision,
+						map[string]any{"kind": "ready", "spellId": 0, "selection": fargodeepReadinessTestSelection}, nil
+				}
+				out, err := runtime.EvaluateContext(ctx, input)
+				return true, runtime.Status().Revision, out, err
+			}
+			s.Tick(context.Background())
+			s.Tick(context.Background())
+			requireNoFargodeepReadinessDispatch(t, s, f)
+		})
+	}
+}
+
+func TestFargodeepReadinessLuaDoesNotGateAnObservedExistingFight(t *testing.T) {
+	s, f, target, request, _ := fargodeepReadinessRig(t, 5)
+	armFargodeep(t, s, request)
+	fargodeepReadinessPlayer(t, f, 1).Health = 94
+	fargodeepReadinessPlayer(t, f, 4).Power = 57
+	f.world.Self.Power = 89 // Below the pull threshold, still enough for Sinister Strike.
+	f.world.Self.UnitFlags |= 0x80000
+	target.AttackVictimKnown, target.AttackVictimGuid, target.AttackAgeMs = true, 5, 100
+	runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+	reads := 0
+	s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+		if input["selection"] == fargodeepReadinessTestSelection {
+			reads++
+		}
+		out, err := runtime.EvaluateContext(ctx, input)
+		return true, runtime.Status().Revision, out, err
+	}
+	s.Tick(context.Background())
+	if reads != 0 {
+		t.Fatal("observed engagement still requested initial-pull readiness", reads, s.stateLocked())
+	}
+	requireFargodeepReadinessAttack(t, s, f, target.Guid)
+}
+
+func fargodeepReadinessMovingRig(t *testing.T) (*Service, *fakeSession, *worldv1.CreatureState, *actionsv1.FargodeepEncounterRequest, func(time.Duration)) {
+	t.Helper()
+	s, f, target, request, advance := fargodeepReadinessRig(t, 5)
+	target.X += 10
+	armFargodeep(t, s, request)
+	s.Tick(context.Background())
+	advance(200 * time.Millisecond)
+	s.Tick(context.Background())
+	if !s.state.Moving || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 0 ||
+		countPackets(f, opcode.CMSGAttackswing) != 0 || countPackets(f, opcode.CMSGCastSpell) != 0 {
+		t.Fatal("fixture did not start its original verified approach", s.stateLocked(), f.packets)
+	}
+	return s, f, target, request, advance
+}
+
+func TestFargodeepReadinessNativePrecheckLossStopsOnlyItsCurrentApproach(t *testing.T) {
+	for _, mode := range []string{"ally_combat", "support_geometry"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, _, advance := fargodeepReadinessMovingRig(t)
+			until := s.fargodeep.until
+			starts, heartbeats := countPackets(f, opcode.MSGMoveStartForward), countPackets(f, opcode.MSGMoveHeartbeat)
+			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+			reads := 0
+			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+				if input["selection"] == fargodeepReadinessTestSelection {
+					reads++
+				}
+				out, err := runtime.EvaluateContext(ctx, input)
+				return true, runtime.Status().Revision, out, err
+			}
+			ally := fargodeepReadinessPlayer(t, f, 1)
+			if mode == "ally_combat" {
+				ally.UnitFlags |= 0x80000
+			} else {
+				// Still within 35 yards of self, but more than 28 from the target.
+				ally.X = -9840
+			}
+			advance(200 * time.Millisecond)
+			s.Tick(context.Background())
+			s.Tick(context.Background()) // An unchanged refusal must not repeat STOP.
+			if reads != 0 || s.state.Moving || countPackets(f, opcode.MSGMoveStop) != 1 ||
+				countPackets(f, opcode.MSGMoveStartForward) != starts || countPackets(f, opcode.MSGMoveHeartbeat) != heartbeats ||
+				countPackets(f, opcode.CMSGAttackswing) != 0 || countPackets(f, opcode.CMSGCastSpell) != 0 ||
+				!s.fargodeep.active || s.fargodeep.until != until {
+				t.Fatal("native precheck refusal left its movement running, repeated STOP or changed mission custody", reads, s.stateLocked(), f.packets)
+			}
+			for _, packet := range f.packets {
+				if packet.Opcode == opcode.MSGMoveStop {
+					guid, _, err := readGUID(packet.Payload)
+					if err != nil || guid != s.selfGUID {
+						t.Fatal("bounded cleanup STOP did not belong to the original current body", guid, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestFargodeepReadinessFinalMovementRefusalPreservesReplacementMissionAndRoute(t *testing.T) {
+	s, f, _, _, advance := fargodeepReadinessMovingRig(t)
+	runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+	reads, changed := 0, false
+	var replacement fargodeepEncounter
+	packetsAtReplacement := 0
+	s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+		out, err := runtime.EvaluateContext(ctx, input)
+		if input["selection"] == fargodeepReadinessTestSelection {
+			reads++
+			if reads == 2 {
+				if !s.state.Moving {
+					t.Fatal("replacement did not occur at the original moving approach")
+				}
+				changed = true
+				replacement = s.fargodeep
+				replacement.active = true
+				replacement.until = replacement.until.Add(time.Minute)
+				replacement.phase = "replacement_movement_owner"
+				replacement.route = []position{s.pos, {x: s.pos.x + 4, y: s.pos.y, z: s.pos.z, o: s.pos.o}}
+				replacement.routeIndex = 1
+				s.fargodeep = replacement
+				replacement.route = append([]position(nil), replacement.route...)
+				packetsAtReplacement = len(f.packets)
+			}
+		}
+		return true, runtime.Status().Revision, out, err
+	}
+	advance(200 * time.Millisecond)
+	s.Tick(context.Background())
+	if !changed || reads < 2 || !s.state.Moving || len(f.packets) != packetsAtReplacement ||
+		countPackets(f, opcode.MSGMoveStop) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 ||
+		countPackets(f, opcode.MSGMoveStartForward) != 1 || !reflect.DeepEqual(s.fargodeep, replacement) {
+		t.Fatal("old map-step refusal stopped, retired or postprocessed the replacement movement mission", reads, s.stateLocked(), s.fargodeep, replacement, f.packets)
+	}
+}
+
+func TestFargodeepReadinessInnerOffenseRefusalPreservesReplacementCustody(t *testing.T) {
+	for _, guid := range []uint64{4, 5} {
+		for _, replace := range []string{"until", "task", "body"} {
+			for _, outcome := range []string{"invalid", "changed_source"} {
+				t.Run(fmt.Sprintf("%d/%s/%s", guid, replace, outcome), func(t *testing.T) {
+					s, f, _, request, _ := fargodeepReadinessRig(t, guid)
+					armFargodeep(t, s, request)
+					if guid == 5 {
+						s.Tick(context.Background()) // Rogue's initial verified route.
+					}
+					runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+					offenseReads, changed := 0, false
+					var replacement fargodeepEncounter
+					packetsAtReplacement, attemptsAtReplacement := 0, uint64(0)
+					s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+						out, err := runtime.EvaluateContext(ctx, input)
+						selection, _ := input["selection"].(string)
+						offense := guid == 4 && selection == "" || guid == 5 && selection == "weapon_strike"
+						if !offense {
+							return true, runtime.Status().Revision, out, err
+						}
+						offenseReads++
+						if offenseReads == 2 {
+							changed = true
+							replacement = s.fargodeep
+							replacement.active = true
+							replacement.until = replacement.until.Add(time.Minute)
+							replacement.phase = "replacement_after_inner_offense"
+							if replace == "task" {
+								replacement.route = []position{s.pos, {x: s.pos.x + 2, y: s.pos.y, z: s.pos.z, o: s.pos.o}}
+								replacement.routeIndex = 1
+							} else if replace == "body" {
+								s.sessionID = "replacement-inner-offense-body"
+								replacement.bodySession = s.sessionID
+							}
+							s.fargodeep = replacement
+							replacement.route = append([]position(nil), replacement.route...)
+							packetsAtReplacement, attemptsAtReplacement = len(f.packets), s.state.AssistAttempts
+							if outcome == "invalid" {
+								out = nil
+							} else if _, reloadErr := runtime.Reload(behaviors.StarterSpellSource+"\n-- accepted inner offense revision S\n", runtime.Status().Revision); reloadErr != nil {
+								t.Fatal(reloadErr)
+							}
+						}
+						return true, runtime.Status().Revision, out, err
+					}
+					s.Tick(context.Background())
+					if !changed || offenseReads != 2 || len(f.packets) != packetsAtReplacement ||
+						s.state.AssistAttempts != attemptsAtReplacement || countPackets(f, opcode.MSGMoveStop) != 0 ||
+						!reflect.DeepEqual(s.fargodeep, replacement) {
+						t.Fatal("inner selector refusal wrote against or retired replacement mission/body custody", offenseReads, s.stateLocked(), s.fargodeep, replacement, f.packets)
+					}
+					if guid == 4 && (countPackets(f, opcode.CMSGCastSpell) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0) {
+						t.Fatal("caster dispatched before the final selector admitted its original mission", f.packets)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestFargodeepReadinessUnrelatedPacketHeartbeatDoesNotChangePullFacts(t *testing.T) {
+	s, f, target, request, _ := fargodeepReadinessRig(t, 5)
+	armFargodeep(t, s, request)
+	runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+	heartbeat := false
+	s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+		out, err := runtime.EvaluateContext(ctx, input)
+		if input["selection"] == fargodeepReadinessTestSelection && !heartbeat {
+			heartbeat = true
+			f.world.ObservedPackets++ // No body, visit, player, quest or target fact changed.
+		}
+		return true, runtime.Status().Revision, out, err
+	}
+	s.Tick(context.Background())
+	s.Tick(context.Background())
+	if !heartbeat {
+		t.Fatal("fixture never crossed readiness with the unrelated observation counter")
+	}
+	requireFargodeepReadinessAttack(t, s, f, target.Guid)
+}
