@@ -1,5 +1,6 @@
 """Real DirectTools -> SessionTransport framing -> simulated native feedback."""
 import copy
+import hashlib
 import json
 from pathlib import Path
 import struct
@@ -126,6 +127,44 @@ class GMCommandEvidenceTests(unittest.TestCase):
         args=dict(command=command)
         if selected is not None:args['select_guid']=selected
         return self.tools.dispatch('gm_execute',args,operation_id=operation)
+
+    def test_named_location_guide_matches_pinned_catalog_without_changing_full_reference(self):
+        reference=(fixtures.ROOT/'dev/lotharen-gm-commands.txt').read_text()
+        guide=reference.split('END GENERAL GUIDE',1)[0]
+        catalog=reference.split('FULL COMMAND HELP AND SOURCE SIGNATURES\n',1)[1].split(
+            '\nPUBLIC SOURCE FILE MANIFEST\n',1)[0]
+        self.assertEqual(hashlib.sha256(catalog.encode()).hexdigest(),
+            '43204986573bd7c99ada6e92d499be5b8b05a481b2be3d5763ebef4002d94581')
+        for syntax in ('.lookup teleport $substring','.teleport #location',
+                       '.teleport name [#playername] #location'):
+            self.assertIn(syntax,guide)
+            self.assertIn('Syntax: '+syntax,catalog)
+        self.assertIn('.teleport group #location',guide)
+        # The pinned SQL help omits this separator; its registered handler
+        # takes GameTele and explicitly selects the player and current group.
+        group_entry=catalog.split('\n.teleport group\n',1)[1].split('\n========',1)[0]
+        self.assertIn('HandleTeleGroupCommand(ChatHandler* handler, GameTele const* tele)',group_entry)
+        self.assertIn('Teleport a selected player and his group members',group_entry)
+        self.assertLess(guide.index('Named locations:'),guide.index('HISTORICAL WORKED FULL-PARTY'))
+        self.assertIn('do not require the historical instance',guide)
+        self.assertIn('a command write is not arrival proof',guide)
+        self.assertIn('Current realm help, permissions and teleport/instance admission',guide)
+        self.assertIn('Keep the old messages and every entered action/unknown receipt',guide)
+        self.assertFalse(self.rpc.packets)
+
+    def test_named_location_forms_keep_exact_native_text_and_do_not_claim_arrival(self):
+        commands=['.lookup teleport FixtureLocation','.teleport FixtureLocation',
+                  '.teleport name Joel FixtureLocation','.teleport group FixtureLocation']
+        for index,command in enumerate(commands):
+            with self.subTest(command=command):
+                result=self.execute(command,selected='3' if index==3 else None,
+                    operation='named-location:'+str(index))
+                self.assertTrue(result['ok'],result)
+                self.assertTrue(result['result']['commandTransportWritten'])
+                self.assertFalse(result['result']['gameEffectClaimed'])
+                self.assertFalse(result['result']['feedback']['commandSuccessKnown'])
+        self.assertEqual(self.rpc.commands,commands)
+        self.assertEqual([code for code,_ in self.rpc.packets],[0x95,0x95,0x95,0x13d,0x95])
 
     def test_fresh_system_uses_latest_baseline_not_first_old_message_and_no_target_attribution(self):
         result=self.execute(selected='3')
