@@ -557,7 +557,7 @@ class DirectTools:
                 specs += [("gm_task_start", "Start the whole commissioned GM recovery/regroup using the existing ordered Lua task. Goal uses current observed roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": obj}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup; this is not a completion receipt.", {"task_id": string}, ["task_id"])]
         if self.self_guid == "87":
-            specs += [("gm_task_status", "Read this body's retained task phase and actual receipts; no task execution.", {"task_id": string}, ["task_id"])]
+            specs += [("gm_task_status", "Read this body's retained task phase and actual receipts; no task execution. JSON path/offset/limit expand and page large observations or memory.", {"task_id": string, **paging}, ["task_id"])]
         return [context_tool_schema(), *[{"type": "function", "function": {"name": name, "description": description,
                  "parameters": {"type": "object", "properties": properties,
                                 "required": required, "additionalProperties": False}}}
@@ -617,8 +617,7 @@ class DirectTools:
                 result = self._helper("self-edit").inspect_spell(int(self.self_guid), self.session_id,
                                                                  _PolicyRPC(self), args.get("spell_id", 0))
                 self._catalog()
-                if not args.get("spell_id", 0) or {"path", "offset", "limit"} & args.keys():
-                    result = self._project(result, args)
+                result = self._project(result, args)
             elif name == "workspace_read":
                 data = self._read_file(args["path"])
                 lines = data.decode().splitlines(True)
@@ -661,10 +660,12 @@ class DirectTools:
                 result = self._policy_input(args)
             elif name.startswith("gm_task_"):
                 result = self._gm(name, args)
+                if name == "gm_task_status":
+                    result = self._project(result, args)
             else:
                 raise ToolError("tool_not_implemented")
             require(len(packed(result)) <= self.max_bytes, "tool_result_size_bound")
-            if name in ("context_read", "session_catalog", "read_observation", "policy_show", "workspace_read") or name == "spell_inspect" and not args.get("spell_id", 0):
+            if name in ("context_read", "session_catalog", "read_observation", "policy_show", "workspace_read", "spell_inspect", "gm_task_status"):
                 require(len(packed(dict(ok=True, result=result))) <= READ_PAGE_BYTES, "read_page_size_bound")
             self.last_receipt = dict(tool=name, sessionId=self.session_id, characterGuid=self.self_guid,
                                      outcome="completed", gameEffectClaimed=False)

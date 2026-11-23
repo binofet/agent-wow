@@ -245,6 +245,12 @@ class DirectToolTests(unittest.TestCase):
         exact = self.tools.dispatch('spell_inspect', dict(spell_id=1499))
         self.assertTrue(exact['ok'], exact)
         self.assertEqual(exact['result']['spell'], rows[-1])
+        rows[-1]['mechanics']['effects'][0]['rawFact'] = 'complete-raw-mechanic' * 2000
+        oversized = self.page('spell_inspect', spell_id=1499)
+        self.assertTrue(next(row for row in oversized['rows'] if row['key'] == 'spell')['omitted'])
+        raw = self.page('spell_inspect', spell_id=1499,
+            path=['spell', 'mechanics', 'effects', '0', 'rawFact'], offset=39980, limit=4096)
+        self.assertEqual(raw['value'], rows[-1]['mechanics']['effects'][0]['rawFact'][39980:])
         self.assertFalse(self.rpc.writes)
 
     def test_authority_and_cancellation_hide_and_refuse_mutations(self):
@@ -464,6 +470,32 @@ class DirectToolTests(unittest.TestCase):
         self.assertEqual(status['result']['result']['phase'], 'starting')
         self.assertFalse(status['result']['gameEffectClaimed'])
         self.assertEqual(self.rpc.writes, [])
+
+    def test_retained_gm_status_pages_large_facts_without_execution_or_state_change(self):
+        runner = mock.Mock(side_effect=AssertionError('Status must not start a task/helper'))
+        tools = self.gm_tools(runner)
+        task_id = 'direct-' + 'a'*24
+        folder = tools._gm_folder(task_id)
+        with self.gm.task_store(folder) as store:
+            host = self.gm.Host(store, self.rpc, None, None, dict(id=task_id, members=[]),
+                self.host/'behaviors/gm-recovery.lua', self.host/'behaviors/gm-recovery-hold.lua')
+            host.data['identity'] = dict(sessionId=self.rpc.sid, guid='87', rpcUrl=self.rpc.url)
+            host.data['lastObservations'] = dict(threats=[dict(guid=str(i), raw='x'*1000) for i in range(100)])
+            host.data['memory'] = dict(pending=dict(id='unknown-original', outcome='unknown'))
+            host.persist()
+        before = self.gm.task_store(folder).load()
+        result = tools.dispatch('gm_task_status', dict(task_id=task_id))
+        self.assertTrue(result['ok'], result)
+        self.assertLessEqual(len(packed(result)), READ_PAGE_BYTES)
+        self.assertTrue(next(row for row in result['result']['rows'] if row['key'] == 'result')['omitted'])
+        exact = tools.dispatch('gm_task_status', dict(task_id=task_id,
+            path=['result', 'lastObservations', 'threats', '99', 'raw'], limit=4096))
+        self.assertTrue(exact['ok'], exact)
+        self.assertLessEqual(len(packed(exact)), READ_PAGE_BYTES)
+        self.assertEqual(exact['result']['value'], 'x'*1000)
+        self.assertEqual(self.gm.task_store(folder).load(), before)
+        runner.assert_not_called()
+        self.assertFalse(self.rpc.writes)
 
     def test_gm_unknown_start_is_retained_and_cannot_start_again(self):
         calls = []
