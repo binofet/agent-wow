@@ -108,8 +108,9 @@ def _varint(value):
 
 class SessionTransport:
     """An exact packet write through the existing authenticated module callback."""
-    def __init__(self, rpc, config):
+    def __init__(self, rpc, config, before_send=None):
         self.rpc,self.config=rpc,config
+        self.before_send=before_send
         prefix=config.get('prefix',[])
         if not isinstance(prefix,list) or not all(isinstance(x,str) and '\0' not in x for x in prefix):
             raise ValueError('transport prefix must be an argv list')
@@ -129,6 +130,7 @@ class SessionTransport:
             '--header','TE: trailers','--data-binary','@-','--dump-header','-','--output','/dev/null',
             'http://localhost/agentwow.module.v1.Session/SendPacket']
         argv=self.prefix+[shlex.join(curl)] if self.prefix else curl
+        if self.before_send is not None:self.before_send()
         reply=subprocess.run(argv,input=wire,capture_output=True,timeout=10)
         if reply.returncode or not re.search(rb'^grpc-status: 0\r?$',reply.stdout,re.M|re.I):
             raise RuntimeError('game packet outcome unconfirmed; observe before deciding whether another action is needed')
@@ -157,7 +159,7 @@ def claim_writer(store,state_dir=None):
     return data
 
 
-def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expected_session=None):
+def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expected_session=None,before_send=None):
     if command is not None and (not isinstance(command,str) or
             re.fullmatch(r'\.[A-Za-z][ -~]{0,253}',command) is None or command!=command.rstrip()):
         raise ValueError('one native GM command required')
@@ -172,7 +174,7 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
         raise ValueError('GM body changed; inspect the current session before acting')
     with task_store(writer_folder(root,sid,config).absolute()) as owner:
         claim_writer(owner)
-        transport=SessionTransport(rpc,config)
+        transport=SessionTransport(rpc,config) if before_send is None else SessionTransport(rpc,config,before_send=before_send)
         if select_guid is not None:transport.select(select_guid,sid)
         if command is not None:transport.gm(command,sid)
     return dict(sessionId=sid,selectedGuid=select_guid,command=command,

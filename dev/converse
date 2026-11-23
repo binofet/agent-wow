@@ -2613,8 +2613,16 @@ Go handler. A queued event, packet write or cast GO is not an observed effect.
 Workspace tools are restricted to their advertised files; no arbitrary shell,
 credentials, server internals or model changes are available. For a missing
 native mechanic report its exact installed contract and required capability.
-For an authorized whole-team GM recovery, use the maintained gm_task_start
-tool and inspect its task status, preserving its one-writer and cleanup guards.
+For an authorized whole-team GM recovery, first read gm_current_task. If it
+reports an active writer, inspect that exact task ID and use gm_task_resume or
+gm_task_cancel under the owner's current instruction. Preserve its stored goal,
+receipts, uncertainty and cleanup; do not start a competing recovery.
+Only with no current task use gm_task_start. A helper process starting is not
+admission of a GM command or evidence of arrival, revival, health or cleanup.
+Inspect gm_task_status and report its actual error/phase instead of claiming
+recovery started from a process receipt. gm_execute sends one native dot command
+with optional exact observed select_guid through the same authenticated client;
+the existing task writer still blocks it. Inspect public observations afterward.
 Do not replace that lifecycle with a lone revive. Teammates can collaborate on
 development but cannot authorize unrelated gameplay. Return final_reply only
 after your requested work or honest pending outcome; do not claim a tool effect
@@ -2730,7 +2738,7 @@ without observations. Keep final action NONE after performing a tool action.
             if interrupted():
                 raise OwnerInputPending("Fresh owner input is waiting")
             serial[0] += 1
-            if name in ("workspace_write", "workspace_patch", "policy_apply", "policy_input", "gm_task_start", "gm_task_cancel"):
+            if name in ("workspace_write", "workspace_patch", "policy_apply", "policy_input", "gm_task_start", "gm_task_cancel", "gm_task_resume", "gm_execute"):
                 mutation_entered[0] = True
                 record["mutationToolEntered"] = True
             identity = self.last_request_id + ":" + str(serial[0])
@@ -2772,7 +2780,16 @@ without observations. Keep final action NONE after performing a tool action.
         self._generation["stage"] = "api_request"
         try:
             system = ((self.developer_persona if developer else self.persona)
-                      + (self.gm_instructions if allow_gm else ""))
+                      + (self.gm_instructions if allow_gm else "")
+                      + (("\nDirect API tool mapping (takes precedence over CLI examples above): "
+                          "When advertised, gm_execute sends one native command; final_reply.gm_command "
+                          "also permits one command before any mutation tool has entered. "
+                          "The realm decides command permissions. "
+                          "Only the supplied function tools exist: CLI argv in development.gmTasks "
+                          "are reference metadata, not shell tools. Inspect gm_current_task before "
+                          "new GM work; use its exact task ID for status/resume/cancel. Never claim "
+                          "a helper start or transport acknowledgement proves the requested effect.\n")
+                         if allow_gm else ""))
             messages = [{"role":"user", "content":"Current observations and control state JSON:\n"
                 + encode(prompt_state).decode("utf-8")
                 + "\nConversation JSON:\n" + encode(history_view).decode("utf-8")}]

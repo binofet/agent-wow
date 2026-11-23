@@ -473,13 +473,113 @@ class DirectTools:
                 re.fullmatch(r"direct-[a-f0-9]{24}", task_id), "bound_gm_task_id_required")
         return self.root / "data/converse/lotharen/gm-tasks" / task_id
 
+    def _gm_config(self):
+        return json.loads((self.root / "data/converse/lotharen/gm-transport.json").read_text())
+
+    def _gm_identity(self, data):
+        require(isinstance(data, dict) and data.get("identity") ==
+                dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url),
+                "gm_task_body_binding_changed")
+
+    def _current_gm_task(self, gm):
+        # The maintained writer, never a model-supplied path, identifies the
+        # one existing task. Its folder can be nested and its goal ID differs
+        # from the folder basename (for example .../<goal-id>/task).
+        config_path = self.root / "data/converse/lotharen/gm-transport.json"
+        config = self._gm_config() if config_path.exists() else {}
+        writer = gm.task_store(gm.writer_folder(self.root, self.session_id, config)).load()
+        if not writer or writer.get("active") is not True:
+            return None
+        value = writer.get("stateDir")
+        require(isinstance(value, str) and Path(value).is_absolute(), "gm_writer_task_path_invalid")
+        folder = Path(value)
+        data = gm.task_store(folder).load()  # Existing private Store validates ownership/symlinks.
+        self._gm_identity(data)
+        task_id = data.get("goal", {}).get("id")
+        require(isinstance(task_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", task_id),
+                "gm_writer_goal_identity_required")
+        return task_id, folder, data
+
+    def _bound_gm_task(self, gm, task_id, *, current_only=False):
+        require(isinstance(task_id, str), "bound_gm_task_id_required")
+        if not current_only and re.fullmatch(r"direct-[a-f0-9]{24}", task_id):
+            folder = self._gm_folder(task_id)
+            data = gm.task_store(folder).load()
+            self._gm_identity(data)
+            require(data.get("goal", {}).get("id") == task_id, "gm_task_goal_binding_changed")
+            return folder, data
+        current = self._current_gm_task(gm)
+        require(current is not None and current[0] == task_id, "current_writer_gm_task_required")
+        return current[1], current[2]
+
+    def _gm_execute(self, gm, args):
+        self._authorise_gm()
+        command = args.get("command")
+        require(isinstance(command, str) and re.fullmatch(r"\.[A-Za-z][ -~]{0,253}", command)
+                and command == command.rstrip() and "|" not in command, "one_native_gm_command_required")
+        selected = args.get("select_guid")
+        require(selected is None or isinstance(selected, str) and re.fullmatch(r"[1-9][0-9]{0,19}", selected)
+                and int(selected) < 2**64, "exact_nonzero_selection_guid_required")
+        require(isinstance(self.request_id, str) and 0 < len(self.request_id) <= 512,
+                "host_request_identity_required")
+        config = self._gm_config()
+        digest = sha(packed(dict(command=command, selectGuid=selected)))
+        key = sha(packed([self.session_id, self.request_id, digest]))
+        folder = self.root / "data/converse/lotharen/gm-commands" / key
+        with gm.task_store(folder) as store:
+            prior = store.load()
+            if prior is not None:
+                self._gm_identity(prior)
+                if prior.get("result") is not None:
+                    return dict(prior["result"], historicalReceipt=True)
+                if prior.get("knownNotDispatched") is not True:
+                    self._unknown("gm_execute", dict(stateDir=str(folder), commandSHA256=digest,
+                        selectedGuid=selected), ToolError("retained_native_command_outcome_unconfirmed"))
+            entered = False
+            def before_send():
+                nonlocal entered
+                self._catalog()
+                self._authorise_gm()
+                store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url),
+                    commandSHA256=digest, selectedGuid=selected, reserved=True))
+                self._catalog()
+                self._authorise_gm()
+                entered = True
+            try:
+                result = gm.execute_command(self.rpc, config, command, self.root,
+                    select_guid=selected, expected_session=self.session_id, before_send=before_send)
+                self._catalog()
+                result = dict(result, commandSHA256=digest, gameEffectClaimed=False)
+                store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url), result=result))
+            except Exception as error:
+                if entered:
+                    self._unknown("gm_execute", dict(stateDir=str(folder), commandSHA256=digest,
+                        selectedGuid=selected), error)
+                if store.load() is not None:
+                    store.save(dict(identity=dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url),
+                        commandSHA256=digest, selectedGuid=selected, knownNotDispatched=True))
+                raise
+            return result
+
     def _gm(self, name, args):
         require(self.self_guid == "87", "authenticated_gm_actor_required")
-        if name != "gm_task_status":
+        if name not in ("gm_task_status", "gm_current_task"):
             self._authorise_gm()
         gm = self._helper("gm_tasks")
+        if name == "gm_execute":
+            return self._gm_execute(gm, args)
+        if name == "gm_current_task":
+            current = self._current_gm_task(gm)
+            self._catalog()
+            if current is None:
+                return dict(active=False, gameEffectClaimed=False)
+            task_id, _, data = current
+            return dict(active=True, taskId=task_id, result=gm.public_status(data), gameEffectClaimed=False)
         if name == "gm_task_start":
             self._authorise_gm()
+            current = self._current_gm_task(gm)
+            require(current is None, "existing_gm_task_owns_writer; inspect gm_current_task and resume/cancel its exact ID: "
+                    + (current[0] if current else ""))
             require(isinstance(self.request_id, str) and 0 < len(self.request_id) <= 512,
                     "host_request_identity_required")
             goal = copy.deepcopy(args["goal"])
@@ -520,15 +620,26 @@ class DirectTools:
                        "--policy-binary", str(self._policy_binary())]
         else:
             task_id = args["task_id"]
-            folder = self._gm_folder(task_id)
-            data = gm.task_store(folder).load()
-            require(isinstance(data, dict) and data.get("identity") ==
-                    dict(sessionId=self.session_id, guid="87", rpcUrl=self.rpc.url),
-                    "gm_task_body_binding_changed")
+            folder, data = self._bound_gm_task(gm, task_id, current_only=name == "gm_task_resume")
             if name == "gm_task_status":
                 self._catalog()
                 return dict(taskId=task_id, result=gm.public_status(data), gameEffectClaimed=False)
             self._authorise_gm()
+            if name == "gm_task_resume" or not re.fullmatch(r"direct-[a-f0-9]{24}", task_id):
+                self._catalog()
+                self._authorise_gm()
+                folder, _ = self._bound_gm_task(gm, task_id, current_only=True)
+                require(gm.load_invocation(gm.task_store(folder)).get("rpcUrl") == self.rpc.url,
+                        "gm_task_invocation_binding_changed")
+                self._catalog()
+                self._authorise_gm()
+                try:
+                    operation = gm.request_resume if name == "gm_task_resume" else gm.request_cancel
+                    result = operation(folder)
+                    self._catalog()
+                except Exception as error:
+                    self._unknown(name, dict(taskId=task_id, stateDir=str(folder)), error)
+                return dict(taskId=task_id, result=result, gameEffectClaimed=False)
             command = [sys.executable, "-B", str(self.root / "dev/gm-task"), "cancel",
                        "--state-dir", str(folder)]
         self._authorise_gm()
@@ -564,9 +675,12 @@ class DirectTools:
             ]
             if self.self_guid == "87" and self.request_id and self.gm_allowed() is True:
                 specs += [("gm_task_start", "Start the whole commissioned GM recovery/regroup using the existing ordered Lua task. Goal uses current observed roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": obj}, ["goal"]),
-                          ("gm_task_cancel", "Request existing task's observed cleanup; this is not a completion receipt.", {"task_id": string}, ["task_id"])]
+                          ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),
+                          ("gm_task_resume", "Resume only gm_current_task's same stored goal/invocation and receipts. Runner started is not a GM effect; no new task or replay of uncertain actions.", {"task_id": string}, ["task_id"]),
+                          ("gm_execute", "Send one native dot command through this exact GM session, optionally with an exact observed selection GUID. The realm decides permissions. The existing active task writer blocks competing commands. Inspect public observations afterward; transport is not effect.", {"command": string, "select_guid": string}, ["command"])]
         if self.self_guid == "87":
-            specs += [("gm_task_status", "Read this body's retained task phase and actual receipts; no task execution. JSON path/offset/limit expand and page large observations or memory.", {"task_id": string, **paging}, ["task_id"])]
+            specs += [("gm_current_task", "Discover only this GM session's maintained active writer-owned task and actual retained status. No caller path, new task or execution. Page large observations/memory with JSON path/offset/limit.", paging, []),
+                      ("gm_task_status", "Read this body's retained direct task or exact gm_current_task ID; no arbitrary task path or execution. JSON path/offset/limit expand and page large observations or memory.", {"task_id": string, **paging}, ["task_id"])]
         return [context_tool_schema(), *[{"type": "function", "function": {"name": name, "description": description,
                  "parameters": {"type": "object", "properties": properties,
                                 "required": required, "additionalProperties": False}}}
@@ -667,14 +781,14 @@ class DirectTools:
                 result = self._policy_apply(args)
             elif name == "policy_input":
                 result = self._policy_input(args)
-            elif name.startswith("gm_task_"):
+            elif name.startswith("gm_task_") or name in ("gm_current_task", "gm_execute"):
                 result = self._gm(name, args)
-                if name == "gm_task_status":
+                if name in ("gm_task_status", "gm_current_task"):
                     result = self._project(result, args)
             else:
                 raise ToolError("tool_not_implemented")
             require(len(packed(result)) <= self.max_bytes, "tool_result_size_bound")
-            if name in ("context_read", "session_catalog", "read_observation", "policy_show", "workspace_read", "spell_inspect", "gm_task_status"):
+            if name in ("context_read", "session_catalog", "read_observation", "policy_show", "workspace_read", "spell_inspect", "gm_task_status", "gm_current_task"):
                 require(len(packed(dict(ok=True, result=result))) <= READ_PAGE_BYTES, "read_page_size_bound")
             self.last_receipt = dict(tool=name, sessionId=self.session_id, characterGuid=self.self_guid,
                                      outcome="completed", gameEffectClaimed=False)

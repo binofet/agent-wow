@@ -127,6 +127,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                     brain = converse.DirectBrain(self.state, developer_workspace=self.workspace,
                         character_name="Lotharen", character_class="paladin", model="fixture-requested-model",
                         provider="local", base_url="http://127.0.0.1:1/v1")
+                    brain.gm_instructions += '\nExisting local realm command reference fixture.'
                     self.assertTrue(brain.development_enabled(state))
                     requests = []
                     def capture(payload, *_):
@@ -135,9 +136,39 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                     with patch.object(brain.client, "_http", side_effect=capture):
                         brain.generate([dict(speaker="Joel" if source == "owner" else "Nixwick", text="Inspect your Lua")], state)
                 names = {row["function"]["name"] for row in requests[0]["tools"]}
-                self.assertTrue({"policy_apply", "workspace_write", "policy_input", "gm_task_status"} <= names)
-                self.assertEqual({"gm_task_start", "gm_task_cancel"} <= names, expected)
+                self.assertTrue({"policy_apply", "workspace_write", "policy_input", "gm_task_status", "gm_current_task"} <= names)
+                self.assertEqual({"gm_task_start", "gm_task_cancel", "gm_task_resume", "gm_execute"} <= names, expected)
+                prompt = requests[0]['messages'][0]['content']
+                self.assertEqual('Existing local realm command reference fixture.' in prompt, expected)
+                if expected:
+                    self.assertLess(prompt.index('Existing local realm command reference fixture.'),
+                                    prompt.index('Direct API tool mapping'))
                 self.assertFalse(rpc.commands or rpc.replies)
+
+    def test_new_gm_mutation_tools_cannot_append_a_second_final_command(self):
+        for name, arguments in (('gm_task_resume', dict(task_id='joel-to-lotharen-existing')),
+                                ('gm_execute', dict(command='.gps'))):
+            with self.subTest(tool=name):
+                rpc = PublicRPC()
+                rpc.guid = rpc.catalog_guid = '87'
+                state = dict(character=dict(guid='87'), gm_controls_available=True,
+                    development=dict(enabled=True, directDevelopment=True, workspace=str(self.workspace),
+                        rpcUrl=rpc.url, sessionId=rpc.core, selfGuid='87', ownerGuid='3'),
+                    current_request=dict(source='owner', senderGuid='3'))
+                with patch.object(converse, 'ROOT', self.workspace), patch.object(converse, 'RPC', return_value=rpc):
+                    brain = converse.DirectBrain(self.state, developer_workspace=self.workspace,
+                        character_name='Lotharen', character_class='paladin', model='fixture-requested-model',
+                        provider='local', base_url='http://127.0.0.1:1/v1')
+                    responses = [chat(('mutation', name, arguments)),
+                        chat(('final', 'final_reply', dict(REPLY, gm_command='.gps')))]
+                    with patch.object(direct_tools.DirectTools, '_gm', return_value=dict(gameEffectClaimed=False)) as tool, \
+                            patch.object(brain.client, '_http', side_effect=responses):
+                        with self.assertRaises(converse.ConversationError) as refused:
+                            brain.generate([dict(speaker='Joel', text='Continue my recovery')], state)
+                    self.assertIn('second reply action was refused', str(refused.exception.__cause__))
+                    self.assertEqual(tool.call_count, 1)
+                    self.assertTrue(brain.last_failure_receipt['mutationToolEntered'])
+                    self.assertFalse(rpc.commands or rpc.replies)
 
     def test_nonterminal_trade_and_pending_prefix_remain_exact_in_large_initial_view(self):
         from direct_context import CONTEXT_BYTES, encode, project_context
