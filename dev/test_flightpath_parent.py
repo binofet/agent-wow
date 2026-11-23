@@ -208,10 +208,14 @@ class FlightpathParentRuntimeTests(unittest.TestCase):
         self.rpc.flight.update(revision='2', operation=dict(revision='2', sessionId='aw-parent', selfGuid='87',
             visitId='1', npcGuid=NPC, mode='arrival', phase='menu_observed', menuKnown=True,
             transportWritten=True, sourceNode=2, knownNodes=[1, 2, 3], activationRevision='1'))
-        departure = dict(sessionId='aw-parent', selfGuid='87', visitId='1', menuRevision='2',
-                         npcGuid=NPC, sourceNode=2, maskFingerprint='1,2,3,')
-        memory['stack'] = [dict(kind='flightpath_activation', stage='plan_wait', binding=departure,
-            destination=3, parentToken='parent-token-1', goalFarePresent=True, goalFare=True)]
+        memory['stack'][0]['stage'] = 'settled'
+        self.runner.persist()
+        # Let the real child settle its prior hop, create its next activation,
+        # push its actual planner and issue a known reference read before lapse.
+        reads = self.rpc.count('buddy-actions.flightpath_reference')
+        self.until('buddy-actions.flightpath_reference', reads+1)
+        self.assertEqual([f['kind'] for f in self.runner.data['memory']['stack']],
+                         ['flightpath_activation', 'flightpath_plan'])
         self.rpc.actions.pop('interactionOwner', None); self.rpc.actions.pop('interactionLeaseRemainingMs', None)
         self.runner.persist(); self.until('buddy-actions.acquire_idle_interaction', 2)
         self.until('buddy-actions.activate_flightpath', 2)

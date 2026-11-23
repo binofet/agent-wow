@@ -137,7 +137,9 @@ function M.decide(state)
     end
     local booking=f.activation or {}
     local paid=booking.pending==true
-    if p.bookingIssued and frame and frame.kind=="flightpath_activation" and not frame.request and not paid and
+    local activation=frame
+    if frame and frame.kind=="flightpath_plan" then activation=(memory.stack or {})[#memory.stack-1] end
+    if p.bookingIssued and activation and activation.kind=="flightpath_activation" and not activation.request and not paid and
        booking.revision==p.lastBookingRevision and booking.phase=="observed_arrival" and booking.arrivalKnown==true and
        booking.activationAccepted==true and booking.replyKnown==true and (booking.replyCode or 0)==0 then
         -- Only the child's new, unissued hop after actual settlement may restart
