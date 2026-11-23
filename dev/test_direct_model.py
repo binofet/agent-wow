@@ -560,5 +560,49 @@ class ActiveContextTests(unittest.TestCase):
                 self.assertNotIn('private-token',json.dumps(caught.exception.receipt))
                 self.assertNotIn('private prompt',json.dumps(caught.exception.receipt))
 
+    def test_one_availability_retry_preserves_the_exact_window_and_never_redispatches_mutation(self):
+        for status in (429,503):
+            with self.subTest(status=status),FakeHTTP([chat(('once','mutate',dict(key='explicit-action'))),
+                    (status,dict(error=dict(code='slot_pressure',message='No available inference slot.'))),self.text()]) as server:
+                client=DirectModel('local','fixture',server.base+'/v1');writes=[]
+                client.generate('Current facts.',[dict(role='user',content='One explicit operation.')],None,
+                    self.tools('mutate'),lambda *args:writes.append(args) or dict(transportWritten=True,replayAllowed=False),
+                    natural=True,conversation_key='same-body',request_id='same-owner')
+                self.assertEqual(len(writes),1)
+                self.assertEqual(len(server.requests),3)
+                self.assertEqual(server.requests[1]['body'],server.requests[2]['body'])
+                self.assertIn('"transportWritten":true',server.requests[2]['body']['messages'][-1]['content'])
+                self.assertEqual(client.last_receipt['httpStatus'],200)
+                self.assertTrue(client.last_receipt['availabilityRecovery']['recovered'])
+                self.assertEqual(client.last_receipt['availabilityRecovery']['httpStatus'],status)
+                self.assertNotIn('providerError',client.last_receipt)
+
+    def test_availability_recovery_is_only_once_and_never_retries_an_unchanged_400(self):
+        for status,count in ((503,2),(429,2),(400,1)):
+            with self.subTest(status=status),FakeHTTP([(status,dict(error=dict(code='capacity_error')))]*count) as server:
+                client=DirectModel('local','fixture',server.base+'/v1')
+                with self.assertRaises(ModelError) as caught:
+                    client.generate('Facts.',[dict(role='user',content='Original request.')],None,[],
+                        lambda *_:self.fail('HTTP failures cannot dispatch'),natural=True,conversation_key='owner')
+                self.assertEqual(caught.exception.reason,'provider_http_error')
+                self.assertEqual(caught.exception.receipt['httpStatus'],status)
+                self.assertEqual(len(server.requests),count)
+                if count==2:self.assertEqual(server.requests[0]['body'],server.requests[1]['body'])
+
+    def test_availability_backoff_honors_fresh_owner_interrupt_and_explicit_deadline(self):
+        for interrupt in (True,False):
+            with self.subTest(interrupt=interrupt),FakeHTTP([(503,dict(error='No available slot.'))]) as server:
+                cancel=threading.Event();client=DirectModel('local','fixture',server.base+'/v1',timeout=None if interrupt else .1)
+                original_sleep=time.sleep
+                def sleep(seconds):
+                    if interrupt and client.last_receipt.get('availabilityRecovery'):cancel.set()
+                    else:original_sleep(seconds)
+                with patch('direct_model.time.sleep',side_effect=sleep),self.assertRaises(ModelError) as caught:
+                    client.generate('Facts.',[dict(role='user',content='Original request.')],None,[],
+                        lambda *_:self.fail('No dispatch during backoff'),natural=True,conversation_key='owner',cancelled=cancel.is_set)
+                self.assertEqual(caught.exception.reason,'cancelled' if interrupt else 'timeout')
+                self.assertFalse(caught.exception.receipt['availabilityRecovery']['retryStarted'])
+                self.assertEqual(len(server.requests),1)
+
 
 if __name__=="__main__":unittest.main()

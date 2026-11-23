@@ -370,6 +370,30 @@ class DirectModel:
             toolConfig=dict(functionCallingConfig=dict(mode="AUTO" if natural else "ANY")),
             **({} if natural else dict(generationConfig=dict(maxOutputTokens=self.max_output_tokens))))
 
+    def _natural_http(self, payload, cancelled, deadline, progress):
+        try:
+            return self._http(payload, cancelled, deadline, progress)
+        except ModelError as error:
+            status = self.last_receipt.get("httpStatus")
+            if error.reason != "provider_http_error" or status not in (429, 503) or "availabilityRecovery" in self.last_receipt:
+                raise
+            # An HTTP error has produced no tool calls to dispatch. Retry the
+            # same API window once, never a tool or an uncertain game write.
+            recovery = dict(httpStatus=status, providerError=copy.deepcopy(self.last_receipt.get("providerError", {})),
+                            retryStarted=False, recovered=False)
+            self.last_receipt["availabilityRecovery"] = recovery
+            until = time.monotonic()+.25
+            while time.monotonic() < until:
+                self._check(cancelled, deadline)
+                time.sleep(min(.05, max(0, until-time.monotonic())))
+            self._check(cancelled, deadline)
+            recovery["retryStarted"] = True
+            for key in ("httpStatus", "providerError", "transportErrorType"):
+                self.last_receipt.pop(key, None)
+            value = self._http(payload, cancelled, deadline, progress)
+            recovery["recovered"] = True
+            return value
+
     def _parse(self, value, round_index):
         usage = value.get("usageMetadata" if self.provider == "gemini" else "usage", {})
         allowed_usage = {"input_tokens","output_tokens","prompt_tokens","completion_tokens","total_tokens",
@@ -611,8 +635,8 @@ class DirectModel:
                 while self.natural_tool_rounds is None or index < self.natural_tool_rounds:
                     self._check(cancelled, deadline)
                     active = self._active_conversation(conversation, read_only_tools, state["unknown"], state["pending"])
-                    value = self._http(self._payload(system, active, list(functions.values()), natural=True),
-                                       cancelled, deadline, progress)
+                    value = self._natural_http(self._payload(system, active, list(functions.values()), natural=True),
+                                               cancelled, deadline, progress)
                     native, calls = self._parse(value, index)
                     self._check(cancelled, deadline)
                     if not calls:
