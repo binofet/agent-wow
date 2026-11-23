@@ -209,7 +209,7 @@ def _feedback_cursor(value):
     return cursor
 
 
-def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expected_session=None,before_send=None,feedback_reader=None,final_authorise=None):
+def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expected_session=None,before_send=None,feedback_reader=None,final_authorise=None,command_guard=None):
     if command is not None and (not isinstance(command,str) or
             re.fullmatch(r'\.[A-Za-z][ -~]{0,253}',command) is None or command!=command.rstrip()):
         raise ValueError('one native GM command required')
@@ -232,6 +232,11 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
         except Exception as error:
             if select_guid is not None:raise
             out['selection']=dict(available=False,error=str(error),realmCommandTargetKnown=False)
+        if command is not None and command_guard is not None:
+            admitted=command_guard(out,'before_selection')
+            if admitted is not None:
+                out.update(completion='same_request_command_unsettled; no packet sent or queued',repeatAdmission=admitted)
+                return out
         if select_guid is not None:
             if not out['selection']['selectionMatches']:
                 try:transport.select(select_guid,sid)
@@ -272,12 +277,18 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
             if not out['selection']['selectionMatches']:
                 out['completion']='selection_changed_before_command; no command was sent or queued'
                 return out
-            def final_selection_guard(code,payload):
-                if code!=0x95:return
+        def final_command_guard(code,payload):
+            if code!=0x95:return
+            if select_guid is not None:
                 out['selection']=selection_evidence(rpc,sid,select_guid)
                 if not out['selection']['selectionMatches']:
                     raise ValueError('observed selection changed at final command boundary')
-            transport.before_packet=final_selection_guard
+            if command_guard is not None:
+                admitted=command_guard(out,'before_command')
+                if admitted is not None:
+                    out['repeatAdmission']=admitted
+                    raise ValueError('same request command is unsettled; no command packet sent')
+        transport.before_packet=final_command_guard
         try:transport.gm(command,sid)
         except Exception as error:
             if getattr(error,'packet_dispatched',None) is False:
