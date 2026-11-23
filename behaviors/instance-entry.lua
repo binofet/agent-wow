@@ -8,7 +8,15 @@ local function ident(s,zero)
     for i=1,#s do local b=byte_at(s,i);if b<48 or b>57 then return false end end
     return (zero or s~="0") and (#s<20 or s<="18446744073709551615")
 end
-local function point(p) return type(p)=="table" and finite(p.x or 0) and finite(p.y or 0) and finite(p.z or 0) end
+local function taskid(s)
+    if type(s)~="string" or #s==0 or #s>80 then return false end
+    for i=1,#s do
+        local b=byte_at(s,i)
+        if not (b>=48 and b<=57 or b>=65 and b<=90 or b>=97 and b<=122 or b==45 or b==46 or b==58 or b==95) then return false end
+    end
+    return true
+end
+local function point(p) return type(p)=="table" and finite(p.x) and finite(p.y) and finite(p.z) end
 local function contains(v,p)
     if not point(p) then return false end
     local dx,dy,dz=(p.x or 0)-v.x,(p.y or 0)-v.y,(p.z or 0)-v.z
@@ -23,7 +31,7 @@ local function allowed(task,id)
     return false
 end
 function M.request(v,observed)
-    if type(v.id)~="string" or #v.id==0 or #v.id>80 or not ident(v.ownerGuid) or not uint(v.destinationMapId) or
+    if not taskid(v.id) or not ident(v.ownerGuid) or not uint(v.destinationMapId) or
        type(v.allowedTriggerIds)~="table" or #v.allowedTriggerIds<1 or #v.allowedTriggerIds>16 or
        v.triggerId~=nil and (not uint(v.triggerId) or v.triggerId==0) then return end
     for _,id in ipairs(v.allowedTriggerIds) do if not uint(id) or id==0 then return end end
@@ -42,7 +50,7 @@ function M.request(v,observed)
     return task
 end
 function M.validate(task)
-    return task.kind=="enter_instance" and ident(task.selfGuid) and ident(task.visitId) and ident(task.ownerGuid) and
+    return task.kind=="enter_instance" and taskid(task.id) and ident(task.selfGuid) and ident(task.visitId) and ident(task.ownerGuid) and
         type(task.sessionId)=="string" and uint(task.destinationMapId) and type(task.allowedTriggerIds)=="table" and
         type(task.history)=="table" and type(task.serial)=="number" and (not task.operation or type(task.operation.capability)=="string")
 end

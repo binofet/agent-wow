@@ -238,7 +238,12 @@ func (p *instanceEntryPolicyFixture) receipt(id uint64, action map[string]any, r
 			outcome = behavior.ActionSettledUnverified
 		}
 		if capability == "move_body" {
-			payload["phase"] = response.(*actionsv1.State).GetBodyMovement().GetPhase()
+			state := response.(*actionsv1.State)
+			phase := state.GetBodyMovement().GetPhase()
+			payload["phase"] = phase
+			// Mirror the real Runtime receipt only for a native known full
+			// body write, including its final STOP. Refusals/unknowns stay false.
+			payload["transport_written"] = state.GetTransportWrites() > 0 && (phase == "body_input_written" || phase == "body_settled_written")
 		}
 		if capability == "release_interaction" {
 			outcome = behavior.ActionSettledUnverified
@@ -435,7 +440,7 @@ func TestInstanceEntryPolicyExpiredOrRefusedReleaseReadsWithoutRepeatingWrites(t
 }
 
 func TestInstanceEntryPolicyMalformedIntentCannotRequestNativeEntry(t *testing.T) {
-	for _, kind := range []string{"no allowlist", "foreign owner syntax", "trigger outside allowlist", "invalid recovery"} {
+	for _, kind := range []string{"no allowlist", "foreign owner syntax", "trigger outside allowlist", "invalid recovery", "missing route coordinate", "whitespace task ID", "control task ID"} {
 		t.Run(kind, func(t *testing.T) {
 			p := newInstanceEntryPolicyFixture(t)
 			command := instanceEntryPolicyCommand()
@@ -448,6 +453,12 @@ func TestInstanceEntryPolicyMalformedIntentCannotRequestNativeEntry(t *testing.T
 				command["triggerId"] = 3135
 			case "invalid recovery":
 				command["startRecovery"] = map[string]any{"absoluteBearingRadians": 0, "durationMs": 501}
+			case "missing route coordinate":
+				command["routeGoal"] = map[string]any{"x": -1484.07, "y": 2617.57}
+			case "whitespace task ID":
+				command["id"] = " entry-id "
+			case "control task ID":
+				command["id"] = "entry\nid"
 			}
 			p.command(command)
 			out := p.step()
