@@ -2652,6 +2652,13 @@ without observations. Keep final action NONE after performing a tool action.
         for key in ("shared_development", "model_selection", "shared_tasks", "server_admin"):
             prompt_state.pop(key, None)
         prompt_state["model_selection"] = self.model_selection()
+        # The exact names are already in final_reply's schema; retain the
+        # same compact catalog facts as the legacy prompt without repeating
+        # its full name/ID table in every direct API request.
+        if isinstance(prompt_state.get("emote_catalog"), dict):
+            catalog = prompt_state["emote_catalog"]
+            prompt_state["emote_catalog"] = {k:catalog[k] for k in ("available","revision","source") if k in catalog}
+            prompt_state["emote_catalog"]["count"] = len(emotes)
         development = state.get("development", {})
         record = self.generation_record(development, None, None)
         record.update(execution="direct_api", childPhase="api.request", outcome="running",

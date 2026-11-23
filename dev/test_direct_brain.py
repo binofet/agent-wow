@@ -110,6 +110,42 @@ class PublicRPC:
 
 
 class DirectBrainIntegrationTests(unittest.TestCase):
+    def test_direct_request_compacts_only_redundant_emote_table_and_keeps_schema_names(self):
+        rows = [dict(id=1000+index, name="EMOTE_%03d" % index) for index in range(512)]
+        state = dict(character=dict(guid="4"), current_request=dict(source="owner", senderGuid="3"),
+            emote_catalog=dict(available=True, revision="emotes-observed", source="installed-chat",
+                               sessionId="chat-current", emotes=rows),
+            observations=dict(self=dict(guid="4", health=711, healthMax=900)),
+            controls=dict(sessionId="aw-current", lastSpellOperation=dict(phase="transport_unconfirmed")),
+            inventory=dict(revision="73", items=[dict(guid="42", count=3)]))
+        original = copy.deepcopy(state)
+        brain = converse.DirectBrain(self.state, character_name="Mira", character_class="mage",
+            model="fixture-requested-model", provider="local", base_url="http://127.0.0.1:1/v1")
+        selection = brain.model_selection()
+        requests = []
+        def capture(payload, *_):
+            requests.append(copy.deepcopy(payload))
+            return chat(("final", "final_reply", dict(REPLY, emote=rows[-1]["name"])))
+        with patch.object(brain.client, "_http", side_effect=capture):
+            reply = brain.generate([dict(speaker="Joel", text="Hello")], state)
+        self.assertEqual(reply["emote"], rows[-1]["name"])
+        self.assertEqual(len(requests), 1)
+        content = requests[0]["messages"][1]["content"]
+        actual = json.loads(content.split("Current observations and control state JSON:\n", 1)[1]
+                            .split("\nConversation JSON:\n", 1)[0])
+        expected = copy.deepcopy(state)
+        expected["emote_catalog"] = dict(available=True, revision="emotes-observed",
+                                         source="installed-chat", count=512)
+        expected["model_selection"] = selection
+        self.assertEqual(actual, expected)
+        final = next(row["function"] for row in requests[0]["tools"]
+                     if row["function"]["name"] == "final_reply")
+        self.assertEqual(final["parameters"]["properties"]["emote"]["enum"],
+                         ["NONE", *sorted(row["name"] for row in rows)])
+        self.assertEqual(state, original)
+        self.assertLess(len(json.dumps(actual)), len(json.dumps(dict(state,
+            model_selection=expected["model_selection"]))))
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve())
         self.addCleanup(temporary.cleanup)
