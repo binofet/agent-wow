@@ -232,7 +232,12 @@ func TestInvalidAndOversizedOutputsQuarantineCandidate(t *testing.T) {
 		"depth": "local t={}; local p=t; for i=1,20 do p.child={}; p=p.child end; return t",
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := New()
+			// Structural output rejection and fallback use a healthy execution
+			// allowance; separate tests retain the default watchdog.
+			r, err := NewWithOptions(SessionOptions{ExecutionLimit: time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
 			first := load(t, r, goodPolicy)
 			r.Evaluate(nil)
 			bad := load(t, r, "return {decide=function(s) "+body+" end}")

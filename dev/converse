@@ -77,6 +77,8 @@ PICK_LOCK_ORDER = re.compile(
 NUMERIC_ARGS = ("quest_id", "item_entry", "gold_copper")
 LEGACY_EMOTES = {"WAVE": 101, "BOW": 17, "CHEER": 21}
 DEVELOPMENT_PEERS = {1:"Arlen", 4:"Mira", 5:"Rook", 8:"Nixwick", 87:"Lotharen"}
+DEVELOPMENT_REPLY_PREFIX = "[dev-reply] "
+DEVELOPMENT_REPLY_BODY_BYTES = 240 - len(DEVELOPMENT_REPLY_PREFIX.encode("utf-8"))
 
 
 def supported_emotes(state):
@@ -2409,12 +2411,14 @@ def inspect_events(raw, developer=False, *, evidence=None):
                 errorEvents=error_events,omittedErrorEvents=omitted_errors)
 
 
-class CodexBrain:
+class AgentBrain:
+    """Shared conversation authority and receipts, independent of model transport."""
     class _SpellLearningRequest(dict):
         """Only the same-body spellbook observer creates this internal cue."""
         def __init__(self,*args,owned_learning_check=None,**kwargs):
             super().__init__(*args,**kwargs)
             self.owned_learning_check=owned_learning_check
+
 
     class _CombatReviewRequest(dict):
         """Created only by this body's private combat observer, never chat JSON."""
@@ -2422,13 +2426,12 @@ class CodexBrain:
             super().__init__(*args, **kwargs)
             self.owned_review_check = owned_review_check
 
-    def __init__(self, binary, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None, *, provider="codex", base_url=None, local_provider=None, api_key_env=None):
-        self.binary, self.state_dir = Path(binary), Path(state_dir)
+
+    def __init__(self, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None):
+        self.state_dir = Path(state_dir)
         self.timeout, self.stopped = timeout, stopped
         self.persona = character_persona(character_name, character_class)
         self.character_name, self.model = character_name, explicit_model(model)
-        self.transport = model_transport(provider, model=self.model, base_url=base_url,
-                                         local_provider=local_provider, api_key_env=api_key_env)
         self.gm_instructions = ""
         if character_name.casefold() == "lotharen":
             self.gm_instructions = gm_tasks.INSTRUCTIONS
@@ -2447,16 +2450,6 @@ class CodexBrain:
         self.last_failure_receipt = None
         self.last_request_id = None
 
-    def model_selection(self):
-        selection = dict(requestedModel=self.model, source='explicit_cli' if self.model is not None else 'cli_default_unpinned',
-                    configured=self.model is not None, effectiveModelKnown=False, userConfigIgnored=True,
-                    requestedReasoningEffort=self.reasoning_effort, reasoningOverride=self.reasoning_effort is not None)
-        transport = getattr(self, "transport", dict(provider="codex"))
-        selection.update(provider=transport["provider"])
-        if transport["provider"] != "codex":
-            selection.update(source="explicit_" + transport["provider"], baseURL=transport["baseURL"],
-                             localProvider=transport["localProvider"])
-        return selection
 
     def development_enabled(self, state):
         if self.developer_workspace is None or not isinstance(state,dict): return False
@@ -2508,6 +2501,7 @@ class CodexBrain:
         except (ConversationError,TypeError,ValueError,AttributeError):
             return False
 
+
     def generation_record(self, development, reason, error_type, process=None):
         development=development if isinstance(development,dict) else {}
         generation=getattr(self,'_generation',None) or {}
@@ -2530,6 +2524,7 @@ class CodexBrain:
             tools=[],pendingTools=[],streamComplete=False,turnStarted=False,turnCompleted=False,
             omittedTools=0,omittedPendingTools=0,lastEventType=None,threadId=None,turnId=None,
             errorEvents=[],omittedErrorEvents=0,actionOutcome='unknown',receiptStored=False)
+
 
     def retain_failure(self, record):
         # This is evidence only: never clear or retry a tool/game reservation.
@@ -2555,31 +2550,6 @@ class CodexBrain:
             record['receiptStored']=stored
             record['retentionError']=type(error).__name__
 
-    def generation_snapshot(self, events, errors, limit, development, reason, error_type, process, developer):
-        record=self.generation_record(development,reason,error_type,process)
-        try:
-            events.flush()
-            raw=os.pread(events.fileno(),limit+1,0)
-            record['eventBytesTruncated']=len(raw)>limit
-            record['partialFinalLine']=bool(raw and not raw.endswith(b'\n'))
-            record['stderrBytes']=os.fstat(errors.fileno()).st_size
-            try:inspect_events(raw[:limit],developer=developer,evidence=record)
-            except ConversationError as error:record['streamError']=str(error)
-            if record['eventBytesTruncated']:record['streamComplete']=False
-        except Exception as error:
-            record['retentionError']=type(error).__name__
-        record['childPhase']=record['lastEventType'] or ('process.started' if record['childStarted'] else 'not_started')
-        return record
-
-    def retain_development_events(self, events, errors, limit, development, reason, error_type, process, *, developer=True):
-        """Keep typed dispositions privately; never retain tool text or replay it."""
-        record=self.generation_snapshot(events,errors,limit,development,reason,error_type,process,developer)
-        if reason is not None:self.retain_failure(record)
-        if developer:
-            self.last_development_events=dict(record['counts'])
-            self.last_development_result=record
-            try:write_json(self.state_dir/'development-events-last.json',record)
-            except Exception as error:record['retentionError']=type(error).__name__
 
     def generate(self, history, control_state=None, cancelled=None):
         # Reset before binding checks, cancellation or Popen can fail. A previous
@@ -2615,6 +2585,280 @@ class CodexBrain:
                 self.retain_failure(record)
             raise
         finally:self._generation=None
+
+
+
+class DirectBrain(AgentBrain):
+    """Conversation brain using model HTTP APIs and actor-bound native tools."""
+    def __init__(self, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen",
+                 character_class="priest", developer_workspace=None, model=None, *,
+                 provider="local", base_url=None, api_key_env=None):
+        super().__init__(state_dir, timeout, stopped, character_name, character_class,
+                         developer_workspace, model, None)
+        from direct_model import DirectModel
+        self.client = DirectModel(provider, self.model, base_url, api_key_env, timeout)
+        self.transport = dict(provider=provider, baseURL=self.client.base_url)
+        self.last_api_receipt = None
+        self.developer_persona = (PERSONA.replace("CHARACTER_NAME", character_name)
+            .replace("CHARACTER_CLASS", character_class) + """
+Your selected model is called directly through its API. There is no Codex CLI,
+shell agent or provider fallback. Use only the supplied function tools.
+Owner input takes priority. Preserve existing pending/unknown actions; never
+repeat a mutation because its response was lost. Game decisions and tuning
+belong in the same accepted Lua policy. You can inspect, save, patch, test and
+CAS-apply your own Lua, inspect learned spells, and deliver structured policy
+input through the supplied identity-bound tools. Read your current policy and
+installed capabilities first. Generic learned spells do not require a separate
+Go handler. A queued event, packet write or cast GO is not an observed effect.
+Workspace tools are restricted to their advertised files; no arbitrary shell,
+credentials, server internals or model changes are available. For a missing
+native mechanic report its exact installed contract and required capability.
+For an authorized whole-team GM recovery, use the maintained gm_task_start
+tool and inspect its task status, preserving its one-writer and cleanup guards.
+Do not replace that lifecycle with a lone revive. Teammates can collaborate on
+development but cannot authorize unrelated gameplay. Return final_reply only
+after your requested work or honest pending outcome; do not claim a tool effect
+without observations. Keep final action NONE after performing a tool action.
+""")
+        if character_name.casefold() == "lotharen":
+            self.developer_persona += LOTHAREN_REALM_INSTRUCTIONS
+
+    def model_selection(self):
+        reported = (self.last_api_receipt or {}).get("providerReportedModel")
+        return dict(provider=self.client.provider, requestedModel=self.model,
+            baseURL=self.client.base_url, execution="direct_api", codexInvoked=False,
+            configured=True, source="explicit_direct_api", effectiveModelKnown=bool(reported),
+            providerReportedModel=reported, requestedReasoningEffort=None, reasoningOverride=False)
+
+    def _generate(self, history, control_state=None, cancelled=None):
+        from direct_model import ModelError, Cancelled
+        state = control_state if isinstance(control_state, dict) else {}
+        request = state.get("current_request", {})
+        request = request if isinstance(request, dict) else {}
+        developer = self.development_enabled(state)
+        if request.get("source") in ("mission_fault", "combat_review", "spell_learning") and not developer:
+            raise ConversationError("Internal developer binding changed")
+        allow_gm = (self.character_name.casefold() == "lotharen" and request.get("source") == "owner"
+                    and state.get("gm_controls_available") is True)
+        allow_silent = developer and (request.get("source") in ("combat_review", "spell_learning")
+            or request.get("source") == "party_agent" and request.get("verifiedPeer") is True
+            and request.get("developmentWhisper") is True)
+        emotes = supported_emotes(state)
+        schema = dict(REPLY_SCHEMA, properties=dict(REPLY_SCHEMA["properties"],
+            emote={"type":"string", "enum":["NONE", *sorted(emotes)]},
+            action={"type":"string", "enum":[value for value in ACTIONS if value != "REPAIR_CONTROLLER"]}))
+        if allow_gm:
+            schema["properties"]["gm_command"] = {"type":"string", "maxLength":255}
+            schema["required"] = [*schema["required"], "gm_command"]
+        prompt_state = dict(state)
+        for key in ("shared_development", "model_selection", "shared_tasks", "server_admin"):
+            prompt_state.pop(key, None)
+        prompt_state["model_selection"] = self.model_selection()
+        # The exact names are already in final_reply's schema; retain the
+        # same compact catalog facts as the legacy prompt without repeating
+        # its full name/ID table in every direct API request.
+        if isinstance(prompt_state.get("emote_catalog"), dict):
+            catalog = prompt_state["emote_catalog"]
+            prompt_state["emote_catalog"] = {k:catalog[k] for k in ("available","revision","source") if k in catalog}
+            prompt_state["emote_catalog"]["count"] = len(emotes)
+        development = state.get("development", {})
+        record = self.generation_record(development, None, None)
+        record.update(execution="direct_api", childPhase="api.request", outcome="running",
+                      turnStarted=True, counts={"completedTools":0, "failedTools":0})
+        serial = [0]
+        mutation_entered = [False]
+        def interrupted():
+            return self.stopped() or bool(cancelled and cancelled())
+        def gm_authorised():
+            current = state.get("current_request", {})
+            return (allow_gm and isinstance(current, dict) and current.get("source") == "owner"
+                and current.get("senderGuid") == str(development.get("ownerGuid"))
+                and state.get("gm_controls_available") is True
+                and self.development_enabled(state) and not interrupted())
+        def api_metadata():
+            raw = self.client.last_receipt or {}
+            keys = ("requestId", "execution", "provider", "requestedModel", "providerReportedModel",
+                    "outcome", "reason", "httpRequests", "httpStatus", "toolCalls", "transportErrorType",
+                    "initialRequestBytes", "lastRequestBytes", "requestIndex", "requestPreparedAtUnixMs", "requestPhase")
+            result = {key: raw[key] for key in keys if key in raw}
+            if isinstance(raw.get("providerError"), dict): result["providerError"] = raw["providerError"]
+            return result
+        def publish():
+            self.last_development_events = dict(record["counts"]) if developer else None
+            record["receiptStored"] = True
+            self.last_development_result = dict(record)
+            try: write_json(self.state_dir / "development-events-last.json", record)
+            except Exception: record["receiptStored"] = False
+            callback = getattr(self, "_generation_progress", None)
+            if callable(callback): callback(record)
+        def api_progress(_):
+            record["api"] = api_metadata()
+            publish()
+        tools = None
+        if developer:
+            from direct_tools import DirectTools
+            prompt_state["shared_development"] = companion_role_context(self.character_name)
+            prompt_state["shared_tasks"] = mission_runtime_context(integer(development["selfGuid"]),
+                development["sessionId"], development["rpcUrl"])
+        from direct_context import ContextLimitError, encode, project_context, project_history
+        from direct_tools import ToolError, context_page, context_tool_schema
+        self._generation["stage"] = "preparing"
+        try:
+            # JSON detachment retains values, never copies typed authority
+            # callback attributes into the read-only model snapshot.
+            full_context = json.loads(encode(prompt_state))
+            if "emote_catalog" in state:
+                full_context["emote_catalog"] = json.loads(encode(state["emote_catalog"]))
+            full_context["conversationHistory"] = json.loads(encode(history))
+            history_view, history_metrics = project_history(history)
+            if history_metrics["historyOmittedRows"]:
+                prompt_state["historyProjection"] = dict(omittedRows=history_metrics["historyOmittedRows"],
+                    fullStatePath=["conversationHistory"],
+                    note="Older conversation rows omitted; the latest request is preserved whole.")
+            prompt_state, context_metrics = project_context(prompt_state)
+        except ContextLimitError as error:
+            raise ConversationError(str(error)) from None
+        if developer:
+            tools = DirectTools(RPC(development["rpcUrl"]), development["sessionId"],
+                development["selfGuid"], self.developer_workspace, ROOT,
+                allowed=lambda: self.development_enabled(state) and not interrupted(),
+                cancelled=interrupted, request_id=self.last_request_id, context=full_context,
+                gm_allowed=gm_authorised)
+        record["promptMetrics"] = dict(context_metrics, **history_metrics,
+            fullCapturedContextBytes=len(encode(full_context)))
+        def dispatch(name, arguments):
+            if interrupted():
+                raise OwnerInputPending("Fresh owner input is waiting")
+            serial[0] += 1
+            if name in ("workspace_write", "workspace_patch", "policy_apply", "policy_input", "gm_task_start", "gm_task_cancel"):
+                mutation_entered[0] = True
+                record["mutationToolEntered"] = True
+            identity = self.last_request_id + ":" + str(serial[0])
+            row = dict(itemId=identity, type="direct_function", name=name, status="unknown")
+            record["pendingTools"].append(identity)
+            record["tools"].append(row)
+            if len(record["tools"]) > 16:
+                record["tools"].pop(0); record["omittedTools"] += 1
+            record.update(childPhase="tool.dispatch", lastTool=row, actionOutcome="unknown")
+            publish()  # Retain an entered/unknown operation before the callback.
+            try:
+                if tools is not None:
+                    result = tools.dispatch(name, arguments)
+                elif name == "context_read":
+                    try:
+                        result = dict(ok=True, result=context_page(full_context, **arguments))
+                    except ToolError as error:
+                        result = dict(ok=False, error=dict(outcome="not_dispatched", error=str(error)[:384]))
+                else:
+                    raise ConversationError("Tool unavailable for this request")
+            except BaseException as error:
+                row["errorType"] = type(error).__name__
+                receipt = getattr(error, "receipt", None)
+                if isinstance(receipt, dict):
+                    safe_keys = ("tool", "sessionId", "characterGuid", "outcome", "replayAllowed", "path",
+                        "expectedSHA256", "targetSHA256", "expectedRevision", "targetRevision",
+                        "valueSHA256", "taskId", "stateDir")
+                    row["unknownReceipt"] = {key: receipt[key] for key in safe_keys if key in receipt
+                        and (type(receipt[key]) in (bool, int) or isinstance(receipt[key], str)
+                             and len(receipt[key]) <= 512)}
+                record["counts"]["failedTools"] += 1
+                publish()
+                raise
+            row["status"] = "returned"
+            record["pendingTools"].remove(identity)
+            record["counts"]["completedTools"] += 1
+            publish()
+            return result
+        self._generation["stage"] = "api_request"
+        try:
+            system = ((self.developer_persona if developer else self.persona)
+                      + (self.gm_instructions if allow_gm else ""))
+            messages = [{"role":"user", "content":"Current observations and control state JSON:\n"
+                + encode(prompt_state).decode("utf-8")
+                + "\nConversation JSON:\n" + encode(history_view).decode("utf-8")}]
+            schemas = tools.tool_schemas() if tools is not None else [context_tool_schema()]
+            record["promptMetrics"].update(systemBytes=len(system.encode("utf-8")),
+                messagesBytes=len(encode(messages)), toolSchemaBytes=len(encode(schemas)))
+            record["requestPreparedAtUnixMs"] = int(time.time()*1000)
+            publish()  # Prepared bytes/phase only; no HTTP write or effect inferred.
+            value = self.client.generate(
+                system, messages, schema, schemas, dispatch,
+                cancelled=interrupted, request_id=self.last_request_id, progress=api_progress)
+            if interrupted():
+                raise OwnerInputPending("Fresh owner input is waiting")
+            if mutation_entered[0] and (value.get("action", "NONE") != "NONE" or value.get("gm_command")):
+                raise ConversationError("A mutation tool already entered; a second reply action was refused")
+            reply = validate_reply(value, emotes, allow_silent=allow_silent, allow_gm=allow_gm)
+            record.update(outcome="completed", streamComplete=True, turnCompleted=True,
+                          childPhase="api.completed", actionOutcome="not_inferred_from_model_reply")
+            self.last_api_receipt = self.client.last_receipt
+            record["api"] = api_metadata()
+            publish()
+            return reply
+        except BaseException as error:
+            self.last_api_receipt = self.client.last_receipt
+            reason = ("stop_requested" if self.stopped() else "owner_input_waiting"
+                if isinstance(error, (Cancelled, OwnerInputPending)) else
+                error.reason if isinstance(error, ModelError) else type(error).__name__)
+            record.update(outcome="failed", reason=reason, errorType=type(error).__name__,
+                          childPhase="api.failed", api=api_metadata())
+            self.retain_failure(record)
+            publish()
+            if self.stopped(): raise Stopped("Conversation stop requested") from error
+            if isinstance(error, (Cancelled, OwnerInputPending)):
+                raise OwnerInputPending("Fresh owner input is waiting") from error
+            if isinstance(error, (KeyboardInterrupt, SystemExit)): raise
+            raise ConversationError("The selected model request did not finish: " + str(reason)) from error
+
+
+
+
+class CodexBrain(AgentBrain):
+    def __init__(self, binary, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None, *, provider="codex", base_url=None, local_provider=None, api_key_env=None):
+        super().__init__(state_dir, timeout, stopped, character_name, character_class, developer_workspace, model, reasoning_effort)
+        self.binary = Path(binary)
+        self.transport = model_transport(provider, model=self.model, base_url=base_url,
+                                         local_provider=local_provider, api_key_env=api_key_env)
+
+    def model_selection(self):
+        selection = dict(requestedModel=self.model, source='explicit_cli' if self.model is not None else 'cli_default_unpinned',
+                    configured=self.model is not None, effectiveModelKnown=False, userConfigIgnored=True,
+                    requestedReasoningEffort=self.reasoning_effort, reasoningOverride=self.reasoning_effort is not None)
+        transport = getattr(self, "transport", dict(provider="codex"))
+        selection.update(provider=transport["provider"])
+        if transport["provider"] != "codex":
+            selection.update(source="explicit_" + transport["provider"], baseURL=transport["baseURL"],
+                             localProvider=transport["localProvider"])
+        return selection
+
+
+    def generation_snapshot(self, events, errors, limit, development, reason, error_type, process, developer):
+        record=self.generation_record(development,reason,error_type,process)
+        try:
+            events.flush()
+            raw=os.pread(events.fileno(),limit+1,0)
+            record['eventBytesTruncated']=len(raw)>limit
+            record['partialFinalLine']=bool(raw and not raw.endswith(b'\n'))
+            record['stderrBytes']=os.fstat(errors.fileno()).st_size
+            try:inspect_events(raw[:limit],developer=developer,evidence=record)
+            except ConversationError as error:record['streamError']=str(error)
+            if record['eventBytesTruncated']:record['streamComplete']=False
+        except Exception as error:
+            record['retentionError']=type(error).__name__
+        record['childPhase']=record['lastEventType'] or ('process.started' if record['childStarted'] else 'not_started')
+        return record
+
+
+    def retain_development_events(self, events, errors, limit, development, reason, error_type, process, *, developer=True):
+        """Keep typed dispositions privately; never retain tool text or replay it."""
+        record=self.generation_snapshot(events,errors,limit,development,reason,error_type,process,developer)
+        if reason is not None:self.retain_failure(record)
+        if developer:
+            self.last_development_events=dict(record['counts'])
+            self.last_development_result=record
+            try:write_json(self.state_dir/'development-events-last.json',record)
+            except Exception as error:record['retentionError']=type(error).__name__
+
 
     def _generate(self, history, control_state=None, cancelled=None):
         transport = getattr(self, "transport", dict(provider="codex"))
@@ -2791,6 +3035,9 @@ class CodexBrain:
                         finally:
                             if developer or reason is not None:
                                 self.retain_development_events(events,errors,limit,prompt_state.get('development',{}),reason,error_type,process,developer=developer)
+
+
+
 
 
 def queue_lua_control(controls, technique, mark=None, target_guid=None):
@@ -4002,7 +4249,7 @@ class BuddyControls:
 
 class Conversation:
     def __init__(self, rpc, brain, player_guid=3, status=lambda **kw: None, stopped=lambda: False, player_name="Joel", controls=None, banter_seconds=0, character_name="Arlen", character_class="priest", character_guid=1, party_agents=None, resume_whispers=False):
-        self.rpc, self.brain, self.player_guid, self.status = rpc, brain, player_guid, status
+        self.rpc, self.brain, self.player_guid, self._status_callback = rpc, brain, player_guid, status
         self.cursor = 0
         self.session_id = ""
         self.player_name = player_name
@@ -4029,6 +4276,24 @@ class Conversation:
         self.combat_review_active = None
         self.combat_reviewed = set()
         self.spell_learning_active=None
+
+    def status_identity(self):
+        # Core and Chat have distinct session identifiers. Publish only facts
+        # observed by this listener, never its configured or previous body SID.
+        controls = self.controls
+        actions = getattr(controls, "actions", {})
+        sid = actions.get("sessionId") if isinstance(actions, dict) else None
+        bound = (getattr(controls, "actions_available", False) is True
+            and getattr(controls, "party_available", False) is True
+            and isinstance(sid, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", sid) is not None
+            and sid == getattr(controls, "party_session", None)
+            and str(actions.get("selfGuid")) == str(self.character_guid))
+        return dict(coreSessionId=sid if bound else None,
+                    coreCharacterGuid=str(self.character_guid) if bound else None,
+                    chatSessionId=self.session_id if self.initialized and self.session_id else None)
+
+    def status(self, **fields):
+        self._status_callback(**dict(fields, **self.status_identity()))
 
     def development_context(self, source, peer_verified=False):
         workspace = getattr(self.brain,"developer_workspace",None)
@@ -4290,11 +4555,11 @@ class Conversation:
         previous_request=getattr(self.brain,'last_request_id',None)
         previous_context=getattr(self.brain,'_generation_context',None)
         previous_progress=getattr(self.brain,'_generation_progress',None)
-        if isinstance(self.brain,CodexBrain):
+        if isinstance(self.brain,AgentBrain):
             self.brain._generation_context=context
             self.brain._generation_progress=lambda receipt:self.publish_brain_evidence(context,previous_request,receipt,'brainProgress')
         try:
-            if isinstance(self.brain, CodexBrain):
+            if isinstance(self.brain, AgentBrain):
                 reply=self.brain.generate(history, state, cancelled=cancelled)
             else:reply=self.brain.generate(history, state)
         except OwnerInputPending:
@@ -4307,13 +4572,13 @@ class Conversation:
             raise
         else:
             published=False
-            if isinstance(self.brain,CodexBrain):
+            if isinstance(self.brain,AgentBrain):
                 published=bool(self.publish_brain_evidence(context,previous_request,getattr(self.brain,'last_development_result',None),'brainProgress'))
             try:self.status(brainFailure=None,**({} if published else dict(brainProgress=None)))
             except Exception:pass
             return reply
         finally:
-            if isinstance(self.brain,CodexBrain):
+            if isinstance(self.brain,AgentBrain):
                 self.brain._generation_context=previous_context
                 self.brain._generation_progress=previous_progress
 
@@ -4368,6 +4633,7 @@ class Conversation:
             return False
         poll_combat = getattr(self.controls, "poll_combat", None)
         if callable(poll_combat):poll_combat()
+        self.status()  # First baseline status precedes these actual Core reads.
         return True
 
     def tick(self):
@@ -4399,6 +4665,7 @@ class Conversation:
         if not isinstance(messages, list) or len(messages) > 256:
             raise ConversationError("Chat poll messages are invalid")
         selected = []
+        development_replies = []
         previous = self.cursor
         for message in messages:
             if not isinstance(message, dict):
@@ -4430,10 +4697,16 @@ class Conversation:
                 selected.append({"speaker": self.player_name, "channel": channel, "text": text, "sender_guid": str(sender),
                     "sequence":sequence,"receiverGuid":message.get('receiverGuid','0')})
             elif (channel == "WHISPER" and sender in DEVELOPMENT_PEERS
-                  and self.session_id and result.get("sessionId") == self.session_id
-                  and getattr(self.brain, "developer_workspace", None) is not None):
+                  and self.session_id and result.get("sessionId") == self.session_id):
                 # The current server chat packet binds this known developer's
                 # GUID. A development DM grants no owner gameplay controls.
+                if text.startswith(DEVELOPMENT_REPLY_PREFIX):
+                    body = text[len(DEVELOPMENT_REPLY_PREFIX):].encode("utf-8")[:DEVELOPMENT_REPLY_BODY_BYTES].decode("utf-8", errors="ignore").rstrip()
+                    development_replies.append(dict(speaker=DEVELOPMENT_PEERS[sender], channel=channel,
+                        text=body, sender_guid=str(sender), sequence=sequence, development_reply=True))
+                    continue
+                if getattr(self.brain, "developer_workspace", None) is None:
+                    continue
                 selected.append({"speaker": DEVELOPMENT_PEERS[sender], "channel": channel,
                     "text": text, "sender_guid": str(sender), "development_whisper": True})
             elif (sender in self.party_agents and channel in ("PARTY", "PARTY_LEADER")
@@ -4442,6 +4715,16 @@ class Conversation:
                 selected.append({"speaker": self.party_agents[sender], "channel": channel, "text": text, "sender_guid": str(sender)})
         # Advance before model/RPC work: ambiguous writes must not cause retries.
         self.cursor = next_sequence
+        for entry in development_replies:
+            key = "DEVELOPMENT:" + entry["sender_guid"]
+            self.history.setdefault(key, []).append(entry)
+            self.history[key] = self.history[key][-20:]
+            self.status(event="development_peer_reply", developmentPeerReply=dict(
+                senderGuid=entry['sender_guid'], sequence=entry['sequence'], text=entry['text'],
+                chatSessionId=self.session_id), cursor=self.cursor)
+        if development_replies and not selected:
+            self.status(phase="listening", cursor=self.cursor)
+            return
         if not selected:
             if not self.refresh_controls():return
             self.poll_shared_quest()
@@ -4530,7 +4813,7 @@ class Conversation:
             if not peer_verified: return
         development = self.development_context("party_agent" if peer else "owner",peer_verified)
         state = dict(state, character={"name":self.character_name,"class":self.character_class,"guid":str(self.character_guid)}, party_agents=[{"name":name,"guid":str(guid)} for guid,name in self.party_agents.items()],
-            development=development,current_request={"source":"party_agent" if peer else "owner","senderGuid":str(sender),"verifiedPeer":peer_verified,"developmentWhisper":development_whisper,"controls_allowed":not peer,"repair_requests_allowed":True})
+            development=development,current_request={"source":"party_agent" if peer else "owner","senderGuid":str(sender),"verifiedPeer":peer_verified,"developmentWhisper":development_whisper,"controls_allowed":not peer,"repair_requests_allowed":not isinstance(self.brain,DirectBrain)})
         if allow_gm:
             state["gm_controls_available"] = True
         try:
@@ -4571,7 +4854,7 @@ class Conversation:
             if reply["text"] == "":
                 self.status(phase="listening", event="development_peer_silent", cursor=self.cursor)
                 return
-        direct = development.get("enabled") is True
+        direct = development.get("enabled") is True or isinstance(self.brain, DirectBrain)
         if direct and reply["action"]=="REPAIR_CONTROLLER":
             reply["action"]="NONE" # Direct generation owns the repair; no queued second agent.
         if self.controls and (not peer or reply["action"] in ("REPORT_PROBLEM","REPAIR_CONTROLLER")):
@@ -4651,7 +4934,13 @@ class Conversation:
             return False
 
     def send_reply(self, reply, channel, target_guid=None, history_key=None):
-        params = {"channel": channel, "language": "COMMON", "text": reply["text"]}
+        development_reply = (channel == "WHISPER" and target_guid != self.player_guid
+            and target_guid in DEVELOPMENT_PEERS and history_key == "DEVELOPMENT:" + str(target_guid))
+        text = reply["text"]
+        if development_reply:
+            text = text.encode("utf-8")[:DEVELOPMENT_REPLY_BODY_BYTES].decode("utf-8", errors="ignore").rstrip()
+        params = {"channel": channel, "language": "COMMON",
+                  "text": DEVELOPMENT_REPLY_PREFIX + text if development_reply else text}
         if channel == "WHISPER":
             params["recipient"] = DEVELOPMENT_PEERS.get(target_guid, self.player_name) if target_guid != self.player_guid else self.player_name
         result = self.rpc.call("buddy-chat.send", params)
@@ -4659,7 +4948,8 @@ class Conversation:
             raise ConversationError("Chat transport did not acknowledge the write")
         self.replies += 1
         history_key = history_key or channel
-        self.history.setdefault(history_key, []).append({"speaker": self.character_name, "channel": channel, "text": reply["text"]})
+        self.history.setdefault(history_key, []).append(dict(speaker=self.character_name, channel=channel,
+            text=text, **({"development_reply": True} if development_reply else {})))
         self.history[history_key] = self.history[history_key][-20:]
         self.status(phase="listening", replies=self.replies, cursor=self.cursor)
         if reply["emote"] != "NONE":
@@ -4958,7 +5248,7 @@ class Conversation:
             current=lambda:self.combat_review_current(self.character_guid,sid,development['rpcUrl'],key)
             if not current():return True
             state=dict(self.controls.context(),character=dict(name=self.character_name,**{'class':self.character_class},guid=str(self.character_guid)),
-                development=development,current_request=CodexBrain._CombatReviewRequest(source='combat_review',reviewKey=key,
+                development=development,current_request=AgentBrain._CombatReviewRequest(source='combat_review',reviewKey=key,
                     owned_review_check=self.combat_review_current,controls_allowed=False,repair_requests_allowed=False),
                 combat_review=dict(key=key,reason=candidate.get('reason')))
             if 'combat' not in state:state['combat']=tracker.context()
@@ -5048,7 +5338,7 @@ class Conversation:
             if pending.get('sessionId')!=self.session_id:self.reset_body();return True
             if integer(pending.get('latestSequence',0))!=self.cursor:return True
             state=dict(self.controls.context(),character=dict(name=self.character_name,**{'class':self.character_class},guid=str(self.character_guid)),
-                development=development,current_request=CodexBrain._SpellLearningRequest(source='spell_learning',noticeKey=key,
+                development=development,current_request=AgentBrain._SpellLearningRequest(source='spell_learning',noticeKey=key,
                     owned_learning_check=self.spell_learning_current,controls_allowed=False,repair_requests_allowed=False),
                 learned_spell_changes=notice)
             cue=dict(speaker='Own learned-spell observer',text=
@@ -5224,13 +5514,13 @@ def main(argv=None):
     parser.add_argument("--rpc-url", default="http://127.0.0.1:8086/rpc")
     parser.add_argument("--player-guid", type=int, default=3)
     parser.add_argument("--codex", default=DEFAULT_CODEX)
-    parser.add_argument("--model-provider", choices=("codex", "local", "responses"), default="codex")
-    parser.add_argument("--model-base-url", help="Explicit local or Responses API base URL")
+    parser.add_argument("--model-provider", choices=("codex", "local", "openai", "claude", "gemini", "responses"), default="codex")
+    parser.add_argument("--model-base-url", help="Explicit base URL for the selected model API")
     parser.add_argument("--local-provider", choices=("lmstudio", "ollama"))
-    parser.add_argument("--model-api-key-env", help="Environment variable name for a custom Responses provider")
+    parser.add_argument("--model-api-key-env", help="Environment variable name for the selected provider key")
     parser.add_argument("--included-usage-only", action="store_true",
                         help="For the Codex provider, start replies only while included usage is available")
-    parser.add_argument("--model", type=explicit_model, help="Explicit Codex model override; omitted preserves the unpinned CLI default")
+    parser.add_argument("--model", type=explicit_model, help="Explicit model ID for the selected provider")
     parser.add_argument("--reasoning-effort", choices=('low', 'medium', 'high', 'xhigh', 'max', 'ultra'),
                         help="Explicit Codex reasoning effort; omitted preserves the CLI default")
     parser.add_argument("--developer-workspace",type=Path,
@@ -5246,8 +5536,12 @@ def main(argv=None):
     parser.add_argument("--banter-seconds", type=float, default=180,
                         help="Minimum gap for occasional initiated conversation; 0 disables it (default 180)")
     args = parser.parse_args(argv)
-    model_transport(args.model_provider, model=args.model, base_url=args.model_base_url,
-                    local_provider=args.local_provider, api_key_env=args.model_api_key_env)
+    if args.model_provider in ("local", "openai", "claude", "gemini"):
+        from direct_model import DirectModel
+        DirectModel(args.model_provider, args.model, args.model_base_url, args.model_api_key_env, args.reply_timeout)
+    else:
+        model_transport(args.model_provider, model=args.model, base_url=args.model_base_url,
+                        local_provider=args.local_provider, api_key_env=args.model_api_key_env)
     if (not 0.2 <= args.poll_seconds <= 10 or args.reply_timeout is not None and not 5 <= args.reply_timeout <= 180
             or not 1 <= args.max_replies <= 1000 or not 0 < args.max_hours <= 24
             or not 0 < args.player_guid < 2**48
@@ -5281,6 +5575,8 @@ def main(argv=None):
                   "started": time.time(), "replies": 0, "cursor": 0, "character_identity":identity,
                   "persistent": args.persistent}
         local_stop = False
+        conversation = None
+        brain = None
         def request_stop(signum, frame):
             nonlocal local_stop
             local_stop = True
@@ -5289,7 +5585,11 @@ def main(argv=None):
         def stopped():
             return local_stop or read_json(state / "stop.json").get("instance") == record["instance"]
         def status(**fields):
-            record.update(fields, updated=time.time())
+            binding = conversation.status_identity() if conversation is not None else dict(
+                coreSessionId=None, coreCharacterGuid=None, chatSessionId=None)
+            record.update(fields, **binding, updated=time.time())
+            if isinstance(brain, DirectBrain):
+                record["modelSelection"] = brain.model_selection()
             if fields.get("phase") in ("listening", "thinking"):
                 record.pop("error", None)
             write_json(state / "status.json", record)
@@ -5297,10 +5597,15 @@ def main(argv=None):
         workspace = args.developer_workspace
         if workspace is None:
             workspace = registered_developer_workspace(args.character_guid, args.character_name)
-        provider_options = {} if args.model_provider == "codex" else dict(provider=args.model_provider,
-            base_url=args.model_base_url, local_provider=args.local_provider, api_key_env=args.model_api_key_env)
-        brain = CodexBrain(args.codex, state, args.reply_timeout, stopped, args.character_name, args.character_class,
-                           workspace, args.model, args.reasoning_effort, **provider_options)
+        if args.model_provider in ("local", "openai", "claude", "gemini"):
+            brain = DirectBrain(state, args.reply_timeout, stopped, args.character_name,
+                args.character_class, workspace, args.model, provider=args.model_provider,
+                base_url=args.model_base_url, api_key_env=args.model_api_key_env)
+        else:
+            provider_options = {} if args.model_provider == "codex" else dict(provider=args.model_provider,
+                base_url=args.model_base_url, local_provider=args.local_provider, api_key_env=args.model_api_key_env)
+            brain = CodexBrain(args.codex, state, args.reply_timeout, stopped, args.character_name, args.character_class,
+                               workspace, args.model, args.reasoning_effort, **provider_options)
         brain.included_usage_only = args.included_usage_only
         record["developerWorkspace"] = str(brain.developer_workspace) if brain.developer_workspace is not None else None
         record["requestedModel"] = brain.model

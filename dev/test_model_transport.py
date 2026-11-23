@@ -204,6 +204,8 @@ class ModelTransportTests(unittest.TestCase):
             def tick(self):
                 self.replies += 1
                 self.asserted = self.brain.transport["provider"] == "local"
+            def status_identity(self):
+                return dict(coreSessionId=None, coreCharacterGuid=None, chatSessionId=None)
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
             with patch.object(converse, "Conversation", OneTurn), \

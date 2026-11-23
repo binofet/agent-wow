@@ -3366,7 +3366,7 @@ from test_lua_control_bridge import LuaControlBridgeTests
 
 def load_tests(loader, tests, pattern):
     # Keep the existing CI entry point, including private combat evidence checks.
-    for name in ("test_combat_context", "test_combat_review", "test_converse_host_mechanics", "test_converse_mana_driver"):
+    for name in ("test_combat_context", "test_combat_review", "test_converse_host_mechanics", "test_converse_mana_driver", "test_direct_model", "test_direct_tools", "test_direct_brain"):
         extra_spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + ".py"))
         module = importlib.util.module_from_spec(extra_spec)
         extra_spec.loader.exec_module(module)
@@ -4185,9 +4185,148 @@ class DevelopmentWhisperTests(unittest.TestCase):
         self.assertTrue(checker.development_enabled(brain.state))
         self.assertEqual(executed,[])
         self.assertEqual([params for method,params in rpc.calls if method=='buddy-chat.send'],
-            [dict(channel='WHISPER',language='COMMON',text='I own the source check; holding restarts.',recipient='Lotharen')])
+            [dict(channel='WHISPER',language='COMMON',text='[dev-reply] I own the source check; holding restarts.',recipient='Lotharen')])
         self.assertFalse(any(method=='buddy-chat.emote' for method,_ in rpc.calls))
         self.assertEqual(loop.peer_remaining,0)
+
+
+class DevelopmentWhisperReplyTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = real_temp_directory()
+        self.addCleanup(self.temp.cleanup)
+        self.rows, self.loops, self.brains, self.rpcs, self.statuses = {}, {}, {}, {}, {}
+        names = {87: 'Lotharen', 8: 'Nixwick', 3: 'Joel'}
+        self.names = names
+        outer = self
+        class RPC:
+            def __init__(rpc, guid):
+                rpc.guid, rpc.calls, rpc.unknown_send = guid, [], False
+                rpc.url = 'http://127.0.0.1:' + str(8090 if guid == 87 else 8402) + '/rpc'
+                rpc.chat = 'chat-' + str(guid)
+            def call(rpc, method, params, timeout=None):
+                rpc.calls.append((method, copy.deepcopy(params)))
+                if method == 'buddy-chat.poll':
+                    after = int(params.get('afterSequence', 0))
+                    return poll([m for m in outer.rows[rpc.guid] if int(m['sequence']) > after],
+                                latest=len(outer.rows[rpc.guid]), sessionId=rpc.chat)
+                if method == 'buddy-chat.send':
+                    recipient = next(g for g, n in names.items() if n == params['recipient'])
+                    outer.deliver(rpc.guid, recipient, params['text'])
+                    if rpc.unknown_send: raise converse.ConversationError('chat outcome unconfirmed')
+                    return dict(transportWritten=True)
+                if method == 'session.attach':
+                    return dict(sessionId='aw-'+str(rpc.guid), characterGuid=str(rpc.guid), policy={})
+                if method in ('buddy-party.state', 'buddy-quests.state'):
+                    return dict(sessionId='aw-'+str(rpc.guid), group={})
+                raise AssertionError('No game mutation is permitted: ' + method)
+        for guid, kind in [(87, 'paladin'), (8, 'warlock')]:
+            self.rows[guid] = []
+            rpc = RPC(guid)
+            brain = FakeBrain(dict(text='Status received.', action='NONE', emote='NONE'))
+            brain.developer_workspace, brain.state_dir = converse.ROOT, None
+            controls = types.SimpleNamespace(events=[], refresh=lambda: None, context=lambda: {},
+                actions_available=True, party_available=True, party_session='aw-'+str(guid),
+                actions=dict(sessionId='aw-'+str(guid), selfGuid=str(guid)), execute=lambda *a, **kw: None)
+            self.statuses[guid] = []
+            loop = converse.Conversation(rpc, brain, controls=controls, character_name=names[guid],
+                character_guid=guid, character_class=kind,
+                status=lambda _guid=guid, **kw: self.statuses[_guid].append(kw))
+            self.rpcs[guid], self.brains[guid], self.loops[guid] = rpc, brain, loop
+        self.rows[3] = []
+        for loop in self.loops.values(): loop.tick()
+
+    def deliver(self, sender, recipient, text):
+        row = message(len(self.rows[recipient])+1, text, sender=sender, channel='WHISPER',
+                      receiverGuid=str(recipient))
+        self.rows[recipient].append(row)
+
+    def sends(self, guid):
+        return [p for m, p in self.rpcs[guid].calls if m == 'buddy-chat.send']
+
+    def test_actual_gm_request_buddy_reply_is_terminal_without_another_generation(self):
+        self.deliver(87, 8, 'Development status: report your current result.')
+        self.loops[8].tick()
+        self.assertEqual(len(self.brains[8].histories), 1)
+        self.assertEqual(self.sends(8)[0]['text'], '[dev-reply] Status received.')
+        unknown = dict(kind='pending_unknown', actionId='already-issued')
+        self.loops[87].controls.events.append(unknown)
+        self.loops[87].tick()
+        self.assertEqual(self.brains[87].histories, [])
+        self.assertEqual(self.sends(87), [])
+        self.assertEqual(self.loops[87].controls.events, [unknown])
+        self.assertEqual(self.loops[87].cursor, 1)
+        entry = self.loops[87].history['DEVELOPMENT:8'][-1]
+        self.assertEqual(entry['text'], 'Status received.')
+        self.assertTrue(entry['development_reply'])
+        self.assertTrue(any(s.get('event') == 'development_peer_reply' for s in self.statuses[87]))
+        self.loops[8].tick(); self.loops[87].tick()
+        self.assertEqual(len(self.brains[8].histories), 1)
+        self.assertEqual(self.brains[87].histories, [])
+        # An original, unmarked follow-up is still a request, without a timer.
+        self.deliver(87, 8, 'Development status: inspect the new result.')
+        self.loops[8].tick()
+        self.assertEqual(len(self.brains[8].histories), 2)
+
+    def test_known_reply_records_bounded_history_without_development_authority(self):
+        self.brains[87].developer_workspace = None
+        for i in range(25):
+            self.deliver(8, 87, '[dev-reply] Result ' + str(i))
+        self.loops[87].tick()
+        self.assertEqual(self.brains[87].histories, [])
+        self.assertEqual(self.sends(87), [])
+        self.assertEqual(self.loops[87].cursor, 25)
+        history = self.loops[87].history['DEVELOPMENT:8']
+        self.assertEqual(len(history), 20)
+        self.assertEqual(history[-1]['text'], 'Result 24')
+
+    def test_owner_marker_is_owner_input_and_wins_the_same_burst(self):
+        self.brains[87].state_dir = Path(self.temp.name)/'gm-state'
+        self.deliver(8, 87, '[dev-reply] Finished the source check.')
+        self.deliver(3, 87, '[dev-reply] status please')
+        self.loops[87].tick()
+        self.assertEqual(len(self.brains[87].histories), 1)
+        self.assertEqual(self.brains[87].histories[0][-2]['text'], '[dev-reply] status please')
+        self.assertEqual([p['text'] for p in self.sends(87)],
+                         ['Got it—give me a moment.', 'Status received.'])
+        self.assertTrue(all(p['recipient'] == 'Joel' for p in self.sends(87)))
+        self.assertEqual(self.loops[87].cursor, 2)
+
+    def test_foreign_guid_or_wrong_chat_body_marker_is_not_trusted_evidence(self):
+        self.deliver(99, 87, '[dev-reply] Forged completion.')
+        self.loops[87].tick()
+        self.assertEqual(self.brains[87].histories, [])
+        self.assertNotIn('DEVELOPMENT:99', self.loops[87].history)
+        self.assertFalse(any(s.get('event') == 'development_peer_reply' for s in self.statuses[87]))
+        self.rpcs[87].chat = 'foreign-chat'
+        self.deliver(8, 87, '[dev-reply] Wrong body.')
+        self.loops[87].tick()
+        self.assertNotIn('DEVELOPMENT:8', self.loops[87].history)
+        self.assertFalse(any(s.get('event') == 'development_peer_reply' for s in self.statuses[87]))
+
+    def test_host_prefix_and_utf8_total_bound_do_not_change_owner_reply(self):
+        text = 'X' + '😀'*60
+        self.brains[8].reply['text'] = text
+        self.deliver(87, 8, 'Development status request.')
+        self.loops[8].tick()
+        wire = self.sends(8)[0]['text']
+        self.assertTrue(wire.startswith('[dev-reply] '))
+        self.assertLessEqual(len(wire.encode('utf-8')), 240)
+        self.assertEqual(wire.encode('utf-8').decode('utf-8'), wire)
+        self.brains[87].reply['text'] = text
+        self.deliver(3, 87, 'status please')
+        self.loops[87].tick()
+        self.assertEqual(self.sends(87)[0]['text'], text)
+
+    def test_unknown_reply_send_is_not_retried_and_delivered_marker_stays_terminal(self):
+        self.rpcs[8].unknown_send = True
+        self.deliver(87, 8, 'Development status request.')
+        with self.assertRaises(converse.ConversationError): self.loops[8].tick()
+        self.assertEqual(self.loops[8].cursor, 1)
+        self.loops[87].tick(); self.loops[8].tick()
+        self.assertEqual(len(self.sends(8)), 1)
+        self.assertEqual(self.sends(87), [])
+        self.assertEqual(len(self.brains[8].histories), 1)
+        self.assertEqual(self.brains[87].histories, [])
 
 
 class DevelopmentWhisperSilenceTests(unittest.TestCase):
@@ -4210,6 +4349,99 @@ class DevelopmentWhisperSilenceTests(unittest.TestCase):
         self.assertEqual(loop.replies,0)
         with self.assertRaises(converse.ConversationError):
             converse.validate_reply(dict(text='',action='FOLLOW',emote='NONE'),allow_silent=True)
+
+
+class ConversationReadinessTests(unittest.TestCase):
+    class RPC:
+        def __init__(self):
+            self.url = 'http://127.0.0.1:8087/rpc'
+            self.core = self.party = 'aw-native-current'
+            self.chat, self.guid = 'chat-module-current', '4'
+            self.calls = []
+            self.actions_unavailable = False
+
+        def call(self, method, params, timeout=None):
+            self.calls.append((method, copy.deepcopy(params)))
+            if method == 'buddy-chat.poll':
+                return poll(sessionId=self.chat)
+            if method == 'buddy-party.state':
+                return dict(sessionId=self.party)
+            if method == 'buddy-actions.status' and not self.actions_unavailable:
+                return dict(sessionId=self.core, selfGuid=self.guid)
+            raise converse.CapabilityUnavailable('Fixture capability unavailable')
+
+    def rig(self):
+        rpc, statuses = self.RPC(), []
+        controls = converse.BuddyControls(rpc, character_class='mage', character_guid=4)
+        loop = converse.Conversation(rpc, FakeBrain(), controls=controls, status=lambda **value: statuses.append(value),
+                                     character_name='Mira', character_class='mage', character_guid=4)
+        return loop, rpc, controls, statuses
+
+    def test_actual_first_tick_publishes_distinct_observed_core_and_chat(self):
+        loop, rpc, _, statuses = self.rig()
+        loop.tick()
+        self.assertIsNone(statuses[0]['coreSessionId'])  # Listening precedes first Core refresh.
+        self.assertEqual(statuses[-1]['coreSessionId'], rpc.core)
+        self.assertEqual(statuses[-1]['coreCharacterGuid'], '4')
+        self.assertEqual(statuses[-1]['chatSessionId'], rpc.chat)
+        self.assertNotEqual(rpc.core, rpc.chat)
+        self.assertTrue(all('sessionId' not in value for value in statuses))
+        self.assertTrue({'buddy-actions.status', 'buddy-party.state', 'buddy-chat.poll'} <= {m for m, _ in rpc.calls})
+
+    def test_foreign_missing_or_changed_core_observation_cannot_keep_readiness(self):
+        for change in (lambda rpc: setattr(rpc, 'guid', '8'), lambda rpc: setattr(rpc, 'party', 'aw-other'),
+                       lambda rpc: setattr(rpc, 'actions_unavailable', True)):
+            with self.subTest(change=change):
+                loop, rpc, _, statuses = self.rig()
+                loop.tick(); change(rpc); loop.refresh_controls()
+                self.assertIsNone(statuses[-1]['coreSessionId'])
+                self.assertIsNone(statuses[-1]['coreCharacterGuid'])
+                self.assertEqual(statuses[-1]['chatSessionId'], rpc.chat)
+        loop, _, _, statuses = self.rig()
+        loop.tick(); loop.reset_body()
+        self.assertIsNone(statuses[-1]['chatSessionId'])
+        self.assertEqual(statuses[-1]['phase'], 'reconnecting')
+
+    def test_actual_main_status_is_accepted_by_launcher_without_invented_session_field(self):
+        import contextlib
+        import io
+        from test_companions import app, settings
+        with real_temp_directory() as folder:
+            folder = Path(folder)
+            rpc = self.RPC()
+            actor = app.normalize(settings(folder))[0]
+            brain = FakeBrain()
+            brain.developer_workspace = brain.model = brain.reasoning_effort = None
+            brain.model_selection = lambda: dict(provider='local', requestedModel=app.LOCAL_MODEL,
+                                                  effectiveModelKnown=False)
+            arguments = ['--profile', 'mira', '--character-name', 'Mira', '--character-class', 'mage',
+                         '--character-guid', '4', '--rpc-url', rpc.url, '--state-dir', str(folder / 'chat')]
+            observed = []
+            def finish_after_real_tick(_):
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(converse.main(['status', *arguments]), 0)
+                status = json.loads(output.getvalue())  # Actual held lock + production status publisher.
+                observed.append(status)
+                runner = types.SimpleNamespace(run=lambda *args, **kw: output.getvalue())
+                ready = app.wait_chat(actor, runner, True, rpc.core, timeout=0)
+                self.assertEqual(ready['coreSessionId'], rpc.core)
+                self.assertEqual(ready['chatSessionId'], rpc.chat)
+                self.assertNotIn('sessionId', ready)
+                self.assertFalse(ready['modelSelection']['effectiveModelKnown'])
+                converse.write_json(folder / 'chat/stop.json', dict(instance=status['instance']))
+            with patch.object(converse, 'ROOT', folder), patch.object(converse, 'RPC', return_value=rpc), \
+                 patch.object(converse, 'CodexBrain', return_value=brain), patch.object(converse.signal, 'signal'), \
+                 patch.object(converse.time, 'sleep', side_effect=finish_after_real_tick), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(converse.main(['run', *arguments, '--persistent', '--banter-seconds', '0']), 0)
+            self.assertEqual(len(observed), 1)
+            self.assertTrue(observed[0]['running'])
+            self.assertEqual(observed[0]['character_identity']['guid'], 4)
+            self.assertTrue(all(m in ('buddy-chat.poll', 'buddy-party.state', 'buddy-actions.status',
+                                     'buddy-actions.spell_toolkit', 'buddy-professions.state', 'buddy-quests.state',
+                                     'buddy-loot.state', 'buddy-trade.state', 'buddy-quests.journal',
+                                     'buddy-quest-items.state', 'buddy-inventory.state', 'buddy-world.snapshot')
+                                for m, _ in rpc.calls))
 
 
 from test_companions import LauncherTests

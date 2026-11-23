@@ -1,5 +1,5 @@
 # Copy to companions.toml and select profiles already staged on the target.
-# This file contains no credentials and starts no gateway or model download.
+# Direct model APIs only. This file contains no credentials or model download.
 version = 1
 default_host = "laniakea"
 
@@ -15,13 +15,11 @@ python = "python3"
 AGENT_WOW_AUTHSERVER_HOST = "10.247.37.1"
 
 [model]
-codex = "codex"                    # Executable on the target host's PATH
 provider = "local"
-local_provider = "lmstudio"
 base_url = "http://127.0.0.1:18765/v1"
 model = "nvidia/nemotron-3.5-super-vl"
-# No default reasoning override: model/provider support differs.
-# For Ollama, set local_provider, base_url and model explicitly.
+# LM Studio is called directly using its OpenAI-compatible API.
+# Other local OpenAI-compatible servers can use an explicit base_url/model.
 # Actors default to banter_seconds=0; set 120..3600 per actor to opt in.
 
 [actors.arlen]
@@ -55,16 +53,27 @@ profile = "nixwick"
 native_profile = "alliance-nixwick"
 native_port = 8402
 
-# Optional per-actor paid route; opt in by uncommenting a complete override.
-# Existing endpoint/key must be configured; there is no local->paid fallback.
+# Optional direct paid APIs; opt in with ONE complete per-actor override.
+# Replace each model placeholder with an actual ID from your provider account.
+# Only the named key environment variable is read. No local->paid fallback.
 # [actors.mira.model]
-# provider = "claude"                # Maps to --model-provider responses
-# base_url = "http://127.0.0.1:4000/v1"
-# model = "claude"                   # Exact alias exposed by your gateway
-# api_key_env = "LITELLM_API_KEY"     # Variable name, never its value
+# provider = "claude"
+# base_url = "https://api.anthropic.com/v1"
+# model = "REPLACE_WITH_YOUR_CLAUDE_MODEL_ID"
+# api_key_env = "ANTHROPIC_API_KEY"   # Variable name, never its value
 #
-# Gemini uses provider="gemini" and an explicitly configured gateway alias.
-# Generic Responses gateways use provider="responses".
-# Existing Codex account mode requires explicit provider="codex" and model.
+# [actors.mira.model]
+# provider = "gemini"
+# base_url = "https://generativelanguage.googleapis.com/v1beta"
+# model = "REPLACE_WITH_YOUR_GEMINI_MODEL_ID"
+# api_key_env = "GEMINI_API_KEY"
+#
+# [actors.mira.model]
+# provider = "openai"
+# base_url = "https://api.openai.com/v1"
+# model = "REPLACE_WITH_YOUR_OPENAI_MODEL_ID"
+# api_key_env = "OPENAI_API_KEY"
+#
+# New companions never use Codex CLI, a gateway or a paid provider fallback.
 # Native runtime-release.json remains authoritative for the coherent binary,
 # module directory, Lua source and private protocol contracts per profile.
