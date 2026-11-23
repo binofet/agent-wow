@@ -330,7 +330,10 @@ end
 
 frame:SetScript("OnEvent", function(_, event, ...)
     if event == "CHAT_MSG_ADDON" then
-        if WarcraftBuddyInventory then WarcraftBuddyInventory.Receive(...) end
+        if WarcraftBuddyInventory then
+            local ok,message=pcall(WarcraftBuddyInventory.Receive,...)
+            if not ok then reportError("readErrors","Inventory panel: "..tostring(message)) end
+        end
         if WarcraftBuddyTeam then
             local ok,message=pcall(WarcraftBuddyTeam.Receive,...)
             if not ok then reportError("readErrors","Team panel: "..tostring(message)) end
@@ -383,7 +386,10 @@ hooksecurefunc("AbandonQuest", function()
     queue()
 end)
 frame:SetScript("OnUpdate", function()
-    if WarcraftBuddyInventory then WarcraftBuddyInventory.Tick() end
+    if WarcraftBuddyInventory then
+        local ok,message=pcall(WarcraftBuddyInventory.Tick)
+        if not ok then reportError("publishErrors","Inventory panel: "..tostring(message)) end
+    end
     if WarcraftBuddyTeam then
         local ok,message=pcall(WarcraftBuddyTeam.Tick)
         if not ok then reportError("publishErrors","Team panel: "..tostring(message)) end
