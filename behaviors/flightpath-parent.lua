@@ -130,6 +130,11 @@ function M.decide(state)
         local out=consume(context,p)
         if out then return out end
     end
+    local booking=f.activation or {}
+    local paid=booking.pending==true
+    if p.visitId~=w.visitRevision and not paid then
+        return await(context,p,"flight_parent_unbooked_visit_replaced")
+    end
     local frame=top(memory);local last=state.last
     if frame and frame.waiting then
         if last and last.id==frame.waiting.id and last.method==frame.waiting.method and not last.error then
@@ -138,11 +143,6 @@ function M.decide(state)
             local child=p.stage=="discover" and discovery.decide_with_parent or flightpath.decide
             return child(child_state(state,p))
         end
-    end
-    local booking=f.activation or {}
-    local paid=booking.pending==true
-    if p.visitId~=w.visitRevision and not paid then
-        return await(context,p,"flight_parent_unbooked_visit_replaced")
     end
     local activation=frame
     if frame and frame.kind=="flightpath_plan" then activation=(memory.stack or {})[#memory.stack-1] end

@@ -211,6 +211,25 @@ class FlightpathParentRuntimeTests(unittest.TestCase):
         self.assertEqual(current, mutations)
         self.assertEqual(self.rpc.count('buddy-actions.activate_flightpath'), 0)
 
+    def test_unbooked_visit_fence_precedes_failed_or_missing_child_reply(self):
+        self.rpc.lost.add('buddy-actions.flightpath_reference')
+        self.until('buddy-actions.flightpath_reference')
+        before = copy.deepcopy(self.runner.data['memory'])
+        self.assertEqual(self.runner.data['last']['effect'], 'read')
+        self.assertIn('error', self.runner.data['last'])
+        self.assertFalse(self.runner.data['pending'])
+        self.rpc.world['visitRevision'] = '2'; self.rpc.flight['visitId'] = '2'
+        for missing in (False, True):
+            if missing: self.runner.data['last'] = None; self.runner.persist()
+            self.runner.tick()
+            self.assertEqual(self.runner.data['memory']['stack'], before['stack'])
+            self.assertEqual(self.runner.data['memory']['flightpathParent']['lease'], before['flightpathParent']['lease'])
+            self.assertEqual(self.runner.data['phase'], 'flight_parent_unbooked_visit_replaced')
+        self.assertEqual(self.rpc.count('buddy-actions.acquire_idle_interaction'), 1)
+        self.assertEqual(self.rpc.count('buddy-actions.release_interaction'), 0)
+        self.assertEqual(self.rpc.count('buddy-actions.flightpath_reference'), 1)
+        self.assertEqual(self.rpc.count('buddy-actions.activate_flightpath'), 0)
+
     def test_explicit_fare_refusal_and_foreign_custody_do_not_book_or_steal(self):
         self.goal['params']['acceptUnknownFare'] = False; self.reopen()
         for _ in range(9): self.runner.tick()
