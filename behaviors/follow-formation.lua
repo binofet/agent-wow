@@ -13,6 +13,7 @@ local vendor_search_yards, vendor_interaction_yards = 35,4.5
 local vendor_prefer_nearest = true
 local trainer_search_yards, trainer_interaction_yards = 100,4
 local trainer_prefer_nearest = true
+local profession_trainers={search_yards=120,anchor_yards=160,max_candidates=32,prefer_nearest=true}
 local class_training={purchase_cap_copper=1000000,reserve_copper=100,prefer_cheapest=true}
 local profession_training={purchase_cap_copper=10000,reserve_copper=0,prefer_cheapest=true,primary_first=true}
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
@@ -151,20 +152,37 @@ function M.service_destination(input)
        (input.scope~="nearby" and input.scope~="interactable" and input.scope~="travel") or
        type(input.candidates)~="table" or #input.candidates>97 then return {} end
     local trainer=input.kind=="trainer"
+    local profession=trainer and input.purpose=="profession"
+    if input.purpose~=nil and not profession then return {} end
     if not trainer and (input.scope=="travel" or #input.candidates>96) then return {} end
     local radius=trainer and trainer_search_yards or
         (input.scope=="nearby" and vendor_search_yards or vendor_interaction_yards)
     local prefer_nearest=trainer and trainer_prefer_nearest or not trainer and vendor_prefer_nearest
+    if profession then
+        radius=profession_trainers.search_yards
+        prefer_nearest=profession_trainers.prefer_nearest
+        if input.scope~="nearby" or not number(profession_trainers.anchor_yards) or profession_trainers.anchor_yards<0 or
+           not number(profession_trainers.max_candidates) or profession_trainers.max_candidates%1~=0 or
+           profession_trainers.max_candidates<1 or profession_trainers.max_candidates>97 or
+           type(prefer_nearest)~="boolean" then return {} end
+    end
     if not number(radius) or radius<=0 then return {} end
     local ranked,seen={},{}
     for _,candidate in ipairs(input.candidates) do
         if type(candidate)~="table" or not identity(candidate.guid) or seen[candidate.guid] or
            not number(candidate.distance) or candidate.distance<0 or
-           trainer and type(candidate.interactable)~="boolean" then return {} end
+           trainer and type(candidate.interactable)~="boolean" or
+           profession and (not number(candidate.anchorDistance) or candidate.anchorDistance<0 or
+               type(candidate.blockedReason)~="string") then return {} end
         seen[candidate.guid]=true
         local within=candidate.distance<=radius
         local eligible=false
-        if trainer then
+        if profession then
+            -- Native List acquires its own stop lease and revalidates the exact
+            -- NPC. Current interactability is an observation, not a claim that
+            -- a stationary nearby trainer cannot be prepared for interaction.
+            eligible=within and candidate.anchorDistance<=profession_trainers.anchor_yards
+        elseif trainer then
             if candidate.interactable then
                 if input.scope~="travel" then eligible=true end
             elseif input.scope~="interactable" and candidate.distance>trainer_interaction_yards and within then
@@ -180,7 +198,7 @@ function M.service_destination(input)
                 if candidate.distance==other.distance then
                     before=#candidate.guid<#other.guid or #candidate.guid==#other.guid and candidate.guid<other.guid
                 end
-                if trainer and candidate.interactable~=other.interactable then before=candidate.interactable end
+                if trainer and not profession and candidate.interactable~=other.interactable then before=candidate.interactable end
                 if before then index=i;break end
             end
             for i=#ranked,index,-1 do ranked[i+1]=ranked[i] end
@@ -188,7 +206,10 @@ function M.service_destination(input)
         end
     end
     local vendors={}
-    for i,candidate in ipairs(ranked) do vendors[i]=candidate.guid end
+    for i,candidate in ipairs(ranked) do
+        if not profession or i<=profession_trainers.max_candidates then vendors[#vendors+1]=candidate.guid end
+    end
+    if profession then return {trainers=vendors,purpose="profession"} end
     if trainer then return {trainers=vendors} end
     return {vendors=vendors}
 end

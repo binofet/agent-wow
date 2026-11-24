@@ -19,8 +19,8 @@ def rank_vendors(rpc, state, candidates, scope, *, bridge=None):
     return rank_services(rpc,state,candidates,scope,'vendor',bridge=bridge)
 
 
-def rank_trainers(rpc, state, self_guid, candidates, scope='nearby', *, bridge=None):
-    return rank_services(rpc,dict(state,selfGuid=str(self_guid)),candidates,scope,'trainer',bridge=bridge)
+def rank_trainers(rpc, state, self_guid, candidates, scope='nearby', *, purpose=None, bridge=None):
+    return rank_services(rpc,dict(state,selfGuid=str(self_guid)),candidates,scope,'trainer',purpose=purpose,bridge=bridge)
 
 
 def class_training(rpc, state, self_guid, spells, eligibility, attempted, reserve_copper=None, *, bridge=None):
@@ -108,8 +108,10 @@ def class_training_current(rpc,state,self_guid,plan,*,offer=True,profession=Fals
         raise Error('class_training_body_source_or_offer_changed')
 
 
-def rank_services(rpc, state, candidates, scope, kind, *, bridge=None):
+def rank_services(rpc, state, candidates, scope, kind, *, purpose=None, bridge=None):
     identity = dict(sessionId=state['sessionId'], characterGuid=str(state['selfGuid']))
+    if purpose is not None and (kind!='trainer' or purpose!='profession' or scope!='nearby'):
+        raise Error('observed_trainer_purpose_required')
     distances, facts = {}, []
     for candidate in candidates:
         distance, guid = candidate[:2]
@@ -119,8 +121,14 @@ def rank_services(rpc, state, candidates, scope, kind, *, bridge=None):
         distances[guid] = distance
         fact=dict(guid=str(guid),distance=distance)
         if kind=='trainer':
-            if len(candidate)!=3 or type(candidate[2]) is not bool:raise Error('observed_trainer_interaction_required')
+            if len(candidate)!=(5 if purpose else 3) or type(candidate[2]) is not bool:raise Error('observed_trainer_interaction_required')
             fact['interactable']=candidate[2]
+            if purpose:
+                anchor_distance,reason=candidate[3:]
+                if (type(anchor_distance) not in (int,float) or not math.isfinite(anchor_distance) or anchor_distance<0
+                        or not isinstance(reason,str)):
+                    raise Error('observed_profession_trainer_anchor_required')
+                fact.update(anchorDistance=anchor_distance,blockedReason=reason)
         facts.append(fact)
     if (kind not in ('vendor','trainer') or len(distances)>(97 if kind=='trainer' else 96)
             or scope not in (('nearby','interactable','travel') if kind=='trainer' else ('nearby','interactable'))):
@@ -138,13 +146,19 @@ def rank_services(rpc, state, candidates, scope, kind, *, bridge=None):
         'return {available=true,decision=policy.service_destination(input)} end}\n')
     bridge = bridge or runtime.Bridge(ROOT/'data/bin/luapolicy', ROOT/'modules',
         source_bytes=max(limit,len(wrapped.encode())), value_bytes=8*1024*1024, execution_ms=1000)
-    result = bridge.evaluate(wrapped, dict(kind=kind,scope=scope,candidates=facts))
+    inputs=dict(kind=kind,scope=scope,candidates=facts)
+    if purpose:inputs['purpose']=purpose
+    result = bridge.evaluate(wrapped, inputs)
     current = rpc.call('session.attach', identity)
     policy = current.get('policy', {})
     observation = rpc.call('buddy-inventory.state' if kind=='vendor' else 'buddy-training.state', {})
+    if purpose:
+        current=rpc.call('session.attach',identity)
+        policy=current.get('policy',{})
     revision_field='inventoryRevision' if kind=='vendor' else 'revision'
     if (current.get('sessionId')!=identity['sessionId'] or str(current.get('characterGuid'))!=identity['characterGuid']
             or policy.get('revision')!=revision or str(policy.get('generation'))!=generation
+            or purpose and policy.get('faulted',False) is not False
             or observation.get('sessionId')!=identity['sessionId']
             or kind=='vendor' and str(observation.get('selfGuid'))!=identity['characterGuid']
             or str(observation.get(revision_field))!=str(state.get(revision_field))):
@@ -152,6 +166,8 @@ def rank_services(rpc, state, candidates, scope, kind, *, bridge=None):
     if not isinstance(result,dict) or result.get('available') is not True:
         raise Error('town_service_destination_export_unavailable')
     decision = result.get('decision')
+    if purpose and (not isinstance(decision,dict) or decision.get('purpose')!=purpose):
+        raise Error('accepted_profession_trainer_destination_required')
     vendors = decision.get(kind+'s') if isinstance(decision,dict) else None
     if vendors == {}: vendors = []  # The Lua bridge represents an empty table as an object.
     if (not isinstance(vendors,list) or len(vendors)>len(distances)

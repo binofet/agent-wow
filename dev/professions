@@ -277,7 +277,7 @@ class Learner:
         rows, pos = context["nearby"], context["actions"]["position"]
         if not isinstance(rows, list) or len(rows) > 97:
             raise Error("Profession trainer discovery exceeds its bound")
-        result = []
+        result, observed = [], {}
         for row in rows:
             npc = row.get("creature", {}) if isinstance(row, dict) else {}
             if (not position(npc) or any(npc.get(key) is not True for key in ("present", "aliveKnown", "alive"))
@@ -290,9 +290,14 @@ class Learner:
             if guid >> 48 != 0xf130 or not guid & 0xffffff or guid >> 24 & 0xffffff != entry:
                 continue
             dist = distance(pos, npc)
-            if dist <= 120 and (self.anchor is None or distance(self.anchor, npc) <= 160):
-                result.append(dict(guid=guid, entry=entry, distance=dist))
-        return sorted(result, key=lambda row: (row["distance"], row["guid"]))[:32]
+            observed[guid]=dict(guid=guid,entry=entry,distance=dist)
+            result.append((dist,guid,row.get('interactable',False),distance(self.anchor or pos,npc),row.get('blockedReason','')))
+        try:
+            ranked=town_policy.rank_trainers(self,context['state'],self.guid,result,purpose='profession')
+        except town_policy.Error as error:
+            self.status.update(phase='waiting_for_accepted_profession_trainer_policy',policyError=str(error)[:128])
+            return None
+        return [observed[guid] for _,guid in ranked]
 
     def travel(self, context, trainer):
         if not self.allow_travel:
@@ -315,7 +320,7 @@ class Learner:
                 return
             fresh["actions"] = dict(fresh["actions"], interactionOwner="")
             if (fresh["session"] != context["session"] or not self.safe(fresh)
-                    or not any(row["guid"] == trainer["guid"] for row in self.candidates(fresh))):
+                    or not any(row["guid"] == trainer["guid"] for row in (self.candidates(fresh) or []))):
                 return
             self.data["travelAttempts"][key] = self.data["travelAttempts"].get(key, 0)+1
             self.save(self.data)
@@ -367,6 +372,7 @@ class Learner:
             return
         self.next_operation = self.now()+10
         trainers = self.candidates(context)
+        if trainers is None:return
         eligible = [row for row in trainers if row["distance"] <= 4 or self.data["travelAttempts"].get(str(row["guid"]), 0) < 3]
         policy=self.training_plan(state,context['own'],budget_only=True)
         if policy is None:return
@@ -438,7 +444,7 @@ class Learner:
                 or integer(spell.get('requiredSkill',0)) or integer(spell.get('requiredSkillRank',0))
                 or any(integer(value) for value in spell.get('requiredAbilities',[]))
                 or not 0<=cost<=budget or integer(fresh['state'].get('copper',0))<cost+reserve and cost>0
-                or not any(row["guid"] == trainer["guid"] and row["distance"] <= 4 for row in self.candidates(fresh))):
+                or not any(row["guid"] == trainer["guid"] and row["distance"] <= 4 for row in (self.candidates(fresh) or []))):
             self.status["phase"] = "profession_offer_changed_rechecking"
             return
         attempt = dict(session=context["session"], npc=str(trainer["guid"]), spell=integer(spell["spellId"]),
