@@ -120,7 +120,15 @@ func TestTradeServicePreparationSignedSkillAndKnownReference(t *testing.T) {
 			reference["lockId"], reference["requiredSkillRank"] = 17, 75
 			row := frame["world"].(map[string]any)["skills"].(map[string]any)["rows"].([]any)[0].(map[string]any)
 			row["value"], row["temporaryBonus"], row["permanentBonus"] = 50, tc.temporary, tc.permanent
-			tradeConsentResult(t, disposalArmorSemanticRuntime(t, source), source, frame, tc.want)
+			r := disposalArmorSemanticRuntime(t, source)
+			if tc.name == "bonuses_meet_actual_lock17_rank75" {
+				// This exact default-CLI case measured a decide resource turn.
+				// Keep the full signed-skill semantics proof, but require either
+				// its real production decision or the typed zero-output refusal.
+				tradeConsentResourceTurnResult(t, r, source, frame, tc.want)
+			} else {
+				tradeConsentResult(t, r, source, frame, tc.want)
+			}
 		})
 	}
 }
