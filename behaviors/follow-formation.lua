@@ -13,6 +13,7 @@ local vendor_search_yards, vendor_interaction_yards = 35,4.5
 local vendor_prefer_nearest = true
 local trainer_search_yards, trainer_interaction_yards = 100,4
 local trainer_prefer_nearest = true
+local profession_trainers={search_yards=120,anchor_yards=160,max_candidates=32,prefer_nearest=true}
 local class_training={purchase_cap_copper=1000000,reserve_copper=100,prefer_cheapest=true}
 local profession_training={purchase_cap_copper=10000,reserve_copper=0,prefer_cheapest=true,primary_first=true}
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
@@ -48,6 +49,47 @@ local function revision(value) return value=="0" or identity(value)~=nil end
 local function at_target(self, target, radius)
     local dx,dy=self.x-target.x,self.y-target.y
     return dx*dx+dy*dy<=radius*radius and math.abs(self.z-target.z)<=1.5
+end
+
+local inn_trainers = {[5]=377,[8]=328,[4]=917}
+local inn_stairs = {{x=-9477,y=22.5,z=56.339386,radius=.75},
+    {x=-9477,y=14,z=60.184803,radius=.75}, {x=-9473.5,y=14,z=60.190014,radius=.75},
+    {x=-9473.5,y=23,z=63.820427,radius=.75}}
+
+local function inn_route(input)
+    local p,t=input.position,input.trainer
+    if (input.direction~="approach" and input.direction~="return") or
+       input.classKnown~=true or not number(input.classId) or not pose(p,false) or not pose(t,false) or
+       p.mapId~=0 or t.mapId~=0 or t.entry~=inn_trainers[input.classId] or
+       t.x < -9480 or t.x > -9455 or t.y < 8 or t.y > 39 or t.z < 63 or t.z > 65 or
+       p.x < -9490 or p.x > -9410 or p.y < 0 or p.y > 85 or p.z < 54 or p.z > 65.5 then
+        return {eligible=false}
+    end
+    local route={}
+    if input.direction=="return" then
+        if p.x < -9480 or p.x > -9455 or p.y < 8 or p.y > 39 or p.z < 62.8 then
+            return {eligible=false}
+        end
+        for i=#inn_stairs,1,-1 do route[#route+1]=inn_stairs[i] end
+    elseif p.z < 62.8 then
+        local first=1
+        if p.x>=-9474.5 and p.x<=-9472.5 and p.y>=14 and p.y<=23.5 and p.z>=60 then
+            first=4
+        elseif p.x>=-9478.5 and p.x<=-9473 and p.y>=13 and p.y<=15 and p.z>=59.5 and p.z<=61 then
+            first=3
+        elseif p.x>=-9478.5 and p.x<=-9475.5 and p.y>15 and p.y<=22.5 and p.z>=56.8 and p.z<=60.7 then
+            first=2
+        elseif p.x>=-9468 and p.x<=-9462 and p.y>=29 and p.y<=35.5 and p.z>=56 and p.z<=58.3 then
+            route[1]={x=-9467,y=30,z=56.96606,radius=.75}
+        else
+            if p.x > -9435 and p.y>=45 and p.y<=70 then
+                route[#route+1]={x=-9432,y=60,z=56.625515,radius=.5}
+            end
+            route[#route+1]={x=-9465.93,y=24.9355,z=56.52882,radius=.5}
+        end
+        for i=first,#inn_stairs do route[#route+1]=inn_stairs[i] end
+    end
+    return {eligible=true,route=route}
 end
 
 local function training_choice(input)
@@ -221,32 +263,65 @@ local function inventory_maintenance(input)
     return finish("operation_limit")
 end
 function M.service_destination(input)
+    if type(input)=="table" and input.kind=="inn_route" then return inn_route(input) end
     if type(input)=="table" and (input.kind=="class_training" or input.kind=="profession_training") then return training_choice(input) end
     if type(input)=="table" and input.kind=="inventory_maintenance" then return inventory_maintenance(input) end
     if type(input)~="table" or (input.kind~="vendor" and input.kind~="trainer") or
        (input.scope~="nearby" and input.scope~="interactable" and input.scope~="travel") or
        type(input.candidates)~="table" or #input.candidates>97 then return {} end
     local trainer=input.kind=="trainer"
+    local profession=trainer and input.purpose=="profession"
+    local class=trainer and input.purpose=="class"
+    if input.purpose~=nil and not profession and not class then return {} end
+    if class and (type(input.classKnown)~="boolean" or not number(input.classId) or
+       input.classId<0 or input.classId>4294967295 or input.classId%1~=0) then return {} end
     if not trainer and (input.scope=="travel" or #input.candidates>96) then return {} end
     local radius=trainer and trainer_search_yards or
         (input.scope=="nearby" and vendor_search_yards or vendor_interaction_yards)
     local prefer_nearest=trainer and trainer_prefer_nearest or not trainer and vendor_prefer_nearest
+    if profession then
+        radius=profession_trainers.search_yards
+        prefer_nearest=profession_trainers.prefer_nearest
+        if input.scope~="nearby" or not number(profession_trainers.anchor_yards) or profession_trainers.anchor_yards<0 or
+           not number(profession_trainers.max_candidates) or profession_trainers.max_candidates%1~=0 or
+           profession_trainers.max_candidates<1 or profession_trainers.max_candidates>97 or
+           type(prefer_nearest)~="boolean" then return {} end
+    end
     if not number(radius) or radius<=0 then return {} end
     local ranked,seen={},{}
     for _,candidate in ipairs(input.candidates) do
         if type(candidate)~="table" or not identity(candidate.guid) or seen[candidate.guid] or
            not number(candidate.distance) or candidate.distance<0 or
-           trainer and type(candidate.interactable)~="boolean" then return {} end
+           trainer and type(candidate.interactable)~="boolean" or
+           class and (not number(candidate.entry) or candidate.entry<1 or
+               candidate.entry>16777215 or candidate.entry%1~=0) or
+           profession and (not number(candidate.anchorDistance) or candidate.anchorDistance<0 or
+               type(candidate.blockedReason)~="string") then return {} end
         seen[candidate.guid]=true
         local within=candidate.distance<=radius
         local eligible=false
-        if trainer then
+        if profession then
+            -- Native List acquires its own stop lease and revalidates the exact
+            -- NPC. Current interactability is an observation, not a claim that
+            -- a stationary nearby trainer cannot be prepared for interaction.
+            eligible=within and candidate.anchorDistance<=profession_trainers.anchor_yards
+        elseif trainer then
             if candidate.interactable then
                 if input.scope~="travel" then eligible=true end
             elseif input.scope~="interactable" and candidate.distance>trainer_interaction_yards and within then
                 eligible=true
             end
         elseif within then eligible=true end
+        if eligible and class then
+            local curated=false
+            for _,entry in pairs(inn_trainers) do
+                if candidate.entry==entry then curated=true end
+            end
+            if curated then
+                eligible=false
+                if input.classKnown==true then eligible=candidate.entry==inn_trainers[input.classId] end
+            end
+        end
         if eligible then
             local index=#ranked+1
             for i,other in ipairs(ranked) do
@@ -256,15 +331,20 @@ function M.service_destination(input)
                 if candidate.distance==other.distance then
                     before=#candidate.guid<#other.guid or #candidate.guid==#other.guid and candidate.guid<other.guid
                 end
-                if trainer and candidate.interactable~=other.interactable then before=candidate.interactable end
+                if trainer and not profession and candidate.interactable~=other.interactable then before=candidate.interactable end
                 if before then index=i;break end
             end
             for i=#ranked,index,-1 do ranked[i+1]=ranked[i] end
             ranked[index]=candidate
         end
     end
-    local vendors={}
-    for i,candidate in ipairs(ranked) do vendors[i]=candidate.guid end
+    local vendors,inn={},{}
+    for i,candidate in ipairs(ranked) do
+        if not profession or i<=profession_trainers.max_candidates then vendors[#vendors+1]=candidate.guid end
+        if class and input.classKnown==true and candidate.entry==inn_trainers[input.classId] then inn[#inn+1]=candidate.guid end
+    end
+    if profession then return {trainers=vendors,purpose="profession"} end
+    if class then return {trainers=vendors,purpose="class",innTrainers=inn} end
     if trainer then return {trainers=vendors} end
     return {vendors=vendors}
 end
