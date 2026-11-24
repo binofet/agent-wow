@@ -312,14 +312,16 @@ class QuestTask:
                 raise Error("Lua quest objective policy returned invalid targets")
             seen, bound[collection] = set(), []
             for row in rows:
-                raw = observed[collection].get(row.get("guid")) if isinstance(row, dict) else None
+                key = row.get("guid") if isinstance(row, dict) else None
+                raw = observed[collection].get(key) if isinstance(key, str) else None
                 if (raw is None or row["guid"] in seen or type(row.get("distance")) not in (int, float)
                         or not math.isfinite(row["distance"]) or not math.isclose(row["distance"], distance(own, raw), rel_tol=0, abs_tol=1e-8)):
                     raise Error("Lua quest objective policy returned an unobserved target")
                 seen.add(row["guid"])
                 bound[collection].append(dict(guid=integer(row["guid"]), point=raw, distance=row["distance"]))
         choice = result.get("choice")
-        if not isinstance(choice, dict) or choice.get("kind") not in ("wait", "travel", "attempt"):
+        if (not isinstance(choice, dict) or choice.get("kind") not in ("wait", "travel", "attempt")
+                or not isinstance(choice.get("collection"), str)):
             raise Error("Lua quest objective policy returned an invalid action")
         if choice["kind"] == "wait":
             if choice.get("collection") not in bound or choice.get("phase") not in ("waiting_for_observed_practice_fire_or_reset", "waiting_for_observed_quest_barrel",

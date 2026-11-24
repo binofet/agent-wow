@@ -207,14 +207,16 @@ class QuestTaskTests(unittest.TestCase):
         self.assertFalse(any(method == "buddy-quest-items.attempt" for method, _ in rpc.calls))
 
     def test_lua_rejects_foreign_or_unobserved_targets_before_any_native_effect(self):
-        for change in ("body", "target"):
+        for change in ("body", "target", "target_shape", "collection_shape"):
             actor, rpc, now, _ = self.rig()
             rpc.following = False
             result = actor.policy(actor.read())
             if change == "body": result["sessionId"] = "foreign"
-            else:
+            elif change == "target":
                 result["collections"]["barrels"][0]["guid"] = "123"
                 result["choice"]["targetGuid"] = "123"
+            elif change == "target_shape": result["collections"]["barrels"][0]["guid"] = {}
+            else: result["choice"]["collection"] = {}
             with patch.object(task.quest_policy, "evaluate", return_value=result): self.tick(actor, now)
             self.assertEqual(actor.status["phase"], "waiting_for_shared_lua_quest_objective_policy")
             self.assertEqual(actor.data["attempts"], [])
