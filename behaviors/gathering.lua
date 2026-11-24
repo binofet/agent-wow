@@ -253,7 +253,133 @@ handlers.gathering=function(c,f)
         return tasks.await(c,o.status=="OUTCOME_UNCONFIRMED" and "gathering_outcome_unconfirmed" or "gathering_material_proof_incomplete")
     end
 end
-return {handlers=handlers,push=function(context,params) tasks.push(context,"gathering",params) end,
+-- Practice is the same profession policy's pure choice surface. The caller
+-- retains durable reservations; native Attempt validates the exact recipe and
+-- current body, inventory, skill and resulting game receipts.
+local practice_tuning={spells={[3275]=129,[2538]=185,[2540]=185,[7620]=356}}
+local function practice_uint(v,maximum)
+    return type(v)=="number" and v>=0 and v<=maximum and v==math.floor(v)
+end
+local function practice_decimal(v,positive)
+    if type(v)~="string" or #v==0 or #v>20 then return false end
+    if v=="0" then return not positive end
+    if byte_at(v,1)==48 then return false end
+    for i=1,#v do local b=byte_at(v,i);if b<48 or b>57 then return false end end
+    return #v<20 or v<="18446744073709551615"
+end
+local function practice_array(v,maximum)
+    if type(v)~="table" or #v>maximum then return false end
+    local count=0
+    for k in pairs(v) do
+        if not practice_uint(k,#v) or k==0 then return false end
+        count=count+1
+    end
+    return count==#v
+end
+local function practice_boolean(v) return v==nil or type(v)=="boolean" end
+local function practice_blocked(reason) return {status="blocked",reason=reason} end
+local function practice_choice(input)
+    local invalid="invalid_practice_facts"
+    if type(input)~="table" or type(input.sessionId)~="string" or #input.sessionId==0 or #input.sessionId>128
+       or not practice_decimal(input.selfGuid,true) or (input.mode~="choose" and input.mode~="validate")
+       or not practice_array(input.requestedSkills,3) or #input.requestedSkills==0
+       or not practice_array(input.attempts,3) or type(input.professionState)~="table" then
+        return practice_blocked(invalid)
+    end
+    local s=input.professionState
+    if s.sessionId~=input.sessionId or s.selfGuid~=input.selfGuid then return practice_blocked(invalid) end
+    for _,key in ipairs({"skillsKnown","spellsKnown","inventoryKnown","backpackKnown","active","closing"}) do
+        if not practice_boolean(s[key]) then return practice_blocked(invalid) end
+    end
+    local rawSkills=s.skills==nil and {} or s.skills
+    local rawRecipes=s.recipes==nil and {} or s.recipes
+    if not practice_decimal(s.revision,false) or not practice_decimal(s.skillsRevision,false)
+       or not practice_decimal(s.inventoryRevision,false) or not practice_decimal(s.backpackRevision,false)
+       or not practice_array(rawSkills,128) or not practice_array(rawRecipes,7) then
+        return practice_blocked(invalid)
+    end
+    local requested,counts,skills,recipes={},{},{},{}
+    for _,skill in ipairs(input.requestedSkills) do
+        if not practice_uint(skill,65535) or skill==0 or requested[skill] then return practice_blocked(invalid) end
+        requested[skill],counts[skill]=true,0
+    end
+    for _,row in ipairs(input.attempts) do
+        if type(row)~="table" or not practice_uint(row.skillId,65535) or row.skillId==0
+           or not practice_uint(row.spellId,2147483647) or row.spellId==0 then return practice_blocked(invalid) end
+        if requested[row.skillId] then counts[row.skillId]=counts[row.skillId]+1 end
+    end
+    for _,row in ipairs(rawSkills) do
+        if type(row)~="table" or not practice_uint(row.skillId,65535) or row.skillId==0 or skills[row.skillId]
+           or not practice_uint(row.rank,65535) or row.rank==0 or not practice_uint(row.maximum,65535)
+           or row.rank>row.maximum then return practice_blocked(invalid) end
+        skills[row.skillId]=row
+    end
+    for _,row in ipairs(rawRecipes) do
+        if type(row)~="table" or not practice_uint(row.skillId,65535) or row.skillId==0
+           or not practice_uint(row.spellId,2147483647) or row.spellId==0 or recipes[row.spellId] then
+            return practice_blocked(invalid)
+        end
+        for _,key in ipairs({"known","ready","requirementsVerified"}) do
+            if not practice_boolean(row[key]) then return practice_blocked(invalid) end
+        end
+        for _,key in ipairs({"reagentEntry","reagentCount","outputEntry","outputCount","focusId","castTimeMs","channelDurationMs"}) do
+            if not practice_uint(row[key]==nil and 0 or row[key],4294967295) then return practice_blocked(invalid) end
+        end
+        if row.reason~=nil and (type(row.reason)~="string" or #row.reason>1024) then return practice_blocked(invalid) end
+        recipes[row.spellId]=row
+    end
+    if type(practice_tuning.spells)~="table" then return practice_blocked("invalid_practice_tuning") end
+    local configured=0
+    for spell,skill in pairs(practice_tuning.spells) do
+        configured=configured+1
+        if configured>7 or not practice_uint(spell,2147483647) or spell==0
+           or not practice_uint(skill,65535) or skill==0 then return practice_blocked("invalid_practice_tuning") end
+    end
+    if s.closing then return practice_blocked("module_closing") end
+    if s.active then return practice_blocked("another_operation_active") end
+    local operation=s.operation
+    if operation~=nil then
+        if type(operation)~="table" or not practice_boolean(operation.cleanupUnconfirmed) then return practice_blocked(invalid) end
+        local status=operation.status
+        if status~="RESERVED" and status~="WAITING_CAST" and status~="WAITING_BOBBER" and status~="WAITING_LOOT"
+           and status~="WAITING_OBSERVATIONS" and status~="COMPLETED" and status~="BLOCKED"
+           and status~="SERVER_REJECTED" and status~="CANCELLED" and status~="OUTCOME_UNCONFIRMED" then
+            return practice_blocked(invalid)
+        end
+        if operation.cleanupUnconfirmed or status=="OUTCOME_UNCONFIRMED" then
+            return practice_blocked("prior_operation_unconfirmed")
+        end
+    end
+    if s.skillsKnown~=true or s.spellsKnown~=true or s.inventoryKnown~=true
+       or s.revision=="0" or s.skillsRevision=="0" or s.inventoryRevision=="0" then
+        return practice_blocked("no_currently_ready_known_recipe")
+    end
+    local function eligible(row)
+        return row and requested[row.skillId] and skills[row.skillId]
+           and practice_tuning.spells[row.spellId]==row.skillId
+           and row.known==true and row.ready==true and row.requirementsVerified==true
+    end
+    if input.mode=="validate" then
+        local selected=input.selected
+        if type(selected)~="table" or not practice_uint(selected.skillId,65535) or selected.skillId==0
+           or not practice_uint(selected.spellId,2147483647) or selected.spellId==0 then return practice_blocked(invalid) end
+        local row=recipes[selected.spellId]
+        if eligible(row) and row.skillId==selected.skillId then
+            return {status="ready",skillId=row.skillId,spellId=row.spellId}
+        end
+        return practice_blocked("no_currently_ready_known_recipe")
+    end
+    local chosen
+    for _,row in ipairs(rawRecipes) do
+        if eligible(row) and (not chosen or counts[row.skillId]<counts[chosen.skillId]
+           or counts[row.skillId]==counts[chosen.skillId] and (row.skillId<chosen.skillId
+               or row.skillId==chosen.skillId and row.spellId<chosen.spellId)) then chosen=row end
+    end
+    if not chosen then return practice_blocked("no_currently_ready_known_recipe") end
+    return {status="selected",skillId=chosen.skillId,spellId=chosen.spellId}
+end
+return {handlers=handlers,practice_choice=practice_choice,practice_tuning=practice_tuning,
+    push=function(context,params) tasks.push(context,"gathering",params) end,
     decide=function(state)
         if #(state.pending or {})>0 then return {memory=state.memory,phase="blocked_on_ambiguous_call",done=false} end
         return tasks.run(state,handlers,"gathering")

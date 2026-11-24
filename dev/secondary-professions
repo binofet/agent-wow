@@ -3,6 +3,9 @@
 import argparse
 import copy
 import fcntl
+import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import math
 import os
@@ -19,16 +22,23 @@ import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = {3275: 129, 2538: 185, 2540: 185, 7620: 356, 8613: 393, 2366: 182, 13262: 333}
-PRACTICE_SPELLS = frozenset((3275, 2538, 2540, 7620))
 STATUSES = ("STATUS_UNSPECIFIED", "RESERVED", "WAITING_CAST", "WAITING_BOBBER", "WAITING_LOOT",
             "WAITING_OBSERVATIONS", "COMPLETED", "BLOCKED", "SERVER_REJECTED", "CANCELLED", "OUTCOME_UNCONFIRMED")
 TERMINAL = frozenset(STATUSES[6:])
-METHODS = frozenset(("buddy-professions.state", "buddy-professions.attempt", "buddy-professions.cancel"))
+METHODS = frozenset(("buddy-professions.state", "buddy-professions.attempt", "buddy-professions.cancel",
+                     "session.policy_source", "session.attach"))
 MAX_RESPONSE, MAX_CALLS = 262144, 128
+# The maintained source contract defaults to 8MiB; JSON escaping can use six
+# bytes per source byte. Native observations keep their smaller existing bound.
+MAX_SOURCE_RESPONSE = 6 * 8 * 1024 * 1024 + MAX_RESPONSE
 
 
 class Error(Exception):
     pass
+
+
+class NotDispatched(Error):
+    """A local refusal before entering the HTTP opener, never a reply guess."""
 
 
 def number(value, maximum=2**64 - 1):
@@ -93,19 +103,25 @@ class RPC:
         return remaining
 
     def call(self, method, params):
-        if method not in METHODS or not isinstance(params, dict):
-            raise Error("rpc_method_not_allowed")
-        remaining = self.remaining()
-        if self.calls >= MAX_CALLS:
-            raise Error("rpc_call_limit_reached")
-        self.calls += 1
-        request = urllib.request.Request(self.url, data=json.dumps({"jsonrpc": "2.0", "id": self.calls,
-            "method": method, "params": params}, allow_nan=False).encode(),
-            headers={"Content-Type": "application/json"}, method="POST")
         try:
+            if method not in METHODS or not isinstance(params, dict):
+                raise Error("rpc_method_not_allowed")
+            remaining = self.remaining()
+            if self.calls >= MAX_CALLS:
+                raise Error("rpc_call_limit_reached")
+            self.calls += 1
+            request = urllib.request.Request(self.url, data=json.dumps({"jsonrpc": "2.0", "id": self.calls,
+                "method": method, "params": params}, allow_nan=False).encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+        except Error as error:
+            raise NotDispatched(str(error)) from error
+        except (ValueError, TypeError) as error:
+            raise NotDispatched("rpc_request_invalid") from error
+        try:
+            bound = MAX_SOURCE_RESPONSE if method == "session.policy_source" else MAX_RESPONSE
             with self.opener.open(request, timeout=min(5, remaining)) as response:
-                raw = response.read(MAX_RESPONSE + 1)
-            if len(raw) > MAX_RESPONSE:
+                raw = response.read(bound + 1)
+            if len(raw) > bound:
                 raise Error("rpc_response_too_large")
             reply = decode_json(raw)
         except (OSError, ValueError, urllib.error.URLError):
@@ -290,12 +306,72 @@ class Journal:
                 temporary.unlink(missing_ok=True)
 
 
+class AcceptedPracticePolicy:
+    """Evaluate one actor publication through the maintained pure helper."""
+
+    def __init__(self, rpc, session_id, guid, *, bridge=None):
+        self.rpc, self.identity = rpc, dict(sessionId=token(session_id), characterGuid=str(guid))
+        loader = importlib.machinery.SourceFileLoader("secondary_profession_runtime", str(ROOT / "dev/task-runtime"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.runtime = importlib.util.module_from_spec(spec)
+        loader.exec_module(self.runtime)
+        self.source, self.revision, self.generation, limit = self._accepted()
+        self.wrapped = ("local policy=(function()\n" + self.source + "\nend)()\n"
+            "return {decide=function(input) "
+            "if type(policy.profession_practice_choice)~='function' then return {available=false} end "
+            "return {available=true,decision=policy.profession_practice_choice(input)} end}\n")
+        self.bridge = bridge or self.runtime.Bridge(os.environ.get("BUDDY_LUAPOLICY_BINARY",
+            os.environ.get("BUDDY_LUAPOLICY_TEST_BINARY", ROOT / "data/bin/luapolicy")), ROOT / "modules",
+            source_bytes=max(limit, len(self.wrapped.encode())), execution_ms=1000)
+
+    def _accepted(self):
+        view = self.rpc.call("session.policy_source", self.identity)
+        source, revision = view.get("source"), view.get("revision")
+        generation = str(view.get("generation", ""))
+        limit = view.get("sourceLimitBytes", self.runtime.MAX_SOURCE)
+        if (view.get("sessionId") != self.identity["sessionId"]
+                or str(view.get("characterGuid")) != self.identity["characterGuid"]
+                or not isinstance(source, str) or not source or not isinstance(revision, str)
+                or re.fullmatch("[a-f0-9]{64}", revision) is None
+                or hashlib.sha256(source.encode()).hexdigest() != revision
+                or re.fullmatch("[1-9][0-9]{0,19}", generation) is None or int(generation) > 2**64 - 1
+                or type(limit) is not int or limit <= 0 or len(source.encode()) > limit):
+            raise Error("current_profession_policy_source_required")
+        return source, revision, generation, limit
+
+    def evaluate(self, facts):
+        try:
+            result = self.bridge.evaluate(self.wrapped, facts)
+        except (self.runtime.Error, OSError, UnicodeError) as error:
+            raise Error("accepted_profession_policy_unavailable") from error
+        if (not isinstance(result, dict) or result.get("available") is not True
+                or not isinstance(result.get("decision"), dict)):
+            raise Error("profession_practice_choice_export_required")
+        return result["decision"]
+
+    def current(self):
+        # The native attempt atomically checks its body/fact revisions, not a
+        # policy revision. Keep this publication preflight nearest the write.
+        try:
+            _, revision, generation, _ = self._accepted()
+            attached = self.rpc.call("session.attach", self.identity)
+            policy = attached.get("policy", {})
+            return (revision == self.revision and generation == self.generation
+                    and attached.get("sessionId") == self.identity["sessionId"]
+                    and str(attached.get("characterGuid")) == self.identity["characterGuid"]
+                    and policy.get("faulted", False) is False and policy.get("revision") == revision
+                    and str(policy.get("generation")) == generation)
+        except Exception:
+            return False
+
+
 class Worker:
-    def __init__(self, rpc, guid, journal=None, skills=(129, 185, 356), sleep=None):
+    def __init__(self, rpc, guid, journal=None, skills=(129, 185, 356), sleep=None, *, policy=None, bridge=None):
         self.rpc, self.guid, self.journal, self.skills = rpc, guid, journal, skills
         self.sleep = sleep or time.sleep
         self.session, self.revisions, self.current = None, None, None
         self.created = []
+        self.policy, self.bridge = policy, bridge
 
     def accept(self, raw):
         state = checked_state(raw, self.guid)
@@ -386,15 +462,37 @@ class Worker:
                     self.record(row, "poll_unconfirmed", str(error))
                 return False
 
-    def candidates(self, state):
-        if (not all(state.get(key) is True for key in ("skillsKnown", "spellsKnown", "inventoryKnown"))
-                or state["inventoryRevision"] == 0):
-            return []
-        own_skills = {number(row["skillId"]) for row in state.get("skills", [])}
-        return [recipe for recipe in state.get("recipes", []) if number(recipe["skillId"]) in self.skills
-                and number(recipe["spellId"]) in PRACTICE_SPELLS
-                and number(recipe["skillId"]) in own_skills
-                and recipe.get("known") is True and recipe.get("ready") is True and recipe.get("requirementsVerified") is True]
+    def choice(self, state, selected=None):
+        if self.policy is None:
+            self.policy = AcceptedPracticePolicy(self.rpc, self.session, self.guid, bridge=self.bridge)
+        if not self.policy.current():
+            raise Error("accepted_profession_policy_changed_or_unhealthy")
+        # Preserve every recipe/skill/material row and the current receipt.
+        # Skinning/herb target arrays are a different gathering decision.
+        fields = ("sessionId", "selfGuid", "revision", "skillsKnown", "skillsRevision", "skills",
+                  "spellsKnown", "recipes", "backpackKnown", "backpackRevision", "active", "operation",
+                  "closing", "inventoryKnown", "inventoryRevision")
+        facts = {key: copy.deepcopy(state[key]) for key in fields if key in state}
+        facts["selfGuid"] = str(number(state["selfGuid"]))
+        for field in ("revision", "skillsRevision", "backpackRevision", "inventoryRevision"):
+            facts[field] = str(state[field])
+        value = dict(sessionId=self.session, selfGuid=str(self.guid), professionState=facts,
+                     requestedSkills=list(self.skills), attempts=copy.deepcopy(self.created),
+                     mode="validate" if selected is not None else "choose")
+        if selected is not None:
+            value["selected"] = dict(skillId=selected["skillId"], spellId=selected["spellId"])
+        decision = self.policy.evaluate(value)
+        if decision.get("status") == "blocked":
+            return None
+        wanted = "ready" if selected is not None else "selected"
+        skill, spell = decision.get("skillId"), decision.get("spellId")
+        if (decision.get("status") != wanted or type(skill) is not int or type(spell) is not int
+                or skill not in self.skills or CATALOG.get(spell) != skill
+                or selected is not None and (skill != selected["skillId"] or spell != selected["spellId"])
+                or not any(number(row["skillId"]) == skill and number(row["spellId"]) == spell
+                           for row in state.get("recipes", []))):
+            raise Error("accepted_profession_choice_not_current_recipe")
+        return dict(skillId=skill, spellId=spell)
 
     def practice(self, maximum):
         if type(maximum) is not int or not 1 <= maximum <= 3:
@@ -411,13 +509,14 @@ class Worker:
             previous = state.get("operation", {})
             if previous.get("status") == "OUTCOME_UNCONFIRMED" or previous.get("cleanupUnconfirmed") is True:
                 return self.result("blocked", previous.get("reason", "prior_operation_unconfirmed"))
-            choices = self.candidates(state)
-            if not choices:
+            try:
+                recipe = self.choice(state)
+            except Error as error:
+                return self.result("blocked", str(error))
+            if recipe is None:
                 return self.result("blocked", "no_currently_ready_known_recipe")
             if len(rows) >= 64:
                 return self.result("blocked", "private_receipt_capacity_reached")
-            counts = {skill: sum(row.get("skillId") == skill for row in self.created) for skill in self.skills}
-            recipe = min(choices, key=lambda row: (counts[number(row["skillId"])], number(row["skillId"]), number(row["spellId"])))
             request_id = str(uuid.uuid4())
             if any(row["requestId"] == request_id for row in rows):
                 raise Error("duplicate_request_id_no_new_attempt")
@@ -425,12 +524,13 @@ class Worker:
                    "skillId": number(recipe["skillId"]), "spellId": number(recipe["spellId"]), "phase": "reserved"}
             rows.append(row); self.created.append(row)
             self.journal.save()  # Durable reservation precedes every possible mutation.
+            entered = False
             try:
                 state = self.read()
                 prior = state.get("operation", {})
                 if (state.get("active") or state.get("closing") or prior.get("cleanupUnconfirmed") is True
                         or prior.get("status") == "OUTCOME_UNCONFIRMED"
-                        or not any(number(r["spellId"]) == row["spellId"] for r in self.candidates(state))):
+                        or self.choice(state, row) is None):
                     self.record(row, "preflight_blocked", "recipe_or_operation_changed_before_attempt")
                     return self.result("blocked", row["reason"])
                 params = {"sessionId": self.session, "requestId": request_id, "expectedRevision": str(state["revision"]),
@@ -439,10 +539,15 @@ class Worker:
                           "expectedInventoryRevision": str(state["inventoryRevision"])}
                 row["request"] = params
                 self.journal.save()
+                if not self.policy.current():
+                    self.record(row, "preflight_blocked", "accepted_profession_policy_changed_or_unhealthy")
+                    return self.result("blocked", row["reason"])
+                entered = True
                 state = self.accept(self.rpc.call("buddy-professions.attempt", params))
             except Error as error:
-                self.record(row, "attempt_unconfirmed", str(error))
-                return self.result("outcome_unconfirmed", str(error))
+                uncertain = entered and not isinstance(error, NotDispatched)
+                self.record(row, "attempt_unconfirmed" if uncertain else "preflight_blocked", str(error))
+                return self.result("outcome_unconfirmed" if uncertain else "blocked", str(error))
             if not self.poll(row, state, cleanup=True):
                 return self.result("stopped_after_attempt", row.get("reason", ""))
             if len(self.created) < maximum:
