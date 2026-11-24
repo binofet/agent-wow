@@ -5,6 +5,63 @@ native command text; the examples below are not a command whitelist or an ordere
 A Codex bridge, a Root-written script and a mandatory gm_task_start are not prerequisites. Existing
 writer ownership, body/owner authority and uncertain-action receipts still apply.
 
+COMMON GM EXCHANGES — TARGET, SYNTAX AND EVIDENCE
+These are independent forms, not a required sequence or a current instruction. Replace angle-bracket
+placeholders with verified names/IDs/counts; do not send literal # prefixes from published help.
+Current realm syntax, permissions and eligibility govern execution. A team request names actual
+recipients; the individual-player forms below are not an implicit command to change every character.
+- LEVEL: .character level Joel 40 sets Joel to ABSOLUTE level 40 at this source pin. .levelup Joel 2
+  changes Joel by DELTA +2; it does not set level 2. The older .character level SQL prose below
+  incorrectly describes a delta. Supply an explicit target and value; verify the resulting level.
+  Level changes can recalculate stats/talents and affect equipment; permitted ranges remain realm rules.
+- TARGETED SPELLS: .learn <spellId> [all] and .unlearn <spellId> [all] affect the selected connected
+  player, not a player-name argument. Use gm_execute's select_guid for the intended observed GUID.
+  With no selection, the pinned getSelectedPlayer helper returns GM self; a non-player selection can
+  fail. It resolves connected player GUIDs globally, unlike GPS's local-unit/self behavior.
+  Verify spell IDs/ranks and the recipient's resulting spellbook; "all" concerns a spell rank chain.
+- BULK TRAINING TARGET TRAP: .learn all my trainer, .learn all my class and .learn all crafts affect
+  GM SELF even when another player is selected. The trainer form learns the GM's currently teachable
+  class-trainer spells; "class" additionally includes talents/quest spells. They are not team training.
+  .learn all default <playerName> teaches that named online player's default skills, custom spells
+  and quest-reward spells, not all trainer spells. Targeted class training needs actual spell IDs or
+  the recipient's normal trainer flow.
+- PROFESSIONS: .learn all recipes <professionName> affects the selected connected player, teaches
+  that matching profession's recipes/rank spells and maximizes its skill. .setskill <skillId> <value>
+  [max] sets that selected player's skill values; it does not teach every recipe. Neither takes a player
+  name argument. Discover actual IDs with .lookup skill <name> / .lookup spell <name>; check skills
+  and learned recipes afterward. These are GM grants, not evidence that ordinary trainer prerequisites passed.
+- GEAR / ITEMS: .lookup item <name> discovers item IDs. .additem Joel <itemId> <count> grants that
+  online player's inventory; storage can admit only part, and adding is not equipping. A negative count
+  (.additem Joel <itemId> -<count>) removes that item template/count, not a specified item GUID/slot.
+  Verify target inventory/equipment and counts. Use accepted Lua gear/reward/disposal evaluations for
+  "upgrade", "best" or "trash" choices; no Python ranking or guessed item IDs. .item move is GM-self
+  inventory movement, not a named other-player equip command. There is no universal "best gear" grant here.
+- QUESTS: .lookup quest <name> discovers IDs. Source forms .quest add <questId> [playerName],
+  .quest complete <questId> [playerName], .quest status <questId> [playerName], .quest remove <questId>
+  [playerName] and .quest reward <questId> [playerName] put the optional name AFTER the quest ID;
+  omitting it uses selected player or GM self. Add checks the log and item-start constraints; a GM grant
+  is not ordinary prerequisite proof. Complete operates on an active quest and can supply objective
+  items/credit. Complete is not reward/turn-in.
+  Remove clears quest/rewarded state and can remove quest items. Online .quest reward requires a
+  completed quest and uses reward choice index 0; it is not the Lua-ranked or arbitrary-choice reward path.
+  Use actual journal, item counts and reward receipts for results; ordinary chosen rewards use the
+  existing accepted Lua/current-offer client flow. No .quest share or .quest update is registered at this
+  pin: granting a quest per player is not a real party share; objective completion is not arbitrary counter editing.
+- REPAIR: gm_execute(command='.gear repair Joel') names the online recipient without select_guid.
+  A fresh matching named repair acknowledgement is SERVER-REPORTED completion, distinct from an
+  independent durability reading; the detailed handler/feedback qualifications below still apply.
+- TRANSPORT: .appear <playerName> moves GM toward that player; .summon <playerName> moves that
+  player toward GM; .groupsummon <playerName> brings their group TO GM's CURRENT location, not
+  to the named member. Named-location forms include .teleport <locationName> (GM self) and
+  .teleport name <playerName> <locationName>. Verify actual destination/arrivals and preserve the
+  requested anchor. The GPS, partial-party, capacity and same-map/instance-copy caveats below remain essential.
+Source basis: the reference pin's cs_character.cpp level handlers; cs_learn.cpp + PlayerCommand.cpp;
+cs_misc.cpp additem/setskill/transport; cs_item.cpp item move; cs_quest.cpp; cs_gear.cpp; Chat.cpp
+getSelectedPlayer/getSelectedUnit and ChatCommandTags.cpp PlayerIdentifier. A source signature is not
+current realm acceptance. Read gm_execute's collected feedback/status, then actual affected facts;
+preserve every entered/unknown receipt and do not resend merely because verification is unavailable.
+END COMMON GM EXCHANGES
+
 CURRENT EVIDENCE TAKES PRECEDENCE OVER HISTORICAL ADVICE
 Later source-verified or actually observed corrections supersede conflicting factual advice in an
 older conversation note. Keep the old messages and every entered action/unknown receipt; do not
