@@ -63,6 +63,13 @@ func tradeConsentFullFrameResult(t *testing.T, r *Runtime, source string, input 
 	t.Helper()
 	// The full-frame fixture proves semantics separately from the product's
 	// safe resource-turn contract. It never turns unavailability into accept.
+	tradeConsentResourceTurnResult(t, r, source, input, want)
+}
+
+func tradeConsentResourceTurnResult(t *testing.T, r *Runtime, source string, input map[string]any, want string) {
+	t.Helper()
+	// This void helper cannot hand a semantic result back as a production
+	// decision when the ordinary default CLI instead measured a resource turn.
 	tradeConsentSemanticAndProductionTurn(t, r, source, input, want, true)
 }
 
@@ -147,7 +154,13 @@ func TestTradeConsentDefaultOwnerAndConsentFacts(t *testing.T) {
 	}
 	for _, phase := range []string{"IDLE", "REQUESTED", "INVITED", "ACCEPT_SENT", "COMPLETED", "unknown"} {
 		t.Run(phase, func(t *testing.T) {
-			r := tradeConsentFixtureRuntime(t, source)
+			fixtureRuntime := tradeConsentFixtureRuntime
+			if phase == "IDLE" {
+				// This observed instrumented resource miss tests wait semantics
+				// separately; the exact frame still requires the default CLI wait.
+				fixtureRuntime = disposalArmorSemanticRuntime
+			}
+			r := fixtureRuntime(t, source)
 			frame := tradeConsentFrame()
 			frame["trade"].(map[string]any)["phase"] = phase
 			tradeConsentResult(t, r, source, frame, "wait")

@@ -116,6 +116,42 @@ def _safe(value, limit=384):
     return raw.decode() if len(raw) <= limit else raw[:limit-3].decode("utf-8", "ignore") + "..."
 
 
+def _provider_error(value):
+    """Retain bounded diagnostic fields, never the response/prompt wholesale."""
+    nested = value.get("error") if isinstance(value, dict) else None
+    sources = [nested, value] if isinstance(nested, dict) else [value]
+    result = {}
+    for source in sources:
+        if not isinstance(source, dict): continue
+        for key in ("type", "code", "reason", "message", "status"):
+            item = source.get(key)
+            if key not in result and (isinstance(item, str) or type(item) is int and abs(item) < 2**53):
+                result[key] = _safe(item, 384 if key in ("message", "reason") else 128) if isinstance(item, str) else item
+    if "message" not in result and isinstance(nested, str): result["message"] = _safe(nested)
+    if "message" not in result and isinstance(value, dict) and isinstance(value.get("detail"), str):
+        result["message"] = _safe(value["detail"])
+    return result or dict(reason="empty_error_object" if nested == {} else "provider_error_without_detail")
+
+
+def _read_custody(value):
+    """Explicit unresolved action evidence must remain in the active window."""
+    if isinstance(value, list): return any(_read_custody(row) for row in value)
+    if not isinstance(value, dict): return False
+    if value.get("ok") is False or value.get("outcomeUnknown") is True or value.get("replayAllowed") is False:
+        return True
+    for key, item in value.items():
+        name = key.lower() if isinstance(key, str) else ""
+        if (name.startswith("pending") or name.endswith(("pending", "unconfirmed")) or
+                name in ("unknownreceipt", "unknownreceipts", "unknownactions", "reservations", "custody")) and item:
+            return True
+        if name in ("phase", "status", "outcome") and isinstance(item, str) and (
+                re.search(r"unknown|unconfirmed|(?:^|_)(?:pending|issued|reserved|offered|entered|attempted|waiting)(?:_|$)", item, re.I)
+                or item.upper() in ("REQUESTED", "INVITED", "OPENING", "OPEN", "ACCEPT_SENT", "CANCEL_SENT")):
+            return True
+        if _read_custody(item): return True
+    return False
+
+
 def _decode(raw):
     def unique(pairs):
         result = {}
@@ -308,12 +344,12 @@ class DirectModel:
         try:
             value = _decode(raw)
         except (ValueError,UnicodeError,RecursionError):
+            if not 200 <= status < 300:
+                self.last_receipt["providerError"] = dict(reason="non_json_error_response", responseBytes=len(raw))
+                raise ModelError("provider_http_error") from None
             raise ModelError("provider_invalid_json") from None
         if not 200 <= status < 300:
-            detail = value.get("error", value) if isinstance(value,dict) else {}
-            self.last_receipt["providerError"] = {k:_safe(detail[k]) if isinstance(detail[k],str) else detail[k]
-                for k in ("type","code","message") if isinstance(detail,dict)
-                and (isinstance(detail.get(k),str) or type(detail.get(k)) is int)}
+            self.last_receipt["providerError"] = _provider_error(value)
             raise ModelError("provider_http_error")
         if not isinstance(value,dict):
             raise ModelError("provider_invalid_response")
@@ -333,6 +369,30 @@ class DirectModel:
             tools=[dict(functionDeclarations=[dict(name=t["name"],description=t.get("description",""),parametersJsonSchema=t["parameters"]) for t in tools])],
             toolConfig=dict(functionCallingConfig=dict(mode="AUTO" if natural else "ANY")),
             **({} if natural else dict(generationConfig=dict(maxOutputTokens=self.max_output_tokens))))
+
+    def _natural_http(self, payload, cancelled, deadline, progress):
+        try:
+            return self._http(payload, cancelled, deadline, progress)
+        except ModelError as error:
+            status = self.last_receipt.get("httpStatus")
+            if error.reason != "provider_http_error" or status not in (429, 503) or "availabilityRecovery" in self.last_receipt:
+                raise
+            # An HTTP error has produced no tool calls to dispatch. Retry the
+            # same API window once, never a tool or an uncertain game write.
+            recovery = dict(httpStatus=status, providerError=copy.deepcopy(self.last_receipt.get("providerError", {})),
+                            retryStarted=False, recovered=False)
+            self.last_receipt["availabilityRecovery"] = recovery
+            until = time.monotonic()+.25
+            while time.monotonic() < until:
+                self._check(cancelled, deadline)
+                time.sleep(min(.05, max(0, until-time.monotonic())))
+            self._check(cancelled, deadline)
+            recovery["retryStarted"] = True
+            for key in ("httpStatus", "providerError", "transportErrorType"):
+                self.last_receipt.pop(key, None)
+            value = self._http(payload, cancelled, deadline, progress)
+            recovery["recovered"] = True
+            return value
 
     def _parse(self, value, round_index):
         usage = value.get("usageMetadata" if self.provider == "gemini" else "usage", {})
@@ -407,6 +467,94 @@ class DirectModel:
         return "".join(part["text"] for part in parts
                        if isinstance(part, dict) and isinstance(part.get("text"), str)
                        and (part.get("type")=="text" if self.provider=="claude" else part.get("thought") is not True))
+
+    def _active_conversation(self, conversation, read_only_tools, unknown, pending):
+        """Supersede only repeated, completed pure-read bodies in the API copy.
+
+        The original calls/results, human messages and action custody remain in
+        the durable transcript. Each marker addresses that original message;
+        the newest recorded result for the exact tool/arguments stays verbatim.
+        No observation is promoted to current merely because it is retained.
+        """
+        active = copy.deepcopy(conversation)
+        if pending: return active
+        pairs, calls = [], {}
+        for index, message in enumerate(conversation):
+            if not isinstance(message, dict): continue
+            role = message.get("role")
+            if self.provider in ("local", "openai"):
+                if role == "assistant":
+                    calls = {}
+                    rows = message.get("tool_calls", [])
+                    for row in rows if isinstance(rows, list) else []:
+                        try:
+                            function = row["function"]
+                            calls[row["id"]] = (function["name"], _decode(function["arguments"]))
+                        except (KeyError, TypeError, ValueError, UnicodeError): continue
+                elif role == "tool" and message.get("tool_call_id") in calls:
+                    pairs.append((index, ("content",), calls.pop(message["tool_call_id"]), message["tool_call_id"]))
+            elif self.provider == "claude":
+                blocks = message.get("content")
+                if not isinstance(blocks, list): continue
+                if role == "assistant":
+                    calls = {row.get("id"): (row.get("name"), row.get("input")) for row in blocks
+                             if isinstance(row, dict) and row.get("type") == "tool_use"}
+                elif role == "user":
+                    for part, row in enumerate(blocks):
+                        if isinstance(row, dict) and row.get("type") == "tool_result" and row.get("tool_use_id") in calls:
+                            pairs.append((index, ("content", part, "content"), calls.pop(row["tool_use_id"]), row["tool_use_id"]))
+            else:
+                parts = message.get("parts", [])
+                if not isinstance(parts, list): continue
+                if role == "model":
+                    calls = []
+                    for row in parts:
+                        if isinstance(row, dict) and isinstance(row.get("functionCall"), dict):
+                            call = row["functionCall"]
+                            calls.append((call.get("id"), call.get("name"), call.get("args", {})))
+                elif role == "user" and isinstance(calls, list):
+                    for part, row in enumerate(parts):
+                        response = row.get("functionResponse") if isinstance(row, dict) else None
+                        if not isinstance(response, dict): continue
+                        matches = [n for n, call in enumerate(calls) if call[1] == response.get("name")
+                                   and call[0] == response.get("id")]
+                        if not matches: continue
+                        native_id, name, args = calls.pop(matches[0])
+                        pairs.append((index, ("parts", part, "functionResponse", "response"), (name, args), native_id))
+        latest, eligible = {}, []
+        for index, path, (name, args), call_id in pairs:
+            if not isinstance(name, str) or name not in read_only_tools or not isinstance(args, dict): continue
+            fingerprint = hashlib.sha256(_packed([name, args], self.max_request_bytes)).hexdigest()
+            if fingerprint in unknown: continue
+            original = conversation[index]
+            for segment in path: original = original[segment]
+            try: value = _decode(original) if isinstance(original, str) else original
+            except (ValueError, UnicodeError, RecursionError): continue
+            if _read_custody(value): continue
+            # Object key order does not create a different observation query.
+            key = json.dumps([name, args], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            row = (index, path, name, call_id, original)
+            eligible.append((key, row)); latest[key] = row
+        superseded = 0
+        for key, row in eligible:
+            if row is latest[key]: continue
+            index, path, name, call_id, original = row
+            raw = original.encode() if isinstance(original, str) else _packed(original, self.max_request_bytes)
+            marker = dict(historicalRead=True, tool=name,
+                original=dict(transcriptMessage=index, toolCallId=call_id, resultPath=list(path)),
+                resultSHA256=hashlib.sha256(raw).hexdigest(), resultBytes=len(raw),
+                supersededBy=dict(transcriptMessage=latest[key][0], toolCallId=latest[key][3]),
+                note="Full result remains in the durable transcript. The newer recorded result is not proof of current state; refresh this read for current facts.")
+            replacement = _packed(marker, self.max_request_bytes)
+            if len(replacement) >= len(raw): continue
+            target = active[index]
+            for segment in path[:-1]: target = target[segment]
+            target[path[-1]] = replacement.decode() if isinstance(original, str) else marker
+            superseded += 1
+        self.last_receipt["contextProjection"] = dict(supersededReadResults=superseded,
+            canonicalConversationBytes=len(_packed(conversation, self.max_request_bytes*8)),
+            activeConversationBytes=len(_packed(active, self.max_request_bytes*8)))
+        return active
 
     def _generate_natural(self, system, messages, reply_schema, tools, dispatch, *, cancelled,
                           request_id, progress, transcript_path, conversation_key, assistant_text, read_only_tools):
@@ -486,8 +634,9 @@ class DirectModel:
                 index = 0
                 while self.natural_tool_rounds is None or index < self.natural_tool_rounds:
                     self._check(cancelled, deadline)
-                    value = self._http(self._payload(system, conversation, list(functions.values()), natural=True),
-                                       cancelled, deadline, progress)
+                    active = self._active_conversation(conversation, read_only_tools, state["unknown"], state["pending"])
+                    value = self._natural_http(self._payload(system, active, list(functions.values()), natural=True),
+                                               cancelled, deadline, progress)
                     native, calls = self._parse(value, index)
                     self._check(cancelled, deadline)
                     if not calls:
