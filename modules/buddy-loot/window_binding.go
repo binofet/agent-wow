@@ -14,6 +14,9 @@ func (s *Service) policyWindowBinding() (string, uint64, string) {
 	}
 	r := s.state.LastGather
 	if s.questGather && r != nil && r.Id != 0 && r.LootWindowObserved && s.window.guid == r.ObjectGuid && r.ObjectGuid == s.pendingGUID() {
+		if s.gatherRequest != nil && s.gatherRequest.request.SourceGuid == r.ObjectGuid {
+			return s.gatherRequest.request.RequestId, r.ObjectGuid, "quest_container"
+		}
 		return "gather-" + strconv.FormatUint(r.Id, 10), r.ObjectGuid, "quest_container"
 	}
 	return "", 0, ""
@@ -41,6 +44,9 @@ func closeWindowSource(r *lootv1.CloseCorpseRequest) uint64 {
 func (s *Service) windowOperation(source uint64) *lootv1.CorpseOperation {
 	if s.corpseRequest != nil && s.corpseRequest.request.CorpseGuid == source {
 		return s.corpseReceiptLocked()
+	}
+	if s.gatherRequest != nil && s.gatherRequest.request.SourceGuid == source {
+		return s.gatherReceiptLocked(s.gatherRequest)
 	}
 	r := s.state.LastGather
 	if r == nil || r.ObjectGuid != source || !r.LootWindowObserved {

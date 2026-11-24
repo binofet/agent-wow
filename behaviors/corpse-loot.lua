@@ -1,8 +1,8 @@
--- One editable policy for ordinary corpse choice, movement and opening.
+-- One editable policy for corpse and quest-container choice and opening.
 -- Exact packet/effect settlement is native; corpse and bound-container windows
--- share this policy. Legacy container source selection/opening remains native.
+-- share this policy. Native gathering executes only a caller-selected recipe.
 local M={tuning={searchRange=12,maxHeight=1.5,openRange=3.75,responseTimeoutMs=2000,windowTimeoutMs=12000,
- reserveQuestSlots=1,resumeMinFreeSlots=1}}
+ reserveQuestSlots=1,resumeMinFreeSlots=1,gatherSearchRange=12,gatherOpenRange=4.5,gatherPreferNearest=true}}
 local state={seen={},paused={},sequence=0}
 local observed
 local function id(value)return type(value)=="string" and value~="" and value~="0" end
@@ -24,6 +24,134 @@ local function distance(p,c)
   return math.sqrt(dx*dx+dy*dy+dz*dz),math.abs(dz)
  end
 end
+local function uint(value,maximum)
+ return type(value)=="number" and value>=0 and value<=maximum and value==math.floor(value)
+end
+local function default(value,fallback)if value==nil then return fallback end;return value end
+local function zero(value)return default(value,0)end
+local function decimal(value,zero)
+ if type(value)~="string" or #value==0 or #value>20 then return false end
+ if value=="0" then return zero==true end
+ if byte_at(value,1)==48 then return false end
+ for i=1,#value do local b=byte_at(value,i);if b<48 or b>57 then return false end end
+ return #value<20 or value<="18446744073709551615"
+end
+local function array(value,maximum)
+ if type(value)~="table" or #value>maximum then return false end
+ local count=0
+ for index in pairs(value) do
+  if not uint(index,#value) or index==0 then return false end
+  count=count+1
+ end
+ return count==#value
+end
+local function boolean(value)return value==nil or type(value)=="boolean" end
+local function coordinate(value)
+ return value==nil or type(value)=="number" and value==value and math.abs(value)<=40000
+end
+local function smaller_guid(a,b)return #a<#b or #a==#b and a<b end
+local function recipe_before(a,b)
+ if a.questId~=b.questId then return a.questId<b.questId end
+ if a.itemId~=b.itemId then return a.itemId<b.itemId end
+ if a.openSpell~=b.openSpell then return a.openSpell<b.openSpell end
+ return a.count<b.count
+end
+local function gather_frame(o,encounter)
+ -- These facts were not exposed by old modules. Their absence never grants
+ -- permission to recreate native selection or to guess a recipe.
+ if o.gatherCandidatesKnown~=true or o.questLogKnown~=true or
+  not decimal(o.selfGuid) or not decimal(o.visitId) or o.visitId~=encounter.visitId or not decimal(o.questLogRevision) or
+  not decimal(o.inventoryRevision) or not array(o.questObjects,32) or
+  not array(o.gatherRecipes,128) or not array(default(o.gatherAttemptedSources,{}),128) or
+  not array(o.questLog,25) or #o.questLog~=25 or not array(default(o.retiredSources,{}),128) then return end
+ local active,slots,quests={},{},{}
+ for _,q in ipairs(o.questLog) do
+  if type(q)~="table" or not uint(zero(q.slot),24) or slots[zero(q.slot)] or
+   not uint(zero(q.questId),4294967295) or not uint(zero(q.state),4294967295) or
+   not boolean(q.complete) or not boolean(q.failed) or q.questId and q.questId~=0 and quests[q.questId] then return end
+  slots[zero(q.slot)]=true
+  if zero(q.questId)~=0 then
+   quests[q.questId]=true
+   if not q.complete and not q.failed and zero(q.state)%4==0 then active[q.questId]=true end
+  end
+ end
+ local objects={}
+ for _,g in ipairs(o.questObjects) do
+  if type(g)~="table" or not decimal(g.guid) or objects[g.guid] or
+   not uint(zero(g.entry),4294967295) or not uint(zero(g.gameObjectType),4294967295) or
+   not uint(zero(g.mapId),4294967295) or not uint(zero(g.flags),4294967295) or
+   not boolean(g.present) or not boolean(g.typeKnown) or not boolean(g.mapKnown) or
+   not boolean(g.positionKnown) or not boolean(g.flagsKnown) or
+   not decimal(default(g.positionRevision,"0"),true) or not coordinate(g.x) or not coordinate(g.y) or not coordinate(g.z) then return end
+  objects[g.guid]=true
+ end
+ local recipes={}
+ for _,r in ipairs(o.gatherRecipes) do
+  if type(r)~="table" or not uint(r.objectEntry,4294967295) or r.objectEntry==0 or
+   not uint(r.questId,4294967295) or r.questId==0 or not uint(r.itemId,4294967295) or r.itemId==0 or
+   not uint(r.count,4294967295) or r.count==0 or not uint(r.openSpell,4294967295) or r.openSpell==0 then return end
+  local key=tostring(r.objectEntry)..":"..tostring(r.questId)..":"..tostring(r.itemId)..":"..tostring(r.openSpell)..":"..tostring(r.count)
+  if recipes[key] then return end
+  recipes[key]=true
+ end
+ local attempted,retired={},{}
+ for _,guid in ipairs(default(o.gatherAttemptedSources,{})) do
+  if not decimal(guid) or attempted[guid] then return end
+  attempted[guid]=true
+ end
+ for _,guid in ipairs(default(o.retiredSources,{})) do
+  if not decimal(guid) or retired[guid] then return end
+  retired[guid]=true
+ end
+ return active,attempted,retired
+end
+local function gather_choice(frame,o,encounter)
+ if (o.state or {}).enabled~=true then return end
+ local active,attempted,retired=gather_frame(o,encounter)
+ if not active then return end
+ local a,p,s=o.actions or {},(o.actions or {}).position,o.self or {}
+ if not p or p.known~=true or p.mapKnown~=true or not decimal(p.revision) or
+  not coordinate(p.x) or not coordinate(p.y) or not coordinate(p.z) or not uint(zero(p.mapId),4294967295) or
+  s.guid~=o.selfGuid or s.healthKnown~=true or not uint(zero(s.health),4294967295) or zero(s.health)==0 or
+  s.mapKnown~=true or not uint(zero(s.mapId),4294967295) or zero(s.mapId)~=zero(p.mapId) or s.movementFlagsKnown~=true or
+  not uint(zero(s.unitFlags),4294967295) or not uint(zero(s.movementFlags),4294967295) or not uint(zero(s.extraMovementFlags),4294967295) or
+  zero(s.movementFlags)>=2147483648 or zero(s.movementFlags)%268435456>511 or zero(s.extraMovementFlags)~=0 then return end
+ for _,bit in ipairs({1,4,8192,262144,524288,1048576,4194304,8388608,16777216,33554432,134217728}) do
+  if math.floor((s.unitFlags or 0)/bit)%2==1 then return end
+ end
+ local range,opening,height=M.tuning.gatherSearchRange,M.tuning.gatherOpenRange,M.tuning.maxHeight
+ if type(range)~="number" or range~=range or range<=0 or range>12 or
+  type(opening)~="number" or opening~=opening or opening<=0 or opening>4.5 or
+  type(height)~="number" or height~=height or height<0 or height>1.5 or
+  type(M.tuning.gatherPreferNearest)~="boolean" then return end
+ local selected,recipe,best
+ for _,g in ipairs(o.questObjects) do
+  if g.present==true and g.typeKnown==true and g.gameObjectType==3 and g.mapKnown==true and
+   (g.mapId or 0)==(p.mapId or 0) and g.positionKnown==true and decimal(g.positionRevision) and
+   g.flagsKnown==true and (g.flags or 0)%2==0 and math.floor((g.flags or 0)/8)%2==0 and
+   math.floor((g.flags or 0)/16)%2==0 and not attempted[g.guid] and not retired[g.guid] and
+   not state.seen[g.guid] and not state.paused[g.guid] then
+   local d,h=distance(p,g)
+   if d and d<=range and h<=height then
+    for _,r in ipairs(o.gatherRecipes) do
+     if r.objectEntry==g.entry and active[r.questId] and (r.openSpell==3365 or r.openSpell==6477 or r.openSpell==6478) and
+      (not selected or M.tuning.gatherPreferNearest and d<best or not M.tuning.gatherPreferNearest and d>best or
+       d==best and (smaller_guid(g.guid,selected.guid) or g.guid==selected.guid and recipe_before(r,recipe))) then
+      selected,recipe,best=g,r,d
+     end
+    end
+   end
+  end
+ end
+ if not selected then return end
+ local approach=best>opening or a.moving==true
+ return {phase=approach and "approach_selected_container" or "open_selected_container",sourceGuid=selected.guid,
+  action={capability="loot_gather",sessionId=o.sessionId,selfGuid=o.selfGuid,sourceGuid=selected.guid,
+   questId=recipe.questId,itemId=recipe.itemId,openSpell=recipe.openSpell,requestId="gather-"..tostring(state.sequence),
+   visitId=o.visitId,expectedPositionRevision=p.revision,expectedObjectRevision=selected.positionRevision,
+   expectedInventoryRevision=o.inventoryRevision,expectedQuestLogRevision=o.questLogRevision,approach=approach,
+   observationSequence=frame.input.observationSequence}}
+end
 function M.on_event(event)
  if event.kind=="corpse_loot_observation" then
   observed=event.value;state.sequence=event.sequence
@@ -36,13 +164,16 @@ function M.on_event(event)
   if op and op.openingTransportAttempted and id(op.corpseGuid) and state.lastRequest~=op.requestId then
    state.seen[op.corpseGuid]=true;state.lastRequest=op.requestId
   end
+  if op and op.openingTransportAttempted and id(op.sourceGuid) then state.seen[op.sourceGuid]=true end
   local fresh=observed.sourceObservation
   if fresh and fresh.present and fresh.mapKnown and (observed.self or {}).mapKnown and
    (fresh.mapId or 0)==(observed.self.mapId or 0) and fresh.aliveKnown and fresh.alive and fresh.healthKnown and (fresh.health or 0)>0 then
    state.seen[fresh.guid]=nil
   end
-  if op and id(op.corpseGuid) and (observed.state or {}).inventoryPaused==true then
-   state.paused[op.corpseGuid]=state.paused[op.corpseGuid] or observed.inventoryRevision
+  local pausedSource=op and (id(op.corpseGuid) and op.corpseGuid or op.sourceGuid)
+  if not id(pausedSource) then pausedSource=(observed.state or {}).pendingGameObjectGuid end
+  if id(pausedSource) and (observed.state or {}).inventoryPaused==true then
+   state.paused[pausedSource]=state.paused[pausedSource] or observed.inventoryRevision
   end
   if (observed.state or {}).inventoryPaused~=true and (observed.generalFreeSlots or 0)>0 then
    for g,revision in pairs(state.paused) do
@@ -52,6 +183,10 @@ function M.on_event(event)
  elseif event.receipt and event.receipt.payload and event.receipt.payload.capability=="loot_open" then
   local p=event.receipt.payload
   if p.opening_transport_attempted and id(p.corpse_guid) then state.seen[p.corpse_guid]=true end
+ elseif event.receipt and event.receipt.payload and event.receipt.payload.capability=="loot_gather" then
+  local p,outcome=event.receipt.payload,event.receipt.outcome
+  if id(p.source_guid) and (p.opening_transport_attempted or outcome=="unknown" or
+   outcome=="settled_unverified" or outcome=="confirmed") then state.seen[p.source_guid]=true end
  end
  return true
 end
@@ -185,6 +320,8 @@ function M.decide(frame,encounter,quiet,urgent)
   return out
  end
  local retired={};for _,g in ipairs(o.retiredSources or {}) do retired[g]=true end
+ local gathering=gather_choice(frame,o,encounter)
+ if gathering then return gathering end
  local chosen,best
  for _,c in ipairs(o.corpses or {}) do
   if id(c.guid) and not state.seen[c.guid] and not state.paused[c.guid] and not retired[c.guid] and c.present==true and c.mapKnown==true and c.mapId==p.mapId and

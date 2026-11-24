@@ -25,6 +25,7 @@ const (
 	BuddyLoot_GetState_FullMethodName       = "/warcraftbuddy.loot.v1.BuddyLoot/GetState"
 	BuddyLoot_ObserveCorpses_FullMethodName = "/warcraftbuddy.loot.v1.BuddyLoot/ObserveCorpses"
 	BuddyLoot_OpenCorpse_FullMethodName     = "/warcraftbuddy.loot.v1.BuddyLoot/OpenCorpse"
+	BuddyLoot_OpenGather_FullMethodName     = "/warcraftbuddy.loot.v1.BuddyLoot/OpenGather"
 	BuddyLoot_CloseCorpse_FullMethodName    = "/warcraftbuddy.loot.v1.BuddyLoot/CloseCorpse"
 	BuddyLoot_TakeMoney_FullMethodName      = "/warcraftbuddy.loot.v1.BuddyLoot/TakeMoney"
 	BuddyLoot_TakeSlot_FullMethodName       = "/warcraftbuddy.loot.v1.BuddyLoot/TakeSlot"
@@ -41,6 +42,7 @@ type BuddyLootClient interface {
 	GetState(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	ObserveCorpses(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*CorpseObservation, error)
 	OpenCorpse(ctx context.Context, in *OpenCorpseRequest, opts ...grpc.CallOption) (*CorpseOperation, error)
+	OpenGather(ctx context.Context, in *OpenGatherRequest, opts ...grpc.CallOption) (*CorpseOperation, error)
 	CloseCorpse(ctx context.Context, in *CloseCorpseRequest, opts ...grpc.CallOption) (*CorpseOperation, error)
 	TakeMoney(ctx context.Context, in *TakeLootRequest, opts ...grpc.CallOption) (*LootMutation, error)
 	TakeSlot(ctx context.Context, in *TakeLootRequest, opts ...grpc.CallOption) (*LootMutation, error)
@@ -91,6 +93,16 @@ func (c *buddyLootClient) OpenCorpse(ctx context.Context, in *OpenCorpseRequest,
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CorpseOperation)
 	err := c.cc.Invoke(ctx, BuddyLoot_OpenCorpse_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyLootClient) OpenGather(ctx context.Context, in *OpenGatherRequest, opts ...grpc.CallOption) (*CorpseOperation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CorpseOperation)
+	err := c.cc.Invoke(ctx, BuddyLoot_OpenGather_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -165,6 +177,7 @@ type BuddyLootServer interface {
 	GetState(context.Context, *emptypb.Empty) (*State, error)
 	ObserveCorpses(context.Context, *emptypb.Empty) (*CorpseObservation, error)
 	OpenCorpse(context.Context, *OpenCorpseRequest) (*CorpseOperation, error)
+	OpenGather(context.Context, *OpenGatherRequest) (*CorpseOperation, error)
 	CloseCorpse(context.Context, *CloseCorpseRequest) (*CorpseOperation, error)
 	TakeMoney(context.Context, *TakeLootRequest) (*LootMutation, error)
 	TakeSlot(context.Context, *TakeLootRequest) (*LootMutation, error)
@@ -192,6 +205,9 @@ func (UnimplementedBuddyLootServer) ObserveCorpses(context.Context, *emptypb.Emp
 }
 func (UnimplementedBuddyLootServer) OpenCorpse(context.Context, *OpenCorpseRequest) (*CorpseOperation, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OpenCorpse not implemented")
+}
+func (UnimplementedBuddyLootServer) OpenGather(context.Context, *OpenGatherRequest) (*CorpseOperation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method OpenGather not implemented")
 }
 func (UnimplementedBuddyLootServer) CloseCorpse(context.Context, *CloseCorpseRequest) (*CorpseOperation, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CloseCorpse not implemented")
@@ -300,6 +316,24 @@ func _BuddyLoot_OpenCorpse_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyLootServer).OpenCorpse(ctx, req.(*OpenCorpseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyLoot_OpenGather_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpenGatherRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyLootServer).OpenGather(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyLoot_OpenGather_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyLootServer).OpenGather(ctx, req.(*OpenGatherRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -434,6 +468,10 @@ var BuddyLoot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OpenCorpse",
 			Handler:    _BuddyLoot_OpenCorpse_Handler,
+		},
+		{
+			MethodName: "OpenGather",
+			Handler:    _BuddyLoot_OpenGather_Handler,
 		},
 		{
 			MethodName: "CloseCorpse",

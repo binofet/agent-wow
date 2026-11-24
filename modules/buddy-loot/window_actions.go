@@ -126,7 +126,7 @@ func (s *Service) takeWindow(ctx context.Context, r *lootv1.TakeLootRequest, mon
 	if w.GetSelf().GetGuid() != s.selfGUID || !money && (!w.InventoryKnown || w.InventoryRevision != r.ExpectedInventoryRevision) || ctx.Err() != nil {
 		return nil, status.Error(codes.FailedPrecondition, "current body and selected inventory revision required")
 	}
-	if s.questGather && (!s.boundHarvestRecipe().quest(w, s.selfGUID, false) || !s.boundHarvestRecipe().objectCurrent(w, lease.State, source)) {
+	if s.questGather && (!s.gatherVisitCurrent(w) || !s.boundHarvestRecipe().quest(w, s.selfGUID, false) || !s.boundHarvestRecipe().objectCurrent(w, lease.State, source)) {
 		return nil, status.Error(codes.FailedPrecondition, "current exact bound quest container required")
 	}
 	if !money && s.unconfirmedItems[r.ExpectedItemId] {

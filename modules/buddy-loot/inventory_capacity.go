@@ -146,7 +146,7 @@ func (s *Service) openingContext(w *worldv1.SnapshotResponse, a *actionsv1.State
 		return false
 	}
 	if s.questGather {
-		if !s.boundHarvestRecipe().context(w, a, s.selfGUID, true) || !s.boundHarvestRecipe().objectCurrent(w, a, s.pendingGUID()) {
+		if !s.gatherVisitCurrent(w) || !s.boundHarvestRecipe().context(w, a, s.selfGUID, true) || !s.boundHarvestRecipe().objectCurrent(w, a, s.pendingGUID()) {
 			return false
 		}
 		for _, g := range w.QuestObjects {

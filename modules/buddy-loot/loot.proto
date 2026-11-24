@@ -5,7 +5,7 @@ import "api/module/v1/session.proto";
 import "google/protobuf/empty.proto";
 import "modules/buddy-world/world.proto";
 import "modules/buddy-actions/actions.proto";
-// Legacy named quest/container scheduler only; ordinary corpse policy is Lua.
+// Legacy named quest scheduling metadata; new corpse/container choices are Lua.
 message EnableRequest { bool enabled = 1; }
 message ItemReceipt { uint32 item_id = 1; uint32 count = 2; uint32 loot_slot = 3; }
 
@@ -77,6 +77,16 @@ message OpenCorpseRequest {
   string request_id = 4; uint64 expected_position_revision = 5;
   uint64 expected_corpse_revision = 6; uint64 expected_inventory_revision = 7;
 }
+// One caller-selected supported quest-container recipe. The native operation
+// validates current facts and executes only its exact finite approach/open.
+message OpenGatherRequest {
+  string session_id = 1; uint64 self_guid = 2; uint64 source_guid = 3;
+  uint32 quest_id = 4; uint32 item_id = 5; uint32 open_spell = 6;
+  string request_id = 7; uint64 visit_id = 8;
+  uint64 expected_position_revision = 9; uint64 expected_object_revision = 10;
+  uint64 expected_inventory_revision = 11; uint64 expected_quest_log_revision = 12;
+  bool approach = 13;
+}
 message CloseCorpseRequest { string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3; bool retire_unconfirmed = 4; uint64 source_guid = 5; }
 message CorpseOperation {
   string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3; string request_id = 4;
@@ -104,7 +114,16 @@ message CorpseObservation {
   repeated OwnedItemCount item_counts = 20;
   // Current cached GameObject facts for the bound container, never a replacement source.
   warcraftbuddy.world.v1.GameObjectState source_object = 21;
+  // Raw observed objects and supported catalog relationships, never a target
+  // recommendation. Missing/false knownness cannot admit a new gather choice.
+  repeated warcraftbuddy.world.v1.GameObjectState quest_objects = 22;
+  repeated GatherRecipe gather_recipes = 23;
+  uint64 quest_log_revision = 24;
+  uint64 visit_id = 25;
+  repeated uint64 gather_attempted_sources = 26;
+  bool gather_candidates_known = 27;
 }
+message GatherRecipe { uint32 object_entry = 1; uint32 quest_id = 2; uint32 item_id = 3; uint32 count = 4; uint32 open_spell = 5; }
 message QuestItemRequirement { uint32 quest_id = 1; uint32 item_id = 2; uint32 count = 3; }
 message OwnedItemCount { uint32 item_id = 1; uint64 count = 2; }
 message LootSlot { uint32 slot = 1; uint32 item_id = 2; uint32 count = 3; uint32 slot_type = 4; bool removed = 5; }
@@ -137,6 +156,7 @@ service BuddyLoot {
   rpc GetState(google.protobuf.Empty) returns (State);
   rpc ObserveCorpses(google.protobuf.Empty) returns (CorpseObservation);
   rpc OpenCorpse(OpenCorpseRequest) returns (CorpseOperation);
+  rpc OpenGather(OpenGatherRequest) returns (CorpseOperation);
   rpc CloseCorpse(CloseCorpseRequest) returns (CorpseOperation);
   rpc TakeMoney(TakeLootRequest) returns (LootMutation);
   rpc TakeSlot(TakeLootRequest) returns (LootMutation);
