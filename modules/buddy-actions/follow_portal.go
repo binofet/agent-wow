@@ -2,29 +2,44 @@ package buddyactions
 
 import (
 	"context"
-	"encoding/binary"
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/areatriggerreference"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
-	"github.com/agent-wow/agent-wow/pkg/opcode"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 )
 
 type dungeonPortal struct {
 	trigger, source, destination uint32
 	center                       position
 	radius                       float64
+	reference                    areatriggerreference.Trigger
 }
 
-// The geometry is from build 12340 AreaTrigger.dbc, with destination maps
-// from AzerothCore's areatrigger_teleport table. The companion approaches the
-// owner's observed ground pose, never a guessed height at the sphere center.
-var dungeonEntrances = [...]dungeonPortal{
-	{trigger: 78, source: 0, destination: 36, center: position{x: -11208.5, y: 1685.339966, z: 25.7612}, radius: 7},
-	{trigger: 228, source: 1, destination: 43, center: position{x: -753.596008, y: -2212.780029, z: 21.5403}, radius: 13},
-	{trigger: 324, source: 0, destination: 90, center: position{x: -5161.33, y: 939.623, z: 258.288}, radius: 10},
-	{trigger: 322, source: 90, destination: 0, center: position{x: -312.205, y: -4.63256, z: -148.657}, radius: 14},
-	{trigger: 45, source: 0, destination: 189, center: position{x: 2924.38, y: -798.429, z: 161.611}, radius: 8}, // Scarlet Monastery Graveyard
+func portalReference(t areatriggerreference.Trigger) dungeonPortal {
+	return dungeonPortal{trigger: t.ID, source: t.SourceMap, destination: t.DestinationMap,
+		center: position{x: float32(t.X), y: float32(t.Y), z: float32(t.Z)}, radius: t.Radius, reference: t}
+}
+
+func (p dungeonPortal) contains(mapID uint32, point position, margin float64) bool {
+	return p.reference.Contains(mapID, float64(point.x), float64(point.y), float64(point.z), margin)
+}
+
+// References identify a unique volume, not realm admission or a route. Never
+// choose between overlapping volumes: Lua's observed-owner intent is not proof
+// of which ambiguous trigger the realm would accept.
+func witnessedPortal(mapID uint32, point position) (dungeonPortal, bool) {
+	var found dungeonPortal
+	for _, reference := range areatriggerreference.All() {
+		if reference.Contains(mapID, float64(point.x), float64(point.y), float64(point.z), 0) {
+			if found.trigger != 0 {
+				return dungeonPortal{}, false
+			}
+			found = portalReference(reference)
+		}
+	}
+	return found, found.trigger != 0
 }
 
 type dungeonPortalFollow struct {
@@ -40,6 +55,7 @@ type dungeonPortalFollow struct {
 	sourceSession         string
 	sourceSelf            uint64
 	sourceVisit           uint64
+	sourceScope           *modv1.TransportScope
 	followRevision        uint64
 	ownerPoseRevision     uint64
 	witness               uint64
@@ -50,8 +66,8 @@ type dungeonPortalFollow struct {
 func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now time.Time) {
 	owner := w.GetOwner()
 	if s.followPortal.portal.trigger != 0 && (s.followPortal.sourceSession != s.sessionID ||
-		s.followPortal.sourceSelf != s.selfGUID || s.followPortal.followRevision != s.followRevision ||
-		s.followPortal.sourceVisit != w.VisitRevision && !s.followPortal.notified) {
+		s.followPortal.sourceSelf != s.selfGUID || !s.followPortal.notified &&
+		(s.followPortal.followRevision != s.followRevision || s.followPortal.sourceVisit != w.VisitRevision)) {
 		s.followPortal = dungeonPortalFollow{}
 		s.portalGoal = portalCatchupGoal{}
 	}
@@ -88,31 +104,31 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 		return
 	}
 	ground := playerPosition(owner)
-	for _, portal := range dungeonEntrances {
-		if owner.MapId == portal.source && distance(ground, portal.center) < portal.radius {
-			catchingUp, valid := s.portalSightingPolicyLocked(w, now)
-			if !valid || !s.legacyPortalIntentLocked(s.now()) && !s.currentFollowFormationGoalLocked(s.followGoal, w) {
-				s.portalGoal = portalCatchupGoal{}
-				return
-			}
-			witness := f.witness
-			if witness == 0 || f.portal.trigger != portal.trigger || f.sourceVisit != w.VisitRevision ||
-				f.followRevision != s.followRevision || f.ownerPoseRevision != owner.PositionRevision ||
-				f.ground != ground || f.catchingUp != catchingUp || !f.lostAt.IsZero() || f.notified {
-				s.portalWitnessRevision++
-				witness = s.portalWitnessRevision
-				s.portalGoal = portalCatchupGoal{}
-			}
-			s.followPortal = dungeonPortalFollow{
-				portal:        portal,
-				ground:        ground,
-				seenAt:        now.Add(-time.Duration(owner.PositionAgeMs) * time.Millisecond),
-				catchingUp:    catchingUp,
-				sourceSession: s.sessionID, sourceSelf: s.selfGUID,
-				sourceVisit: w.VisitRevision, followRevision: s.followRevision, ownerPoseRevision: owner.PositionRevision, witness: witness,
-			}
+	if portal, found := witnessedPortal(owner.MapId, ground); found {
+		sourceScope := clonePortalScope(portalObservedWorldScope(w, s.selfGUID))
+		catchingUp, valid := s.portalSightingPolicyLocked(w, now)
+		if !valid || !s.legacyPortalIntentLocked(s.now()) && !s.currentFollowFormationGoalLocked(s.followGoal, w) {
+			s.portalGoal = portalCatchupGoal{}
 			return
 		}
+		witness := f.witness
+		if witness == 0 || f.portal.trigger != portal.trigger || f.sourceVisit != w.VisitRevision ||
+			f.followRevision != s.followRevision || f.ownerPoseRevision != owner.PositionRevision ||
+			f.ground != ground || f.catchingUp != catchingUp || !f.lostAt.IsZero() || f.notified || !samePortalCoreVisit(f.sourceScope, sourceScope) {
+			s.portalWitnessRevision++
+			witness = s.portalWitnessRevision
+			s.portalGoal = portalCatchupGoal{}
+		}
+		s.followPortal = dungeonPortalFollow{
+			portal:        portal,
+			ground:        ground,
+			seenAt:        now.Add(-time.Duration(owner.PositionAgeMs) * time.Millisecond),
+			catchingUp:    catchingUp,
+			sourceSession: s.sessionID, sourceSelf: s.selfGUID,
+			sourceVisit: w.VisitRevision, followRevision: s.followRevision, ownerPoseRevision: owner.PositionRevision, witness: witness,
+			sourceScope: clonePortalScope(sourceScope),
+		}
+		return
 	}
 }
 
@@ -128,6 +144,7 @@ func (s *Service) portalSourceWitnessCurrentLocked(w *worldv1.SnapshotResponse) 
 	return !s.closed && !s.independent && f.sourceSession == s.sessionID && f.sourceSelf == s.selfGUID &&
 		f.sourceVisit == w.GetVisitRevision() && f.followRevision == s.followRevision &&
 		(f.sourceVisit == 0 || s.matchesCurrentEncounterVisitLocked(w)) &&
+		samePortalCoreVisit(f.sourceScope, portalObservedWorldScope(w, s.selfGUID)) &&
 		f.portal.trigger != 0 &&
 		owner != nil && owner.Guid == ownerGUID && !owner.Present &&
 		(!owner.MapKnown || owner.MapId == f.portal.source || owner.MapId == f.portal.destination) &&
@@ -191,6 +208,10 @@ func (s *Service) portalCatchUpTarget(ctx context.Context, ground position, cand
 // Disappearance at the portal is a cue to try the normal transfer once. The
 // realm decides eligibility and which copy this party is allowed to enter.
 func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.SnapshotResponse, now time.Time) bool {
+	if s.areaTrigger.operation.GetPending() {
+		s.state.Reason = "area_trigger_waiting_for_destination_observation"
+		return true
+	}
 	f := &s.followPortal
 	if f.portal.trigger == 0 {
 		return false
@@ -198,8 +219,7 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 	self := w.GetSelf()
 	if f.notified && f.sourceSession == s.sessionID && f.sourceSelf == s.selfGUID &&
 		self.GetGuid() == f.sourceSelf && self.GetPresent() && self.GetMapKnown() && self.GetMapId() == f.portal.destination &&
-		(w.GetVisitRevision() == 0 && f.sourceVisit == 0 ||
-			w.GetVisitRevision() > f.sourceVisit && s.matchesCurrentEncounterVisitLocked(w)) {
+		f.sourceVisit != 0 && w.GetVisitRevision() > f.sourceVisit && s.matchesCurrentEncounterVisitLocked(w) {
 		s.followPortal = dungeonPortalFollow{}
 		s.portalGoal = portalCatchupGoal{}
 		s.followNav.Reset()
@@ -244,37 +264,8 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		s.state.Reason = "follow_instance_party_or_pose_unavailable"
 		return true
 	}
-	if distance(s.pos, f.portal.center) < f.portal.radius-0.03 {
-		if !s.stopLocked(ctx) {
-			return true
-		}
-		// STOP and the party lookup may race an owner reappearance, combat, or
-		// correction. Bind entry to the fresh source map and current tracker.
-		fresh, err := s.snapshot(ctx)
-		if err != nil || !s.portalIntentCurrentLocked(intent, fresh) ||
-			!s.refreshPositionLocked(fresh) || distance(s.pos, f.portal.center) >= f.portal.radius-0.03 {
-			s.state.Reason = "follow_instance_source_changed"
-			return true
-		}
-		current := s.portalPolicyLocked(fresh, s.now())
-		if !current.Valid || !current.Eligible || !current.Ready || !s.portalIntentCurrentLocked(intent, fresh) {
-			s.state.Reason = "follow_instance_policy_changed"
-			return true
-		}
-		// The pure source read can race a new World observation. Recheck
-		// physical entry after it, with no further policy callback before send.
-		latest, err := s.snapshot(ctx)
-		if err != nil || ctx.Err() != nil || !s.portalIntentCurrentLocked(intent, latest) || !s.refreshPositionLocked(latest) ||
-			latest.GetSelf().GetPositionRevision() != fresh.GetSelf().GetPositionRevision() ||
-			playerPosition(latest.GetSelf()) != playerPosition(fresh.GetSelf()) ||
-			distance(s.pos, f.portal.center) >= f.portal.radius-0.03 {
-			s.state.Reason = "follow_instance_source_changed"
-			return true
-		}
-		f.notified = true // Do not replay an ambiguous write.
-		if s.sendLocked(ctx, opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, f.portal.trigger)) {
-			s.state.Reason = "follow_waiting_for_instance_transfer"
-		}
+	if f.portal.contains(s.posMap, s.pos, .03) {
+		s.enterWitnessedPortalLocked(ctx, w, intent)
 		return true
 	}
 	if s.navDataDir == "" {

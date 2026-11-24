@@ -35,6 +35,7 @@ def main():
         ("encounter_movement", behaviors / "encounter-movement.lua"),
         ("encounter_commands", behaviors / "encounter-commands.lua"),
         ("encounter_spell_invocation", behaviors / "spell-invocation.lua"),
+        ("encounter_instance_entry", behaviors / "instance-entry.lua"),
         ("encounter_tasks", behaviors / "encounter-tasks.lua"),
     ]
     if args.intent:
