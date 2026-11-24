@@ -70,6 +70,26 @@ class TrainerDestinationTests(unittest.TestCase):
     def rank(self,rpc,rows,scope='nearby',**options):
         return policy.rank_trainers(rpc,copy.deepcopy(rpc.state),1,rows,scope,**options)
 
+    def test_class_purpose_uses_shared_lua_map_and_preserves_unknown_and_generic_defaults(self):
+        def guid(entry):return 0xf130000000000000|entry<<24|1
+        rpc=TrainingRPC()
+        rows=[(1.,guid(328),True,328),(2.,guid(377),True,377),(3.,guid(917),True,917),(4.,guid(9000),True,9000)]
+        def choose(known,class_id):
+            return [g for _,g in self.rank(rpc,rows,purpose='class',class_context=dict(classKnown=known,classId=class_id))['candidates']]
+        self.assertEqual(choose(True,5),[guid(377),guid(9000)])
+        self.assertEqual(choose(False,5),[guid(9000)])
+        self.assertEqual(choose(True,9),[guid(9000)])
+        rpc.source=rpc.source.replace('[5]=377,[8]=328','[5]=328,[8]=377');rpc.generation='2'
+        self.assertEqual(choose(True,5),[guid(328),guid(9000)])
+        self.assertTrue(all(m.startswith('session.') or m=='buddy-training.state' for m,_ in rpc.calls))
+
+    def test_class_purpose_missing_mode_or_wrong_observed_entry_has_no_native_fallback(self):
+        rpc=TrainingRPC('return {service_destination=function() return {trainers={"'+str(VENDOR)+'"}} end}')
+        with self.assertRaisesRegex(policy.Error,'accepted_class_trainer_destination_required'):
+            self.rank(rpc,[(1.,VENDOR,True,VENDOR>>24&0xffffff)],purpose='class',class_context={})
+        with self.assertRaisesRegex(policy.Error,'observed_class_trainer_entry_required'):
+            self.rank(TrainingRPC(),[(1.,VENDOR,True,377)],purpose='class',class_context={})
+
     def test_actual_bundle_interaction_priority_range_ties_and_same_body_tuning(self):
         source=subprocess.check_output(['python3','-B',str(ROOT/'dev/encounter-bundle')],text=True)
         rpc=TrainingRPC(source)

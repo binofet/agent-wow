@@ -195,7 +195,10 @@ function M.service_destination(input)
        type(input.candidates)~="table" or #input.candidates>97 then return {} end
     local trainer=input.kind=="trainer"
     local profession=trainer and input.purpose=="profession"
-    if input.purpose~=nil and not profession then return {} end
+    local class=trainer and input.purpose=="class"
+    if input.purpose~=nil and not profession and not class then return {} end
+    if class and (type(input.classKnown)~="boolean" or not number(input.classId) or
+       input.classId<0 or input.classId>4294967295 or input.classId%1~=0) then return {} end
     if not trainer and (input.scope=="travel" or #input.candidates>96) then return {} end
     local radius=trainer and trainer_search_yards or
         (input.scope=="nearby" and vendor_search_yards or vendor_interaction_yards)
@@ -214,6 +217,8 @@ function M.service_destination(input)
         if type(candidate)~="table" or not identity(candidate.guid) or seen[candidate.guid] or
            not number(candidate.distance) or candidate.distance<0 or
            trainer and type(candidate.interactable)~="boolean" or
+           class and (not number(candidate.entry) or candidate.entry<1 or
+               candidate.entry>16777215 or candidate.entry%1~=0) or
            profession and (not number(candidate.anchorDistance) or candidate.anchorDistance<0 or
                type(candidate.blockedReason)~="string") then return {} end
         seen[candidate.guid]=true
@@ -231,6 +236,16 @@ function M.service_destination(input)
                 eligible=true
             end
         elseif within then eligible=true end
+        if eligible and class then
+            local curated=false
+            for _,entry in pairs(inn_trainers) do
+                if candidate.entry==entry then curated=true end
+            end
+            if curated then
+                eligible=false
+                if input.classKnown==true then eligible=candidate.entry==inn_trainers[input.classId] end
+            end
+        end
         if eligible then
             local index=#ranked+1
             for i,other in ipairs(ranked) do
@@ -252,6 +267,7 @@ function M.service_destination(input)
         if not profession or i<=profession_trainers.max_candidates then vendors[#vendors+1]=candidate.guid end
     end
     if profession then return {trainers=vendors,purpose="profession"} end
+    if class then return {trainers=vendors,purpose="class"} end
     if trainer then return {trainers=vendors} end
     return {vendors=vendors}
 end

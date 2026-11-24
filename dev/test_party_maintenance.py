@@ -18,6 +18,7 @@ spec=importlib.util.spec_from_loader(loader.name,loader)
 m=importlib.util.module_from_spec(spec);loader.exec_module(m)
 TRAINER_BRIDGE = m.town_policy.runtime.Bridge
 MAILBOX = 0xf110000000000000 | 142075 << 24 | 1
+INN_TRAINERS = {5:377, 8:328, 4:917}
 INN_STAIRS = ((-9477.,22.5,56.339386), (-9477.,14.,60.184803),
               (-9473.5,14.,60.190014), (-9473.5,23.,63.820427))
 
@@ -63,7 +64,8 @@ class RPC:
         elif method=='buddy-party.state':value={'group':self.group}
         elif method=='buddy-actions.status':value=self.actions
         elif method=='buddy-training.discover':
-            if self.trainer_x is None:value={'state':self.training,'nearby':[{'interactable':True,'distanceKnown':True,'distance':0,'creature':{'guid':self.offer['npcGuid']}}]}
+            if self.trainer_x is None:value={'state':self.training,'nearby':[{'interactable':True,'distanceKnown':True,'distance':0,
+                'creature':{'guid':self.offer['npcGuid'],'entry':int(self.offer['npcGuid'])>>24&0xffffff}}]}
             else:
                 x=self.actions['position']['x'];distance=abs(self.trainer_x-x)
                 creature=dict(guid=self.offer['npcGuid'],entry=(int(self.offer['npcGuid'])>>24)&0xffffff,
@@ -118,7 +120,7 @@ class InnRPC(RPC):
             self.creatures.append(dict(guid=str(0xf130000000000000|entry<<24|entry),entry=entry,
                 present=True,mapKnown=True,mapId=0,positionKnown=True,x=point[0],y=point[1],z=point[2],
                 positionRevision='1',aliveKnown=True,alive=True,healthKnown=True,health=100,npcFlags=0x33))
-        self.offer['npcGuid']=next(c['guid'] for c in self.creatures if c['entry']==m.INN_TRAINERS[class_id])
+        self.offer['npcGuid']=next(c['guid'] for c in self.creatures if c['entry']==INN_TRAINERS[class_id])
         self.lease_owner=None
         self.after_waypoint=None
         self.waypoint_reason='exploration_within_distance'
@@ -327,6 +329,64 @@ class MaintenanceTests(unittest.TestCase):
         listed=next(p for method,p in self.rpc.calls if method=='buddy-training.list')
         self.assertEqual(int(listed['npcGuid'])>>24&0xffffff,328)
         self.assertEqual(self.methods().count('buddy-actions.travel_trainer'),1)
+
+    def test_accepted_lua_class_map_changes_actual_selected_npc_without_python_preference(self):
+        self.inn_rig('Mira',4,8,(-9460.75,33.1338,63.9038))
+        self.rpc.policy_source=self.rpc.policy_source.replace('[5]=377,[8]=328','[5]=328,[8]=377')
+        self.rpc.generation='2';original=self.rpc.call
+        def reply_from_requested_npc(method,params):
+            if method=='buddy-training.list':self.rpc.offer['npcGuid']=params['npcGuid']
+            return original(method,params)
+        self.rpc.call=reply_from_requested_npc
+        self.tick()
+        self.assertEqual([int(p['npcGuid'])>>24&0xffffff for method,p in self.rpc.calls
+            if method=='buddy-training.list'],[377])
+        self.assertNotIn('buddy-actions.travel_to',self.methods())
+        self.assertNotIn('buddy-actions.travel_trainer',self.methods())
+
+    def test_class_ranking_binding_replacement_or_class_change_before_list_never_queries(self):
+        for mode in ('source','class'):
+            with self.subTest(mode=mode):
+                self.setUp();self.inn_rig('Mira',4,8,(-9471.67,34.451,63.9038));original=self.rpc.call
+                def changed(method,params):
+                    response=original(method,params)
+                    if method=='buddy-world.snapshot' and any(m=='session.policy_source' for m,_ in self.rpc.calls):
+                        if mode=='source':self.rpc.generation='2'
+                        else:response['self']['classId']=5
+                    return response
+                self.rpc.call=changed
+                with self.assertRaises(m.Error):self.tick()
+                self.assertNotIn('buddy-training.list',self.methods())
+                self.assertNotIn('buddy-training.buy',self.methods())
+                self.assertNotIn('buddy-actions.acquire_interaction',self.methods())
+
+    def test_inn_plan_must_share_the_ranked_class_policy_before_any_lease(self):
+        self.inn_rig()
+        discovery=self.rpc.call('buddy-training.discover',{})
+        own=self.rpc.world['self']
+        selected=self.agent.trainer_destinations(discovery['state'],discovery['nearby'],own)[0]
+        original=self.rpc.call;reads=[0]
+        def changed(method,params):
+            if method=='session.policy_source':
+                reads[0]+=1
+                if reads[0]==2:self.rpc.generation='2'
+            return original(method,params)
+        self.rpc.call=changed
+        with self.assertRaisesRegex(m.Error,'policy_changed_before_inn_plan'):
+            self.agent.travel_trainer(discovery,selected)
+        self.assertNotIn('buddy-actions.acquire_interaction',self.methods())
+        self.assertNotIn('buddy-actions.travel_to',self.methods())
+        self.assertNotIn('buddy-actions.travel_trainer',self.methods())
+
+    def test_changed_class_mapping_cannot_replay_an_existing_uncertain_purchase(self):
+        self.inn_rig('Mira',4,8,(-9471.67,34.451,63.9038));self.tick()
+        saved=copy.deepcopy(self.saved[-1])
+        self.assertEqual(saved['training'][-1]['status'],'reserved')
+        self.rpc.policy_source=self.rpc.policy_source.replace('[5]=377,[8]=328','[5]=328,[8]=377')
+        self.rpc.generation='2'
+        self.tick()
+        self.assertEqual(self.agent.data['training'],saved['training'])
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
 
     def test_inn_landmarks_never_apply_on_another_map_or_from_a_distant_city(self):
         self.inn_rig()
