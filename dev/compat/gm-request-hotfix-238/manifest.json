@@ -87,8 +87,10 @@
     ]
   },
   "review": {
-    "status": "pending Root independent combined source review",
-    "authorship": "Root authored none of these product components"
+    "status": "clear",
+    "reviewer": "Root (independent; authored none of the product components)",
+    "qualifiedComposition": "fdc5091db901a4cf08060762716882450b32a757",
+    "scope": "Combined public source, exact component byte identities and compatibility AST/helper closure; no reviewer test execution or target verification."
   },
   "normalSourceDelivery": {
     "gmPR": "https://github.com/binofet/agent-wow/pull/239",
