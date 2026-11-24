@@ -124,6 +124,6 @@ func TestThermapluggApproachStopsOnKnockdownAndCanRetry(t *testing.T) {
 	}
 	advance(2 * time.Second)
 	if !run() || len(f.packets) != 3 || f.packets[2].Opcode != opcode.CMSGGameobjUse {
-		t.Fatalf("knockdown must not permanently abandon the mechanic, got %v", f.packets)
+		t.Fatalf("knockdown retry: packets=%v reason=%s policy=%s feedback=%s memory=%v pos=%v raw=%d client=%d lastWorld=%v bound=%+v", f.packets, s.state.Reason, s.starterSpells.lastError, s.thermaplugg.feedback, s.thermaplugg.memory, s.pos, s.positionRevision, s.posRevision, s.lastWorld.GetSelf(), s.thermaplugg.bound)
 	}
 }
