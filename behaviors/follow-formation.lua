@@ -13,6 +13,7 @@ local vendor_search_yards, vendor_interaction_yards = 35,4.5
 local vendor_prefer_nearest = true
 local trainer_search_yards, trainer_interaction_yards = 100,4
 local trainer_prefer_nearest = true
+local class_training={purchase_cap_copper=1000000,reserve_copper=100,prefer_cheapest=true}
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
 
 local function number(value)
@@ -48,10 +49,50 @@ local function at_target(self, target, radius)
     return dx*dx+dy*dy<=radius*radius and math.abs(self.z-target.z)<=1.5
 end
 
+local function training_choice(input)
+    local function uint(v) return number(v) and v>=0 and v<=4294967295 and v%1==0 end
+    if input.copperKnown~=true or not uint(input.copper) or not uint(input.nativePurchaseCap)
+        or not uint(class_training.purchase_cap_copper) or not uint(class_training.reserve_copper)
+        or type(class_training.prefer_cheapest)~="boolean" or type(input.spells)~="table" or #input.spells>256
+        or type(input.eligibility)~="table" or type(input.attempted)~="table" then return {} end
+    local reserve=input.reserveCopper
+    if reserve==nil then reserve=class_training.reserve_copper end
+    if not uint(reserve) then return {} end
+    local cap=math.min(class_training.purchase_cap_copper,input.nativePurchaseCap)
+    local budget=math.min(cap,math.max(0,input.copper-reserve))
+    local out={consumer="class_training",budgetCopper=budget,reserveCopper=reserve,purchaseCapCopper=cap}
+    local best,seen
+    seen={}
+    for _,spell in ipairs(input.spells) do
+        if type(spell)~="table" then return {} end
+        local id,cost,level=spell.spellId,spell.costCopper or 0,spell.requiredLevel or 0
+        local usable,points=spell.usable or 0,spell.pointCost or {}
+        if not uint(id) or id==0 or seen[tostring(id)] or not uint(cost)
+            or not uint(level) or not uint(usable) or usable>2 or type(points)~="table" or #points>2 then return {} end
+        seen[tostring(id)]=true
+        local no_points=true
+        for _,value in ipairs(points) do if not uint(value) then return {} end;if value~=0 then no_points=false end end
+        if usable==0 and input.attempted[tostring(id)]~=true and cost>budget and cost<=cap
+            and (not out.nextCost or cost<out.nextCost) then out.nextCost=cost end
+        local evidence=input.eligibility[tostring(id)] or {}
+        if evidence.known==true and evidence.retryAllowed==true and uint(evidence.level) and level<=evidence.level
+            and usable==0 and no_points and input.attempted[tostring(id)]~=true and cost<=budget then
+            if not best or cost~=best.costCopper and
+                (class_training.prefer_cheapest and cost<best.costCopper or not class_training.prefer_cheapest and cost>best.costCopper)
+                or cost==best.costCopper and id<best.spellId then
+                best={spellId=id,costCopper=cost}
+            end
+        end
+    end
+    if best then out.spellId=best.spellId;out.costCopper=best.costCopper end
+    return out
+end
+
 -- Town planning and the finite service workers consult this export from the
 -- character's current accepted policy. Callers supply mechanically validated
 -- observed NPCs; this policy owns the search radius and destination order.
 function M.service_destination(input)
+    if type(input)=="table" and input.kind=="class_training" then return training_choice(input) end
     if type(input)~="table" or (input.kind~="vendor" and input.kind~="trainer") or
        (input.scope~="nearby" and input.scope~="interactable" and input.scope~="travel") or
        type(input.candidates)~="table" or #input.candidates>97 then return {} end

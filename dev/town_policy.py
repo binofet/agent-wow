@@ -12,6 +12,7 @@ _spec = importlib.util.spec_from_loader(_loader.name, _loader)
 runtime = importlib.util.module_from_spec(_spec)
 _loader.exec_module(runtime)
 Error = runtime.Error
+NATIVE_CLASS_PURCHASE_CAP=1000000  # Existing buddy-training.Buy mechanical limit.
 
 
 def rank_vendors(rpc, state, candidates, scope, *, bridge=None):
@@ -20,6 +21,63 @@ def rank_vendors(rpc, state, candidates, scope, *, bridge=None):
 
 def rank_trainers(rpc, state, self_guid, candidates, scope='nearby', *, bridge=None):
     return rank_services(rpc,dict(state,selfGuid=str(self_guid)),candidates,scope,'trainer',bridge=bridge)
+
+
+def class_training(rpc, state, self_guid, spells, eligibility, attempted, reserve_copper=None, *, bridge=None):
+    """One accepted Lua service choice, bound to the current native offer."""
+    identity=dict(sessionId=state['sessionId'],characterGuid=str(self_guid))
+    view=rpc.call('session.policy_source',identity)
+    source,revision,generation=view.get('source'),view.get('revision'),str(view.get('generation',''))
+    limit=view.get('sourceLimitBytes',runtime.MAX_SOURCE)
+    if (view.get('sessionId')!=identity['sessionId'] or str(view.get('characterGuid'))!=identity['characterGuid']
+            or not isinstance(source,str) or not source or not re.fullmatch('[a-f0-9]{64}',str(revision))
+            or hashlib.sha256(source.encode()).hexdigest()!=revision or not re.fullmatch('[1-9][0-9]{0,19}',generation)
+            or int(generation)>=2**64
+            or type(limit) is not int or limit<=0 or len(source.encode())>limit):
+        raise Error('current_class_training_source_required')
+    wrapped=('local policy=(function()\n'+source+'\nend)()\nreturn {decide=function(input) '
+        'if type(policy.service_destination)~="function" then return {available=false} end '
+        'return {available=true,decision=policy.service_destination(input)} end}\n')
+    evaluator=bridge or runtime.Bridge(ROOT/'data/bin/luapolicy',ROOT/'modules',
+        source_bytes=max(limit,len(wrapped.encode())),value_bytes=8*1024*1024,execution_ms=1000)
+    result=evaluator.evaluate(wrapped,dict(kind='class_training',copperKnown=state.get('copperKnown') is True,
+        copper=state.get('copper',0),nativePurchaseCap=NATIVE_CLASS_PURCHASE_CAP,reserveCopper=reserve_copper,
+        spells=spells,eligibility=eligibility,attempted={str(value):True for value in attempted}))
+    class_training_current(rpc,state,self_guid,dict(policyRevision=revision,policyGeneration=generation),offer=bool(spells))
+    decision=result.get('decision') if isinstance(result,dict) and result.get('available') is True else None
+    if (not isinstance(decision,dict) or decision.get('consumer')!='class_training'
+            or any(type(decision.get(key)) is not int or not 0<=decision[key]<=NATIVE_CLASS_PURCHASE_CAP
+                   for key in ('budgetCopper','reserveCopper','purchaseCapCopper'))
+            or decision['budgetCopper']>decision['purchaseCapCopper']
+            or decision['budgetCopper']+decision['reserveCopper']>state.get('copper',0) and decision['budgetCopper']>0):
+        raise Error('accepted_class_training_mode_required')
+    if 'nextCost' in decision and (type(decision['nextCost']) is not int
+            or not decision['budgetCopper']<decision['nextCost']<=decision['purchaseCapCopper']
+            or not any(row.get('costCopper',0)==decision['nextCost'] for row in spells)):
+        raise Error('class_training_next_cost_must_be_observed')
+    if 'spellId' in decision:
+        matches=[row for row in spells if row.get('spellId')==decision['spellId']]
+        if (len(matches)!=1 or type(decision['spellId']) is not int or not 0<decision['spellId']<2**32
+                or type(decision.get('costCopper')) is not int or decision['costCopper']!=matches[0].get('costCopper',0)
+                or not 0<=decision['costCopper']<=decision['budgetCopper']):
+            raise Error('class_training_must_select_exact_offered_spell')
+    return dict(decision,policyRevision=revision,policyGeneration=generation)
+
+
+def class_training_current(rpc,state,self_guid,plan,*,offer=True):
+    observed=rpc.call('buddy-training.state',{})
+    expected_offer,observed_offer=state.get('offer',{}),observed.get('offer',{})
+    current=rpc.call('session.attach',dict(sessionId=state['sessionId'],characterGuid=str(self_guid)))
+    policy=current.get('policy',{})
+    if (current.get('sessionId')!=state['sessionId'] or str(current.get('characterGuid'))!=str(self_guid)
+            or policy.get('revision')!=plan['policyRevision'] or str(policy.get('generation'))!=plan['policyGeneration']
+            or policy.get('faulted',False) is not False or observed.get('sessionId')!=state['sessionId']
+            or observed.get('revision')!=state.get('revision') or observed.get('copperKnown')!=state.get('copperKnown')
+            or observed.get('copper',0)!=state.get('copper',0)
+            or offer and (any(observed_offer.get(key)!=expected_offer.get(key)
+                             for key in ('revision','npcGuid','trainerType','spells'))
+                or int(observed_offer.get('expiresInMs',0))<=0)):
+        raise Error('class_training_body_source_or_offer_changed')
 
 
 def rank_services(rpc, state, candidates, scope, kind, *, bridge=None):
