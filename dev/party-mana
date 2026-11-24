@@ -83,47 +83,41 @@ def run(state_dir):
         signal.signal(signal.SIGINT, stopping)
         rests, supply, bag_attempts = {}, {}, {}
         previous, views = None, {}
+        # Lua owns finite rest leases and release; stopping this observer
+        # cannot change following or retire a pending consumable use.
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(PARTY)) as readers:
-            try:
-                while not stop:
-                    views = {port: view for port, view in zip(PARTY, readers.map(observe, PARTY)) if view}
-                    drink = maintain_drink(rpc, views, rests)
-                    for port, view in views.items():
-                        view["mana_rest_active"] = port in rests
-                    try:
-                        water = maintain_supply(rpc, views, supply)
-                    except (KeyError, OSError, ValueError, RPCError) as error:
-                        water = str(error)
-                    held=(supply.get("memory",{}).get("pending") or {}).get("ports",[])
-                    for port,view in views.items():
-                        view["mana_supply_pending"]=str(port) in held
-                    bags = maintain_bag_pressure(rpc, views, bag_attempts, junk_entries)
-                    status = {
-                        "phases": {"drinking": drink, "water": water, "bag_space": bags},
-                        "casters": {
-                            str(port): {"mana": view["world"]["self"].get("power", 0),
-                                        "max_mana": view["world"]["self"].get("maxPower", 0),
-                                        "drinks": view["inventory"].get("manaDrinkCount", 0)}
-                            for port, view in views.items() if port in CASTERS
-                        },
-                    }
-                    if "error" in supply:
-                        status["water_error"] = supply["error"]
-                    if status != previous:
-                        tmp = state_dir / "status.next.json"
-                        tmp.write_text(json.dumps(status, sort_keys=True) + "\n")
-                        tmp.replace(state_dir / "status.json")
-                        previous = status
-                    time.sleep(1)
-            finally:
+            while not stop:
+                views = {port: view for port, view in zip(PARTY, readers.map(observe, PARTY)) if view}
+                drink = maintain_drink(rpc, views, rests)
                 for port, view in views.items():
-                    if port in rests and rests[port].get("restoreFollow") is True:
-                        try:
-                            current = rpc(port, METHODS["actions"])
-                            if current.get("sessionId") == rests[port].get("sessionId"):
-                                rpc(port, "buddy-actions.follow", {"enabled": True})
-                        except (OSError, RPCError):
-                            pass
+                    view["mana_rest_active"] = (rests.get(port, {}).get("sessionId")
+                        == view["actions"]["sessionId"])
+                try:
+                    water = maintain_supply(rpc, views, supply)
+                except (KeyError, OSError, ValueError, RPCError) as error:
+                    water = str(error)
+                held=(supply.get("memory",{}).get("pending") or {}).get("ports",[])
+                for port,view in views.items():
+                    view["mana_supply_pending"]=str(port) in held
+                bags = maintain_bag_pressure(rpc, views, bag_attempts, junk_entries)
+                status = {
+                    "phases": {"drinking": drink, "water": water, "bag_space": bags},
+                    "casters": {
+                        str(port): {"mana": view["world"]["self"].get("power", 0),
+                                    "max_mana": view["world"]["self"].get("maxPower", 0),
+                                    "drinks": view["inventory"].get("manaDrinkCount", 0),
+                                    "lua_rest": view.get("mana_rest")}
+                        for port, view in views.items() if port in CASTERS
+                    },
+                }
+                if "error" in supply:
+                    status["water_error"] = supply["error"]
+                if status != previous:
+                    tmp = state_dir / "status.next.json"
+                    tmp.write_text(json.dumps(status, sort_keys=True) + "\n")
+                    tmp.replace(state_dir / "status.json")
+                    previous = status
+                time.sleep(1)
 
 
 if __name__ == "__main__":
