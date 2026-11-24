@@ -126,9 +126,12 @@ func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.S
 		return nil, status.Error(codes.FailedPrecondition, "quest182 practice requires a stopped client position in its verified troll area")
 	}
 	binding, previousGoal := chosen.binding, s.coldridgeGoal
+	phase, epoch := s.state.PracticePhase, s.hostEncounterEpoch
 	facts, _ := s.coldridgeLifecycleFacts(w, "start")
 	current := func() bool {
-		return binding.sameTask(s, ctx) && s.coldridgeGoal == previousGoal && s.practiceLifecycleSourceCurrentLocked(chosen.source)
+		return binding.sameTask(s, ctx) && s.coldridgeGoal == previousGoal && s.practiceLifecycleSourceCurrentLocked(chosen.source) &&
+			s.state.PracticePhase == phase && s.hostEncounterEpoch == epoch && !s.state.CastPending && !s.state.MotionUnconfirmed && !s.state.Traveling &&
+			!s.bodyMoving && !s.questApproaching && !s.clientControlLost && !s.clientControlRestoring && !s.recovery.state.Active
 	}
 	if !current() || !s.stopAutoAttackLocked(ctx) || !current() || !s.stopLocked(ctx) || !current() {
 		return nil, status.Error(codes.FailedPrecondition, "practice stop or original task binding is unconfirmed")
@@ -139,11 +142,15 @@ func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.S
 	if err != nil || !known || !current() || !reflect.DeepEqual(practiceLifecycleStable(facts), practiceLifecycleStable(latest)) {
 		return nil, status.Error(codes.FailedPrecondition, "Coldridge start observations changed during stop")
 	}
+	if !reflect.DeepEqual(chosen.motionSources, practiceLifecycleMotionSources(observed, chosen.binding.target)) {
+		return nil, status.Error(codes.FailedPrecondition, "Coldridge start motion source changed during stop")
+	}
 	// An attached source can change during STOP callbacks without altering the
 	// native cache. Read the same pure selector once more before binding a task.
 	confirmed, _, owned := s.coldridgeLifecycleLocked(ctx, observed, "start")
 	if !owned || !confirmed.Valid || !current() || confirmed.source != chosen.source || confirmed.Kind != "start" ||
-		confirmed.QuestID != chosen.QuestID || confirmed.LeaseMS != chosen.LeaseMS || !reflect.DeepEqual(confirmed.Counts, chosen.Counts) || !reflect.DeepEqual(confirmed.NeededEntries, chosen.NeededEntries) {
+		!sameColdridgeLifecycleChoice(confirmed, chosen) || !reflect.DeepEqual(chosen.motionSources, confirmed.motionSources) ||
+		!reflect.DeepEqual(practiceLifecycleStable(chosen.facts), practiceLifecycleStable(confirmed.facts)) {
 		return nil, status.Error(codes.FailedPrecondition, "Coldridge start source changed during stop")
 	}
 	s.state.Practicing, s.state.PracticePhase = true, "waiting_for_safe_coldridge_pull"

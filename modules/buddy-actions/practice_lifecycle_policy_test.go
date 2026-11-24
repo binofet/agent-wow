@@ -13,7 +13,9 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -223,5 +225,148 @@ func TestPracticeLifecycleOwnedFightAgeBoundaryCannotCarryAcrossFreshRead(t *tes
 	}
 	if reflectAge := practiceLifecycleStable(map[string]any{"attackAgeMs": strconv.FormatUint(c.AttackAgeMs, 10)}).(map[string]any)["attackAgeMs"]; reflectAge != false {
 		t.Fatal(reflectAge)
+	}
+}
+
+type practiceMotionSession struct {
+	*fakeSession
+	snapshots      int
+	beforeSnapshot func(int)
+}
+
+func (f *practiceMotionSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, options ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
+	if r.Module == "buddy-world" && r.Method == "snapshot" {
+		f.snapshots++
+		if f.beforeSnapshot != nil {
+			f.beforeSnapshot(f.snapshots)
+		}
+	}
+	return f.fakeSession.InvokeModule(ctx, r, options...)
+}
+
+func practiceMovingFixture(t *testing.T) (*Service, *practiceMotionSession, *worldv1.CreatureState) {
+	t.Helper()
+	s, f, _ := practiceRig(t, 8)
+	c := f.world.NearbyCreatures[0]
+	c.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 10000, AgeMs: 100,
+		DestinationKnown: true, DestinationX: -8920, DestinationY: c.Y, DestinationZ: c.Z, Flags: 0x2000}
+	fixture := &practiceMotionSession{fakeSession: f}
+	s.session = fixture
+	return s, fixture, c
+}
+
+func TestPracticeLifecycleMovingEstimateProgressUsesSameLuaChoiceAndPostStopProof(t *testing.T) {
+	s, f, c := practiceMovingFixture(t)
+	f.beforeSnapshot = func(int) { c.Trajectory.AgeMs += 100 }
+	runtime := s.starterSpells.runtime
+	reads := 0
+	s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+		reads++
+		out, err := runtime.EvaluateContext(ctx, input)
+		return true, runtime.Status().Revision, out, err
+	}
+	ctx := context.Background()
+	selected, latest, valid := s.practiceLifecycleDecisionLocked(ctx, f.world, "tick")
+	if !valid || selected.kind != "select" || selected.target != c.Guid || reads != 2 || f.snapshots != 2 || c.Trajectory.AgeMs != 300 ||
+		latest.NearbyCreatures[0].Trajectory.AgeMs != 300 {
+		t.Fatal("age-only progression starved or bypassed latest Lua choice", selected, reads, f.snapshots, s.starterSpells.lastError)
+	}
+	if !s.stopForPracticeLifecycleLocked(ctx, &selected) || reads != 4 || f.snapshots != 6 || len(f.packets) != 0 {
+		t.Fatal("post-STOP validation starved or recursively reread moving estimate", reads, f.snapshots, f.packets)
+	}
+}
+
+func TestPracticeLifecycleMovingSourceReplacementCannotAuthorizeOldChoice(t *testing.T) {
+	for _, seam := range []int{1, 2} {
+		for _, field := range []string{"endpoint", "duration", "flags", "position revision"} {
+			t.Run(strconv.Itoa(seam)+"/"+field, func(t *testing.T) {
+				s, f, c := practiceMovingFixture(t)
+				f.beforeSnapshot = func(n int) {
+					c.Trajectory.AgeMs += 100
+					if n != seam {
+						return
+					}
+					switch field {
+					case "endpoint":
+						c.Trajectory.DestinationX++
+					case "duration":
+						c.Trajectory.DurationMs++
+					case "flags":
+						c.Trajectory.Flags ^= 0x4000
+					case "position revision":
+						c.PositionRevision++
+					}
+				}
+				selected, _, valid := s.practiceLifecycleDecisionLocked(context.Background(), f.world, "tick")
+				if valid || f.snapshots != seam || len(f.packets) != 0 || s.practiceTarget != 0 || s.state.PracticePulls != 0 {
+					t.Fatal("replaced raw motion source authorized old Lua choice", selected, f.snapshots, s.stateLocked(), f.packets)
+				}
+			})
+		}
+	}
+}
+
+func TestPracticeLifecycleMovingCompetitorRequiresFreshLuaChoice(t *testing.T) {
+	s, f, first := practiceMovingFixture(t)
+	first.X = -8932
+	first.Trajectory.AgeMs, first.Trajectory.DurationMs, first.Trajectory.DestinationX = 0, 1000, -8833
+	second := proto.Clone(first).(*worldv1.CreatureState)
+	second.Guid, second.X, second.Trajectory = first.Guid+1, -8923, nil
+	f.world.NearbyCreatures = append(f.world.NearbyCreatures, second)
+	f.beforeSnapshot = func(int) { first.Trajectory.AgeMs += 200 }
+	runtime := s.starterSpells.runtime
+	choices := []string{}
+	s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+		out, err := runtime.EvaluateContext(ctx, input)
+		if id, ok := out["targetGuid"].(string); ok {
+			choices = append(choices, id)
+		}
+		return true, runtime.Status().Revision, out, err
+	}
+	ctx := context.Background()
+	selected, _, valid := s.practiceLifecycleDecisionLocked(ctx, f.world, "tick")
+	if valid || len(choices) != 2 || choices[0] != strconv.FormatUint(first.Guid, 10) || choices[1] != strconv.FormatUint(second.Guid, 10) ||
+		f.snapshots != 1 || len(f.packets) != 0 || s.practiceTarget != 0 {
+		t.Fatal("native retained/reranked a superseded Lua choice", selected, choices, f.snapshots, f.packets)
+	}
+	// A later explicit observation may obtain its own current choice; the
+	// refused call itself never silently substituted the other target.
+	selected, _, valid = s.practiceLifecycleDecisionLocked(ctx, f.world, "tick")
+	if !valid || selected.target != second.Guid || len(f.packets) != 0 {
+		t.Fatal("fresh Lua choice could not progress", selected, choices, s.starterSpells.lastError)
+	}
+}
+
+func TestPracticeLifecycleMovingControllerReplacementReceivesNoCleanup(t *testing.T) {
+	s, f, advance := practiceRig(t, 4)
+	f.world.NearbyCreatures[0].X = -8920
+	s.practiceTickLocked(context.Background())
+	if len(f.packets) != 1 || f.packets[0].Opcode != opcode.MSGMoveStartForward || !s.state.Moving {
+		t.Fatal("fixture has no real owned approach", f.packets, s.stateLocked())
+	}
+	advance(200 * time.Millisecond)
+	runtime := s.starterSpells.runtime
+	s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+		out, err := runtime.EvaluateContext(ctx, input)
+		if input["selection"] == practiceLifecycleSelection {
+			s.state.InteractionOwner, s.interactionToken = "trade", "replacement-trade-token"
+		}
+		return true, runtime.Status().Revision, out, err
+	}
+	target, until, phase := s.practiceTarget, s.practiceUntil, s.state.PracticePhase
+	s.practiceTickLocked(context.Background())
+	if len(f.packets) != 1 || !s.state.Moving || s.state.InteractionOwner != "trade" || s.interactionToken != "replacement-trade-token" ||
+		s.practiceTarget != target || s.practiceUntil != until || s.state.PracticePhase != phase || !s.state.Practicing {
+		t.Fatal("old practice callback STOPped or changed replacement controller", s.stateLocked(), f.packets)
+	}
+}
+
+func TestPracticeLifecycleAcceptedSourceCannotExceedExecutionLeaseEnvelope(t *testing.T) {
+	s, f, _ := practiceRig(t, 8)
+	until, target := s.practiceUntil, s.practiceTarget
+	const source = `return {decide=function(input) return {kind="start",targetGuid="0",questGoal=false,phase="waiting_for_safe_pull",leaseMs=600001,finishing=false} end}`
+	reloadPracticeLifecycleSource(t, s, source)
+	if _, err := s.Practice(context.Background(), &actionsv1.ToggleRequest{Enabled: true}); err == nil || s.practiceUntil != until || s.practiceTarget != target || !s.state.Practicing || len(f.packets) != 0 {
+		t.Fatal("accepted Lua source escaped the finite native execution envelope", err, s.stateLocked(), f.packets)
 	}
 }

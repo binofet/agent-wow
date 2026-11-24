@@ -13,7 +13,9 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -212,5 +214,106 @@ func TestColdridgeLifecycleAll32CandidatesAndCompleteQuestLogFitUnchangedLimits(
 	selected, valid := decodeColdridgeLifecycle(out)
 	if err != nil || !valid || selected.Kind != "select" {
 		t.Fatal("complete supported frame failed default value/node limits", selected, err)
+	}
+}
+
+func TestColdridgeLifecycleTargetFree182FrameKeepsNilAndReachesItsPlanner(t *testing.T) {
+	s, f, _ := cold182Rig(t, 2, 4, 3)
+	input, known := s.coldridgeLifecycleFacts(f.world, "tick")
+	if !known || input["selected"] != nil || s.practiceTarget != 0 {
+		t.Fatal("target-free frame fabricated an empty selected row", input["selected"], s.practiceTarget)
+	}
+	output, err := s.starterSpells.runtime.EvaluateContext(context.Background(), input)
+	lifecycle, valid := decodeColdridgeLifecycle(output)
+	if err != nil || !valid || lifecycle.Kind != "continue" || lifecycle.TargetGUID != "0" {
+		t.Fatal("actual nil selection was interpreted as a stale target", lifecycle, err)
+	}
+	plans := 0
+	s.planColdridge182Path = func(ctx context.Context, root string, from, to position) ([]position, error) {
+		plans++
+		return coldStraight(ctx, root, from, to)
+	}
+	s.Tick(context.Background())
+	if plans != 1 || s.practiceTarget != cold182GoalGUID || lastCast(f) != 0 || s.practicePullStarted {
+		t.Fatal("target-free accepted lifecycle did not reach native route qualification", plans, s.stateLocked(), s.starterSpells.lastError)
+	}
+}
+
+type coldLifecycleWorldHook struct {
+	*fakeSession
+	beforeWorld func()
+}
+
+func (f *coldLifecycleWorldHook) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, options ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
+	if r.Module == "buddy-world" && r.Method == "snapshot" && f.beforeWorld != nil {
+		f.beforeWorld()
+	}
+	return f.fakeSession.InvokeModule(ctx, r, options...)
+}
+
+func TestColdridgeLifecycleMovingSourceUsesOneSameChoiceReevaluation(t *testing.T) {
+	for _, mode := range []string{"same_source", "changed_source", "changed_final_source", "changed_choice", "changed_controller"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _ := coldridgeRig(t)
+			creature := f.world.NearbyCreatures[0]
+			creature.PositionRevision = 1
+			creature.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, DestinationKnown: true,
+				DestinationX: creature.X + 2, DestinationY: creature.Y, DestinationZ: creature.Z}
+			if mode == "changed_choice" {
+				creature.Trajectory.DestinationX = creature.X + 17
+				other := proto.Clone(creature).(*worldv1.CreatureState)
+				other.Guid = (other.Guid & ^uint64(0xffffff)) | 900
+				other.X, other.Trajectory = creature.X+1, nil
+				f.world.NearbyCreatures = append(f.world.NearbyCreatures, other)
+			}
+			reads, calls := 0, 0
+			s.session = &coldLifecycleWorldHook{fakeSession: f, beforeWorld: func() {
+				reads++
+				creature.Trajectory.AgeMs += 100
+				if mode == "changed_source" {
+					creature.Trajectory.DurationMs++
+				}
+				if mode == "changed_final_source" && reads == 2 {
+					creature.Trajectory.DurationMs++
+				}
+				if mode == "changed_choice" {
+					creature.Trajectory.AgeMs = 500
+				}
+			}}
+			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+				calls++
+				out, err := s.starterSpells.runtime.EvaluateContext(ctx, input)
+				if mode == "changed_controller" {
+					s.state.InteractionOwner, s.interactionToken = "trade", "replacement-token"
+				}
+				return true, s.starterSpells.runtime.Status().Revision, out, err
+			}
+			goal := s.coldridgeGoal
+			selected, _, owned := s.coldridgeLifecycleLocked(context.Background(), f.world, "targets")
+			if s.coldridgeGoal != goal || len(f.packets) != 0 {
+				t.Fatal("pure moving-source admission mutated goal or wrote", s.coldridgeGoal, f.packets)
+			}
+			if mode == "same_source" {
+				if !owned || !selected.Valid || selected.Kind != "select" || calls != 2 || reads != 2 {
+					t.Fatal("same source did not use bounded same-choice recheck", selected, owned, calls, reads, s.starterSpells.lastError)
+				}
+			} else if mode == "changed_controller" {
+				if owned || selected.Valid || reads != 0 || s.state.InteractionOwner != "trade" || s.interactionToken != "replacement-token" {
+					t.Fatal("late controller acquired Coldridge mutation authority", selected, owned, reads, s.stateLocked())
+				}
+			} else {
+				wantCalls := 1
+				wantReads := 1
+				if mode == "changed_choice" || mode == "changed_final_source" {
+					wantCalls = 2
+				}
+				if mode == "changed_final_source" {
+					wantReads = 2
+				}
+				if !owned || selected.Valid || calls != wantCalls || reads != wantReads {
+					t.Fatal("changed source/choice was retried or admitted", selected, owned, calls, reads, s.starterSpells.lastError)
+				}
+			}
+		})
 	}
 }

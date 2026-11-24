@@ -27,6 +27,14 @@ type coldridgeLifecycleDecision struct {
 	Valid         bool     `json:"valid"`
 	source        string
 	binding       practiceLifecycleBinding
+	motionSources any
+	facts         map[string]any
+}
+
+func sameColdridgeLifecycleChoice(a, b coldridgeLifecycleDecision) bool {
+	left, _ := json.Marshal(a)
+	right, _ := json.Marshal(b)
+	return bytes.Equal(left, right) // Exactly the eleven public decoded fields.
 }
 
 func decodeColdridgeLifecycle(output map[string]any) (coldridgeLifecycleDecision, bool) {
@@ -128,13 +136,19 @@ func (s *Service) coldridgeLifecycleFacts(w *worldv1.SnapshotResponse, stage str
 			entries = append(entries, entry)
 		}
 	}
+	// A typed nil map becomes an empty Lua table. Absence must remain nil so
+	// the policy cannot confuse target-free planning with a selected creature.
+	var selected any
+	if creature := practiceTargetObservation(w, s.practiceTarget); creature != nil {
+		selected = project(creature)
+	}
 	return map[string]any{"selection": coldridgeLifecycleSelection, "stage": stage, "sessionId": s.sessionID,
 		"selfGuid": strconv.FormatUint(s.selfGUID, 10), "visitId": strconv.FormatUint(w.VisitRevision, 10), "self": self,
 		"questLogKnown": w.SelfQuestLogKnown, "questLog": quests,
 		"goal":       map[string]any{"questId": goal.questID, "counts": []any{goal.counts[0], goal.counts[1]}, "neededEntries": entries},
 		"targetGuid": strconv.FormatUint(s.practiceTarget, 10), "pullStarted": s.practicePullStarted,
 		"clientPosition": map[string]any{"x": s.pos.x, "y": s.pos.y, "z": s.pos.z}, "nearby": nearby,
-		"selected": project(practiceTargetObservation(w, s.practiceTarget))}, true
+		"selected": selected}, true
 }
 
 // The callback chooses policy; only this unchanged native task and identical
@@ -143,13 +157,22 @@ func (s *Service) coldridgeLifecycleLocked(ctx context.Context, w *worldv1.Snaps
 	binding := s.practiceLifecycleBindingLocked(w)
 	invalid := coldridgeLifecycleDecision{binding: binding}
 	sid, self, visit, goal, target, pulled, until, practicing := s.sessionID, s.selfGUID, s.encounterVisit, s.coldridgeGoal, s.practiceTarget, s.practicePullStarted, s.practiceUntil, s.state.Practicing
+	owner, token, motion, cast, travel, body, approach, control, restoring, epoch := s.state.InteractionOwner, s.interactionToken, s.state.MotionUnconfirmed, s.state.CastPending, s.state.Traveling, s.bodyMoving, s.questApproaching, s.clientControlLost, s.clientControlRestoring, s.hostEncounterEpoch
+	recovery, recoveryToken, phase := s.recovery.state.Active, s.recovery.token, s.state.PracticePhase
 	current := func() bool {
 		now := s.now()
 		return binding.sameTask(s, ctx) && ctx.Err() == nil && !s.closed && s.sessionID == sid && s.selfGUID == self && s.encounterVisit == visit &&
 			s.practiceUntil == until && s.state.Practicing == practicing && s.coldridgeGoal == goal && s.practiceTarget == target && s.practicePullStarted == pulled &&
+			s.state.InteractionOwner == owner && s.interactionToken == token && s.state.MotionUnconfirmed == motion && s.state.CastPending == cast &&
+			s.state.Traveling == travel && s.bodyMoving == body && s.questApproaching == approach && s.clientControlLost == control && s.clientControlRestoring == restoring &&
+			s.hostEncounterEpoch == epoch && s.recovery.state.Active == recovery && s.recovery.token == recoveryToken && s.state.PracticePhase == phase &&
 			(stage == "start" || until.IsZero() || now.Before(until))
 	}
+	if stage != "observe" && (owner != "" || motion || travel || body || approach || control || restoring || recovery) || stage == "start" && cast {
+		return invalid, nil, false
+	}
 	input, known := s.coldridgeLifecycleFacts(w, stage)
+	motionSources := practiceLifecycleMotionSources(w, target)
 	if !known || !current() {
 		return invalid, nil, current()
 	}
@@ -195,9 +218,31 @@ func (s *Service) coldridgeLifecycleLocked(ctx context.Context, w *worldv1.Snaps
 		return invalid, nil, false
 	}
 	now, valid := s.coldridgeLifecycleFacts(fresh, stage)
-	if err != nil || !valid || !reflect.DeepEqual(practiceLifecycleStable(input), practiceLifecycleStable(now)) || !s.practiceLifecycleSourceCurrentLocked(source) {
+	if err != nil || !valid || !reflect.DeepEqual(motionSources, practiceLifecycleMotionSources(fresh, target)) || !reflect.DeepEqual(practiceLifecycleStable(input), practiceLifecycleStable(now)) || !s.practiceLifecycleSourceCurrentLocked(source) {
 		s.starterSpells.lastError = "Coldridge lifecycle observations or source changed after policy read"
 		return invalid, nil, true
+	}
+	if !reflect.DeepEqual(practiceLifecycleMotionPositions(input), practiceLifecycleMotionPositions(now)) {
+		repeated := s.starterSpells.decide(ctx, now, s.behavior)
+		if !current() {
+			return invalid, nil, false
+		}
+		again, valid := decodeColdridgeLifecycle(repeated)
+		if !valid || s.starterSpells.revision != source || !s.practiceLifecycleSourceCurrentLocked(source) || !sameColdridgeLifecycleChoice(out, again) {
+			s.starterSpells.lastError = "Coldridge moving-source policy choice changed"
+			return invalid, nil, true
+		}
+		latest, e := s.snapshot(ctx, target)
+		if !current() {
+			return invalid, nil, false
+		}
+		last, known := s.coldridgeLifecycleFacts(latest, stage)
+		if e != nil || !known || !reflect.DeepEqual(motionSources, practiceLifecycleMotionSources(latest, target)) ||
+			!reflect.DeepEqual(practiceLifecycleStable(now), practiceLifecycleStable(last)) || !s.practiceLifecycleSourceCurrentLocked(source) {
+			s.starterSpells.lastError = "Coldridge moving-source final observations changed"
+			return invalid, nil, true
+		}
+		fresh, now = latest, last
 	}
 	selectedGoal := goal
 	if stage == "start" {
@@ -218,7 +263,7 @@ func (s *Service) coldridgeLifecycleLocked(ctx context.Context, w *worldv1.Snaps
 	if out.QuestID != 0 && (!valid || out.Counts[0] != counts[0] || out.Counts[1] != counts[1]) {
 		return invalid, nil, true
 	}
-	out.source, out.binding = source, binding
+	out.source, out.binding, out.motionSources, out.facts = source, binding, motionSources, now
 	return out, fresh, true
 }
 
