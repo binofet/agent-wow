@@ -320,7 +320,68 @@ local function area_sweep(input)
     end
     return finish({kind="done",phase="finished_visible_area_quest_sweep"})
 end
+-- Pick one observed objective step. Item admission, route physics and the
+-- existing operation/unknown journal remain native executor responsibilities.
+local function quest_objective(input)
+    local invalid={status="invalid"}
+    if type(input)~="table" or not text(input.sessionId,128) or not decimal(input.selfGuid) or
+       not uint(input.questId,4294967295) or input.questId==0 or not pose(input.selfPosition) or
+       not number(input.now) or type(input.recipe)~="table" or type(input.bucket)~="table" or
+       type(input.collections)~="table" or type(input.ready)~="boolean" then return invalid end
+    local recipe,bucket=input.recipe,input.bucket
+    for _,key in ipairs({"sourceEntry","targetEntry","itemEntry"}) do
+        if not uint(recipe[key],4294967295) or recipe[key]==0 then return invalid end
+    end
+    for _,key in ipairs({"sourceRange","targetRange"}) do
+        if not number(recipe[key]) or recipe[key]<=0 or recipe[key]>200000 then return invalid end
+    end
+    if not decimal(bucket.itemGuid) or not uint(bucket.entry,4294967295) or not uint(bucket.count,4294967295) then return invalid end
+    local collections,exhausted={},{}
+    for _,field in ipairs({"barrels","fires"}) do
+        local rows=input.collections[field]
+        if not array(rows,32) then return invalid end
+        local result,seen={},{}
+        local limit=field=="barrels" and recipe.sourceRange or recipe.targetRange
+        local entry=field=="barrels" and recipe.sourceEntry or recipe.targetEntry
+        exhausted[field]=false
+        for _,row in ipairs(rows) do
+            if type(row)~="table" or not decimal(row.guid) or not uint(row.entry,4294967295) or
+               not uint(row.travelAttempts,4294967295) or not number(row.cooldownAt) then return invalid end
+            if not seen[row.guid] and row.identityMatches==true and row.entry==entry and row.present==true and
+               pose(row.position) and row.position.mapId==input.selfPosition.mapId then
+                seen[row.guid]=true
+                local d=distance(input.selfPosition,row.position)
+                if d>limit and row.travelAttempts>=3 then exhausted[field]=true
+                else
+                    local candidate={guid=row.guid,distance=d,cooldownAt=row.cooldownAt}
+                    local i=#result+1
+                    while i>1 and (candidate.distance<result[i-1].distance or candidate.distance==result[i-1].distance and
+                            less_guid(candidate.guid,result[i-1].guid)) do result[i]=result[i-1]; i=i-1 end
+                    result[i]=candidate
+                end
+            end
+        end
+        collections[field]=result
+    end
+    local has_bucket=bucket.itemGuid~="0" and bucket.entry==recipe.itemEntry and bucket.count>0
+    local field=has_bucket and "fires" or "barrels"
+    local selected
+    for _,row in ipairs(collections[field]) do
+        if field=="barrels" or row.cooldownAt<=input.now then selected=row; break end
+    end
+    local choice
+    if not selected then choice={kind="wait",collection=field,phase=has_bucket and "waiting_for_observed_practice_fire_or_reset" or "waiting_for_observed_quest_barrel"}
+    else
+        local limit=has_bucket and recipe.targetRange or recipe.sourceRange
+        if selected.distance>limit then choice={kind="travel",collection=field,targetGuid=selected.guid}
+        elseif not input.ready then choice={kind="wait",collection=field,phase="waiting_for_quest_item_capability"}
+        else choice={kind="attempt",collection=field,targetGuid=selected.guid,action=has_bucket and "THROW_BUCKET" or "FILL_BUCKET"} end
+    end
+    return {status="ready",sessionId=input.sessionId,selfGuid=input.selfGuid,questId=input.questId,
+        collections=collections,exhausted=exhausted,choice=choice}
+end
 function M.decide(input)
+    if type(input)=="table" and input.mode=="quest_objective" then return quest_objective(input) end
     if type(input)=="table" and input.mode=="area_sweep" then return area_sweep(input) end
     if type(input)=="table" and input.mode=="starter_pickup" then return starter_pickup(input) end
     local invalid={status="invalid"}
