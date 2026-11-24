@@ -207,6 +207,21 @@ func TestPracticeCasterLuaCurrentPolicyNeverFallsBackToHostileWrite(t *testing.T
 	}
 }
 
+// Lifecycle and approach reads use the same bridge. Only the unnamed frame
+// with an actual target and spell observations is a caster rank decision.
+func practiceCasterSpellSelectionFrame(input map[string]any) bool {
+	if selection, present := input["selection"]; present && selection != nil {
+		value, ok := selection.(string)
+		if !ok || value != "" {
+			return false
+		}
+	}
+	_, target := input["target"].(map[string]any)
+	observation, observed := input["observation"].(map[string]any)
+	_, spells := observation["spells"].(map[string]any)
+	return target && observed && spells
+}
+
 func TestPracticeCasterLuaFinalPolicyReadRevalidatesCurrentFacts(t *testing.T) {
 	for _, class := range []uint32{8, 5} {
 		for _, mode := range []string{"mana", "body", "target", "quest", "cooldown", "policy"} {
@@ -216,7 +231,7 @@ func TestPracticeCasterLuaFinalPolicyReadRevalidatesCurrentFacts(t *testing.T) {
 				reads := 0
 				s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
 					out, err := runtime.EvaluateContext(ctx, input)
-					if input["selection"] == practiceApproachSelection {
+					if !practiceCasterSpellSelectionFrame(input) {
 						return true, runtime.Status().Revision, out, err
 					}
 					reads++
@@ -264,7 +279,7 @@ func TestPracticeCasterLuaFinalWorldReturnCannotExtendAuthority(t *testing.T) {
 				runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
 				reads := 0
 				s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
-					if input["selection"] != practiceApproachSelection {
+					if practiceCasterSpellSelectionFrame(input) {
 						reads++
 					}
 					out, err := runtime.EvaluateContext(ctx, input)
@@ -286,6 +301,49 @@ func TestPracticeCasterLuaFinalWorldReturnCannotExtendAuthority(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPracticeCasterEarlyLifecycleCooldownAllowsOnlyCurrentLuaBaseline(t *testing.T) {
+	for _, class := range []uint32{8, 5} {
+		t.Run(fmt.Sprint(class), func(t *testing.T) {
+			s, f, target, best, _ := practiceCasterRig(t, class)
+			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+			lifecycleReads, spellReads := 0, 0
+			injected := false
+			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+				out, err := runtime.EvaluateContext(ctx, input)
+				if practiceCasterSpellSelectionFrame(input) {
+					spellReads++
+				}
+				if input["selection"] == practiceLifecycleSelection && input["stage"] == "tick" {
+					lifecycleReads++
+					if lifecycleReads == 2 {
+						if spellReads != 0 {
+							t.Fatal("fixture did not place cooldown before the first spell selection", spellReads)
+						}
+						if s.spellReady == nil {
+							s.spellReady = map[uint32]time.Time{}
+						}
+						s.spellReady[best] = s.now().Add(time.Minute)
+						injected = true
+					}
+				}
+				return true, runtime.Status().Revision, out, err
+			}
+			s.Tick(context.Background())
+			baseline := uint32(fireball)
+			if class == 5 {
+				baseline = smite
+			}
+			op := s.stateLocked().GetLastSpellOperation()
+			if !injected || spellReads != 2 || lastCast(f) != baseline || lastCast(f) == best ||
+				countPackets(f, opcode.CMSGCastSpell) != 1 || countPackets(f, opcode.CMSGAttackswing) != 0 || s.state.AssistAttempts != 1 ||
+				!s.now().Before(s.spellReady[best]) || op == nil || op.SpellId != baseline || op.TargetGuid != target.Guid ||
+				!op.TransportWritten || op.ServerCastGo || op.EffectObserved {
+				t.Fatal("earlier lifecycle cooldown bypassed current Lua choice or native cast admission", lifecycleReads, spellReads, s.stateLocked(), f.packets)
+			}
+		})
 	}
 }
 

@@ -6,74 +6,61 @@ import worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 // are high-water marks from complete own quest-log observations, not kill or
 // transport counters. Needed is refreshed on every observation and fails closed.
 type coldridgePracticeGoal struct {
-	questID uint32
-	counts  [2]uint32
-	needed  bool
+	questID       uint32
+	counts        [2]uint32
+	needed        bool
+	neededEntries [2]uint32
 }
 
-func selectColdridgePracticeGoal(w *worldv1.SnapshotResponse, selfGUID uint64) (coldridgePracticeGoal, bool) {
-	for _, questID := range []uint32{179, 170, 183, 182} {
-		goal := coldridgePracticeGoal{questID: questID}
-		if _, needed := goal.observe(w, selfGUID); needed {
-			return goal, true
-		}
-	}
-	return coldridgePracticeGoal{}, false
-}
-
-func (g *coldridgePracticeGoal) observe(w *worldv1.SnapshotResponse, selfGUID uint64) (active, needed bool) {
-	if g == nil {
-		return false, false
-	}
-	g.needed = false
-	if g.questID != 179 && g.questID != 170 && g.questID != 183 && g.questID != 182 || selfGUID == 0 || selfGUID>>48 != 0 || w == nil || w.Self == nil || w.Self.Guid != selfGUID || !w.Self.Present || !w.Self.ClassKnown || w.Self.ClassId != 9 || !w.Self.LevelKnown || w.Self.Level < 1 || g.questID != 182 && w.Self.Level > 5 || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
-		return false, false
-	}
-	if g.questID == 170 && w.Self.Level < 2 || g.questID == 183 && w.Self.Level < 3 || g.questID == 182 && (w.Self.Level < 4 || w.Self.Level > 6) {
-		return false, false
+// Validate the complete own frame and preserve factual counter high-water marks.
+// Whether this goal or an objective still needs work belongs to Lua.
+func (g *coldridgePracticeGoal) observationCounts(w *worldv1.SnapshotResponse, selfGUID uint64) ([2]uint32, bool) {
+	previous := g.counts
+	if selfGUID == 0 || selfGUID>>48 != 0 || w == nil || w.Self == nil || w.Self.Guid != selfGUID || !w.Self.Present ||
+		!w.Self.ClassKnown || w.Self.ClassId != 9 || !w.Self.LevelKnown || w.Self.Level < 1 ||
+		!w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
+		return previous, false
 	}
 	var slots [25]bool
 	quests := make(map[uint32]bool)
 	var own *worldv1.QuestLogEntry
 	for _, q := range w.SelfQuestLog {
 		if q == nil || q.Slot >= 25 || slots[q.Slot] || q.QuestId != 0 && quests[q.QuestId] {
-			return false, false
+			return previous, false
 		}
 		slots[q.Slot] = true
 		if q.QuestId != 0 {
 			quests[q.QuestId] = true
 		}
-		if q.QuestId == 170 && !validColdridgeThreatCounts(q.ObjectiveCounts) || q.QuestId == 183 && !validColdridge183Counts(q.ObjectiveCounts) {
-			return false, false
-		}
-		if g.questID == 182 && q.QuestId == 182 && !validColdridge182Counts(q.ObjectiveCounts) {
-			return false, false
+		if q.QuestId == 170 && !validColdridgeThreatCounts(q.ObjectiveCounts) || q.QuestId == 183 && !validColdridge183Counts(q.ObjectiveCounts) ||
+			g.questID == 182 && q.QuestId == 182 && !validColdridge182Counts(q.ObjectiveCounts) {
+			return previous, false
 		}
 		if q.QuestId == g.questID {
 			own = q
 		}
 	}
-	if own == nil || own.Failed || own.State&2 != 0 {
-		return false, false
+	if g.questID == 0 {
+		return previous, true
 	}
-	needed = !own.Complete && own.State&1 == 0
-	if g.questID == 170 || g.questID == 183 || g.questID == 182 {
-		for i := range g.counts {
-			if own.ObjectiveCounts[i] < g.counts[i] {
-				return false, false
-			}
-		}
-		copy(g.counts[:], own.ObjectiveCounts)
-		if g.questID == 170 {
-			needed = needed && (g.counts[0] < 6 || g.counts[1] < 6)
-		} else if g.questID == 183 {
-			needed = needed && g.counts[0] < 12
-		} else {
-			needed = needed && g.counts[0] < 10
+	if g.questID != 179 && g.questID != 170 && g.questID != 183 && g.questID != 182 {
+		return previous, false
+	}
+	if own == nil {
+		return previous, true
+	}
+	if g.questID == 179 {
+		return previous, true
+	}
+	if len(own.ObjectiveCounts) != 4 {
+		return previous, false
+	}
+	for i := range previous {
+		if own.ObjectiveCounts[i] < previous[i] {
+			return previous, false
 		}
 	}
-	g.needed = needed
-	return true, needed
+	return [2]uint32{own.ObjectiveCounts[0], own.ObjectiveCounts[1]}, true
 }
 
 func validColdridgeThreatCounts(counts []uint32) bool {
@@ -97,22 +84,7 @@ func validColdridge182Counts(counts []uint32) bool {
 }
 
 func (g coldridgePracticeGoal) targetNeeded(entry uint32) bool {
-	if !g.needed {
-		return false
-	}
-	if g.questID == 179 {
-		return entry == 705
-	}
-	if g.questID == 170 {
-		return entry == 707 && g.counts[0] < 6 || entry == 724 && g.counts[1] < 6
-	}
-	if g.questID == 183 {
-		return entry == 708 && g.counts[0] < 12
-	}
-	if g.questID == 182 {
-		return entry == 706 && g.counts[0] < 10
-	}
-	return false
+	return g.needed && entry != 0 && (g.neededEntries[0] == entry || g.neededEntries[1] == entry)
 }
 
 func (g coldridgePracticeGoal) supportsEntry(entry uint32) bool {

@@ -204,7 +204,7 @@ func TestPolicyThermapluggFullBundleCallbackAndSameSessionTuningCAS(t *testing.T
 	locked["candidates"].([]any)[0].(map[string]any)["button"].(map[string]any)["flags"] = float64(2)
 	x.expect(t, locked, "choose", 1)
 	initial := x.host.vm.Status().Revision
-	revision := x.reload(t, "prefer_nearest=true", "prefer_nearest=false")
+	revision := x.reload(t, "role_classes={[4]=true},prefer_nearest=true", "role_classes={[4]=true},prefer_nearest=false")
 	x.expect(t, input, "choose", 1)
 	accepted := x.host.starterSpell.Load()
 	if _, err := x.host.Reload(context.Background(), x.source, initial); !errors.Is(err, behavior.ErrRevisionConflict) || x.host.starterSpell.Load() != accepted {
@@ -247,7 +247,7 @@ func TestPolicyThermapluggUnknownAttemptSurvivesMemoryResetAndScopeChanges(t *te
 	input["nowMs"] = float64(10800)
 	x.expect(t, input, "observe", 0)
 	input["memory"], input["observationsKnown"], input["nowMs"] = map[string]any{}, true, float64(1000000)
-	x.reload(t, "prefer_nearest=true", "prefer_nearest=false")
+	x.reload(t, "role_classes={[4]=true},prefer_nearest=true", "role_classes={[4]=true},prefer_nearest=false")
 	x.expect(t, input, "wait", 0) // Neither a timer, memory reset nor a source edit reuses the button.
 	for _, field := range []string{"sessionId", "selfGuid", "visitId"} {
 		old := attempt[field]
@@ -268,9 +268,9 @@ func TestPolicyThermapluggCurrentInvalidFailedAndMissingExportNeverReuseOldChoic
 	x := newThermapluggPolicyFixture(t)
 	input := thermapluggPolicyInput(t, x.sid)
 	x.expect(t, input, "choose", 0)
-	x.reload(t, "prefer_nearest=true", `prefer_nearest="invalid"`)
+	x.reload(t, "role_classes={[4]=true},prefer_nearest=true", `role_classes={[4]=true},prefer_nearest="invalid"`)
 	x.expect(t, input, "wait", -1)
-	x.reload(t, `prefer_nearest="invalid"`, "prefer_nearest=true")
+	x.reload(t, `role_classes={[4]=true},prefer_nearest="invalid"`, "role_classes={[4]=true},prefer_nearest=true")
 	x.expect(t, input, "choose", 0)
 	failed := x.reload(t, "return encounter_button_policy.decide(input)", `error("active Thermaplugg selector failure")`)
 	for range 2 {
