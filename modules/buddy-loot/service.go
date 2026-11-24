@@ -72,6 +72,8 @@ type Service struct {
 	rejectedInventoryRevision                  uint64
 	corpseRequests                             map[string]*corpseRequest
 	corpseRequest                              *corpseRequest
+	gatherRequests                             map[string]*gatherRequest
+	gatherRequest                              *gatherRequest
 	exactCorpse                                bool
 	windowRevision                             uint64
 	windowRequests                             map[string]*windowRequest
@@ -227,6 +229,13 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 	if s.session == nil {
 		return false
 	}
+	gatherOpening := s.questGather && s.gatherRequest != nil && op == opcode.CMSGCastSpell
+	if gatherOpening {
+		s.gatherRequest.receipt.OpeningTransportAttempted = true
+		// An in-range Lua RPC retains its exact cast token. Delayed finite
+		// approach execution never stores or reuses an expired RPC token.
+		ctx = modcb.ForwardPolicySpell(ctx)
+	}
 	if s.policyWindow() && (op == opcode.CMSGLoot || op == opcode.CMSGLootRelease) {
 		if op == opcode.CMSGLoot && s.corpseRequest != nil {
 			s.corpseRequest.receipt.OpeningTransportAttempted = true
@@ -236,6 +245,18 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 	_, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: op, Payload: p})
 	s.lastLootWriteError = err
 	if err != nil {
+		if gatherOpening {
+			if modcb.PacketWasNotDispatched(err) {
+				s.gatherRequest.receipt.OpeningTransportAttempted = false
+				delete(s.gatherSeen, s.pendingGUID())
+				s.state.Reason = "opening_callback_rejected_before_transport"
+				return false
+			}
+			if s.retired == nil {
+				s.retired = map[uint64]bool{}
+			}
+			s.retired[s.pendingGUID()] = true
+		}
 		if s.exactCorpse && s.corpseRequest != nil && op == opcode.CMSGLoot && modcb.PacketWasNotDispatched(err) {
 			s.corpseRequest.receipt.OpeningTransportAttempted = false
 			s.state.Reason = "opening_callback_rejected_before_transport"
@@ -249,6 +270,9 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 		return false
 	}
 	s.state.TransportWrites++
+	if gatherOpening {
+		s.gatherRequest.receipt.OpeningTransportWritten = true
+	}
 	if s.exactCorpse && s.corpseRequest != nil && op == opcode.CMSGLoot {
 		s.corpseRequest.receipt.OpeningTransportWritten = true
 	}
@@ -294,6 +318,7 @@ func (s *Service) finish(ctx context.Context) {
 				r.Reason = s.state.Reason
 			}
 		}
+		s.finishGatherRequest()
 	} else if s.cleanup.source == 0 {
 		s.state.LastCorpseGuid = s.state.PendingCorpseGuid
 	}
@@ -825,12 +850,9 @@ func (s *Service) Tick(ctx context.Context) {
 			delete(s.seen, guid)
 		}
 	}
-	if s.tryGatherLocked(ctx, world) {
-		return
-	}
 	// Ordinary corpse discovery, ranking and movement belong to the attached
 	// Lua policy. This remaining native path is only the explicitly named
-	// starter-quest controller, alongside legacy quest-container gathering.
+	// starter-quest controller. New quest-container sources/recipes are Lua too.
 	if s.automatic || !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) {
 		s.state.Reason = "ordinary_corpse_selection_owned_by_lua"
 		return

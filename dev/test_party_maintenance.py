@@ -1625,6 +1625,112 @@ class MailboxTargetConsumerTests(unittest.TestCase):
                 self.assert_no_list_or_claim()
 
 
+class ClassTrainingLuaTests(unittest.TestCase):
+    setUp=MaintenanceTests.setUp
+    tick=MaintenanceTests.tick
+    methods=MaintenanceTests.methods
+
+    def buys(self):return [params for method,params in self.rpc.calls if method=='buddy-training.buy']
+
+    def test_actual_lua_ranking_edit_selects_different_offered_spell_in_same_body(self):
+        self.rpc.offer['spells']=[dict(spellId=123,costCopper=100),dict(spellId=124,costCopper=50)]
+        self.tick()
+        self.assertEqual(self.buys()[0]['spellId'],124)
+        self.rpc.purchase=dict(id=1,npcGuid=self.rpc.offer['npcGuid'],spellId=124,costCopper=50,
+            status='TRAINING_CONFIRMED',serverSuccessObserved=True,learnedSpellObserved=True)
+        self.rpc.offer['spells'][1]['usable']=2
+        self.rpc.offer['spells'].append(dict(spellId=125,costCopper=200))
+        self.rpc.policy_source=self.rpc.policy_source.replace('prefer_cheapest=true','prefer_cheapest=false')
+        self.rpc.generation='2'
+        self.tick()
+        self.assertEqual([row['spellId'] for row in self.buys()],[124,125])
+        self.assertEqual(self.agent.data['training'][0]['status'],'confirmed')
+        self.assertEqual(self.rpc.training['sessionId'],'body1')
+
+    def test_actual_lua_reserve_default_and_explicit_owner_override(self):
+        self.rpc.training['copper']=200
+        self.rpc.offer['spells']=[dict(spellId=123,costCopper=100)]
+        self.rpc.policy_source=self.rpc.policy_source.replace('reserve_copper=100','reserve_copper=150')
+        self.tick();self.assertEqual(self.buys(),[])
+        self.agent.reserve_copper=50
+        self.tick()
+        self.assertEqual((self.buys()[0]['reserveCopper'],self.buys()[0]['maxSpendCopper']),(50,150))
+
+    def test_source_edit_invalidates_cached_exhaustion_even_without_a_next_cost(self):
+        self.rpc.policy_source=self.rpc.policy_source.replace('purchase_cap_copper=1000000','purchase_cap_copper=10')
+        self.rpc.offer['spells']=[dict(spellId=123,costCopper=100,pointCost=[0,0])]
+        self.tick()
+        cached=self.agent.exhausted_trainers[int(self.rpc.offer['npcGuid'])]
+        self.assertIsNone(cached['nextCost'])
+        self.tick();self.assertEqual(self.methods().count('buddy-training.list'),1)
+        self.rpc.policy_source=self.rpc.policy_source.replace('purchase_cap_copper=10','purchase_cap_copper=1000000')
+        self.rpc.generation='2'
+        self.tick()
+        self.assertEqual(self.methods().count('buddy-training.list'),2)
+        self.assertEqual(self.buys()[0]['spellId'],123)
+
+    def test_missing_class_mode_does_not_restore_a_python_selection(self):
+        self.rpc.policy_source=('local p=(function()\n'+self.rpc.policy_source+'\nend)()\n'
+            'local service=p.service_destination;p.service_destination=function(i) '
+            'if i.kind=="class_training" then return {} end return service(i) end;return p')
+        with self.assertRaisesRegex(m.town_policy.Error,'accepted_class_training_mode_required'):
+            self.tick()
+        self.assertEqual(self.buys(),[])
+        self.assertEqual(self.agent.data['training'],[])
+
+    def test_unoffered_lua_spell_is_rejected_before_any_reservation(self):
+        self.rpc.policy_source=('local p=(function()\n'+self.rpc.policy_source+'\nend)()\n'
+            'local service=p.service_destination;p.service_destination=function(i) local o=service(i);'
+            'if i.kind=="class_training" then o.spellId=999;o.costCopper=100 end return o end;return p')
+        with self.assertRaisesRegex(m.town_policy.Error,'exact_offered_spell'):
+            self.tick()
+        self.assertEqual(self.buys(),[])
+        self.assertEqual(self.agent.data['training'],[])
+
+    def test_source_change_during_reservation_retires_only_the_known_unentered_row(self):
+        self.tick()
+        self.rpc.purchase=dict(id=1,npcGuid=self.rpc.offer['npcGuid'],spellId=123,costCopper=100,
+            status='TRAINING_CONFIRMED',serverSuccessObserved=True,learnedSpellObserved=True)
+        self.rpc.offer['spells']=[dict(spellId=123,costCopper=100,usable=2),dict(spellId=124,costCopper=50)]
+        original=self.agent.save
+        def save(data):
+            original(data)
+            if data['training'] and data['training'][-1]['spell']==124:
+                self.rpc.generation='2'
+        self.agent.save=save
+        self.tick()
+        self.assertEqual(len(self.buys()),1)
+        self.assertEqual([(r['spell'],r['status']) for r in self.agent.data['training']],[(123,'confirmed')])
+        self.assertEqual((self.agent.data['reservedCopper'],self.agent.data['spentCopper']),(100,100))
+        self.assertEqual(self.agent.data['lastNotDispatched']['status'],'not_dispatched')
+        self.assertEqual(self.agent.data['lastNotDispatched']['spell'],124)
+        m.Maintenance('Arlen',1,self.rpc,lambda d:None,self.saved[-1],now=lambda:200)
+
+    def test_current_full_encounter_export_owns_class_training_choice(self):
+        self.rpc.policy_source=subprocess.check_output([os.sys.executable,'-B',str(Path(__file__).with_name('encounter-bundle'))],text=True)
+        self.tick()
+        self.assertEqual(self.buys()[0]['spellId'],123)
+
+    def test_stop_during_final_attach_retires_unentered_row_without_buy(self):
+        stopped=[False]
+        self.agent.stopped=lambda:stopped[0]
+        original=self.rpc.call
+        def call(method,params):
+            result=original(method,params)
+            if (method=='session.attach' and self.agent.data['training']
+                    and self.agent.data['training'][-1]['status']=='reserved'):
+                stopped[0]=True
+            return result
+        self.rpc.call=call
+        self.tick()
+        self.assertEqual(self.buys(),[])
+        self.assertEqual(self.saved[-1]['training'],[])
+        self.assertEqual(self.saved[-1]['reservedCopper'],0)
+        self.assertEqual(self.saved[-1]['lastNotDispatched']['status'],'not_dispatched')
+        self.assertEqual(self.saved[-1]['lastNotDispatched']['spell'],123)
+
+
 from test_town_policy import VendorDestinationTests, TrainerDestinationTests
+from test_town_maintenance import GearCompatibilityTests, TownTests
 
 if __name__=='__main__':unittest.main()

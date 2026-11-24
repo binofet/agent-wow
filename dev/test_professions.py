@@ -2,21 +2,26 @@
 """Profession learning through fake, strictly bounded normal trainer APIs."""
 import contextlib
 import copy
+import hashlib
 import importlib.machinery
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from test_town_policy import service_source
 
 loader = importlib.machinery.SourceFileLoader("professions_tested", str(Path(__file__).with_name("professions")))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 p = importlib.util.module_from_spec(spec)
 loader.exec_module(p)
 NPC = 0xf130000202000001
+TRAINING_BRIDGE=p.town_policy.runtime.Bridge
 SPELLS = {165: (2155, 2108), 171: (2275, 2259), 182: (2372, 2366), 197: (3911, 3908),
           333: (7414, 7411), 393: (8615, 8613), 129: (3279, 3273), 185: (2551, 2550), 356: (7733, 7620),
           164: (2020, 2018), 186: (2581, 2575), 202: (4039, 4036), 755: (25245, 25229), 773: (45375, 45357)}
@@ -43,6 +48,7 @@ class RPC:
         self.spells = [offered(skill) for skill in (*self.primary_skills, *p.SECONDARY)]
         self.apply, self.error_buy, self.prove, self.after_list, self.after_acquire = True, False, True, None, None
         self.reject,self.offer_revision=False,20
+        self.policy_source,self.generation=service_source(),'1'
 
     def state(self):
         return dict(sessionId=self.session, professionsKnown=self.known, professionsRevision=str(self.revision),
@@ -57,6 +63,12 @@ class RPC:
 
     def call(self, method, params):
         self.calls.append((method, copy.deepcopy(params)))
+        if method=='session.policy_source':
+            return dict(sessionId=self.session,characterGuid=str(self.guid),source=self.policy_source,
+                revision=hashlib.sha256(self.policy_source.encode()).hexdigest(),generation=self.generation,sourceLimitBytes=8*1024*1024)
+        if method=='session.attach':
+            return dict(sessionId=self.session,characterGuid=str(self.guid),policy=dict(
+                revision=hashlib.sha256(self.policy_source.encode()).hexdigest(),generation=self.generation))
         if method == "buddy-world.snapshot":
             return {"self": dict(guid=str(self.guid), present=True, mapKnown=self.map_known, mapId=self.map_id, aliveKnown=True, alive=True,
                                  unitFlagsKnown=True, unitFlags=0x80000 if self.combat else 0,
@@ -112,6 +124,13 @@ class RPC:
 
 
 class ProfessionTests(unittest.TestCase):
+    def setUp(self):
+        binary=Path(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY',p.ROOT/'data/bin/luapolicy'))
+        if not binary.is_file():raise RuntimeError('Actual maintained Lua evaluator is required')
+        bridge=patch.object(p.town_policy.runtime,'Bridge',side_effect=lambda _binary,modules,**options:
+            TRAINING_BRIDGE(binary,modules,**options))
+        bridge.start();self.addCleanup(bridge.stop)
+
     def rig(self, guid=1, stored=None, allow_travel=False):
         rpc, now, saved = RPC(guid), [100.], []
         actor = p.Learner(guid, rpc, save=lambda value: saved.append(copy.deepcopy(value)), stored=stored,
@@ -513,6 +532,103 @@ class ProfessionTests(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(p.main(["stop", "--character-guid", "1"]), 0)
                 self.assertEqual(p.c.read_json(folder/"stop.json"), {"identity": record["identity"], "instance": record["instance"]})
+
+
+    def test_actor_lua_priority_edit_changes_next_real_offered_choice_without_rebinding_goal(self):
+        actor,rpc,now,_=self.rig()
+        self.step(actor,now)
+        self.assertEqual(self.buys(rpc)[0]['skillId'],171)
+        rpc.policy_source=rpc.policy_source.replace('primary_first=true','primary_first=false')
+        rpc.generation='2'
+        self.step(actor,now)
+        self.assertEqual([row['skillId'] for row in self.buys(rpc)],[171,129])
+        self.assertEqual(actor.primary_skills,p.PRIMARY[1])
+        self.assertEqual(actor.data['attempts'][0]['status'],'confirmed')
+        self.assertEqual(rpc.session,'profession-body')
+
+    def test_profession_offer_reuses_training_cost_order_and_budget_tuning(self):
+        actor,rpc,now,_=self.rig()
+        rpc.spells=[offered(171,40),offered(182,20)]
+        rpc.policy_source=rpc.policy_source.replace('prefer_cheapest=true,primary_first','prefer_cheapest=false,primary_first')
+        self.step(actor,now)
+        self.assertEqual((self.buys(rpc)[0]['skillId'],self.buys(rpc)[0]['purchase']['expectedCostCopper']),(171,40))
+
+    def test_source_change_reopens_same_body_query_cache_without_wallet_or_goal_change(self):
+        actor,rpc,now,_=self.rig()
+        rpc.policy_source=rpc.policy_source.replace('purchase_cap_copper=10000,reserve_copper=0','purchase_cap_copper=5,reserve_copper=0')
+        self.step(actor,now,2)
+        self.assertEqual(self.buys(rpc),[])
+        self.assertEqual(sum(method=='buddy-training.list' for method,_ in rpc.calls),1)
+        goal=copy.deepcopy(actor.identity)
+        rpc.policy_source=rpc.policy_source.replace('purchase_cap_copper=5,reserve_copper=0','purchase_cap_copper=10000,reserve_copper=0')
+        rpc.generation='2';self.step(actor,now)
+        self.assertEqual(sum(method=='buddy-training.list' for method,_ in rpc.calls),2)
+        self.assertEqual(len(self.buys(rpc)),1)
+        self.assertEqual(actor.identity,goal)
+
+    def test_missing_accepted_profession_mode_reports_unknown_without_python_fallback(self):
+        actor,rpc,now,_=self.rig()
+        rpc.policy_source=rpc.policy_source.replace('or input.kind=="profession_training"','')
+        self.step(actor,now)
+        self.assertEqual(actor.status['phase'],'waiting_for_accepted_profession_policy')
+        self.assertEqual(self.buys(rpc),[])
+        self.assertEqual(actor.data['attempts'],[])
+        rpc.policy_source=service_source();rpc.generation='2';self.step(actor,now)
+        self.assertEqual(len(self.buys(rpc)),1)
+
+    def test_current_full_bundle_exposes_profession_mode_without_new_export(self):
+        actor,rpc,now,_=self.rig()
+        rpc.policy_source=subprocess.check_output([sys.executable,'-B',str(Path(__file__).with_name('encounter-bundle'))],text=True)
+        self.step(actor,now)
+        self.assertEqual(self.buys(rpc)[0]['skillId'],171)
+
+    def test_source_change_during_reservation_is_known_no_call_and_retains_original_goal(self):
+        actor,rpc,now,saved=self.rig()
+        original=actor.save
+        def save(data):
+            original(data)
+            if data['attempts'] and data['attempts'][-1]['status']=='reserved':rpc.generation='2'
+        actor.save=save
+        self.step(actor,now)
+        self.assertEqual(self.buys(rpc),[])
+        self.assertEqual((saved[-1]['attempts'],saved[-1]['reservedCopper']),([],0))
+        self.assertEqual(saved[-1]['lastNotDispatched']['status'],'not_dispatched')
+        resumed=p.Learner(1,rpc,stored=copy.deepcopy(saved[-1]),now=lambda:now[0])
+        resumed.tick()
+        self.assertEqual(len(self.buys(rpc)),1)
+
+    def test_stop_during_final_attach_never_enters_profession_buy(self):
+        actor,rpc,now,saved=self.rig()
+        stopped=[False];actor.stopped=lambda:stopped[0]
+        original=rpc.call
+        def call(method,params):
+            result=original(method,params)
+            if method=='session.attach' and actor.data['attempts'] and actor.data['attempts'][-1]['status']=='reserved':
+                stopped[0]=True
+            return result
+        rpc.call=call;self.step(actor,now)
+        self.assertEqual(self.buys(rpc),[])
+        self.assertEqual(saved[-1]['attempts'],[])
+        self.assertEqual(saved[-1]['lastNotDispatched']['status'],'not_dispatched')
+
+    def test_entered_unknown_survives_actor_policy_edit_and_restart_without_reselection(self):
+        actor,rpc,now,saved=self.rig()
+        rpc.apply,rpc.prove,rpc.error_buy=False,False,True
+        with self.assertRaises(p.Error):actor.tick()
+        retained=copy.deepcopy(saved[-1]);pending=copy.deepcopy(retained['attempts'])
+        rpc.policy_source=rpc.policy_source.replace('primary_first=true','primary_first=false');rpc.generation='2'
+        source_reads=sum(method=='session.policy_source' for method,_ in rpc.calls)
+        resumed=p.Learner(1,rpc,stored=retained,now=lambda:now[0]+100)
+        resumed.tick()
+        self.assertEqual(len(self.buys(rpc)),1)
+        self.assertEqual(resumed.data['attempts'],pending)
+        self.assertEqual(sum(method=='session.policy_source' for method,_ in rpc.calls),source_reads)
+
+    def test_unclassified_extra_row_does_not_block_an_actual_ready_profession(self):
+        actor,rpc,now,_=self.rig()
+        rpc.spells=[dict(spellId=999,costCopper=1,pointCost=[0,0]),offered(171)]
+        self.step(actor,now)
+        self.assertEqual(self.buys(rpc)[0]['skillId'],171)
 
 
 if __name__ == "__main__":

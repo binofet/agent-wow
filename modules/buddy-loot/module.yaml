@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Exact observed loot-window actions and retained quest-container opening; ordinary corpse and window choices belong to Lua
+description: Exact observed loot-window and caller-selected quest-container actions; corpse container recipe and window choices belong to Lua
 requires: [buddy-world, buddy-actions, buddy-party]
 compose:
   file: compose.yaml
@@ -12,15 +12,17 @@ rpc:
   state: /warcraftbuddy.loot.v1.BuddyLoot/GetState
   observe_corpses: /warcraftbuddy.loot.v1.BuddyLoot/ObserveCorpses
   open_corpse: /warcraftbuddy.loot.v1.BuddyLoot/OpenCorpse
+  open_gather: /warcraftbuddy.loot.v1.BuddyLoot/OpenGather
   close_corpse: /warcraftbuddy.loot.v1.BuddyLoot/CloseCorpse
   take_money: /warcraftbuddy.loot.v1.BuddyLoot/TakeMoney
   take_slot: /warcraftbuddy.loot.v1.BuddyLoot/TakeSlot
   resume_source: /warcraftbuddy.loot.v1.BuddyLoot/ResumeSource
 script_api:
-  enable: {effect: mutation, description: Legacy named quest/container scheduling metadata; ordinary corpse choice remains in Lua}
+  enable: {effect: mutation, description: Legacy named quest scheduling metadata; new corpse and container choices remain in Lua}
   state: {effect: read, description: Read current native loot-window and packet settlement facts}
   observe_corpses: {effect: read, description: 'Read observed corpse/window, bound quest-container, position, capacity and exact receipts without choosing a source'}
   open_corpse: {effect: mutation, description: 'Open one exact current in-range corpse, bound to body, source and inventory revisions and an idempotent request ID'}
+  open_gather: {effect: mutation, description: 'Execute one Lua-selected quest-container recipe and optional finite approach bound to body visit object position inventory quest-log revisions and idempotent request ID'}
   close_corpse: {effect: mutation, description: Release an exact bound corpse or observed quest-container window and yield body custody without replaying uncertain mutations}
   take_money: {effect: mutation, description: Take observed unrequested money from the exact bound window with an idempotent request ID}
   take_slot: {effect: mutation, description: Take one caller-selected permitted slot bound to source window revision item count inventory revision and request ID}

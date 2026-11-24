@@ -13,6 +13,8 @@ local vendor_search_yards, vendor_interaction_yards = 35,4.5
 local vendor_prefer_nearest = true
 local trainer_search_yards, trainer_interaction_yards = 100,4
 local trainer_prefer_nearest = true
+local class_training={purchase_cap_copper=1000000,reserve_copper=100,prefer_cheapest=true}
+local profession_training={purchase_cap_copper=10000,reserve_copper=0,prefer_cheapest=true,primary_first=true}
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
 
 local function number(value)
@@ -48,10 +50,179 @@ local function at_target(self, target, radius)
     return dx*dx+dy*dy<=radius*radius and math.abs(self.z-target.z)<=1.5
 end
 
+local function training_choice(input)
+    local function uint(v) return number(v) and v>=0 and v<=4294967295 and v%1==0 end
+    local profession=input.kind=="profession_training"
+    local tuning=profession and profession_training or class_training
+    if input.copperKnown~=true or not uint(input.copper) or not uint(input.nativePurchaseCap)
+        or not uint(tuning.purchase_cap_copper) or not uint(tuning.reserve_copper)
+        or type(tuning.prefer_cheapest)~="boolean" or type(input.spells)~="table" or #input.spells>256
+        or type(input.eligibility)~="table" or type(input.attempted)~="table" then return {} end
+    local reserve=input.reserveCopper
+    if reserve==nil then reserve=tuning.reserve_copper end
+    if not uint(reserve) then return {} end
+    local cap=math.min(tuning.purchase_cap_copper,input.nativePurchaseCap)
+    local assigned,wanted,observed,primary_count,conflict={},{},{},0,false
+    local profession_state=input.professions or {}
+    if profession then
+        if profession_state.known~=true or type(tuning.primary_first)~="boolean" or input.levelKnown~=true or not uint(input.level)
+            or not uint(input.goalBudgetCopper) or not uint(input.reservedCopper) or input.reservedCopper>input.goalBudgetCopper
+            or type(input.primaryGoals)~="table" or #input.primaryGoals>2 or type(input.secondaryGoals)~="table" or #input.secondaryGoals>3
+            or type(profession_state.primary)~="table" or #profession_state.primary>11
+            or type(profession_state.secondary)~="table" or #profession_state.secondary>3 then return {} end
+        cap=math.min(cap,input.goalBudgetCopper-input.reservedCopper)
+        for _,skill in ipairs(input.primaryGoals) do
+            if not uint(skill) or skill==0 or wanted[tostring(skill)] then return {} end
+            assigned[tostring(skill)]=true;wanted[tostring(skill)]=true
+        end
+        for _,skill in ipairs(input.secondaryGoals) do
+            if not uint(skill) or skill==0 or wanted[tostring(skill)] then return {} end
+            wanted[tostring(skill)]=true
+        end
+        for _,rows in ipairs({profession_state.primary,profession_state.secondary}) do
+            for _,row in ipairs(rows) do
+                if type(row)~="table" or not uint(row.skillId) or row.skillId==0 or observed[tostring(row.skillId)] then return {} end
+                observed[tostring(row.skillId)]=true
+                if rows==profession_state.primary then
+                    primary_count=primary_count+1
+                    if not assigned[tostring(row.skillId)] then conflict=true end
+                end
+            end
+        end
+    end
+    local budget=math.min(cap,math.max(0,input.copper-reserve))
+    local out={consumer=profession and "profession_training" or "class_training",budgetCopper=budget,reserveCopper=reserve,purchaseCapCopper=cap}
+    local best,seen
+    seen={}
+    for _,spell in ipairs(input.spells) do
+        if type(spell)~="table" then return {} end
+        local id,cost,level=spell.spellId,spell.costCopper or 0,spell.requiredLevel or 0
+        local usable,points=spell.usable or 0,spell.pointCost or {}
+        if not uint(id) or id==0 or seen[tostring(id)] or not uint(cost)
+            or not uint(level) or not uint(usable) or usable>2 or type(points)~="table" or #points>2 then return {} end
+        seen[tostring(id)]=true
+        local no_points=true
+        for _,value in ipairs(points) do if not uint(value) then return {} end;if value~=0 then no_points=false end end
+        local evidence=input.eligibility[tostring(id)] or {}
+        local eligible=evidence.known==true and evidence.retryAllowed==true and uint(evidence.level) and level<=evidence.level
+            and usable==0 and no_points and input.attempted[tostring(id)]~=true
+        local order_id,priority,skill,learned=id,0
+        if profession then
+            skill,learned=spell.professionSkillId,spell.learnedSpellId
+            local primary=assigned[tostring(skill)]==true
+            local abilities=spell.requiredAbilities or {};local abilities_clear=type(abilities)=="table" and #abilities<=3
+            for _,value in ipairs(abilities_clear and abilities or {}) do
+                if not uint(value) or value~=0 then abilities_clear=false end
+            end
+            eligible=uint(skill) and skill>0 and uint(learned) and learned>0
+                and wanted[tostring(skill)]==true and not observed[tostring(skill)] and input.attempted[tostring(skill)]~=true
+                and usable==0 and id<2147483648 and learned<2147483648 and (spell.primaryProfession==true)==primary
+                and #points==2 and points[1]==0 and points[2]==(primary and 1 or 0) and level<=input.level
+                and (spell.requiredSkill or 0)==0 and (spell.requiredSkillRank or 0)==0 and abilities_clear
+            if primary and (conflict or primary_count>=2 or profession_state.freePrimarySlotsKnown~=true
+                or not uint(profession_state.freePrimarySlots) or profession_state.freePrimarySlots<1
+                or profession_state.freePrimarySlots>2 or input.level<5) then eligible=false end
+            order_id=skill;priority=tuning.primary_first and not primary and 1 or 0
+        end
+        if ((not profession and usable==0 and input.attempted[tostring(id)]~=true) or profession and eligible)
+            and cost>budget and cost<=cap
+            and (not out.nextCost or cost<out.nextCost) then out.nextCost=cost end
+        if eligible and cost<=budget then
+            if not best or priority<best.priority or priority==best.priority and
+                (cost~=best.costCopper and (tuning.prefer_cheapest and cost<best.costCopper or not tuning.prefer_cheapest and cost>best.costCopper)
+                or cost==best.costCopper and order_id<best.orderId) then
+                best={spellId=id,costCopper=cost,priority=priority,orderId=order_id,skillId=skill,learnedSpellId=learned}
+            end
+        end
+    end
+    if best then
+        out.spellId=best.spellId;out.costCopper=best.costCopper
+        out.skillId=best.skillId;out.learnedSpellId=best.learnedSpellId
+    end
+    return out
+end
+
 -- Town planning and the finite service workers consult this export from the
 -- character's current accepted policy. Callers supply mechanically validated
 -- observed NPCs; this policy owns the search radius and destination order.
+local function inventory_maintenance(input)
+    local function uint(v,max) return number(v) and v>=0 and v<=max and v%1==0 end
+    local function array(rows,max)
+        if type(rows)~="table" or #rows>max then return false end
+        local n=0
+        for k in pairs(rows) do if not uint(k,max) or k<1 then return false end; n=n+1 end
+        return n==#rows
+    end
+    local function item(row)
+        return type(row)=="table" and uint(row.bag,4) and uint(row.slot,35) and identity(row.itemGuid)~=nil and
+            uint(row.entry,4294967295) and row.entry>0 and uint(row.stackCount,4294967295) and row.stackCount>0
+    end
+    if type(input.counts)~="table" or not uint(input.counts.equip,192) or not uint(input.counts.claim,192) or
+       not uint(input.counts.sell,192) or not array(input.emptyEquipmentSlots,4) or not array(input.bagCandidates,160) or
+       not array(input.saleCandidates,160) or not array(input.vendors,96) or type(input.vendorsKnown)~="boolean" or
+       type(input.mailAvailable)~="boolean" or type(input.freeGeneralSlot)~="boolean" or type(input.claimsOnly)~="boolean" or
+       type(input.vendorExplicit)~="boolean" then return {} end
+    local empty,seen
+    seen={}
+    for _,slot in ipairs(input.emptyEquipmentSlots) do
+        if not uint(slot,22) or slot<19 or seen[slot] then return {} end
+        seen[slot]=true
+        if not empty or slot<empty then empty=slot end
+    end
+    local function first(rows)
+        local best,seen=nil,{}
+        for _,row in ipairs(rows) do
+            if not item(row) or seen[row.itemGuid] then return nil,false end
+            seen[row.itemGuid]=true
+            if not best or row.bag<best.bag or row.bag==best.bag and row.slot<best.slot then best=row end
+        end
+        return best,true
+    end
+    local bag,bags_valid=first(input.bagCandidates)
+    local sale,sales_valid=first(input.saleCandidates)
+    if not bags_valid or not sales_valid then return {} end
+    seen={}
+    for _,candidate in ipairs(input.vendors) do
+        if type(candidate)~="table" or not identity(candidate.guid) or seen[candidate.guid] or
+           not number(candidate.distance) or candidate.distance<0 then return {} end
+        seen[candidate.guid]=true
+    end
+    local function finish(phase,reason) return {choice={kind="finish",phase=phase,reason=reason or ""}} end
+    -- One editable ordering, shared by the finite worker's planning/dispatch.
+    local priorities={"equip","claim","sell"}
+    for _,kind in ipairs(priorities) do
+        if kind=="equip" and empty and bag and input.counts.equip<4 then
+            return {choice={kind="equip",source=bag,equipmentSlot=empty}}
+        elseif kind=="claim" and input.mailAvailable and empty and input.freeGeneralSlot and input.counts.claim<4 then
+            return {choice={kind="claim"}}
+        elseif kind=="sell" and not input.claimsOnly and input.counts.sell<160 then
+            if not input.vendorsKnown then return {choice={kind="discover_sales"}} end
+            local vendors={}
+            if input.vendorExplicit then
+                if #input.vendors==1 then vendors={input.vendors[1].guid} end
+            else
+                -- Reuse the existing destination policy in this same accepted
+                -- source evaluation; do not carry a prior revision's ranking.
+                local ranked=M.service_destination({kind="vendor",scope="interactable",candidates=input.vendors})
+                vendors=type(ranked)=="table" and ranked.vendors or nil
+                if type(vendors)~="table" then return {} end
+            end
+            if #vendors==0 then return finish("blocked","no_actual_in_range_vendor_no_travel_attempted") end
+            if sale then return {choice={kind="sell",source=sale,vendorGuid=vendors[1]}} end
+        end
+    end
+    if input.claimsOnly then
+        if input.mailAvailable and empty and not input.freeGeneralSlot then
+            return finish("blocked","known_general_slot_for_bag_attachment_required")
+        end
+        return finish("complete","finite_bag_maintenance_finished")
+    end
+    if input.counts.sell<160 then return finish("complete","no_observed_safe_junk_sale") end
+    return finish("operation_limit")
+end
 function M.service_destination(input)
+    if type(input)=="table" and (input.kind=="class_training" or input.kind=="profession_training") then return training_choice(input) end
+    if type(input)=="table" and input.kind=="inventory_maintenance" then return inventory_maintenance(input) end
     if type(input)~="table" or (input.kind~="vendor" and input.kind~="trainer") or
        (input.scope~="nearby" and input.scope~="interactable" and input.scope~="travel") or
        type(input.candidates)~="table" or #input.candidates>97 then return {} end

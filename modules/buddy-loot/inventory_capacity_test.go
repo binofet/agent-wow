@@ -114,6 +114,14 @@ func TestLootCapacityBlocksNewOpenAndRechecksAfterLease(t *testing.T) {
 			f.world.InventoryKnown = true
 			advance(time.Second)
 			tickCapacityLoot(t, s, gather)
+			if gather {
+				// The first fresh view retires the native capacity pause; the
+				// next normal Lua turn chooses the exact new source request.
+				if current(t, s).InventoryPaused || len(f.packets) != 0 {
+					t.Fatal("gather capacity bookkeeping emitted an opening", current(t, s), f.packets)
+				}
+				tickCapacityLoot(t, s, true)
+			}
 			if len(f.packets) != 1 || current(t, s).InventoryPaused {
 				t.Fatal("actual free capacity did not resume", current(t, s), f.packets)
 			}
@@ -278,10 +286,14 @@ func TestLootInventoryFullRequiresNewerFreeInventoryRevision(t *testing.T) {
 			f.world.InventoryKnown = true
 			advance(time.Second)
 			tickCapacityLoot(t, s, gather)
-			if !gather && len(f.packets) == before && !current(t, s).InventoryPaused {
-				// The native item-store barrier may be cleared by this tick;
-				// Lua then consumes its positively updated state on a fresh read.
-				tickCapacityLoot(t, s, false)
+			if gather && (current(t, s).InventoryPaused || len(f.packets) != before) {
+				t.Fatal("source-bound capacity resume was not metadata-only", current(t, s), f.packets)
+			}
+			if len(f.packets) == before && !current(t, s).InventoryPaused {
+				// A native item-store barrier or exact Lua source-capacity
+				// pause can settle on this turn. Lua consumes that positively
+				// updated state only on a fresh normal read, without retrying.
+				tickCapacityLoot(t, s, gather)
 			}
 			if (gather && current(t, s).InventoryPaused || !gather && corpsePolicyPaused(t, s)) || len(f.packets) != before+1 {
 				t.Fatal("newer complete free view did not resume", current(t, s), f.packets)
@@ -298,7 +310,10 @@ func TestLootFinalCapacityReadRetainsOwnWolfQuestAuthority(t *testing.T) {
 		}
 	}
 	enable(t, s)
-	tickCapacityLoot(t, s, true)
+	// This is the explicitly named native wolf workflow, whose own-quest
+	// authority must still hold at its final world read. Generic Lua corpse
+	// opening intentionally does not borrow that named controller's authority.
+	s.Tick(context.Background())
 	if f.snapshotReads != 4 || len(f.packets) != 0 || s.token != "" || f.releases != 1 {
 		t.Fatal("final quest loss reached corpse loot write", current(t, s), f.snapshotReads, f.packets)
 	}

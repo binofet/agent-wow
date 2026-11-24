@@ -51,6 +51,7 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 		Owner: w.Owner, SourceObservation: w.RequestedCreature,
 		Corpses: w.LootableCorpses, NearbyCreatures: w.NearbyCreatures, InventoryKnown: w.InventoryKnown,
 		InventoryRevision: w.InventoryRevision, GeneralFreeSlots: uint32(ownKnownFreeSlots(w, s.selfGUID)), State: s.snapshotLocked()}
+	s.observeGatherCandidates(w, out)
 	if s.policyWindow() && s.windowRequest != nil && !s.windowRequest.receipt.Terminal && s.unconfirmedItemDelta(w) {
 		s.windowRequest.receipt.SlotRemoved = true
 		s.windowRequest.receipt.InventoryDeltaObserved = true
@@ -83,7 +84,11 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 	}
 	sort.Slice(out.ItemCounts, func(i, j int) bool { return out.ItemCounts[i].ItemId < out.ItemCounts[j].ItemId })
 	if s.questGather {
-		out.Operation = s.windowOperation(s.pendingGUID())
+		if s.gatherRequest != nil {
+			out.Operation = s.gatherReceiptLocked(s.gatherRequest)
+		} else {
+			out.Operation = s.windowOperation(s.pendingGUID())
+		}
 	} else if s.corpseRequest != nil {
 		out.Operation = s.corpseReceiptLocked()
 	}

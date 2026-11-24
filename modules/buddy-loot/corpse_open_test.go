@@ -206,7 +206,11 @@ func corpsePolicyDecision(t *testing.T, vm *behavior.Session, o *lootv1.CorpseOb
 		t.Fatal(err)
 	}
 	n := strconv.FormatUint(seq, 10)
-	input := map[string]any{"quiet": quiet, "urgent": urgent, "observationSequence": n, "observationSequences": map[string]any{"corpse_loot": n}, "encounter": map[string]any{"selfGuid": strconv.FormatUint(o.SelfGuid, 10), "visitId": "1"}}
+	visit := o.VisitId
+	if visit == 0 { // Older corpse-only fixture frames predate the gather visit fact.
+		visit = 1
+	}
+	input := map[string]any{"quiet": quiet, "urgent": urgent, "observationSequence": n, "observationSequences": map[string]any{"corpse_loot": n}, "encounter": map[string]any{"selfGuid": strconv.FormatUint(o.SelfGuid, 10), "visitId": strconv.FormatUint(visit, 10)}}
 	if len(now) > 0 {
 		input["testNow"] = now[0]
 	}
@@ -309,6 +313,15 @@ func tickCorpseLua(t *testing.T, s *Service) {
 					t.Fatal(err)
 				}
 				_, _ = s.OpenCorpse(context.Background(), r)
+			} else if ok && a["capability"] == "loot_gather" {
+				delete(a, "capability")
+				delete(a, "observationSequence")
+				raw, _ := json.Marshal(a)
+				r := &lootv1.OpenGatherRequest{}
+				if err = protojson.Unmarshal(raw, r); err != nil {
+					t.Fatal(err)
+				}
+				_, _ = s.OpenGather(context.Background(), r)
 			} else if ok && a["capability"] == "loot_resume_source" {
 				delete(a, "capability")
 				delete(a, "observationSequence")
@@ -338,13 +351,10 @@ func tickCorpseLua(t *testing.T, s *Service) {
 	s.Tick(context.Background())
 }
 
-// Pre-window source/approach fixtures keep exercising the retained workflow;
-// once the server window exists its choices come from the same actual Lua VM.
+// Existing gather wire/settlement fixtures use the same actual Lua source for
+// target/recipe selection and window choices. Tick only progresses an already
+// admitted exact native operation; it cannot discover a replacement source.
 func tickGatherWindow(t *testing.T, s *Service) {
 	t.Helper()
-	if s.policyWindow() || s.state.InventoryPaused && s.pausedGather && s.pausedSource != 0 {
-		tickCorpseLua(t, s)
-	} else {
-		s.Tick(context.Background())
-	}
+	tickCorpseLua(t, s)
 }

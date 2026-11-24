@@ -4,13 +4,10 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
-	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
-	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // OPEN_KNEELING is a shared lock mechanic, not a quest-specific command.
@@ -157,90 +154,10 @@ func (s *Service) observeGatherQuest(w *worldv1.SnapshotResponse) {
 		}
 	}
 }
-func (s *Service) tryGatherLocked(ctx context.Context, w *worldv1.SnapshotResponse) bool {
-	if w == nil || len(w.QuestObjects) == 0 || len(w.QuestObjects) > 32 || len(s.gatherSeen) >= 128 {
-		return false
-	}
-	a := &actionsv1.State{}
-	if s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, a) != nil {
-		return false
-	}
-	var selected *worldv1.GameObjectState
-	var recipe harvestRecipe
-	best := math.Inf(1)
-	for _, g := range w.QuestObjects {
-		if g == nil {
-			continue
-		}
-		for _, candidate := range s.harvestRecipes(g.Entry) {
-			if s.gatherSeen[g.Guid] || s.retired[g.Guid] || !candidate.context(w, a, s.selfGUID, true) || !candidate.objectWithin(a.Position, g, 12) {
-				continue
-			}
-			d := math.Pow(float64(g.X-a.Position.X), 2) + math.Pow(float64(g.Y-a.Position.Y), 2) + math.Pow(float64(g.Z-a.Position.Z), 2)
-			if d < best || d == best && (selected == nil || g.Guid < selected.Guid) {
-				selected, best, recipe = g, d, candidate
-			}
-		}
-	}
-	if selected == nil {
-		return false
-	}
-	l := &actionsv1.InteractionLease{}
-	if s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", LeaseMs: 15000}, l) != nil {
-		return false
-	}
-	if l.Token == "" || l.State == nil || l.State.InteractionOwner != "loot" {
-		s.state.Reason = "gather_interaction_lease_unconfirmed"
-		return true
-	}
-	s.token = l.Token
-	fresh := &worldv1.SnapshotResponse{}
-	valid := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, fresh) == nil && !l.State.Moving && recipe.context(fresh, l.State, s.selfGUID, true)
-	var current *worldv1.GameObjectState
-	if valid && len(fresh.QuestObjects) <= 32 {
-		for _, g := range fresh.QuestObjects {
-			if g != nil && g.Guid == selected.Guid {
-				if current != nil {
-					valid = false
-					break
-				}
-				current = g
-			}
-		}
-	}
-	if !valid || current == nil || current.PositionRevision != selected.PositionRevision || fresh.SelfQuestLogRevision != w.SelfQuestLogRevision || !recipe.objectWithin(l.State.Position, current, 12) {
-		s.releaseLease(ctx)
-		s.state.Reason = "gather_observation_changed_after_stop"
-		return true
-	}
-	id := uint64(1)
-	if s.state.LastGather != nil {
-		id = s.state.LastGather.Id + 1
-	}
-	s.questGather = true
-	if s.gatherSeen == nil {
-		s.gatherSeen = map[uint64]bool{}
-	}
-	s.gatherSeen[current.Guid] = true
-	s.state.PendingGameObjectGuid = current.Guid
-	s.gatherObjectRevision = current.PositionRevision
-	s.state.LastGather = &lootv1.GatherReceipt{Id: id, ObjectGuid: current.Guid, ObjectEntry: recipe.objectEntry, QuestId: recipe.questID, ItemId: recipe.itemID, Status: lootv1.GatherStatus_GATHER_REQUESTED, BaselineQuestLogRevision: fresh.SelfQuestLogRevision, ObservedQuestLogRevision: fresh.SelfQuestLogRevision, Reason: "opening_requested_waiting_for_server"}
-	s.transactionUntil = s.now().Add(12 * time.Second)
-	s.moneySent = false
-	s.moneyCleared = false
-	if recipe.object(l.State.Position, current) {
-		s.openLocked(ctx)
-	} else {
-		s.state.Phase = "gather_approaching"
-		s.state.Reason = "nearby_harvest_crate_approach_pending"
-	}
-	return true
-}
-
 func (s *Service) gatherApproachLocked(ctx context.Context, w *worldv1.SnapshotResponse, a *actionsv1.State) {
 	recipe := s.boundHarvestRecipe()
 	valid := func(world *worldv1.SnapshotResponse, actions *actionsv1.State, maxDistance float64) bool {
-		if !recipe.context(world, actions, s.selfGUID, true) || len(world.QuestObjects) > 32 {
+		if !s.gatherVisitCurrent(world) || !recipe.context(world, actions, s.selfGUID, true) || len(world.QuestObjects) > 32 {
 			return false
 		}
 		matches := 0
