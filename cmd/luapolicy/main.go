@@ -49,7 +49,7 @@ func validate(registry *moddisc.Registry, name string, raw json.RawMessage) (jso
 func run(args []string, in io.Reader, out io.Writer) error {
 	flags := flag.NewFlagSet("luapolicy", flag.ContinueOnError)
 	modules := flags.String("modules", "modules", "validated module metadata directory")
-	mode := flags.String("mode", "evaluate", "evaluate, validate or describe")
+	mode := flags.String("mode", "evaluate", "evaluate, evaluate-runtime, validate or describe")
 	source := flags.String("source", "", "Lua decide policy")
 	sourceBytes := flags.Int("source-bytes", 0, "Lua source budget (0 uses 8 MiB)")
 	valueBytes := flags.Int("value-bytes", 0, "JSON value budget (0 keeps the standalone 32 KiB default)")
@@ -74,7 +74,7 @@ func run(args []string, in io.Reader, out io.Writer) error {
 	}
 	var value any
 	switch *mode {
-	case "evaluate":
+	case "evaluate", "evaluate-runtime":
 		file, err := os.Open(*source)
 		if err != nil {
 			return err
@@ -96,6 +96,15 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		}
 		if decoder.Decode(new(any)) != io.EOF {
 			return errors.New("one bounded JSON input required")
+		}
+		if *mode == "evaluate-runtime" {
+			value, err = evaluateRuntimeSource(string(code), input, behavior.SessionOptions{
+				SourceBytes: limit, ValueBytes: *valueBytes, ExecutionLimit: time.Duration(*executionMS) * time.Millisecond,
+			})
+			if err != nil {
+				return err
+			}
+			break
 		}
 		runtime, err := behavior.NewWithOptions(behavior.SessionOptions{
 			SourceBytes: limit, ValueBytes: *valueBytes, ExecutionLimit: time.Duration(*executionMS) * time.Millisecond,

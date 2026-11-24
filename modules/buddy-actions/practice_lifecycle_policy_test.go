@@ -125,16 +125,50 @@ func TestPracticeLifecycleActualDefaultBudgetKeepsAll32CandidatesAndMotionPoint(
 	if input["nearby"].([]any)[31].(map[string]any)["motionPositionKnown"] != true {
 		t.Fatal("existing trajectory position mechanic disappeared")
 	}
-	// Actual production lazy construction/initialization and5ms pure evaluator;
-	// this fixture never substitutes a larger budget or retries a failure.
-	s.starterSpells.runtime = nil
-	if behavior.EvaluationLimit != 5*time.Millisecond {
+	if behavior.EvaluationLimit != 5*time.Millisecond || behavior.MaxJSONBytes != 32*1024 {
 		t.Fatal("production budget changed")
 	}
-	selected, _, valid := s.practiceLifecycleDecisionLocked(context.Background(), f.world, "tick")
-	if !valid || selected.kind != "select" || selected.target != last.Guid || len(f.packets) != 0 {
-		t.Fatal("actual default selector did not retain/select the32nd observed candidate", len(raw), selected, s.starterSpells.lastError)
+	// Keep the existing100ms semantic fixture for the native projection/source/
+	// late-fact guards. Its result is not a native race-binary budget proof.
+	// The ordinary exact-artifact CLI below independently executes Runtime
+	// Reload+Evaluate at unchanged5ms/32KiB defaults on this identical full frame.
+	runtime := s.starterSpells.runtime
+	if runtime == nil || runtime.Status().Revision == "" {
+		t.Fatal("fixture did not load the actual shared starter source")
 	}
+	revision := runtime.Status().Revision
+	worldBefore := proto.Clone(f.world).(*worldv1.SnapshotResponse)
+	until, target, phase := s.practiceUntil, s.practiceTarget, s.state.PracticePhase
+	var capturedFrame []byte
+	var capturedOutput map[string]any
+	reads := 0
+	s.starterSpells.remote = func(ctx context.Context, frame map[string]any) (bool, string, map[string]any, error) {
+		reads++
+		serialized, marshalErr := json.Marshal(frame)
+		rows, rowsKnown := frame["nearby"].([]any)
+		quests, questsKnown := frame["questLog"].([]any)
+		if marshalErr != nil || string(serialized) != string(raw) || !rowsKnown || len(rows) != 32 || !questsKnown || len(quests) != 25 {
+			t.Fatal("native policy call changed the exact full32/25 frame", len(serialized), marshalErr)
+		}
+		capturedFrame = append([]byte(nil), serialized...)
+		output, evaluateErr := runtime.EvaluateContext(ctx, frame)
+		afterFrame, marshalErr := json.Marshal(frame)
+		if marshalErr != nil || string(afterFrame) != string(capturedFrame) || runtime.Status().Revision != revision {
+			t.Fatal("semantic evaluation mutated caller input or replaced its source", marshalErr)
+		}
+		encoded, encodeErr := json.Marshal(output)
+		if encodeErr != nil || json.Unmarshal(encoded, &capturedOutput) != nil {
+			t.Fatal("actual selector output could not be detached", encodeErr)
+		}
+		return true, revision, output, evaluateErr
+	}
+	selected, _, valid := s.practiceLifecycleDecisionLocked(context.Background(), f.world, "tick")
+	if !valid || selected.kind != "select" || selected.target != last.Guid || len(f.packets) != 0 || reads != 1 ||
+		selected.revision != revision || len(capturedOutput) != 6 || string(capturedFrame) != string(raw) ||
+		!proto.Equal(worldBefore, f.world) || s.practiceUntil != until || s.practiceTarget != target || s.state.PracticePhase != phase || s.state.PracticePulls != 0 {
+		t.Fatal("native semantic guards did not retain the exact32nd motion target and unmodified frame", len(raw), selected, s.starterSpells.lastError, reads)
+	}
+	practiceDefaultRuntimeCLIParity(t, behaviors.StarterSpellSource)(raw, capturedOutput)
 }
 
 func TestPracticeLifecycleLatePolicyChangesCannotReplaceTaskOrDispatch(t *testing.T) {
