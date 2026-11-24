@@ -174,4 +174,6 @@ def rank_services(rpc, state, candidates, scope, kind, *, purpose=None, bridge=N
             or any(not isinstance(guid,str) or guid not in {str(g) for g in distances} for guid in vendors)
             or len(set(vendors))!=len(vendors)):
         raise Error('lua_must_select_current_observed_'+kind+'s')
-    return [(distances[int(guid)],int(guid)) for guid in vendors]
+    ranked=[(distances[int(guid)],int(guid)) for guid in vendors]
+    if purpose:return dict(candidates=ranked,policyRevision=revision,policyGeneration=generation)
+    return ranked

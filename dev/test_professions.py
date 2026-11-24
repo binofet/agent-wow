@@ -611,6 +611,63 @@ class ProfessionTests(unittest.TestCase):
         self.assertEqual(len(self.buys(rpc)),1)
         self.assertEqual(resumed.data['attempts'],pending['attempts'])
 
+    def test_rank_revision_cannot_be_replaced_by_a_new_budget_or_offer_plan(self):
+        for edit_at in ('budget_read','after_list'):
+            with self.subTest(edit_at=edit_at):
+                actor,rpc,now,_=self.rig();original=rpc.call;source_reads=[0]
+                def edit():
+                    rpc.policy_source=rpc.policy_source.replace('max_candidates=32,prefer_nearest=true',
+                        'max_candidates=32,prefer_nearest=false');rpc.generation='2'
+                def call(method,params):
+                    if method=='session.policy_source':
+                        source_reads[0]+=1
+                        if edit_at=='budget_read' and source_reads[0]==2:edit()
+                    value=original(method,params)
+                    if method=='buddy-training.discover_professions':
+                        other=rpc.creature();other.update(guid=str(NPC+1),x=3.)
+                        value['nearby'].append(dict(creature=other))
+                    return value
+                rpc.call=call
+                if edit_at=='after_list':rpc.after_list=lambda _:edit()
+                self.step(actor,now)
+                self.assertEqual(actor.status['phase'],'waiting_for_accepted_profession_trainer_policy')
+                self.assertEqual(self.buys(rpc),[])
+                self.assertEqual(actor.data['attempts'],[])
+                self.assertEqual(sum(m=='buddy-training.list' for m,_ in rpc.calls),int(edit_at=='after_list'))
+                # Actual revised Lua now chooses the other NPC; the old row must
+                # not borrow this source's offer/budget plan as its authority.
+                self.assertEqual(actor.candidates(actor.read())[0]['guid'],NPC+1)
+
+    def test_rank_source_change_after_lease_or_route_reservation_releases_without_travel(self):
+        for edit_at in ('lease','reservation'):
+            with self.subTest(edit_at=edit_at):
+                actor,rpc,now,saved=self.rig(allow_travel=True);rpc.npc_x=20.;original=rpc.call
+                def edit():
+                    rpc.policy_source=rpc.policy_source.replace('max_candidates=32,prefer_nearest=true',
+                        'max_candidates=32,prefer_nearest=false');rpc.generation='2'
+                def call(method,params):
+                    value=original(method,params)
+                    if method=='buddy-training.discover_professions':
+                        other=rpc.creature();other.update(guid=str(NPC+1),x=30.)
+                        value['nearby'].append(dict(creature=other))
+                    return value
+                rpc.call=call
+                if edit_at=='lease':rpc.after_acquire=lambda _:edit()
+                else:
+                    save=actor.save
+                    def save_and_edit(value):
+                        save(value)
+                        if value['travelAttempts']:edit()
+                    actor.save=save_and_edit
+                self.step(actor,now)
+                self.assertEqual(actor.status['phase'],'waiting_for_accepted_profession_trainer_policy')
+                self.assertEqual(sum(m=='buddy-actions.acquire_interaction' for m,_ in rpc.calls),1)
+                self.assertEqual(sum(m=='buddy-actions.release_interaction' for m,_ in rpc.calls),1)
+                self.assertFalse(any(m in ('buddy-actions.travel_trainer','buddy-training.list','buddy-training.buy_profession') for m,_ in rpc.calls))
+                self.assertEqual(saved[-1]['travelAttempts'],{})
+                self.assertEqual(actor.data['attempts'],[])
+                self.assertEqual(rpc.owner,'')
+
     def test_actor_lua_priority_edit_changes_next_real_offered_choice_without_rebinding_goal(self):
         actor,rpc,now,_=self.rig()
         self.step(actor,now)

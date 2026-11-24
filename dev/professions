@@ -297,7 +297,22 @@ class Learner:
         except town_policy.Error as error:
             self.status.update(phase='waiting_for_accepted_profession_trainer_policy',policyError=str(error)[:128])
             return None
-        return [observed[guid] for _,guid in ranked]
+        return [dict(observed[guid],policyRevision=ranked['policyRevision'],policyGeneration=ranked['policyGeneration'])
+                for _,guid in ranked['candidates']]
+
+    def trainer_current(self,context,trainer):
+        try:
+            town_policy.class_training_current(self,context['state'],self.guid,trainer,offer=False,profession=True)
+        except town_policy.Error as error:
+            self.status.update(phase='waiting_for_accepted_profession_trainer_policy',policyError=str(error)[:128])
+            return False
+        return True
+
+    def trainer_plan_matches(self,trainer,plan):
+        if any(trainer[key]!=plan[key] for key in ('policyRevision','policyGeneration')):
+            self.status.update(phase='waiting_for_accepted_profession_trainer_policy',policyError='profession_trainer_source_changed')
+            return False
+        return True
 
     def travel(self, context, trainer):
         if not self.allow_travel:
@@ -307,6 +322,7 @@ class Learner:
         if self.data["travelAttempts"].get(key, 0) >= 3:
             self.status["phase"] = "profession_trainer_route_attempt_limit"
             return
+        if not self.trainer_current(context,trainer):return
         lease = self.call("buddy-actions.acquire_interaction", {"owner": "training", "leaseMs": 30000})
         token, state = lease.get("token"), lease.get("state", {})
         if not isinstance(token, str) or not 1 <= len(token) <= 128 or state.get("interactionOwner") != "training":
@@ -322,8 +338,15 @@ class Learner:
             if (fresh["session"] != context["session"] or not self.safe(fresh)
                     or not any(row["guid"] == trainer["guid"] for row in (self.candidates(fresh) or []))):
                 return
-            self.data["travelAttempts"][key] = self.data["travelAttempts"].get(key, 0)+1
+            previous_attempts=self.data["travelAttempts"].get(key,0)
+            self.data["travelAttempts"][key] = previous_attempts+1
             self.save(self.data)
+            if not self.trainer_current(fresh,trainer):
+                # This exact newly reserved route has not entered transport.
+                if previous_attempts:self.data["travelAttempts"][key]=previous_attempts
+                else:self.data["travelAttempts"].pop(key,None)
+                self.save(self.data)
+                return
             self.status["phase"] = "traveling_to_actual_profession_trainer"
             self.call("buddy-actions.travel_trainer", {"token": token, "npcGuid": str(trainer["guid"])})
         finally:
@@ -385,9 +408,11 @@ class Learner:
         if trainer is None:
             self.status["phase"] = "waiting_for_observed_assigned_profession_trainer"
             return
+        if not self.trainer_plan_matches(trainer,policy):return
         if trainer["distance"] > 4:
             self.travel(context, trainer)
             return
+        if not self.trainer_current(context,trainer):return
         state = self.call("buddy-training.list", {"sessionId": context["session"], "npcGuid": str(trainer["guid"]), "trainerType": 2})
         offer = state.get("offer", {})
         if (sync.session_id(state) != context["session"] or integer(offer.get("npcGuid", 0)) != trainer["guid"]
@@ -411,6 +436,7 @@ class Learner:
                 attempted.add(skill)
         plan=self.training_plan(state,context['own'],attempted)
         if plan is None:return
+        if not self.trainer_plan_matches(trainer,plan):return
         budget,reserve=plan['budgetCopper'],plan['reserveCopper']
         if 'spellId' not in plan:
             self.data["queried"].append([str(trainer["guid"]), signature])
