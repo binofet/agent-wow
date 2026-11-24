@@ -1,7 +1,7 @@
 -- Public party-mana policy. The existing worker supplies observations and
 -- invokes the selected installed primitive; it does not choose water or peers.
 local M={stock_minimum=5,peer_reorder_threshold=12,poll_ms=4000,trade_yards=10,
-    water_family=5504,recipient_priority={}}
+    water_family=5504,recipient_priority={},loot_yards=12,cleanup_cooldown_ms=30000,cleanup_recheck_ms=5000}
 local function n(v) return tonumber(v) or 0 end
 local function id(v)
     if type(v)=='string' then return v end
@@ -223,7 +223,8 @@ local function cleanup(frame,m,port,disposal,gear)
         if meta and row.metadataKnown==true and row.enhancementsKnown==true and row.hasEnhancements~=true
             and n(row.stackCount)>0 and n(meta.sellPrice)>0 and quest_safe(v,entry) then
             local source={bag=n(row.bag),slot=n(row.slot),entry=entry,stackCount=n(row.stackCount),itemGuid=id(row.itemGuid)}
-            local context={source=source,carriedSource=row,world=v.world,inventory=v.inventory,journal=v.journal}
+            local context=(frame.disposalContexts or {})[source.itemGuid]
+                or {source=source,carriedSource=row,world=v.world,inventory=v.inventory,journal=v.journal}
             local decision=disposal.classify('owned_destroy',meta,context,gear)
             if decision.status=='eligible' then
                 local value=n(meta.sellPrice)*source.stackCount
@@ -258,6 +259,72 @@ local function cleanup(frame,m,port,disposal,gear)
     return issue(m,port,'buddy-trade.destroy_junk',params,'cleanup_requested')
 end
 
+local function cleanup_receipt(frame,m,now,retain_replaced)
+    local p=m.pending;local views=frame.observations or {};local v=views[p.actorPort]
+    if not v then return result(m,'awaiting_cleanup_observations') end
+    if (v.actions or {}).sessionId~=p.actorSession then
+        if not retain_replaced then m.pending=nil end
+        return result(m,'previous_body_replaced')
+    end
+    local receipt=(v.trade or {}).lastJunkDisposal or {};local rows=slots(v);local gone=rows~=nil
+    for _,row in ipairs(rows or {}) do if id(row.itemGuid)==p.source.itemGuid then gone=false end end
+    if current(v,v.actions.selfGuid) and rows and id(receipt.itemGuid)==p.source.itemGuid
+        and n(receipt.entry)==p.source.entry and n(receipt.count)==p.source.stackCount
+        and id(p.source.bag==0 and receipt.backpackRevision or receipt.inventoryRevision)==p.sourceRevision
+        and (not p.requestId or receipt.requestId==p.requestId)
+        and receipt.status=='SERVER_SLOT_REMOVAL_CONFIRMED' and after(v.trade.revision,p.tradeRevision)
+        and after(v.inventory.inventoryRevision,p.inventoryRevision) and gone then
+        m.pending=nil;m.nextAtMs=now+(retain_replaced and M.cleanup_cooldown_ms or 0)
+        return result(m,'server_confirmed_cleanup')
+    end
+    local last=frame.last or {}
+    return result(m,last.id==p.actionId and last.outcome=='transport_unconfirmed' and 'cleanup_outcome_unconfirmed' or 'awaiting_cleanup_effect')
+end
+
+-- The standalone loot-pressure observer uses the SAME cleanup selector and
+-- receipt checks as water-space cleanup. Only this Lua branch chooses whether
+-- a nearby loot window justifies destroying an eligible owned stack.
+local function loot_pressure(frame,disposal,gear)
+    local m=frame.memory or {};local now=n(frame.nowMs);local b=frame.bindings or {}
+    local port=id(b.magePort);local v=(frame.observations or {})[port];local guid=id(b.mageGuid)
+    local function out(phase) local r=result(m,phase);r.consumer='loot_pressure';return r end
+    if m.lastNowMs and now<n(m.lastNowMs) then m.nextAtMs=now end
+    m.lastNowMs=now
+    if not v or not current(v,guid) then return out('waiting_for_current_cleanup_body') end
+    if m.pending then
+        if m.pending.kind~='cleanup' then return out('other_pending_intent_retained') end
+        local last=frame.last or {}
+        if last.id==m.pending.actionId and last.outcome=='not_dispatched' then
+            m.pending=nil;m.nextAtMs=now+M.cleanup_recheck_ms;return out('cleanup_not_dispatched')
+        end
+        local r=cleanup_receipt(frame,m,now,true);r.consumer='loot_pressure';return r
+    end
+    local rows=slots(v)
+    if not rows then return out('waiting_for_complete_inventory') end
+    for _,row in ipairs(rows) do if n(row.itemGuid)==0 then return out('room_available') end end
+    local loot=v.loot or {};local p=position(v);local pressure=false
+    if loot.sessionId==v.actions.sessionId and loot.enabled==true and loot.inventoryPaused==true
+        and p.mapKnown==true and p.positionKnown==true then
+        for _,corpse in ipairs((v.world or {}).lootableCorpses or {}) do
+            if corpse.present==true and corpse.positionKnown==true and corpse.mapKnown==true and n(corpse.mapId)==n(p.mapId) then
+                local x,y,z=n(corpse.x)-n(p.x),n(corpse.y)-n(p.y),n(corpse.z)-n(p.z)
+                if x*x+y*y+z*z<=M.loot_yards*M.loot_yards then pressure=true end
+            end
+        end
+    end
+    if not pressure then return out('no_current_bag_pressure') end
+    local owner=(v.world or {}).owner or {}
+    if not body(v.world.self,guid) or not free(v,guid) or v.mana_supply_pending
+        or v.actions.practicing or (v.actions.recovery or {}).active
+        or owner.present==true and owner.unitFlagsKnown==true and math.floor(n(owner.unitFlags)/524288)%2~=0 then
+        return out('waiting_for_safe_cleanup')
+    end
+    if m.nextAtMs and now<n(m.nextAtMs) then return out('cleanup_cooldown') end
+    local r=cleanup(frame,m,port,disposal,gear);r.consumer='loot_pressure'
+    if not r.action then m.nextAtMs=now+M.cleanup_recheck_ms end
+    return r
+end
+
 local function space_pressure(frame,mage,b)
     local out={};local all=ranks(mage,frame.metadata or {})
     local clients={{port=b.magePort,guid=b.mageGuid}}
@@ -281,6 +348,7 @@ local function space_pressure(frame,mage,b)
 end
 
 function M.plan(frame,disposal,gear)
+    if frame.query=='loot_pressure' then return loot_pressure(frame,disposal,gear) end
     local m=frame.memory or {};local now=n(frame.nowMs);local b=frame.bindings or {}
     -- Caller monotonic time can restart while a remote body stays online.
     -- Re-arm only scheduling; issued/uncertain custody below remains intact.
@@ -295,21 +363,8 @@ function M.plan(frame,disposal,gear)
             m.pending=nil;return result(m,last.reason or 'supply_not_dispatched')
         end
         if p.kind=='cleanup' then
-            local v=views[p.actorPort]
-            if not v then return result(m,'awaiting_cleanup_observations') end
-            if mage.actions.sessionId~=p.mageSession or v.actions.sessionId~=p.actorSession then m.pending=nil;return result(m,'previous_body_replaced') end
-            local receipt=(v.trade or {}).lastJunkDisposal or {}
-            local gone=true
-            for _,row in ipairs(slots(v) or {}) do if id(row.itemGuid)==p.source.itemGuid then gone=false end end
-            if current(v,v.actions.selfGuid) and slots(v) and id(receipt.itemGuid)==p.source.itemGuid
-                and n(receipt.entry)==p.source.entry and n(receipt.count)==p.source.stackCount
-                and id(p.source.bag==0 and receipt.backpackRevision or receipt.inventoryRevision)==p.sourceRevision
-                and (not p.requestId or receipt.requestId==p.requestId)
-                and receipt.status=='SERVER_SLOT_REMOVAL_CONFIRMED' and after(v.trade.revision,p.tradeRevision)
-                and after(v.inventory.inventoryRevision,p.inventoryRevision) and gone then
-                m.pending=nil;m.nextAtMs=now;return result(m,'server_confirmed_cleanup')
-            end
-            return result(m,last.id==p.actionId and last.outcome=='transport_unconfirmed' and 'cleanup_outcome_unconfirmed' or 'awaiting_cleanup_effect')
+            if mage.actions.sessionId~=p.mageSession then m.pending=nil;return result(m,'previous_body_replaced') end
+            return cleanup_receipt(frame,m,now,false)
         end
         local peer=p.recipientPort and views[p.recipientPort]
         if p.recipientSession and not peer then return result(m,'awaiting_recipient_observations') end
