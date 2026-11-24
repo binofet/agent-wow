@@ -18,6 +18,9 @@ spec=importlib.util.spec_from_loader(loader.name,loader)
 m=importlib.util.module_from_spec(spec);loader.exec_module(m)
 TRAINER_BRIDGE = m.town_policy.runtime.Bridge
 MAILBOX = 0xf110000000000000 | 142075 << 24 | 1
+INN_TRAINERS = {5:377, 8:328, 4:917}
+INN_STAIRS = ((-9477.,22.5,56.339386), (-9477.,14.,60.184803),
+              (-9473.5,14.,60.190014), (-9473.5,23.,63.820427))
 
 
 def mailbox(guid=MAILBOX, x=0, **fields):
@@ -61,7 +64,8 @@ class RPC:
         elif method=='buddy-party.state':value={'group':self.group}
         elif method=='buddy-actions.status':value=self.actions
         elif method=='buddy-training.discover':
-            if self.trainer_x is None:value={'state':self.training,'nearby':[{'interactable':True,'distanceKnown':True,'distance':0,'creature':{'guid':self.offer['npcGuid']}}]}
+            if self.trainer_x is None:value={'state':self.training,'nearby':[{'interactable':True,'distanceKnown':True,'distance':0,
+                'creature':{'guid':self.offer['npcGuid'],'entry':int(self.offer['npcGuid'])>>24&0xffffff}}]}
             else:
                 x=self.actions['position']['x'];distance=abs(self.trainer_x-x)
                 creature=dict(guid=self.offer['npcGuid'],entry=(int(self.offer['npcGuid'])>>24)&0xffffff,
@@ -116,7 +120,7 @@ class InnRPC(RPC):
             self.creatures.append(dict(guid=str(0xf130000000000000|entry<<24|entry),entry=entry,
                 present=True,mapKnown=True,mapId=0,positionKnown=True,x=point[0],y=point[1],z=point[2],
                 positionRevision='1',aliveKnown=True,alive=True,healthKnown=True,health=100,npcFlags=0x33))
-        self.offer['npcGuid']=next(c['guid'] for c in self.creatures if c['entry']==m.INN_TRAINERS[class_id])
+        self.offer['npcGuid']=next(c['guid'] for c in self.creatures if c['entry']==INN_TRAINERS[class_id])
         self.lease_owner=None
         self.after_waypoint=None
         self.waypoint_reason='exploration_within_distance'
@@ -202,7 +206,7 @@ class MaintenanceTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.setUp();self.inn_rig(name,guid,class_id,start);self.tick()
                 routes=[p for method,p in self.rpc.calls if method=='buddy-actions.travel_to']
-                expected=[(-9465.93,24.9355,56.52882)]+list(m.INN_STAIRS)
+                expected=[(-9465.93,24.9355,56.52882)]+list(INN_STAIRS)
                 if name=='Arlen':expected.insert(0,(-9432.,60.,56.625515))
                 self.assertEqual([tuple(p[k] for k in ('x','y','z')) for p in routes],expected)
                 self.assertEqual([p['arrivalDistance'] for p in routes],([.5,.5] if name=='Arlen' else [.5])+[.75]*4)
@@ -223,7 +227,7 @@ class MaintenanceTests(unittest.TestCase):
         self.inn_rig('Rook',5,4,(-9464.171,33.176174,56.96606));self.tick()
         routes=[p for method,p in self.rpc.calls if method=='buddy-actions.travel_to']
         self.assertEqual([tuple(p[k] for k in ('x','y','z')) for p in routes],
-            [(-9467.,30.,56.96606)]+list(m.INN_STAIRS))
+            [(-9467.,30.,56.96606)]+list(INN_STAIRS))
         self.assertTrue(all(p['arrivalDistance']==.75 for p in routes))
         self.assertEqual(self.methods().count('buddy-training.buy'),1)
         self.assertLess(max(i for i,(method,_) in enumerate(self.rpc.calls) if method=='buddy-actions.travel_to'),
@@ -241,7 +245,7 @@ class MaintenanceTests(unittest.TestCase):
                 self.rpc.actions.update(following=True,healing=True,assisting=True)
                 self.tick()
                 routes=[p for method,p in self.rpc.calls if method=='buddy-actions.travel_to']
-                self.assertEqual([tuple(p[k] for k in ('x','y','z')) for p in routes],list(reversed(m.INN_STAIRS)))
+                self.assertEqual([tuple(p[k] for k in ('x','y','z')) for p in routes],list(reversed(INN_STAIRS)))
                 self.assertTrue(all(p['arrivalDistance']==.75 for p in routes))
                 self.assertEqual(self.agent.data,history);self.assertEqual(self.saved,[])
                 self.assertNotIn('buddy-training.buy',self.methods());self.assertIsNone(self.rpc.token)
@@ -325,6 +329,73 @@ class MaintenanceTests(unittest.TestCase):
         listed=next(p for method,p in self.rpc.calls if method=='buddy-training.list')
         self.assertEqual(int(listed['npcGuid'])>>24&0xffffff,328)
         self.assertEqual(self.methods().count('buddy-actions.travel_trainer'),1)
+
+    def test_accepted_lua_class_map_changes_actual_selected_npc_without_python_preference(self):
+        self.inn_rig('Mira',4,8,(-9460.75,33.1338,63.9038))
+        self.rpc.policy_source=self.rpc.policy_source.replace('[5]=377,[8]=328','[5]=328,[8]=377')
+        self.rpc.generation='2';original=self.rpc.call
+        def reply_from_requested_npc(method,params):
+            if method=='buddy-training.list':self.rpc.offer['npcGuid']=params['npcGuid']
+            return original(method,params)
+        self.rpc.call=reply_from_requested_npc
+        self.tick()
+        self.assertEqual([int(p['npcGuid'])>>24&0xffffff for method,p in self.rpc.calls
+            if method=='buddy-training.list'],[377])
+        self.assertNotIn('buddy-actions.travel_to',self.methods())
+        self.assertNotIn('buddy-actions.travel_trainer',self.methods())
+
+    def test_class_ranking_binding_replacement_or_class_change_before_list_never_queries(self):
+        for mode in ('source','class'):
+            with self.subTest(mode=mode):
+                self.setUp();self.inn_rig('Mira',4,8,(-9471.67,34.451,63.9038));original=self.rpc.call
+                def changed(method,params):
+                    response=original(method,params)
+                    if method=='buddy-world.snapshot' and any(m=='session.policy_source' for m,_ in self.rpc.calls):
+                        if mode=='source':self.rpc.generation='2'
+                        else:response['self']['classId']=5
+                    return response
+                self.rpc.call=changed
+                with self.assertRaises(m.Error):self.tick()
+                self.assertNotIn('buddy-training.list',self.methods())
+                self.assertNotIn('buddy-training.buy',self.methods())
+                self.assertNotIn('buddy-actions.acquire_interaction',self.methods())
+
+    def test_inn_plan_must_share_the_ranked_class_policy_before_any_lease(self):
+        self.inn_rig()
+        discovery=self.rpc.call('buddy-training.discover',{})
+        own=self.rpc.world['self']
+        selected=self.agent.trainer_destinations(discovery['state'],discovery['nearby'],own)[0]
+        original=self.rpc.call;reads=[0]
+        def changed(method,params):
+            if method=='session.policy_source':
+                reads[0]+=1
+                if reads[0]==2:self.rpc.generation='2'
+            return original(method,params)
+        self.rpc.call=changed
+        with self.assertRaisesRegex(m.Error,'policy_changed_before_inn_plan'):
+            self.agent.travel_trainer(discovery,selected)
+        self.assertNotIn('buddy-actions.acquire_interaction',self.methods())
+        self.assertNotIn('buddy-actions.travel_to',self.methods())
+        self.assertNotIn('buddy-actions.travel_trainer',self.methods())
+
+    def test_changed_class_mapping_cannot_replay_an_existing_uncertain_purchase(self):
+        self.inn_rig('Mira',4,8,(-9471.67,34.451,63.9038));self.tick()
+        saved=copy.deepcopy(self.saved[-1])
+        self.assertEqual(saved['training'][-1]['status'],'reserved')
+        self.rpc.policy_source=self.rpc.policy_source.replace('[5]=377,[8]=328','[5]=328,[8]=377')
+        self.rpc.generation='2'
+        self.tick()
+        self.assertEqual(self.agent.data['training'],saved['training'])
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+
+    def test_exhausted_non_inn_lua_target_never_enters_inn_return_or_movement(self):
+        self.rpc.offer['spells']=[dict(spellId=123,usable=2,pointCost=[0,0])]
+        self.tick()
+        self.assertEqual(self.agent.status['phase'],'no_affordable_unattempted_class_training')
+        self.assertNotIn('buddy-actions.acquire_interaction',self.methods())
+        self.assertNotIn('buddy-actions.travel_to',self.methods())
+        self.assertNotIn('buddy-actions.travel_trainer',self.methods())
+        self.assertNotIn('buddy-training.buy',self.methods())
 
     def test_inn_landmarks_never_apply_on_another_map_or_from_a_distant_city(self):
         self.inn_rig()
@@ -411,6 +482,63 @@ class MaintenanceTests(unittest.TestCase):
                 self.setUp();self.inn_rig(start=start);self.tick()
                 self.assertEqual(self.methods().count('buddy-actions.travel_to'),count)
                 self.assertEqual(self.methods().count('buddy-training.buy'),1)
+
+    def test_accepted_lua_edit_changes_actual_approach_and_return_waypoints(self):
+        self.inn_rig()
+        self.rpc.policy_source=self.rpc.policy_source.replace('x=-9432,y=60','x=-9433,y=60')
+        self.rpc.generation='2'
+        self.tick()
+        first=next(p for method,p in self.rpc.calls if method=='buddy-actions.travel_to')
+        self.assertEqual((first['x'],first['y'],first['z']),(-9433,60,56.625515))
+        self.setUp();self.inn_rig('Rook',5,4,(-9466.226,15.32826,63.820427));self.cache_inn_offer()
+        self.rpc.policy_source=self.rpc.policy_source.replace('x=-9473.5,y=23','x=-9474,y=23')
+        self.rpc.generation='3'
+        self.tick()
+        first=next(p for method,p in self.rpc.calls if method=='buddy-actions.travel_to')
+        self.assertEqual((first['x'],first['y'],first['z']),(-9474,23,63.820427))
+        self.assertNotIn('buddy-training.buy',self.methods())
+
+    def test_missing_or_invalid_inn_lua_output_has_no_python_route_fallback(self):
+        for decision in ('{}','{eligible=true,route={{x=-1,y=20,z=60,radius=.75}}}',
+                '{eligible=true,route={{x=-9477,y=20,z=60,radius=true}}}', '{eligible="true"}'):
+            with self.subTest(decision=decision):
+                self.setUp();self.inn_rig()
+                self.rpc.policy_source=('local p=(function()\n'+self.rpc.policy_source+'\nend)()\n'
+                    'local choose=p.service_destination p.service_destination=function(input) '
+                    'if input.kind=="inn_route" then return '+decision+' end return choose(input) end return p')
+                with self.assertRaises(m.Error):self.tick()
+                self.assertNotIn('buddy-actions.acquire_interaction',self.methods())
+                self.assertNotIn('buddy-actions.travel_to',self.methods())
+                self.assertNotIn('buddy-actions.travel_trainer',self.methods())
+                self.assertNotIn('buddy-training.buy',self.methods())
+
+    def test_inn_policy_replacement_or_fault_after_lease_stops_before_first_move(self):
+        for mode in ('replace','fault','body'):
+            with self.subTest(mode=mode):
+                self.setUp();self.inn_rig();original=self.rpc.call
+                def changed(method,params):
+                    response=original(method,params)
+                    if method=='buddy-actions.acquire_interaction':
+                        if mode=='replace':self.rpc.generation='2'
+                        elif mode=='body':self.rpc.training['sessionId']='replacement'
+                    if mode=='fault' and method=='session.attach' and self.rpc.token:
+                        response['policy']['faulted']=True
+                    return response
+                self.rpc.call=changed
+                with self.assertRaises(m.Error):self.tick()
+                self.assertNotIn('buddy-actions.travel_to',self.methods())
+                self.assertNotIn('buddy-actions.travel_trainer',self.methods())
+                self.assertNotIn('buddy-training.buy',self.methods())
+                if mode!='body':self.assertIsNone(self.rpc.token)
+
+    def test_inn_source_replacement_after_first_waypoint_releases_without_second_move(self):
+        self.inn_rig()
+        self.rpc.after_waypoint=lambda rpc:setattr(rpc,'generation','2')
+        with self.assertRaises(m.Error):self.tick()
+        self.assertEqual(self.methods().count('buddy-actions.travel_to'),1)
+        self.assertNotIn('buddy-actions.travel_trainer',self.methods())
+        self.assertNotIn('buddy-training.buy',self.methods())
+        self.assertIsNone(self.rpc.token)
 
     def test_observed_class_trainer_travel_releases_before_offer_and_purchase(self):
         for present in (True,False):
@@ -1091,9 +1219,10 @@ class StipendConnectedConsumerTests(unittest.TestCase):
     def test_missing_export_fault_or_unobserved_lua_request_cannot_fallback(self):
         export='stipend_selection=encounter_stipend_selection and encounter_stipend_selection.decide'
         self.assertEqual(self.bundle.count(export),1)
-        self.assertEqual(self.bundle.count('mailId=selected.mailId'),1)
+        self.assertEqual(self.stipend.count('mailId=selected.mailId'),1)
+        bad_stipend=self.stipend.replace('mailId=selected.mailId','mailId="999"',1)
         variants=(self.bundle.replace(export,'stipend_selection=false',1),
-            self.bundle+'\ninvalid =',self.bundle.replace('mailId=selected.mailId','mailId="999"',1))
+            self.bundle+'\ninvalid =',self.bundle.replace(self.stipend,bad_stipend,1))
         for source in variants:
             with self.subTest(source_length=len(source)):
                 self.reset_case();self.edit_source(source)

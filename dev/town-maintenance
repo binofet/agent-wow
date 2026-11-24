@@ -240,14 +240,16 @@ class Journal(base.Journal):
                 if set(req) != set(normalized):
                     raise Error("journal_bag_claim_fields_changed")
             if row["phase"] == "not_dispatched":
-                proof = row.get("policyBinding", {})
-                if (row.get("localNotDispatched") is not True or row.get("receipt") is not None
-                        or not isinstance(proof, dict) or set(proof) != {"sessionId", "characterGuid", "revision", "generation"}
-                        or proof.get("sessionId") != req["sessionId"] or proof.get("characterGuid") != str(self.guid)
-                        or not isinstance(proof.get("revision"), str) or len(proof["revision"]) != 64
-                        or any(ch not in "0123456789abcdef" for ch in proof["revision"])
-                        or not str(proof.get("generation", "")).isdigit() or int(proof["generation"]) <= 0):
+                if row.get("localNotDispatched") is not True or row.get("receipt") is not None:
                     raise Error("journal_local_no_dispatch_proof_required")
+                proof = row.get("policyBinding", {})
+                for bound in (proof, row.get("choicePolicyBinding", proof)):
+                    if (not isinstance(bound, dict) or set(bound) != {"sessionId", "characterGuid", "revision", "generation"}
+                            or bound.get("sessionId") != req["sessionId"] or bound.get("characterGuid") != str(self.guid)
+                            or not isinstance(bound.get("revision"), str) or len(bound["revision"]) != 64
+                            or any(ch not in "0123456789abcdef" for ch in bound["revision"])
+                            or not str(bound.get("generation", "")).isdigit() or int(bound["generation"]) <= 0):
+                        raise Error("journal_local_no_dispatch_proof_required")
                 continue
             if row["phase"] in TERMINAL:
                 op = row.get("receipt")
@@ -460,13 +462,19 @@ class Worker:
     def pending(self):
         return next((r for r in self.journal.data["attempts"] if r["phase"] not in TERMINAL), None)
 
-    def submit(self, kind, request, *, policy_binding=None, **extra):
+    def submit(self, kind, request, *, policy_binding=None, choice_binding=None, **extra):
+        if policy_binding is None and choice_binding is not None:
+            policy_binding = choice_binding
         if policy_binding is not None:
             extra["policyBinding"] = copy.deepcopy(policy_binding)
+        if choice_binding is not None:
+            extra["choicePolicyBinding"] = copy.deepcopy(choice_binding)
         row = self.record(kind, request, **extra)
         method = "buddy-mail.claim_bag_attachment" if kind == "claim" else "buddy-inventory." + kind
         if policy_binding is not None:
             try:
+                if choice_binding is not None and choice_binding != policy_binding:
+                    raise destination_policy.Error("inventory_policy_changed_between_priority_and_attachment_choice")
                 destination_policy.verify_inventory_maintenance(self.rpc, policy_binding)
             except (destination_policy.Error, Error) as error:
                 # The reservation is already durable, but no mutation RPC has
@@ -575,17 +583,28 @@ class Worker:
                 seen.add(key); lows.add(low); indices.add((mid, index))
                 if low not in done:
                     candidates.append(key)
-        if not candidates:
-            return self.result("complete", "no_unclaimed_exact_party_bag_attachment")
-        mid, index, low = min(candidates)
         fresh = self.state()
         self.ready(fresh)
         if fresh["sessionId"] != state["sessionId"] or fresh["inventoryRevision"] != state["inventoryRevision"]:
             raise Error("inventory_changed_during_mail_list")
+        try:
+            choice = destination_policy.inventory_maintenance(self.rpc, fresh, dict(stage="claim_attachment",
+                mailboxGuid=str(mailbox), listRevision=str(positive(mail.get("listRevision", 0))),
+                inventoryRevision=str(positive(fresh["inventoryRevision"])),
+                candidates=[dict(mailId=mid, attachmentIndex=index, itemGuidLow=low, entry=41599, count=1)
+                    for mid, index, low in candidates]))
+        except destination_policy.Error as error:
+            raise Error(str(error)) from None
+        if choice.get("kind") == "no_attachment" and not candidates:
+            return self.result("complete", "no_unclaimed_exact_party_bag_attachment")
+        key = tuple(choice.get(field) for field in ("mailId", "attachmentIndex", "itemGuidLow"))
+        if choice.get("kind") != "claim_attachment" or any(type(value) is not int for value in key) or key not in candidates:
+            raise Error("lua_mail_choice_must_match_current_exact_attachment")
+        mid, index, low = key
         req = {"sessionId": state["sessionId"], "requestId": str(uuid.uuid4()), "listRevision": str(positive(mail.get("listRevision", 0))),
                "mailboxGuid": str(mailbox), "mailId": mid, "attachmentIndex": index, "itemGuidLow": low,
                "expectedCount": 1, "expectedInventoryRevision": str(positive(state["inventoryRevision"]))}
-        return self.submit("claim", req, policy_binding=policy_binding)
+        return self.submit("claim", req, policy_binding=policy_binding or choice["policyBinding"], choice_binding=choice["policyBinding"])
 
     def settle(self, result, deadline):
         for _ in range(10):
