@@ -233,3 +233,50 @@ func TestThermapluggMalformedPolicyAndForeignVisitCannotConfirmAttempt(t *testin
 		t.Fatal("foreign visit closed the old attempt", a, f.packets)
 	}
 }
+
+func TestThermapluggStopCannotRefreshAwayChangedChoiceAuthority(t *testing.T) {
+	for _, approach := range []bool{false, true} {
+		for _, seam := range []string{"fresh raw", "fresh controller", "fresh source", "stop controller"} {
+			t.Run(strconv.FormatBool(approach)+"/"+seam, func(t *testing.T) {
+				s, f, _ := thermapluggRig(t)
+				f.objects[142211].State = 0
+				if approach {
+					f.objects[142214].X = 9
+				}
+				runtime := s.starterSpells.runtime
+				s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+					out, err := runtime.EvaluateContext(ctx, input)
+					if input["observationsKnown"] == true {
+						f.onSnapshot = func() {
+							f.onSnapshot = nil
+							switch seam {
+							case "fresh raw":
+								f.world.Self.X++
+								f.world.Self.PositionRevision++
+							case "fresh controller":
+								s.pos.x++
+								s.posRevision++
+							case "fresh source":
+								s.starterSpells.revision = "replacement"
+							}
+						}
+						if seam == "stop controller" {
+							s.state.Moving = true
+							f.onClock = func() { s.posRevision++ }
+						}
+					}
+					return true, runtime.Status().Revision, out, err
+				}
+				s.thermapluggButtonsTickLocked(context.Background(), f.world)
+				for _, packet := range f.packets {
+					if packet.Opcode != opcode.MSGMoveStop {
+						t.Fatal("changed choice authority admitted approach/use", packet)
+					}
+				}
+				if s.thermaplugg.attempt != nil {
+					t.Fatal("changed choice authority reserved a use", s.thermaplugg.attempt)
+				}
+			})
+		}
+	}
+}

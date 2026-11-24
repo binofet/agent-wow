@@ -129,6 +129,30 @@ func (x thermapluggExecution) sameSelection(s *Service) bool {
 		(r.attempt == nil || !r.attempt.pending)
 }
 
+// Read before STOP so its ordinary correction rebase uses the same actual
+// observation that authorized this choice. Never repair a changed controller
+// after STOP: only that STOP's own revision advance can join the binding.
+func (s *Service) stopThermapluggExecutionLocked(ctx context.Context, x *thermapluggExecution) (*worldv1.SnapshotResponse, bool) {
+	w, err := s.snapshot(ctx)
+	if err != nil || !x.binding.current(s, ctx, w, true) || !x.sameSelection(s) || !s.thermapluggPolicySourceCurrent(x.source) {
+		return nil, false
+	}
+	revision := s.posRevision
+	if s.state.Moving {
+		revision++
+	}
+	if !s.stopThermapluggApproachLocked(ctx) || !s.stopLocked(ctx) || s.posRevision != revision ||
+		s.pos != x.binding.position || !x.binding.current(s, ctx, s.lastWorld, false) ||
+		!x.sameSelection(s) || !s.thermapluggPolicySourceCurrent(x.source) {
+		return nil, false
+	}
+	x.binding.clientRevision = revision
+	if !x.binding.current(s, ctx, s.lastWorld, true) {
+		return nil, false
+	}
+	return s.lastWorld, true
+}
+
 func (s *Service) thermapluggPolicySourceCurrent(revision string) bool {
 	if s.starterSpells.remote != nil {
 		return s.starterSpells.revision == revision

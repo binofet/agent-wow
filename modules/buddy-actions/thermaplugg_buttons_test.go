@@ -20,6 +20,7 @@ type thermapluggTestSession struct {
 	objects     map[uint32]*worldv1.GameObjectState
 	objectReads int
 	onObject    func(uint32)
+	onSnapshot  func()
 	useError    error
 	onUse       func()
 }
@@ -37,6 +38,9 @@ func (f *thermapluggTestSession) InvokeModule(ctx context.Context, r *modv1.Invo
 		}
 		v, err := anypb.New(w)
 		return &modv1.InvokeModuleResponse{Result: v}, err
+	}
+	if r.Module == "buddy-world" && r.Method == "snapshot" && f.onSnapshot != nil {
+		f.onSnapshot()
 	}
 	return f.fakeSession.InvokeModule(ctx, r, opts...)
 }

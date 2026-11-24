@@ -175,12 +175,9 @@ func (s *Service) thermapluggButtonsTickLocked(ctx context.Context, w *worldv1.S
 	defer func() { r.executing = nil }()
 	to := thermapluggObjectPosition(selected.button)
 	if distance(s.pos, to) <= thermapluggButtonReach {
-		if !s.stopThermapluggApproachLocked(ctx) || !s.stopLocked(ctx) {
-			return true
-		}
-		// A known STOP can advance only the controller part of this binding.
-		x.binding.position, x.binding.clientRevision = s.pos, s.posRevision
-		if !s.thermapluggMovementAllowedLocked(ctx, observed) || !x.binding.current(s, ctx, observed, true) || distance(s.pos, to) > thermapluggButtonReach {
+		var stopped bool
+		observed, stopped = s.stopThermapluggExecutionLocked(ctx, &x)
+		if !stopped || !s.thermapluggMovementAllowedLocked(ctx, observed) || !x.binding.current(s, ctx, observed, true) || distance(s.pos, to) > thermapluggButtonReach {
 			r.feedback = "interaction_observation_changed"
 			return false
 		}
@@ -201,10 +198,12 @@ func (s *Service) thermapluggButtonsTickLocked(ctx context.Context, w *worldv1.S
 		return true
 	}
 	if len(r.path) == 0 || r.pathRevision != s.posRevision {
-		if !s.stopLocked(ctx) {
-			return true
+		var stopped bool
+		observed, stopped = s.stopThermapluggExecutionLocked(ctx, &x)
+		if !stopped {
+			r.feedback = "route_observation_changed"
+			return false
 		}
-		x.binding.position, x.binding.clientRevision = s.pos, s.posRevision
 		plan, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 		path, err := s.thermapluggButtonPath(plan, to)
 		cancel()
