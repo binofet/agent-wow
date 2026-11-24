@@ -241,6 +241,52 @@ end}
                 self.view['inventoryRevision'] = '14'
                 self.assertNotIn('action', self.tick())
 
+    def test_exact_acquired_no_open_allows_fresh_facts_without_erasing_old_unknown(self):
+        def refused():
+            return dict(outcome='settled_unverified', payload=dict(capability='loot_gather', source_guid=GUID,
+                request_id='gather-1', opening_transport_attempted=False, transport_written=False,
+                result=dict(sessionId='gather-policy-fixture', selfGuid='6', sourceGuid=GUID, requestId='gather-1',
+                    phase='acquired_not_opened', terminal=True, openingTransportAttempted=False, openingTransportWritten=False)))
+
+        for omitted in (False, True):
+            with self.subTest(omitted_proto_false=omitted):
+                self.setUp(); self.tick()
+                receipt = refused()
+                if omitted:
+                    receipt['payload']['result'].pop('openingTransportAttempted')
+                    receipt['payload']['result'].pop('openingTransportWritten')
+                self.view['actions']['position']['revision'] = '12'
+                self.view['questObjects'][0]['positionRevision'] = '18'
+                self.view['inventoryRevision'], self.view['questLogRevision'] = '14', '20'
+                action = self.tick(receipt=receipt)['action']
+                self.assertEqual((action['sourceGuid'], action['requestId'], action['expectedPositionRevision'],
+                    action['expectedObjectRevision'], action['expectedInventoryRevision'], action['expectedQuestLogRevision']),
+                    (GUID, 'gather-2', '12', '18', '14', '20'))
+                self.assertFalse(self.checkpoint['data']['seen'])
+
+        # A truthful no-opening result for another attempt never deletes an
+        # existing reservation retained through export/import from uncertainty.
+        self.setUp(); self.tick()
+        unknown = dict(outcome='unknown', payload=dict(capability='loot_gather', source_guid=GUID,
+            request_id='gather-1', opening_transport_attempted=False))
+        self.assertNotIn('action', self.tick(receipt=unknown))
+        self.assertNotIn('action', self.tick(receipt=refused()))
+        self.assertTrue(self.checkpoint['data']['seen'][GUID])
+
+        for change in ('source', 'request', 'terminal', 'attempted', 'written', 'unknown', 'acquisition_unconfirmed'):
+            with self.subTest(not_a_known_no_open=change):
+                self.setUp(); self.tick()
+                receipt = refused(); result = receipt['payload']['result']
+                if change == 'source': result['sourceGuid'] = str(int(GUID)+1)
+                elif change == 'request': result['requestId'] = 'other-request'
+                elif change == 'terminal': result['terminal'] = False
+                elif change == 'attempted': result['openingTransportAttempted'] = True
+                elif change == 'written': result['openingTransportWritten'] = True
+                elif change == 'unknown': receipt['outcome'] = 'unknown'
+                else: result['phase'] = 'acquisition_unconfirmed'
+                self.assertNotIn('action', self.tick(receipt=receipt))
+                self.assertTrue(self.checkpoint['data']['seen'][GUID])
+
     def test_only_observed_capacity_clear_can_release_its_matching_seen_source(self):
         self.tick()
         self.view['state'].update(inventoryPaused=True, pendingGameObjectGuid=GUID)

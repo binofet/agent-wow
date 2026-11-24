@@ -15,8 +15,9 @@ import (
 )
 
 type gatherRequest struct {
-	request *lootv1.OpenGatherRequest
-	receipt *lootv1.CorpseOperation
+	request  *lootv1.OpenGatherRequest
+	receipt  *lootv1.CorpseOperation
+	acquired bool
 }
 
 func (s *Service) gatherVisitCurrent(w *worldv1.SnapshotResponse) bool {
@@ -94,6 +95,9 @@ func (s *Service) finishGatherRequest() {
 	g.receipt.Phase = "closed_unverified"
 	if !g.receipt.OpeningTransportAttempted {
 		g.receipt.Phase = "not_dispatched"
+		if g.acquired {
+			g.receipt.Phase = "acquired_not_opened"
+		}
 	} else if g.receipt.WindowObserved && g.receipt.ReleaseObserved && !s.hasUnsettledLootMutation() {
 		g.receipt.Phase = "window_and_release_observed"
 	}
@@ -169,43 +173,59 @@ func (s *Service) OpenGather(ctx context.Context, r *lootv1.OpenGatherRequest) (
 	if selected == nil || a.InteractionOwner != "" || a.AutoAttackRequested || !ownKnownFreeSlot(w, s.selfGUID) {
 		return nil, status.Error(codes.FailedPrecondition, "current exact supported source recipe pose capacity and unoccupied body required")
 	}
+	// Entering legacy body acquisition may issue STOP before a reply or later
+	// validation fails. Reserve the immutable request first, without claiming
+	// that an opening or even an acquisition packet was actually written.
+	g := &gatherRequest{request: proto.Clone(r).(*lootv1.OpenGatherRequest), receipt: &lootv1.CorpseOperation{
+		SessionId: r.SessionId, SelfGuid: r.SelfGuid, SourceGuid: r.SourceGuid, RequestId: r.RequestId,
+		Phase: "acquisition_unconfirmed", Reason: "interaction_acquisition_outcome_unconfirmed"}}
+	if s.gatherRequests == nil {
+		s.gatherRequests = map[string]*gatherRequest{}
+	}
+	s.gatherRequests[r.RequestId] = g
+	if s.gatherSeen == nil {
+		s.gatherSeen = map[uint64]bool{}
+	}
+	s.gatherSeen[r.SourceGuid] = true
 	lease := &actionsv1.InteractionLease{}
 	if err := s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", LeaseMs: 15000}, lease); err != nil {
-		return nil, err
+		return s.gatherReceiptLocked(g), nil
 	}
-	if lease.Token == "" || !stoppedLootLease(lease.State) {
+	if lease.Token == "" || !stoppedLootLease(lease.State) || lease.State.GetSessionId() != r.SessionId {
 		if lease.Token != "" && lease.State != nil && lease.State.SessionId == r.SessionId && lease.State.InteractionOwner == "loot" {
 			s.token = lease.Token
 			s.releaseLease(ctx)
 		}
-		return nil, status.Error(codes.FailedPrecondition, "exact stopped loot custody required")
+		return s.gatherReceiptLocked(g), nil
 	}
 	s.token = lease.Token
+	g.acquired = true
+	g.receipt.Phase, g.receipt.Reason = "acquired_not_opened", "selected_gather_facts_changed_after_acquisition"
+	g.receipt.Terminal = true
 	fresh := &worldv1.SnapshotResponse{}
 	if err := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, fresh); err != nil {
 		s.releaseLease(ctx)
-		return nil, err
+		delete(s.gatherSeen, r.SourceGuid) // No opening or delayed executor was started.
+		return s.gatherReceiptLocked(g), nil
 	}
-	current, currentRecipe := s.exactGatherCurrent(r, fresh, lease.State)
-	if current == nil || currentRecipe != recipe || !ownKnownFreeSlot(fresh, s.selfGUID) || ctx.Err() != nil {
+	// The request's pre-acquire pose remains immutable in history. A successful
+	// STOP publishes its own new position revision; validate the selected source
+	// against that exact owned stopped pose rather than the superseded estimate.
+	stopped := proto.Clone(r).(*lootv1.OpenGatherRequest)
+	stopped.ExpectedPositionRevision = lease.State.GetPosition().GetRevision()
+	current, currentRecipe := s.exactGatherCurrent(stopped, fresh, lease.State)
+	if stopped.ExpectedPositionRevision == 0 || current == nil || currentRecipe != recipe || !ownKnownFreeSlot(fresh, s.selfGUID) || ctx.Err() != nil {
 		s.releaseLease(ctx)
-		return nil, status.Error(codes.FailedPrecondition, "selected gather facts changed after stop")
+		delete(s.gatherSeen, r.SourceGuid) // A fresh Lua turn may replan this known-no-open result.
+		return s.gatherReceiptLocked(g), nil
 	}
 	id := uint64(1)
 	if s.state.LastGather != nil {
 		id = s.state.LastGather.Id + 1
 	}
 	s.questGather, s.exactCorpse = true, false
-	s.gatherRequest = &gatherRequest{request: proto.Clone(r).(*lootv1.OpenGatherRequest), receipt: &lootv1.CorpseOperation{
-		SessionId: r.SessionId, SelfGuid: r.SelfGuid, SourceGuid: r.SourceGuid, RequestId: r.RequestId, Phase: "reserved"}}
-	if s.gatherRequests == nil {
-		s.gatherRequests = map[string]*gatherRequest{}
-	}
-	s.gatherRequests[r.RequestId] = s.gatherRequest
-	if s.gatherSeen == nil {
-		s.gatherSeen = map[uint64]bool{}
-	}
-	s.gatherSeen[current.Guid] = true
+	s.gatherRequest = g
+	g.receipt.Phase, g.receipt.Reason, g.receipt.Terminal = "reserved", "caller_selected_opening_requested", false
 	s.state.PendingGameObjectGuid, s.gatherObjectRevision = current.Guid, current.PositionRevision
 	s.state.LastGather = &lootv1.GatherReceipt{Id: id, ObjectGuid: current.Guid, ObjectEntry: recipe.objectEntry, QuestId: recipe.questID,
 		ItemId: recipe.itemID, Status: lootv1.GatherStatus_GATHER_REQUESTED, BaselineQuestLogRevision: fresh.SelfQuestLogRevision,

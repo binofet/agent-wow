@@ -185,7 +185,19 @@ function M.on_event(event)
   if p.opening_transport_attempted and id(p.corpse_guid) then state.seen[p.corpse_guid]=true end
  elseif event.receipt and event.receipt.payload and event.receipt.payload.capability=="loot_gather" then
   local p,outcome=event.receipt.payload,event.receipt.outcome
-  if id(p.source_guid) and (p.opening_transport_attempted or outcome=="unknown" or
+  local r=p.result
+  -- Acquiring custody may send STOP before a final guard refuses opening.
+  -- Its exact terminal receipt permits a fresh normal decision, but cannot
+  -- erase custody already retained from an earlier unknown/entered request.
+  local no_open=outcome=="settled_unverified" and type(r)=="table" and
+   r.phase=="acquired_not_opened" and r.terminal==true and r.sessionId==state.sessionId and
+   decimal(r.selfGuid) and decimal(r.sourceGuid) and r.sourceGuid==p.source_guid and
+   id(p.request_id) and r.requestId==p.request_id and
+   (r.openingTransportAttempted==nil or r.openingTransportAttempted==false) and
+   (r.openingTransportWritten==nil or r.openingTransportWritten==false) and
+   (p.opening_transport_attempted==nil or p.opening_transport_attempted==false) and
+   (p.transport_written==nil or p.transport_written==false)
+  if not no_open and id(p.source_guid) and (p.opening_transport_attempted or outcome=="unknown" or
    outcome=="settled_unverified" or outcome=="confirmed") then state.seen[p.source_guid]=true end
  end
  return true

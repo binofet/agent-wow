@@ -42,7 +42,7 @@ func TestGatherAutomaticTickOnlyObservesUntilLuaSelectsSource(t *testing.T) {
 		}
 	}
 	if len(f.packets) != 0 || len(s.gatherSeen) != 0 || s.state.LastGather != nil || s.state.PendingGameObjectGuid != 0 {
-		t.Fatal("native automatic path still chose a gather", s.state, f.packets)
+		t.Fatal("native automatic path still chose a gather", &s.state, f.packets)
 	}
 }
 
@@ -115,7 +115,7 @@ func TestGatherStaleOrUnsupportedRequestHasZeroPhysicalEffects(t *testing.T) {
 				}
 			}
 			if len(f.packets) != 0 || len(s.gatherRequests) != 0 || len(s.gatherSeen) != 0 || s.state.LastGather != nil {
-				t.Fatal("bad request changed gather custody", fault, s.state, f.packets)
+				t.Fatal("bad request changed gather custody", fault, &s.state, f.packets)
 			}
 		})
 	}
@@ -154,7 +154,7 @@ func TestGatherApproachSameMapNewVisitNeverMovesOrOpens(t *testing.T) {
 	f.world.VisitRevision++ // Same map/source/pose, but a different world visit.
 	s.Tick(context.Background())
 	if f.approachCalls != 0 || len(f.packets) != 0 || s.state.PendingGameObjectGuid != 0 || s.state.LastGather.ObjectGuid != r.SourceGuid {
-		t.Fatal("old request moved or opened in a replacement visit", s.state, f.packets, f.approachCalls)
+		t.Fatal("old request moved or opened in a replacement visit", &s.state, f.packets, f.approachCalls)
 	}
 }
 
@@ -223,7 +223,7 @@ func TestGatherWrittenOpeningWithoutWindowSurvivesEnableToggle(t *testing.T) {
 	emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(r.SourceGuid), 1))
 	s.Tick(context.Background())
 	if !s.retired[r.SourceGuid] || s.state.LastGather.LootWindowObserved {
-		t.Fatal("missing server window lost uncertainty", s.state)
+		t.Fatal("missing server window lost uncertainty", &s.state)
 	}
 	before := len(f.packets)
 	enable(t, s)
