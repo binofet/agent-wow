@@ -75,6 +75,11 @@ func tradeConsentResourceTurnResult(t *testing.T, r *Runtime, source string, inp
 
 func tradeConsentSemanticAndProductionTurn(t *testing.T, r *Runtime, source string, input map[string]any, want string, resourceTurn bool) map[string]any {
 	t.Helper()
+	return tradeConsentSemanticAndProductionPhases(t, r, source, input, want, resourceTurn, false)
+}
+
+func tradeConsentSemanticAndProductionPhases(t *testing.T, r *Runtime, source string, input map[string]any, want string, resourceTurn, initializationResource bool) map[string]any {
+	t.Helper()
 	before, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
@@ -90,13 +95,13 @@ func tradeConsentSemanticAndProductionTurn(t *testing.T, r *Runtime, source stri
 	}
 	// Independently invoke the exact source/full frame ONCE in the clean-head
 	// ordinary CLI, with default initialization and evaluation limits.
-	production, err := evaluateDisposalProduction(t, source, input)
+	production, err := evaluateDisposalProductionWithInitializationResource(t, source, input, initializationResource)
 	var unavailable *disposalProductionResourceError
-	if resourceTurn && errors.As(err, &unavailable) {
-		if production != nil || unavailable.phase != "decide" || !errors.Is(err, ErrExecutionBudget) {
+	if errors.As(err, &unavailable) && (resourceTurn && unavailable.phase == "decide" || initializationResource && unavailable.phase == "chunk_initialize") {
+		if production != nil || !errors.Is(err, ErrExecutionBudget) {
 			t.Fatal("resource turn produced or substituted a production decision", production, err)
 		}
-		t.Log("default production decide resource turn: NO decision; no retry or performance-success claim", err)
+		t.Log("default production", unavailable.phase, "resource turn: NO decision; no retry or performance-success claim", err)
 	} else if err != nil || !reflect.DeepEqual(production, out) {
 		t.Fatalf("default production result %v differs from fixture %v: %v", production, out, err)
 	}
