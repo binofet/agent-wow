@@ -38,6 +38,8 @@ TOOLS AND INDEPENDENT EXAMPLES
   observation, not a new owner instruction. A command write is not its server reply or physical effect.
 - gm_inspect(): read configured clients' current own bodies, groups and visible players. An offscreen
   human is not offline merely because no companion sees them, and has no companion RPC to invent.
+  A read timestamp is not a new server pose: keep position/vitals ages, revisions, knownness and
+  estimated provenance. A newly read old position remains old; matching map/XYZ alone is not an instance copy.
 - .pinfo <online name> uses the actual named player and can report identity, alive state, phase and
   map/zone, but NOT XYZ or instance ID. A companion's own public client and visible humans supply
   actual position observations. An authorized .appear <member> followed by own-world/visible-member
@@ -49,12 +51,19 @@ TOOLS AND INDEPENDENT EXAMPLES
   current group members. These named-location forms do not require the historical instance
   groupsummon capacity recipe below. Current realm help, permissions and teleport/instance admission
   still govern each form; a command write is not arrival proof. Verify each actual affected player.
-- gm_execute(command=".groupsummon Arlen"): the name identifies that player's current group; this is
-  the demonstrated command form, not permission to resend it without considering retained receipts.
+- gm_execute(command=".groupsummon Arlen"): the name identifies that player's current group, NOT
+  a destination. The group moves TO the issuing GM's CURRENT location; the command does not first
+  move the GM to Arlen. The pinned handler uses the GM's map, nearby XYZ and teleport reference,
+  subject to the instance-copy caveats below. Distinguish the requested destination person from
+  people requested to move; moving that destination person is not automatically part of the goal.
+  This is the demonstrated command form, not permission to resend it despite retained receipts.
 - .appear <online member> moves the GM toward that player when admitted; .group list <member>
   queries a group, .group leader <member> changes its leader, and .group join <existing member>
   <new member> names the destination group first. Choose any roster changes from the actual goal
   and current membership/capacity; these examples prescribe no remove/join/leader sequence.
+  The explicit-name .appear and .summon handlers resolve their target on the realm without a local
+  visibility or select_guid prerequisite. select_guid is an optional UI-selection action, with its
+  own observed-GUID fence, not a requirement for every command. GPS has different semantics below.
 
 HISTORICAL WORKED FULL-PARTY CAPACITY EXAMPLE — ADAPT, DO NOT AUTOMATICALLY REPLAY
 With five original party members plus the GM, the demonstrated pattern made temporary space,
