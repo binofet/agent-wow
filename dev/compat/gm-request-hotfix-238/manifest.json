@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "kind": "public_source_hotfix_for_selected_238_compatibility_host",
+  "qualifiedLocalSnapshot": "fdc5091db901a4cf08060762716882450b32a757",
+  "sourceComponents": {
+    "gmContextAndFailureFeedback": "2f636007c9ed58361fa4d97facb0e5d6968d279a",
+    "modelContextAndAvailabilityRecovery": "86e5017855b7fee0822ceb8696c9350b13b504f8",
+    "selectedHistoricalHost": "67b379b2fd14ce95e9fa3de65e175e5cefa450ed",
+    "public238Compatibility": "5c839c87d2e2ec95cff9efc4e09b9ae317d3180b"
+  },
+  "files": {
+    "dev/converse": {
+      "file": "converse",
+      "sha256": "9a4237adc867b7a4cab8e3786aebdae5c1ae170a0ff8e1417bb7d61909f2bc5b",
+      "bytes": 388759,
+      "expectedPublicPreimages": [
+        "c4630a3aa5b55d560f49a1df9b2ba3a64e489e17e5b2f0753be70ba6093679d6"
+      ]
+    },
+    "dev/direct_tools.py": {
+      "file": "direct_tools.py",
+      "sha256": "6a9006a59f16f78179da3d218d48a2f129c6c0b34c69747e4be0e2066d881a8d",
+      "bytes": 101243,
+      "expectedPublicPreimages": [
+        "fa622692521bad764bc2b65d992e61e90c338f04ce754c3f4d5c255bbb9a9cb3"
+      ]
+    },
+    "dev/direct_model.py": {
+      "file": "direct_model.py",
+      "sha256": "56569c8581447c79c1301589838b4d5105a8cd24b17d5b4668d6438aa266b408",
+      "bytes": 49988,
+      "expectedPublicPreimages": [
+        "78281189eae1ac81db3e1dc8b6f47d714b86607a8b8ab0a2ba54dd7e100bb50f"
+      ]
+    },
+    "dev/lotharen-gm-commands.txt": {
+      "file": "lotharen-gm-commands.txt",
+      "sha256": "c93867ec41b9dfb5decc48aa43a1d32b56ffec7431732f07dd3ee2101d8ac2f4",
+      "bytes": 355046,
+      "expectedPublicPreimages": [
+        "ab825bcedabfb643d829bb1c31e7c8f461a6da254f4e4339240cbed0bc09db09",
+        "0142c33e8d6eb19d0915534b1d6acf04fe119a3a0a60b917717b470c0b398553",
+        "c93867ec41b9dfb5decc48aa43a1d32b56ffec7431732f07dd3ee2101d8ac2f4"
+      ]
+    }
+  },
+  "unchangedHelpers": {
+    "dev/task-runtime": {
+      "sha256": "e2c77702eefc774e3ef7242662968f8e29a8337520fc467d39dcde9a59f9ce07",
+      "unchangedFromHistorical": true
+    },
+    "dev/self-edit": {
+      "sha256": "41f216ba9d0089fe9b90f6ac564196523fb55f09f08eab96b44abb779d69567f",
+      "unchangedFromHistorical": true
+    },
+    "dev/direct_context.py": {
+      "sha256": "345265e30e5b573a1ded5d75036c8bfc224b607998931fbe45f2e153deef6cfe",
+      "unchangedFromHistorical": true
+    }
+  },
+  "compositionProof": {
+    "originalConverseFunctions": 162,
+    "unchangedFunctions": 159,
+    "changedFunctions": [
+      "DirectBrain.__init__",
+      "DirectBrain._generate",
+      "Conversation.tick"
+    ],
+    "changedFunctionsASTIdenticalToB": true,
+    "addedOrRemovedFunctions": false,
+    "oldRewardHandlerUnchanged": true,
+    "guideCommandPaths": 739,
+    "catalogSHA256": "43204986573bd7c99ada6e92d499be5b8b05a481b2be3d5763ebef4002d94581",
+    "countScope": "top-level functions and all class methods, recursively including nested classes"
+  },
+  "checks": {
+    "outcome": "pass",
+    "count": 144,
+    "seconds": 49.74,
+    "head": "fdc5091db901a4cf08060762716882450b32a757",
+    "sourceCleanBeforeAndAfter": true,
+    "scope": [
+      "test_direct_tools",
+      "test_direct_brain",
+      "test_direct_model",
+      "test_gm_raw_tool_context"
+    ]
+  },
+  "review": {
+    "status": "pending Root independent combined source review",
+    "authorship": "Root authored none of these product components"
+  },
+  "normalSourceDelivery": {
+    "gmPR": "https://github.com/binofet/agent-wow/pull/239",
+    "modelPR": "https://github.com/binofet/agent-wow/pull/240",
+    "mainOrRequiredCISuccessClaimed": false
+  },
+  "runtime": {
+    "targetPreimagesVerified": false,
+    "deployed": false,
+    "realModelOrGameCalls": false,
+    "operatorInstructions": "Operator must match actual selected host hashes to only these proven public preimages. Guide 0142 is a comparison source, not an installed-target fact. Keep settings, profiles, own Lua, native SIDs and journals untouched; coordinate chat-only code handoff.",
+    "scope": "Four host source files only. No profile/settings/model configuration, actor Lua, native binary/client, operation journal, transcript, credentials or private payload."
+  },
+  "behaviorNotes": [
+    "Current GM facts and native command syntax are supplied without making the ordered task mandatory.",
+    "Natural API copy may replace older completed repeated pure-read bodies with historical SHA/index markers; the canonical full journal, human text, mutations, unknowns and pending custody remain. Marker references do not currently provide a model tool for retrieving superseded old bodies.",
+    "One HTTP 429/503 availability response may be retried per owner turn with the identical request window; HTTP 400 and uncertain transport are not retried.",
+    "Current bound zero-tool HTTP failures are host transport status, not model refusal; any entered tool or stale receipt retains uncertainty.",
+    "The public 739-command catalog is unchanged. The guide comparison hash0142 is not an installed-target assertion."
+  ]
+}
