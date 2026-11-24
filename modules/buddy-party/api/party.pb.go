@@ -255,8 +255,14 @@ type Group struct {
 	Members       []*Member `protobuf:"bytes,5,rep,name=members,proto3" json:"members,omitempty"`
 	TypeFlags     uint32    `protobuf:"varint,6,opt,name=type_flags,json=typeFlags,proto3" json:"type_flags,omitempty"`
 	ServerCounter uint32    `protobuf:"varint,7,opt,name=server_counter,json=serverCounter,proto3" json:"server_counter,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Server-reported group difficulties, not an instance ID or current location.
+	// Unknown until a complete group-list packet supplies its difficulty tail.
+	DungeonDifficultyKnown bool   `protobuf:"varint,8,opt,name=dungeon_difficulty_known,json=dungeonDifficultyKnown,proto3" json:"dungeon_difficulty_known,omitempty"`
+	DungeonDifficulty      uint32 `protobuf:"varint,9,opt,name=dungeon_difficulty,json=dungeonDifficulty,proto3" json:"dungeon_difficulty,omitempty"`
+	RaidDifficultyKnown    bool   `protobuf:"varint,10,opt,name=raid_difficulty_known,json=raidDifficultyKnown,proto3" json:"raid_difficulty_known,omitempty"`
+	RaidDifficulty         uint32 `protobuf:"varint,11,opt,name=raid_difficulty,json=raidDifficulty,proto3" json:"raid_difficulty,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *Group) Reset() {
@@ -334,6 +340,34 @@ func (x *Group) GetTypeFlags() uint32 {
 func (x *Group) GetServerCounter() uint32 {
 	if x != nil {
 		return x.ServerCounter
+	}
+	return 0
+}
+
+func (x *Group) GetDungeonDifficultyKnown() bool {
+	if x != nil {
+		return x.DungeonDifficultyKnown
+	}
+	return false
+}
+
+func (x *Group) GetDungeonDifficulty() uint32 {
+	if x != nil {
+		return x.DungeonDifficulty
+	}
+	return 0
+}
+
+func (x *Group) GetRaidDifficultyKnown() bool {
+	if x != nil {
+		return x.RaidDifficultyKnown
+	}
+	return false
+}
+
+func (x *Group) GetRaidDifficulty() uint32 {
+	if x != nil {
+		return x.RaidDifficulty
 	}
 	return 0
 }
@@ -941,7 +975,7 @@ const file_modules_buddy_party_party_proto_rawDesc = "" +
 	"\x05flags\x18\x06 \x01(\rR\x05flags\x12\x14\n" +
 	"\x05roles\x18\a \x01(\rR\x05roles\x12\x1f\n" +
 	"\vwire_status\x18\b \x01(\rR\n" +
-	"wireStatus\"\xf8\x01\n" +
+	"wireStatus\"\xbe\x03\n" +
 	"\x05Group\x12\x14\n" +
 	"\x05known\x18\x01 \x01(\bR\x05known\x12\x19\n" +
 	"\bin_group\x18\x02 \x01(\bR\ainGroup\x12\x1d\n" +
@@ -952,7 +986,12 @@ const file_modules_buddy_party_party_proto_rawDesc = "" +
 	"\amembers\x18\x05 \x03(\v2\x1e.warcraftbuddy.party.v1.MemberR\amembers\x12\x1d\n" +
 	"\n" +
 	"type_flags\x18\x06 \x01(\rR\ttypeFlags\x12%\n" +
-	"\x0eserver_counter\x18\a \x01(\rR\rserverCounter\"|\n" +
+	"\x0eserver_counter\x18\a \x01(\rR\rserverCounter\x128\n" +
+	"\x18dungeon_difficulty_known\x18\b \x01(\bR\x16dungeonDifficultyKnown\x12-\n" +
+	"\x12dungeon_difficulty\x18\t \x01(\rR\x11dungeonDifficulty\x122\n" +
+	"\x15raid_difficulty_known\x18\n" +
+	" \x01(\bR\x13raidDifficultyKnown\x12'\n" +
+	"\x0fraid_difficulty\x18\v \x01(\rR\x0eraidDifficulty\"|\n" +
 	"\rCommandResult\x12\x1c\n" +
 	"\toperation\x18\x01 \x01(\rR\toperation\x12\x1f\n" +
 	"\vmember_name\x18\x02 \x01(\tR\n" +
