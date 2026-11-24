@@ -1219,9 +1219,10 @@ class StipendConnectedConsumerTests(unittest.TestCase):
     def test_missing_export_fault_or_unobserved_lua_request_cannot_fallback(self):
         export='stipend_selection=encounter_stipend_selection and encounter_stipend_selection.decide'
         self.assertEqual(self.bundle.count(export),1)
-        self.assertEqual(self.bundle.count('mailId=selected.mailId'),1)
+        self.assertEqual(self.stipend.count('mailId=selected.mailId'),1)
+        bad_stipend=self.stipend.replace('mailId=selected.mailId','mailId="999"',1)
         variants=(self.bundle.replace(export,'stipend_selection=false',1),
-            self.bundle+'\ninvalid =',self.bundle.replace('mailId=selected.mailId','mailId="999"',1))
+            self.bundle+'\ninvalid =',self.bundle.replace(self.stipend,bad_stipend,1))
         for source in variants:
             with self.subTest(source_length=len(source)):
                 self.reset_case();self.edit_source(source)
