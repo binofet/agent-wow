@@ -50,6 +50,8 @@ def step(rpc, observations, rests, port, guid):
     if (current.get('sessionId') != session or current.get('characterGuid') != str(guid)
             or policy.get('revision') != state['revision'] or policy.get('generation') != state['generation']):
         return 'waiting_for_current_lua_state'
+    if policy.get('faulted') is True:
+        return 'lua_rest_policy_fault'
     # Preserve clocks/cursors as observations: this is the last committed Lua
     # phase, not proof that the feed is still running or a game effect occurred.
     report = dict(sessionId=session, revision=state['revision'], generation=state['generation'],

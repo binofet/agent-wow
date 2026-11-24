@@ -184,6 +184,17 @@ end}
         self.assertEqual(self.observe(), 'waiting_for_current_lua_decision')
         self.assertEqual(self.rests, before)
 
+    def test_fault_reported_by_postread_attachment_cannot_publish_or_release_old_hold(self):
+        self.acquire()
+        before = copy.deepcopy(self.rests)
+        published = copy.deepcopy(self.views[8086]['mana_rest'])
+        self.observation['players']['1']['inCombat'] = True
+        self.assertEqual(self.lua()['action']['mode'], 'release')
+        self.on_attach = lambda result: result['policy'].update(faulted=True)
+        self.assertEqual(self.observe(), 'lua_rest_policy_fault')
+        self.assertEqual(self.rests, before)
+        self.assertEqual(self.views[8086]['mana_rest'], published)
+
     def test_observation_keeps_original_clocks_and_is_detached_from_reply(self):
         self.lua()
         self.observe()
