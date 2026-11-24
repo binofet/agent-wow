@@ -670,7 +670,7 @@ BuddyWorldÑ
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponse^
 ObserveClientMovement-.warcraftbuddy.world.v1.ClientMovementRequest.google.protobuf.EmptyC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-è
+’
 modules/buddy-party/party.protowarcraftbuddy.party.v1api/module/v1/session.protogoogle/protobuf/empty.proto"√
 PendingInvite
 sequence (Rsequence!
@@ -686,7 +686,7 @@ BuddyWorldÑ
 flags (Rflags
 roles (Rroles
 wire_status (R
-wireStatus"¯
+wireStatus"æ
 Group
 known (Rknown
 in_group (RinGroup
@@ -697,7 +697,12 @@ leaderGuid8
 members (2.warcraftbuddy.party.v1.MemberRmembers
 
 type_flags (R	typeFlags%
-server_counter (RserverCounter"|
+server_counter (RserverCounter8
+dungeon_difficulty_known (RdungeonDifficultyKnown-
+dungeon_difficulty	 (RdungeonDifficulty2
+raid_difficulty_known
+ (RraidDifficultyKnown'
+raid_difficulty (RraidDifficulty"|
 CommandResult
 	operation (R	operation
 member_name (	R
