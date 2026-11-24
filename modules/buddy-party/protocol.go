@@ -149,9 +149,14 @@ func decodeGroup(payload []byte, selfGUID uint64, selfName string) (*partyv1.Gro
 		members = append(members, member)
 	}
 	group.LeaderGuid = r.u64()
+	var dungeonDifficulty, raidDifficulty uint32
 	if count != 0 {
-		r.take(13)
-	} // Loot method, looter GUID, threshold, difficulties.
+		r.u8()  // Loot method.
+		r.u64() // Looter GUID.
+		r.u8()  // Loot threshold.
+		dungeonDifficulty, raidDifficulty = r.u8(), r.u8()
+		r.u8() // Dynamic raid difficulty; not separately exposed.
+	}
 	if err := r.finish(); err != nil {
 		return nil, err
 	}
@@ -163,6 +168,10 @@ func decodeGroup(payload []byte, selfGUID uint64, selfName string) (*partyv1.Gro
 	}
 	if groupGUID>>48 != 0x1f50 || uint32(groupGUID) == 0 || !playerGUID(group.LeaderGuid) || !seen[group.LeaderGuid] {
 		return nil, errMalformed
+	}
+	if count != 0 {
+		group.DungeonDifficultyKnown, group.RaidDifficultyKnown = true, true
+		group.DungeonDifficulty, group.RaidDifficulty = dungeonDifficulty, raidDifficulty
 	}
 	group.InGroup, group.Members = true, members
 	return group, nil

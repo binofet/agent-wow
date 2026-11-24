@@ -132,16 +132,97 @@ class AreaTests(unittest.TestCase):
                 return
         self.fail("Area sweep did not finish in its bounded fake scenario")
 
+    def test_real_lua_priority_and_exact_offer_custody(self):
+        actor, rpc, _, _ = self.rig()
+        actor.session = rpc.session
+        actor.anchor = dict(known=True, mapKnown=True, mapId=0, x=0., y=0., z=0.)
+        rpc.reward = dict(npcGuid=str(A), questId=7, revision="18446744073709551615",
+            expiresInMs="60000", source="reward_offer", canComplete=True)
+        rpc.offer = dict(npcGuid=str(B), revision="9007199254740993", expiresInMs="60000",
+            quests=[dict(questId=18, available=True)])
+        def choice(): return actor.policy(actor.read())["choice"]
+        self.assertEqual(choice(), dict(kind="claim_reward", npcGuid=str(A), questId=7,
+            offerRevision="18446744073709551615"))
+        actor.data["reservations"]["claim:7"] = [rpc.session, str(A), "18446744073709551615"]
+        self.assertEqual(choice(), dict(kind="turn_in", npcGuid=str(A), questId=7))
+        actor.turnins.add((A, 7, rpc.revision))
+        self.assertEqual(choice(), dict(kind="accept", npcGuid=str(B), questId=18,
+            offerRevision="9007199254740993"))
+        actor.data["reservations"]["accept:18"] = [rpc.session, str(B), "9007199254740993"]
+        self.assertEqual(choice(), dict(kind="offer", npcGuid=str(A)))
+        actor.queries.update((guid, ((7,), (7,))) for guid in (A, B))
+        self.assertEqual(choice(), dict(kind="done", phase="finished_visible_area_quest_sweep"))
+        self.assertFalse(any(method.startswith("buddy-quests.") and method not in
+            ("buddy-quests.discover", "buddy-quests.state", "buddy-quests.journal") for method, _ in rpc.calls))
+
+    def test_editing_shared_lua_changes_actual_first_giver_without_python_reordering(self):
+        actor, rpc, _, _ = self.rig()
+        rpc.following, rpc.journal = False, False
+        source = area.party.quest_policy.SOURCE.read_text()
+        needle = "row.distance<givers[i-1].distance"
+        self.assertEqual(source.count(needle), 1)
+        with tempfile.TemporaryDirectory() as folder:
+            policy = Path(folder)/"area.lua"
+            policy.write_text(source.replace(needle, "row.distance>givers[i-1].distance"))
+            with patch.object(area.party.quest_policy, "SOURCE", policy):
+                actor.tick()
+        queries = [params for method, params in rpc.calls if method == "buddy-quests.offer"]
+        self.assertEqual([row["npcGuid"] for row in queries], [str(B)])
+
+    def test_real_lua_distance_tie_preserves_full_uint64_guid(self):
+        actor, rpc, _, _ = self.rig()
+        actor.session = rpc.session
+        actor.anchor = dict(known=True, mapKnown=True, mapId=0, x=0., y=0., z=0.)
+        rpc.creatures = {guid: rpc.creature(guid, 20) for guid in (A+1, A)}
+        self.assertGreater(A, 2**53)
+        result = actor.policy(actor.read())
+        self.assertEqual([row["guid"] for row in result["givers"]], [str(A), str(A+1)])
+        self.assertEqual(result["choice"]["npcGuid"], str(A))
+
+    def test_missing_or_unbound_lua_decision_has_no_python_fallback(self):
+        for result in (dict(status="pending"), dict(status="ready", sessionId="body-quests",
+                givers=[dict(guid="123", entry=197, distance=0)], choice=dict(kind="offer", npcGuid="123"))):
+            actor, rpc, _, _ = self.rig()
+            rpc.following = False
+            actor.data["reservations"]["claim:7"] = [rpc.session, str(A), "old-unknown"]
+            before = copy.deepcopy(actor.data["reservations"])
+            with patch.object(area.party.quest_policy, "evaluate", return_value=result): actor.tick()
+            self.assertEqual(actor.status["phase"], "waiting_for_shared_lua_area_quest_policy")
+            self.assertEqual(actor.data["reservations"], before)
+            self.assertFalse(any(method in ("buddy-actions.travel_quest", "buddy-quests.offer",
+                "buddy-quests.turn_in", "buddy-quests.accept", "buddy-quests.claim_reward") for method, _ in rpc.calls))
+
+    def test_lua_selected_offer_is_rechecked_after_travel_lease(self):
+        actor, rpc, _, _ = self.rig()
+        rpc.following, rpc.journal = False, False
+        rpc.offer = dict(npcGuid=str(A), revision="9007199254740993", expiresInMs="60000",
+            quests=[dict(questId=15, available=True)])
+        rpc.after_acquire = lambda mock: mock.offer.update(revision="9007199254740994")
+        actor.tick()
+        self.assertNotIn("accept:15", actor.data["reservations"])
+        self.assertFalse(any(method in ("buddy-actions.travel_quest", "buddy-quests.accept") for method, _ in rpc.calls))
+        self.assertEqual(rpc.calls[-1][0], "buddy-actions.release_interaction")
+
     def test_owner_free_sweep_turns_in_and_accepts_actual_local_quests_then_restores_follow(self):
         actor, rpc, clock, _ = self.rig()
         self.run_sweep(actor, clock)
         self.assertEqual(rpc.active, {15, 18})
         self.assertEqual(actor.status["acceptedQuestIds"], [15, 18])
         self.assertEqual(actor.status["rewardedQuestIds"], [7])
+        claim = next(params for method, params in rpc.calls if method == "buddy-quests.claim_reward")
+        self.assertEqual((claim["noChoice"], claim["choiceIndex"], claim["expectedItemId"]), (True, 0, 0))
         self.assertFalse(any(method in ("buddy-party.state", "buddy-chat.owner_feed") for method, _ in rpc.calls))
         actor.cleanup()
         self.assertTrue(rpc.following)
         self.assertEqual(actor.status["cleanup"], "previous_follow_intent_restored")
+
+    def test_single_offered_reward_keeps_exact_index_without_item_ranking(self):
+        actor, rpc, clock, _ = self.rig()
+        rpc.choices = [dict(index=4, itemId=99000, count=1)]
+        self.run_sweep(actor, clock)
+        claim = next(params for method, params in rpc.calls if method == "buddy-quests.claim_reward")
+        self.assertEqual((claim["noChoice"], claim["choiceIndex"], claim["expectedItemId"]), (False, 4, 99000))
+        self.assertFalse(any(method == "buddy-trade.lookup_items" for method, _ in rpc.calls))
 
     def test_nonzero_map_sweep_uses_actual_same_map_givers_and_rewards(self):
         for map_id in (1,530):
