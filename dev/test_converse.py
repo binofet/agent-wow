@@ -3307,6 +3307,57 @@ class AttachedPolicyRepairTests(unittest.TestCase):
         self.actions.update(lastCastFailure=code,
             lastSpellOperation=dict(spellId=53,targetGuid=self.npc_guid,capability='offense',phase='server_rejected_no_replay'))
 
+    def test_fresh_failure_cannot_borrow_cached_spell_or_legacy_assist_reason(self):
+        stale=dict(self.actions,assistReason='unsafe_unit_state',lastCastFailure=40,
+            lastSpellOperation=dict(spellId=9474,targetGuid='3',capability='heal',
+                phase='server_rejected_no_replay',operationRevision='11'))
+        self.controls.context=lambda:dict(controls=copy.deepcopy(stale))
+        self.actions.update(assistReason='unsupported_movement_state',lastCastFailure=67,
+            lastSpellOperation=dict(spellId=8106,targetGuid=self.npc_guid,capability='offense',
+                phase='server_rejected_no_replay',operationRevision='12',visitId='7'))
+        original=copy.deepcopy(self.actions)
+        self.loop.tick()
+        state=self.brain.states[0];fault=state['mission_fault']
+        self.assertEqual(state['controls'],original)
+        failure=fault['evidence']['operationFailure']
+        self.assertEqual((failure['spellId'],failure['failureCode'],failure['operationRevision']),
+            (8106,67,'12'))
+        self.assertEqual(failure['targetGuid'],self.npc_guid)
+        self.assertEqual(failure['casterGuid'],'5');self.assertEqual(failure['sessionId'],'aw-current')
+        self.assertFalse(fault['operationOrigin']['known'])
+        self.assertEqual(fault['policy']['revision'],self.policy['revision'])
+        cue=self.brain.histories[0][0]['text']
+        self.assertIn('"spellId":8106',cue);self.assertIn('"failureCode":67',cue)
+        self.assertNotIn('9474',cue)
+        self.assertIn('never substitute a previous spell',cue)
+        self.assertIn('not a controller refusal',cue)
+        self.assertIn('attachment alone does not establish the operation origin',cue)
+        self.assertEqual(self.actions,original)
+
+    def test_attempted_flash_heal_is_not_replaced_by_later_heal_or_repeated_whisper(self):
+        self.actions.update(assistReason='unsafe_unit_state',lastCastFailure=40,
+            lastSpellOperation=dict(spellId=9474,targetGuid='3',capability='heal',
+                phase='server_rejected_no_replay',operationRevision='11'))
+        self.brain.reply=dict(text='Spell #9474 was attempted and server rejected code 40; no repair verified.',
+            emote='NONE',action='NONE')
+        self.loop.tick();self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+        self.assertEqual(len([m for m,p in self.calls if m=='buddy-chat.send']),1)
+        self.assertEqual(self.brain.states[0]['mission_fault']['evidence']['operationFailure']['spellId'],9474)
+        self.actions.update(lastCastFailure=0,lastSpellOperation=dict(spellId=2050,targetGuid='3',
+            capability='heal',phase='confirmed_heal',operationRevision='12',effectObserved=True))
+        self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+        self.assertEqual(len([m for m,p in self.calls if m=='buddy-chat.send']),1)
+
+    def test_missing_failure_code_stays_unknown_and_current_policy_is_not_origin(self):
+        self.actions['lastSpellOperation']=dict(spellId=9474,phase='server_rejected_no_replay')
+        fault=converse.attached_policy_faults(5,'aw-current',self.policy,self.actions)[0]
+        self.assertFalse(fault['evidence']['operationFailure']['failureCodeKnown'])
+        self.assertIsNone(fault['evidence']['operationFailure']['failureCode'])
+        self.assertNotIn('operationRevision',fault['evidence']['operationFailure'])
+        self.assertFalse(fault['operationOrigin']['known'])
+
     def test_bad_targets_on_dead_or_absent_exact_npc_does_not_spend_a_model_turn(self):
         self.spatial_failure(12)
         self.world['requestedCreature']['alive']=False
