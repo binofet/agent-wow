@@ -357,5 +357,15 @@ class PartyQuestPolicyTests(unittest.TestCase):
                 self.assertEqual(result.get("status"), "invalid", result)
 
 
+def load_tests(loader, tests, pattern):
+    # The maintained CI entry point also exercises the actual area consumer.
+    extra = importlib.util.spec_from_file_location("area_quest_consumer_tests",
+        Path(__file__).with_name("test_area_quests.py"))
+    module = importlib.util.module_from_spec(extra)
+    extra.loader.exec_module(module)
+    tests.addTests(loader.loadTestsFromModule(module))
+    return tests
+
+
 if __name__ == "__main__":
     unittest.main()

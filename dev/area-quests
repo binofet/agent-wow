@@ -67,31 +67,128 @@ class AreaSweep(party.PartyQuestSync):
             return False
         return True
 
-    def givers(self, context):
-        nearby = context["quests"].get("nearby", [])
-        if not isinstance(nearby, list) or len(nearby) > 64:
-            raise Error("Area questgiver observations are invalid")
-        own, result = context["actions"]["position"], []
+    def policy(self, context):
+        state = context["quests"]
+        nearby, log = state.get("nearby", []), state.get("questLog", [])
+        journal = context["journal"].get("entries", [])
+        if (not isinstance(nearby, list) or len(nearby) > 64 or not isinstance(log, list) or len(log) > 25
+                or not isinstance(journal, list) or len(journal) > 25):
+            raise Error("Area quest observations are invalid")
+        def position(value, known="positionKnown"):
+            if not party.finite_position(value, known):
+                return {"known": False}
+            return dict(known=True, mapId=integer(value.get("mapId", 0)),
+                        **{key: value[key] for key in ("x", "y", "z")})
+        creatures, observed = [], {}
         for row in nearby:
-            creature = row.get("creature", {}) if isinstance(row, dict) else {}
-            if (not party.finite_position(creature)
-                    or any(creature.get(key) is not True for key in ("present", "aliveKnown", "alive"))
-                    or integer(creature.get("mapId", 0)) != integer(own.get("mapId", 0))
-                    or self.anchor is None or self.anchor.get("mapKnown") is not True
-                    or integer(creature.get("mapId", 0)) != integer(self.anchor.get("mapId", 0))
-                    or integer(creature.get("npcFlags", 0)) & 2 == 0
-                    or integer(creature.get("movementFlags", 0)) & ~0x70000000
-                    or integer(creature.get("unitFlags", 0)) & (0x1 | 0x4 | 0x80000 | 0x100000 | 0x2000000)
-                    or party.distance(self.anchor, creature) > 120):
-                continue
-            guid, entry = integer(creature.get("guid", 0)), integer(creature.get("entry", 0))
-            if guid >> 48 != 0xf130 or not guid & 0xffffff or guid >> 24 & 0xffffff != entry:
-                continue
-            current_distance = party.distance(own, creature)
-            if self.travel_attempts.get(guid, 0) >= 3 and current_distance > 8:
-                continue
-            result.append({"guid": guid, "entry": entry, "distance": current_distance})
-        return sorted(result, key=lambda row: (row["distance"], row["guid"]))[:32]
+            c = row.get("creature", {}) if isinstance(row, dict) else {}
+            if not isinstance(c, dict): c = {}
+            guid, entry = integer(c.get("guid", 0)), integer(c.get("entry", 0))
+            key = str(guid)
+            if key in observed:
+                raise Error("Area questgiver identity is duplicated")
+            observed[key] = c
+            creatures.append(dict(guid=key, entry=entry, position=position(c),
+                creatureIdentityMatches=guid >> 48 == 0xf130 and bool(guid & 0xffffff) and (guid >> 24 & 0xffffff) == entry,
+                travelAttempts=self.travel_attempts.get(guid, 0),
+                **{key: c.get(key) is True for key in ("present", "aliveKnown", "alive")},
+                **{key: integer(c.get(key, 0)) for key in ("npcFlags", "unitFlags", "movementFlags")}))
+        def offer(value):
+            if not isinstance(value, dict): value = {}
+            rows = value.get("quests", [])
+            return dict(npcGuid=str(integer(value.get("npcGuid", 0))),
+                revision=str(integer(value.get("revision", 0))), expiresInMs=str(integer(value.get("expiresInMs", 0))),
+                questId=integer(value.get("questId", 0)), source=value.get("source", ""),
+                canComplete=value.get("canComplete") is True, rewardRequested=value.get("rewardRequested") is True,
+                quests=[dict(questId=integer(q.get("questId", 0)), flags=integer(q.get("flags", 0)),
+                    **{key: q.get(key) is True for key in ("available", "repeatable", "acceptRequested")})
+                    if isinstance(q, dict) else {} for q in rows] if isinstance(rows, list) and len(rows) <= 32 else None)
+        receipt = state.get("lastReward", {})
+        if not isinstance(receipt, dict): receipt = {}
+        facts = dict(mode="area_sweep", sessionId=context["session"], ownQuestIds=sorted(context["active"]),
+            selfPosition=position(context["actions"]["position"], "known"),
+            anchorPosition=position(self.anchor, "known"), nearby=creatures,
+            questLog=[dict(questId=integer(q.get("questId", 0)), complete=q.get("complete") is True,
+                failed=q.get("failed") is True) if isinstance(q, dict) else {} for q in log],
+            journal=[dict(questId=integer(q.get("questId", 0)),
+                observedRewardNpcGuid=str(integer(q.get("observedRewardNpcGuid", 0))))
+                if isinstance(q, dict) else {} for q in journal],
+            offer=offer(state.get("offer", {})), turnInOffer=offer(state.get("turnInOffer", {})),
+            lastReward=dict(questId=integer(receipt.get("questId", 0)), status=receipt.get("status", "REWARD_NONE")),
+            questLogRevision=str(integer(state.get("questLogRevision", 0))), reservations=self.data["reservations"],
+            queries=[dict(npcGuid=str(g), activeQuestIds=list(signature[0]), completeQuestIds=list(signature[1]))
+                for g, signature in self.queries],
+            turnins=[dict(npcGuid=str(g), questId=q, questLogRevision=str(revision)) for g, q, revision in self.turnins],
+            autoAccepts=[list(row) for row in self.auto_accepts])
+        result = party.quest_policy.evaluate(facts)
+        if not isinstance(result, dict) or result.get("status") != "ready" or result.get("sessionId") != context["session"]:
+            raise Error("Shared Lua area quest policy is unavailable or rejected its observations")
+        givers = result.get("givers")
+        if givers == {}: givers = []
+        if not isinstance(givers, list) or len(givers) > 32:
+            raise Error("Lua area quest policy returned invalid giver identities")
+        seen = set()
+        for g in givers:
+            c = observed.get(g.get("guid")) if isinstance(g, dict) else None
+            if (c is None or g["guid"] in seen or type(g.get("entry")) is not int
+                    or g["entry"] != integer(c.get("entry", 0)) or not party.finite_position(c)
+                    or type(g.get("distance")) not in (int, float) or not math.isfinite(g["distance"])
+                    or not math.isclose(g["distance"], party.distance(context["actions"]["position"], c), rel_tol=0, abs_tol=1e-8)):
+                raise Error("Lua area quest policy returned an unobserved giver")
+            seen.add(g["guid"])
+        result["_givers"] = [dict(g, guid=integer(g["guid"])) for g in givers]
+        return result
+
+    def givers(self, context):
+        return self.policy(context)["_givers"]
+
+    def apply_choice(self, context, choice):
+        if not isinstance(choice, dict):
+            raise Error("Lua area quest policy returned an invalid action")
+        kind = choice.get("kind")
+        if kind == "done":
+            phase = choice.get("phase")
+            if phase not in ("finished_at_bounded_giver_query_limit", "finished_visible_area_quest_sweep"):
+                raise Error("Lua area quest policy returned an invalid finish state")
+            self.done = True
+            self.status.update(phase="finished_with_unconfirmed_area_requests" if self.unconfirmed and
+                phase == "finished_visible_area_quest_sweep" else phase,
+                queriedGivers=len({row[0] for row in self.queries}))
+            return
+        if kind not in ("claim_reward", "turn_in", "accept", "auto_accept", "offer"):
+            raise Error("Lua area quest policy returned an unknown action")
+        giver = next((g for g in self.givers(context) if str(g["guid"]) == choice.get("npcGuid")), None)
+        qid = choice.get("questId", 0)
+        if giver is None or type(qid) is not int or not 0 <= qid <= 2**32-1 or kind != "offer" and not qid:
+            raise Error("Lua area quest policy returned an unobserved action identity")
+        state, session = context["quests"], context["session"]
+        if kind in ("claim_reward", "accept", "auto_accept"):
+            offer = state.get("turnInOffer" if kind == "claim_reward" else "offer", {})
+            bound = sync.binding(session, giver["guid"], integer(offer.get("revision", 0)))
+            if (choice.get("offerRevision") != bound[2] or integer(offer.get("npcGuid", 0)) != giver["guid"]
+                    or integer(offer.get("expiresInMs", 0)) <= 0):
+                raise Error("Lua area quest policy returned a stale offer")
+            if kind == "auto_accept":
+                if not any(isinstance(q, dict) and integer(q.get("questId", 0)) == qid
+                        and q.get("available") is True and q.get("repeatable") is not True
+                        and q.get("acceptRequested") is not True and integer(q.get("flags", 0)) & 0x80000
+                        for q in offer.get("quests", [])):
+                    raise Error("Lua area quest policy returned an unobserved automatic offer")
+                self.auto_accepts.add(tuple(bound)+(qid,))
+                self.status["phase"] = "waiting_for_automatic_quest_log_confirmation"
+                return
+            if kind == "claim_reward" and self.choice(offer, context["world"]["self"], lookup=True, session=session) is False:
+                return
+            self.request(context, giver, "buddy-quests."+kind, qid,
+                ("claim:" if kind == "claim_reward" else "accept:")+str(qid), bound)
+        elif kind == "turn_in":
+            if qid not in self.complete(context) or converse.BuddyControls.ambiguous_quest_reward(state, qid):
+                raise Error("Lua area quest policy returned an unobserved completed quest")
+            self.request(context, giver, "buddy-quests.turn_in", qid,
+                query=("turn_in", (giver["guid"], qid, integer(state.get("questLogRevision", 0)))))
+        else:
+            signature = (tuple(sorted(context["active"])), tuple(sorted(self.complete(context))))
+            self.request(context, giver, "buddy-quests.offer", query=("offer", (giver["guid"], signature)))
 
     @staticmethod
     def complete(context):
@@ -228,70 +325,12 @@ class AreaSweep(party.PartyQuestSync):
         if self.now() < self.data["nextMutationAt"]:
             self.status["phase"] = "waiting_for_mutation_cooldown"
             return
-        candidates = self.givers(context)
-        state = context["quests"]
-        offer, reward = state.get("offer", {}), state.get("turnInOffer", {})
-        complete = self.complete(context)
-        reward_giver = next((row for row in candidates if integer(reward.get("npcGuid", 0)) == row["guid"]), None)
-        reward_qid = integer(reward.get("questId", 0))
-        if reward_giver and reward_qid in complete and self.reward_offer(reward, reward_qid, reward_giver["guid"]):
-            bound = sync.binding(self.session, reward_giver["guid"], integer(reward.get("revision", 0)))
-            if not converse.BuddyControls.ambiguous_quest_reward(state, reward_qid) and self.data["reservations"].get("claim:"+str(reward_qid)) != bound:
-                if self.choice(reward, context["world"]["self"], lookup=True, session=self.session) is False:
-                    return
-                self.request(context, reward_giver, "buddy-quests.claim_reward", reward_qid, "claim:"+str(reward_qid), bound)
-                return
-        menu_giver = next((row for row in candidates if integer(offer.get("npcGuid", 0)) == row["guid"]), None)
-        entries = offer.get("quests", [])
-        if not isinstance(entries, list) or len(entries) > 32:
-            raise Error("Area quest offer is invalid")
-        journal = context["journal"].get("entries", [])
-        if not isinstance(journal, list) or len(journal) > 25:
-            raise Error("Area quest journal is invalid")
-        for giver in candidates:
-            known = {integer(row.get("questId", 0)) for row in journal if isinstance(row, dict)
-                     and integer(row.get("observedRewardNpcGuid", 0)) == giver["guid"]}
-            if menu_giver == giver and integer(offer.get("expiresInMs", 0)) > 0:
-                known |= {integer(row.get("questId", 0)) for row in entries if isinstance(row, dict)}
-            for qid in sorted(complete & known):
-                turn_key = (giver["guid"], qid, integer(state.get("questLogRevision", 0)))
-                if turn_key not in self.turnins and not converse.BuddyControls.ambiguous_quest_reward(state, qid):
-                    self.request(context, giver, "buddy-quests.turn_in", qid, query=("turn_in", turn_key))
-                    return
-        if menu_giver and integer(offer.get("expiresInMs", 0)) > 0:
-            bound = sync.binding(self.session, menu_giver["guid"], integer(offer.get("revision", 0)))
-            for quest in entries:
-                if (not isinstance(quest, dict) or quest.get("available") is not True
-                        or quest.get("repeatable") is True or quest.get("acceptRequested") is True):
-                    continue
-                qid = integer(quest.get("questId", 0))
-                if not qid or qid in context["active"] or len(context["active"]) >= 25:
-                    continue
-                if integer(quest.get("flags", 0)) & 0x80000:
-                    auto_key = tuple(bound) + (qid,)
-                    if auto_key not in self.auto_accepts:
-                        self.auto_accepts.add(auto_key)
-                        self.status["phase"] = "waiting_for_automatic_quest_log_confirmation"
-                        return
-                    continue
-                if self.data["reservations"].get("accept:"+str(qid)) != bound:
-                    self.request(context, menu_giver, "buddy-quests.accept", qid, "accept:"+str(qid), bound)
-                    return
-        signature = (tuple(sorted(context["active"])), tuple(sorted(complete)))
-        for giver in candidates:
-            key = (giver["guid"], signature)
-            if key not in self.queries:
-                if len(self.queries) >= 64:
-                    self.done = True
-                    self.status["phase"] = "finished_at_bounded_giver_query_limit"
-                    return
-                if self.travel_attempts.get(giver["guid"], 0) >= 3 and giver["distance"] > 8:
-                    continue
-                self.request(context, giver, "buddy-quests.offer", query=("offer", key))
-                return
-        self.done = True
-        self.status.update(phase="finished_with_unconfirmed_area_requests" if self.unconfirmed else "finished_visible_area_quest_sweep",
-                           queriedGivers=len({row[0] for row in self.queries}))
+        try:
+            self.apply_choice(context, self.policy(context).get("choice"))
+        except converse.Stopped:
+            raise
+        except Error:
+            self.status["phase"] = "waiting_for_shared_lua_area_quest_policy"
 
     def cleanup(self):
         if self.session is None or not self.held or not self.original_following or self.suppress_follow_restore:
