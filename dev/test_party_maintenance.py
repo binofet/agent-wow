@@ -1626,5 +1626,6 @@ class MailboxTargetConsumerTests(unittest.TestCase):
 
 
 from test_town_policy import VendorDestinationTests, TrainerDestinationTests
+from test_town_maintenance import GearCompatibilityTests, TownTests
 
 if __name__=='__main__':unittest.main()

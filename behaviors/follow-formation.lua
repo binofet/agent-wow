@@ -51,7 +51,83 @@ end
 -- Town planning and the finite service workers consult this export from the
 -- character's current accepted policy. Callers supply mechanically validated
 -- observed NPCs; this policy owns the search radius and destination order.
+local function inventory_maintenance(input)
+    local function uint(v,max) return number(v) and v>=0 and v<=max and v%1==0 end
+    local function array(rows,max)
+        if type(rows)~="table" or #rows>max then return false end
+        local n=0
+        for k in pairs(rows) do if not uint(k,max) or k<1 then return false end; n=n+1 end
+        return n==#rows
+    end
+    local function item(row)
+        return type(row)=="table" and uint(row.bag,4) and uint(row.slot,35) and identity(row.itemGuid)~=nil and
+            uint(row.entry,4294967295) and row.entry>0 and uint(row.stackCount,4294967295) and row.stackCount>0
+    end
+    if type(input.counts)~="table" or not uint(input.counts.equip,192) or not uint(input.counts.claim,192) or
+       not uint(input.counts.sell,192) or not array(input.emptyEquipmentSlots,4) or not array(input.bagCandidates,160) or
+       not array(input.saleCandidates,160) or not array(input.vendors,96) or type(input.vendorsKnown)~="boolean" or
+       type(input.mailAvailable)~="boolean" or type(input.freeGeneralSlot)~="boolean" or type(input.claimsOnly)~="boolean" or
+       type(input.vendorExplicit)~="boolean" then return {} end
+    local empty,seen
+    seen={}
+    for _,slot in ipairs(input.emptyEquipmentSlots) do
+        if not uint(slot,22) or slot<19 or seen[slot] then return {} end
+        seen[slot]=true
+        if not empty or slot<empty then empty=slot end
+    end
+    local function first(rows)
+        local best,seen=nil,{}
+        for _,row in ipairs(rows) do
+            if not item(row) or seen[row.itemGuid] then return nil,false end
+            seen[row.itemGuid]=true
+            if not best or row.bag<best.bag or row.bag==best.bag and row.slot<best.slot then best=row end
+        end
+        return best,true
+    end
+    local bag,bags_valid=first(input.bagCandidates)
+    local sale,sales_valid=first(input.saleCandidates)
+    if not bags_valid or not sales_valid then return {} end
+    seen={}
+    for _,candidate in ipairs(input.vendors) do
+        if type(candidate)~="table" or not identity(candidate.guid) or seen[candidate.guid] or
+           not number(candidate.distance) or candidate.distance<0 then return {} end
+        seen[candidate.guid]=true
+    end
+    local function finish(phase,reason) return {choice={kind="finish",phase=phase,reason=reason or ""}} end
+    -- One editable ordering, shared by the finite worker's planning/dispatch.
+    local priorities={"equip","claim","sell"}
+    for _,kind in ipairs(priorities) do
+        if kind=="equip" and empty and bag and input.counts.equip<4 then
+            return {choice={kind="equip",source=bag,equipmentSlot=empty}}
+        elseif kind=="claim" and input.mailAvailable and empty and input.freeGeneralSlot and input.counts.claim<4 then
+            return {choice={kind="claim"}}
+        elseif kind=="sell" and not input.claimsOnly and input.counts.sell<160 then
+            if not input.vendorsKnown then return {choice={kind="discover_sales"}} end
+            local vendors={}
+            if input.vendorExplicit then
+                if #input.vendors==1 then vendors={input.vendors[1].guid} end
+            else
+                -- Reuse the existing destination policy in this same accepted
+                -- source evaluation; do not carry a prior revision's ranking.
+                local ranked=M.service_destination({kind="vendor",scope="interactable",candidates=input.vendors})
+                vendors=type(ranked)=="table" and ranked.vendors or nil
+                if type(vendors)~="table" then return {} end
+            end
+            if #vendors==0 then return finish("blocked","no_actual_in_range_vendor_no_travel_attempted") end
+            if sale then return {choice={kind="sell",source=sale,vendorGuid=vendors[1]}} end
+        end
+    end
+    if input.claimsOnly then
+        if input.mailAvailable and empty and not input.freeGeneralSlot then
+            return finish("blocked","known_general_slot_for_bag_attachment_required")
+        end
+        return finish("complete","finite_bag_maintenance_finished")
+    end
+    if input.counts.sell<160 then return finish("complete","no_observed_safe_junk_sale") end
+    return finish("operation_limit")
+end
 function M.service_destination(input)
+    if type(input)=="table" and input.kind=="inventory_maintenance" then return inventory_maintenance(input) end
     if type(input)~="table" or (input.kind~="vendor" and input.kind~="trainer") or
        (input.scope~="nearby" and input.scope~="interactable" and input.scope~="travel") or
        type(input.candidates)~="table" or #input.candidates>97 then return {} end

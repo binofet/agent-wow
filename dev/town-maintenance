@@ -25,7 +25,7 @@ destination_policy = importlib.util.module_from_spec(_spec)
 _loader.exec_module(destination_policy)
 METHODS = {"buddy-inventory." + n for n in ("state", "discover", "move", "equip", "sell")} | {
     "buddy-mail.state", "buddy-mail.list", "buddy-mail.claim_bag_attachment", "session.policy_source", "session.attach"}
-TERMINAL = {"confirmed", "blocked", "server_rejected"}
+TERMINAL = {"confirmed", "blocked", "server_rejected", "not_dispatched"}
 PHASES = TERMINAL | {"reserved", "requested", "transport_unknown", "outcome_unconfirmed", "receipt_mismatch", "new_session_requires_review"}
 
 
@@ -239,6 +239,16 @@ class Journal(base.Journal):
                 normalized = claim_ref(req)
                 if set(req) != set(normalized):
                     raise Error("journal_bag_claim_fields_changed")
+            if row["phase"] == "not_dispatched":
+                proof = row.get("policyBinding", {})
+                if (row.get("localNotDispatched") is not True or row.get("receipt") is not None
+                        or not isinstance(proof, dict) or set(proof) != {"sessionId", "characterGuid", "revision", "generation"}
+                        or proof.get("sessionId") != req["sessionId"] or proof.get("characterGuid") != str(self.guid)
+                        or not isinstance(proof.get("revision"), str) or len(proof["revision"]) != 64
+                        or any(ch not in "0123456789abcdef" for ch in proof["revision"])
+                        or not str(proof.get("generation", "")).isdigit() or int(proof["generation"]) <= 0):
+                    raise Error("journal_local_no_dispatch_proof_required")
+                continue
             if row["phase"] in TERMINAL:
                 op = row.get("receipt")
                 if not isinstance(op, dict):
@@ -295,7 +305,7 @@ class Worker:
             raise Error("complete_exact_item_eligibility_required")
         return found[0]
 
-    def discovery(self, vendor_guid=None):
+    def discovery(self, vendor_guid=None, *, rank_policy=True):
         params = {} if vendor_guid is None else {"vendorGuid": str(positive(vendor_guid))}
         data = self.rpc.call("buddy-inventory.discover", params)
         state = checked_state(data.get("state"), self.guid)
@@ -319,9 +329,45 @@ class Worker:
                 vendors.append((d, g))
         # An explicit caller-selected destination stays exact. Convenience
         # selection uses the same current Lua export as standing town planning.
-        if vendor_guid is None and vendors:
+        if rank_policy and vendor_guid is None and vendors:
             vendors = rank_vendors(self.rpc, state, vendors, 'interactable')
         return state, vendors
+
+    def maintenance_choice(self, state, counts, mailbox_guid, claims_only, vendor_guid, vendors=None):
+        bags, slots = self.ready(state)
+        candidates = bag_candidates(state, slots)
+        sales = [ref(row["item"]) for row in state.get("items", []) if row.get("metadataKnown") is True
+            and row.get("safeJunkSaleEligible") is True and number(row.get("unitSellPriceCopper", 0)) > 0]
+        empty = [18+b for b in range(1, 5) if not number(bags[b].get("containerGuid", 0))]
+        facts = dict(counts=dict(counts), emptyEquipmentSlots=empty, bagCandidates=candidates, saleCandidates=sales,
+            mailAvailable=mailbox_guid is not None, claimsOnly=claims_only, vendorsKnown=vendors is not None,
+            vendorExplicit=vendor_guid is not None,
+            vendors=[dict(guid=str(guid), distance=distance) for distance, guid in vendors or []],
+            freeGeneralSlot=any(not number(item.get("itemGuid", 0)) and
+                (bag == 0 or number(bags[bag].get("entry", 0)) == 41599) for (bag, _), item in slots.items()))
+        try:
+            choice = destination_policy.inventory_maintenance(self.rpc, state, facts)
+        except destination_policy.Error as error:
+            raise Error(str(error)) from None
+        kind = choice.get("kind")
+        if kind not in ("equip", "claim", "discover_sales", "sell", "finish"):
+            raise Error("lua_inventory_priority_action_required")
+        if kind in ("equip", "sell"):
+            source = ref(choice.get("source"))
+            if source not in (candidates if kind == "equip" else sales):
+                raise Error("lua_inventory_source_must_match_current_native_eligibility")
+            if kind == "equip" and number(choice.get("equipmentSlot"), 22) not in empty:
+                raise Error("lua_inventory_destination_must_be_observed_empty_slot")
+            if kind == "sell":
+                selected = positive(choice.get("vendorGuid"))
+                if selected not in {guid for _, guid in vendors or []} or vendor_guid is not None and selected != positive(vendor_guid):
+                    raise Error("lua_inventory_vendor_must_be_current_exact_destination")
+        elif kind == "claim" and mailbox_guid is None or kind == "discover_sales" and vendors is not None:
+            raise Error("lua_inventory_action_must_match_available_service_scope")
+        elif kind == "finish" and (choice.get("phase") not in ("blocked", "complete", "operation_limit")
+                or not isinstance(choice.get("reason"), str) or len(choice["reason"]) > 120):
+            raise Error("lua_inventory_finish_state_required")
+        return choice
 
     def record(self, kind, request, **extra):
         if not self.journal or self.journal.lock is None or len(self.journal.data["attempts"]) >= 192:
@@ -406,15 +452,28 @@ class Worker:
         if not rows:
             return self.result("no_prior_operation")
         row = row or rows[-1]
+        if row["phase"] == "not_dispatched":
+            return self.result(row["phase"], row.get("reason", ""), requestId=row["requestId"])
         mail = self.rpc.call("buddy-mail.state", {}) if row["kind"] == "claim" else None
         return self.receipt(row, state, mail)
 
     def pending(self):
         return next((r for r in self.journal.data["attempts"] if r["phase"] not in TERMINAL), None)
 
-    def submit(self, kind, request, **extra):
+    def submit(self, kind, request, *, policy_binding=None, **extra):
+        if policy_binding is not None:
+            extra["policyBinding"] = copy.deepcopy(policy_binding)
         row = self.record(kind, request, **extra)
         method = "buddy-mail.claim_bag_attachment" if kind == "claim" else "buddy-inventory." + kind
+        if policy_binding is not None:
+            try:
+                destination_policy.verify_inventory_maintenance(self.rpc, policy_binding)
+            except (destination_policy.Error, Error) as error:
+                # The reservation is already durable, but no mutation RPC has
+                # entered. Never fabricate a native blocked/transport receipt.
+                row.update(phase="not_dispatched", localNotDispatched=True, reason=str(error))
+                self.journal.save()
+                return self.result(row["phase"], row["reason"], requestId=row["requestId"])
         try:
             result = self.rpc.call(method, request)
             state = self.state() if kind == "claim" else checked_state(result, self.guid)
@@ -424,7 +483,7 @@ class Worker:
             self.journal.save()
             return self.result(row["phase"], row["reason"], requestId=row["requestId"])
 
-    def mutation(self, kind, state=None, **options):
+    def mutation(self, kind, state=None, *, policy_binding=None, **options):
         if not self.journal or self.journal.lock is None:
             raise Error("locked_private_journal_required")
         pending = self.pending()
@@ -468,9 +527,9 @@ class Worker:
             extra["baselineCopper"] = number(state.get("copper", 0))
         else:
             raise Error("known_inventory_operation_required")
-        return self.submit(kind, req, **extra)
+        return self.submit(kind, req, policy_binding=policy_binding, **extra)
 
-    def claim_one(self, mailbox_guid):
+    def claim_one(self, mailbox_guid, *, policy_binding=None):
         if self.pending():
             return self.reconcile(self.pending())
         mailbox = positive(mailbox_guid)
@@ -525,7 +584,7 @@ class Worker:
         req = {"sessionId": state["sessionId"], "requestId": str(uuid.uuid4()), "listRevision": str(positive(mail.get("listRevision", 0))),
                "mailboxGuid": str(mailbox), "mailId": mid, "attachmentIndex": index, "itemGuidLow": low,
                "expectedCount": 1, "expectedInventoryRevision": str(positive(state["inventoryRevision"]))}
-        return self.submit("claim", req)
+        return self.submit("claim", req, policy_binding=policy_binding)
 
     def settle(self, result, deadline):
         for _ in range(10):
@@ -546,36 +605,29 @@ class Worker:
         for _ in range(169):
             if self.now() >= deadline:
                 return self.result("time_limit", operations=counts)
-            state = self.state(); bags, slots = self.ready(state)
-            empty = [b for b in range(1, 5) if not number(bags[b].get("containerGuid", 0))]
-            free = any(not number(i.get("itemGuid", 0)) and (b == 0 or number(bags[b].get("entry", 0)) == 41599) for (b, _), i in slots.items())
-            candidates = bag_candidates(state, slots)
-            kind = ""
-            if empty and candidates and counts["equip"] < 4:
-                source = min(candidates, key=lambda i: (i["bag"], i["slot"]))
-                result = self.mutation("equip", state=state, source_bag=source["bag"], source_slot=source["slot"], item_guid=source["itemGuid"], equipment_slot=18+min(empty)); kind = "equip"
-            elif mailbox_guid and empty and free and counts["claim"] < 4:
-                result = self.claim_one(mailbox_guid)
-                if result["phase"] != "complete":
-                    kind = "claim"
-                else:
+            state = self.state()
+            choice = self.maintenance_choice(state, counts, mailbox_guid, claims_only, vendor_guid)
+            if choice["kind"] == "discover_sales":
+                state, vendors = self.discovery(vendor_guid, rank_policy=False)
+                choice = self.maintenance_choice(state, counts, mailbox_guid, claims_only, vendor_guid, vendors)
+            kind = choice["kind"]
+            if kind == "equip":
+                source = ref(choice["source"])
+                result = self.mutation("equip", state=state, source_bag=source["bag"], source_slot=source["slot"],
+                    item_guid=source["itemGuid"], equipment_slot=choice["equipmentSlot"], policy_binding=choice["policyBinding"])
+            elif kind == "claim":
+                result = self.claim_one(mailbox_guid, policy_binding=choice["policyBinding"])
+                if result["phase"] == "complete":
                     mailbox_guid = None
                     continue
-            elif claims_only:
-                if mailbox_guid and empty and not free:
-                    return self.result("blocked", "known_general_slot_for_bag_attachment_required", operations=counts)
-                return self.result("complete", "finite_bag_maintenance_finished", operations=counts)
-            elif counts["sell"] < 160:
-                state, vendors = self.discovery(vendor_guid)
-                if not vendors:
-                    return self.result("blocked", "no_actual_in_range_vendor_no_travel_attempted", operations=counts)
-                safe = [i for i in state.get("items", []) if i.get("metadataKnown") is True and i.get("safeJunkSaleEligible") is True and number(i.get("unitSellPriceCopper", 0)) > 0]
-                if not safe:
-                    return self.result("complete", "no_observed_safe_junk_sale", operations=counts)
-                source = min((ref(i["item"]) for i in safe), key=lambda i: (i["bag"], i["slot"]))
-                result = self.mutation("sell", state=state, source_bag=source["bag"], source_slot=source["slot"], item_guid=source["itemGuid"], vendor_guid=vendors[0][1]); kind = "sell"
+            elif kind == "sell":
+                source = ref(choice["source"])
+                result = self.mutation("sell", state=state, source_bag=source["bag"], source_slot=source["slot"],
+                    item_guid=source["itemGuid"], vendor_guid=choice["vendorGuid"], policy_binding=choice["policyBinding"])
+            elif kind == "finish":
+                return self.result(choice["phase"], choice["reason"], operations=counts)
             else:
-                return self.result("operation_limit", operations=counts)
+                raise Error("lua_inventory_priority_must_settle_after_discovery")
             counts[kind] += 1
             result = self.settle(result, min(deadline, self.now()+12))
             if result["phase"] != "confirmed":
