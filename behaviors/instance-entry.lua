@@ -1,5 +1,6 @@
 -- An explicit owner destination is intent, never an owner-location witness.
 -- This frame belongs to encounter-tasks' existing checkpoint/action ledger.
+local pi=3.141592653589793
 local M={tuning={lease_ms=30000,renew_below_ms=28000,regroup_yards=20,inward_margin=.25}}
 local function finite(n) return type(n)=="number" and n==n and n>-math.huge and n<math.huge end
 local function uint(n) return finite(n) and n>=0 and n<=4294967295 and n==math.floor(n) end
@@ -39,7 +40,7 @@ function M.request(v,observed)
        observed.mapId==v.destinationMapId or v.sessionId~=nil and v.sessionId~=observed.sessionId or
        v.selfGuid~=nil and v.selfGuid~=observed.selfGuid or v.visitId~=nil and v.visitId~=observed.visitId then return end
     if v.startRecovery~=nil and (type(v.startRecovery)~="table" or not finite(v.startRecovery.absoluteBearingRadians) or
-       math.abs(v.startRecovery.absoluteBearingRadians)>math.pi or not uint(v.startRecovery.durationMs) or
+       math.abs(v.startRecovery.absoluteBearingRadians)>pi or not uint(v.startRecovery.durationMs) or
        v.startRecovery.durationMs<1 or v.startRecovery.durationMs>500) then return end
     if v.routeGoal~=nil and not point(v.routeGoal) then return end
     local task={id=v.id,kind="enter_instance",ownerGuid=v.ownerGuid,destinationMapId=v.destinationMapId,
@@ -134,10 +135,6 @@ function M.on_event(task,event)
             task.uncertain=op;task.history[#task.history+1]={operation=op,receipt=receipt};task.error="travel_effect_unconfirmed";return
         end
         task.route=nil;task.actions=r;task.stage="refresh";task.afterRefresh="prepare"
-    elseif op.capability=="movement_owner" then
-        if op.mode=="release" then task.movementToken=nil
-        elseif r and type(r.token)=="string" and r.token~="" then task.movementToken=r.token
-        else task.uncertain=op;task.error="recovery_movement_reply_unbound" end
     elseif op.capability=="move_body" then
         if p.transport_written~=true or p.phase~="body_input_written" and p.phase~="body_settled_written" then
             task.uncertain=op;task.history[#task.history+1]={operation=op,receipt=receipt};task.error="body_recovery_write_unconfirmed";return
@@ -199,13 +196,10 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
     if obs.sessionId~=task.sessionId or obs.selfGuid~=task.selfGuid then
         task.finishing="body_changed";return view(task,"body_changed_custody_retained")
     end
+    local self=(obs.players or {})[obs.selfGuid]
+    if self and self.aliveKnown==true and self.alive==false then task.finishing=task.finishing or "dead" end
     if task.operation then return view(task,"waiting_for_"..task.operation.capability) end
     if task.uncertain then return view(task,"reconcile_"..task.uncertain.capability) end
-    local movement=(obs.navigation or {}).movementOwner
-    if task.movementToken and type(movement)=="table" and type(movement.active)=="boolean" and
-       (movement.active==false or movement.owner~="task:"..task.id) then
-        task.lastMovementToken=task.movementToken;task.movementToken=nil
-    end
     if task.notifyId and not task.destinationVisit and not (task.native and task.native.notDispatched==true) then
         return propose("observing_trigger_delivery",request(task,obs,"area_trigger_observation"))
     end
@@ -213,14 +207,14 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
         if obs.visitId~=task.destinationVisit or obs.mapId~=task.destinationMapId then return view(task,"waiting_for_destination_observation") end
         local a,done=cleanup(task,obs)
         if not done then return propose("reconciling_old_visit_custody",a) end
-        if regroup(task,obs) then task.finishing=task.finishing or "regroup_observed";return {task=task,done=true,status={id=task.id,kind=task.kind,phase="complete",reason=task.finishing}} end
-        return view(task,"waiting_for_fresh_owner_regroup")
+        if task.finishing or regroup(task,obs) then task.finishing=task.finishing or "regroup_observed";return {task=task,done=true,status={id=task.id,kind=task.kind,phase="complete",reason=task.finishing}} end
+        local waiting=view(task,"waiting_for_fresh_owner_regroup")
+        -- The crossing and parent cleanup are observed. Resume the unchanged
+        -- normal follow intent while separately awaiting defensible regroup.
+        waiting.hold=false
+        return waiting
     end
     if obs.visitId~=task.visitId or obs.mapId~=task.mapId then return view(task,"unlinked_visit_change_custody_retained") end
-    if (task.finishing or in_combat or task.blocked) and task.movementToken then
-        local a=request(task,obs,"movement_owner");a.mode="release";a.owner="task:"..task.id;a.token=task.movementToken
-        return propose("releasing_finite_recovery_movement",a)
-    end
     if task.finishing or in_combat then
         local a,done=cleanup(task,obs)
         if not done then return propose("reconciling_entry_custody",a) end
@@ -243,35 +237,17 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
     local owner=state.interactionOwner or "";local ms=tonumber(state.interactionLeaseRemainingMs or "0")
     if owner~="" and (owner~="exploration" or not task.token) then return view(task,"foreign_interaction_custody") end
     if owner=="" and task.token then task.error="owned_lease_lapsed";task.blocked=true;return view(task,"owned_lease_lapsed") end
-    if task.startRecovery and not task.recoveryDone then
-        if task.token then return propose("releasing_custody_before_body_recovery",release(task,obs)) end
-        local owner=(obs.navigation or {}).movementOwner or {}
-        if owner.active==true and owner.owner~="task:"..task.id then return view(task,"foreign_recovery_movement_owner") end
-        if not task.movementToken then
-            if owner.active==true then return view(task,"recovery_movement_token_unavailable") end
-            local a=request(task,obs,"movement_owner");a.mode="acquire";a.owner="task:"..task.id;a.leaseMs=3000
-            return propose("acquiring_finite_recovery_movement",a)
-        end
-        local remaining=tonumber(owner.remainingMs or "0")
-        if owner.active~=true or not remaining or remaining<1500 then
-            local a=request(task,obs,"movement_owner");a.mode="renew";a.owner="task:"..task.id;a.token=task.movementToken;a.leaseMs=3000
-            return propose("renewing_finite_recovery_movement",a)
-        end
-        local self=(obs.players or {})[obs.selfGuid]
-        if not self or not finite(self.orientation) then return view(task,"actual_orientation_required_for_recovery") end
-        local bearing=task.startRecovery.absoluteBearingRadians-self.orientation
-        while bearing>math.pi do bearing=bearing-2*math.pi end
-        while bearing< -math.pi do bearing=bearing+2*math.pi end
-        local a=request(task,obs,"move_body");a.bearingRadians=bearing;a.durationMs=task.startRecovery.durationMs;a.jump=false
-        a.sequenceId=sequence;return propose("executing_explicit_measured_start_recovery",a)
-    end
-    if task.movementToken and task.recoveryDone then
-        local a=request(task,obs,"movement_owner");a.mode="release";a.owner="task:"..task.id;a.token=task.movementToken
-        return propose("releasing_finite_recovery_movement",a)
-    end
     if not task.token or not ms or ms<=M.tuning.renew_below_ms then
         local a=request(task,obs,"acquire_idle_interaction");a.owner="exploration";a.token=task.token;a.leaseMs=M.tuning.lease_ms
         task.afterLease=task.stage;return propose(task.token and "renewing_entry_custody" or "acquiring_entry_custody",a)
+    end
+    if task.startRecovery and not task.recoveryDone then
+        local self=(obs.players or {})[obs.selfGuid]
+        if not self or not finite(self.orientation) then return view(task,"actual_orientation_required_for_recovery") end
+        local bearing=(task.startRecovery.absoluteBearingRadians-self.orientation+pi)%(2*pi)-pi
+        local a=request(task,obs,"move_body");a.bearingRadians=bearing;a.durationMs=task.startRecovery.durationMs;a.jump=false
+        a.sequenceId=sequence;a.idleToken=task.token
+        return propose("executing_explicit_measured_start_recovery",a)
     end
     if contains(task.volume,p) then
         local a=request(task,obs,"notify_area_trigger");a.token=task.token;a.triggerId=task.volume.triggerId

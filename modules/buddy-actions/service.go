@@ -186,6 +186,7 @@ type Service struct {
 	flightpath                           flightpathTracker
 	flightpathActivation                 flightpathActivationTracker
 	areaTrigger                          areaTriggerTracker
+	idleMotion                           *idleMotionScope
 }
 
 func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
@@ -269,7 +270,7 @@ func (s *Service) expireInteractionLocked() {
 	if s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
 		// An approach must stop before its expired lease can be discarded.
 		// Tick owns the bounded transport write; status remains read-only.
-		if s.state.Moving || s.state.InteractionHarvest && s.state.MotionUnconfirmed {
+		if s.state.Moving || s.state.MotionUnconfirmed && (s.state.InteractionHarvest || s.idleInteraction.token != "" && s.idleInteraction.token == s.interactionToken) {
 			return
 		}
 		s.state.InteractionOwner = ""
@@ -829,7 +830,27 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 	if len(scopes) != 0 && scopes[0] != nil {
 		request.TransportScope = proto.Clone(scopes[0]).(*modv1.TransportScope)
 	}
+	motion, _ := ctx.Value(idleMotionScopeKey{}).(*idleMotionScope)
+	if motion != nil {
+		scope, err := s.idleMotionBeforeWriteLocked(ctx, motion, op, payload)
+		if err != nil {
+			if motion.writes > 0 {
+				motion.broken = true
+				s.state.MotionUnconfirmed = true
+			}
+			s.lastTransportError = err
+			s.state.LastTransportFailure = &actionsv1.TransportFailure{Sequence: s.transportSequence, Opcode: op, Error: err.Error(), OutcomeUnknown: false}
+			return err
+		}
+		request.TransportScope = scope
+		s.idleMotion = motion
+		motion.lastOpcode, motion.lastPayload = op, append([]byte(nil), payload...)
+	}
 	if _, err := s.session.SendPacket(sendCtx, request); err != nil {
+		if motion != nil && (!modcb.PacketWasNotDispatched(err) || motion.writes > 0) {
+			motion.broken = true
+			s.state.MotionUnconfirmed = true
+		}
 		s.lastTransportError = err
 		s.state.LastTransportFailure = &actionsv1.TransportFailure{Sequence: s.transportSequence, Opcode: op, Error: err.Error(), OutcomeUnknown: !modcb.PacketWasNotDispatched(err)}
 		s.state.Reason = "transport_error_outcome_unconfirmed"
@@ -839,6 +860,13 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 	}
 
 	s.state.TransportWrites++
+	if motion != nil {
+		if err := s.idleMotionAfterWriteLocked(ctx, motion, op, payload); err != nil {
+			s.lastTransportError = err
+			s.state.NavReason = boundedPolicyDiagnostic("packet written; source report unavailable: "+err.Error(), 240)
+			return err
+		}
+	}
 	return nil
 }
 
@@ -975,6 +1003,26 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	if snapshotErr == nil && w.Self.AliveKnown && w.Self.Alive && w.Self.MovementFlagsKnown {
 		passive = w.Self.MovementFlags & movementflags.PassiveModifiers
 	}
+	if !moving && op == opcode.MSGMoveStop && s.state.InteractionOwner == "exploration" && s.idleInteraction.token != "" && s.idleInteraction.token == s.interactionToken {
+		_, portalStop := ctx.Value(portalStopGuardKey{}).(portalStopAdmission)
+		if !portalStop {
+			if scope, ok := ctx.Value(idleMotionScopeKey{}).(*idleMotionScope); ok && scope != nil {
+				cleanup := *scope
+				cleanup.cleanupOnly = true
+				ctx = context.WithValue(ctx, idleMotionScopeKey{}, &cleanup)
+			} else {
+				if snapshotErr != nil || p != s.pos {
+					return false
+				}
+				scope, err := s.newIdleMotionScopeLocked(ctx, s.interactionToken, w, true)
+				if err != nil {
+					s.state.Reason = "idle_cleanup_source_unavailable"
+					return false
+				}
+				ctx = context.WithValue(ctx, idleMotionScopeKey{}, scope)
+			}
+		}
+	}
 	var payload []byte
 	isSwimming := swim != nil && swim.wet
 	if !moving && op == opcode.MSGMoveStop {
@@ -1050,6 +1098,9 @@ func (s *Service) stopLocked(ctx context.Context) bool {
 		// competing request has not written anything and cannot make it unknown.
 		s.state.Reason = "bounded_body_input_active"
 		return false
+	}
+	if s.idleInteraction.token != "" && s.state.MotionUnconfirmed {
+		s.observeIdleMotionStoppedLocked(ctx)
 	}
 	// Corrections can coincide with an unsafe owner/self movement flag. Those
 	// paths stop before normal follow position refresh, so rebase here too.

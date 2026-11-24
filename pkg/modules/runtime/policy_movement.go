@@ -6,9 +6,14 @@ import (
 	"math"
 	"math/bits"
 	"strconv"
+	"strings"
 
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	moddisc "github.com/agent-wow/agent-wow/pkg/modules/discovery"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
@@ -18,13 +23,15 @@ import (
 )
 
 type policyMovement struct {
-	self     uint64
-	stop     bool
-	body     bool
-	jump     bool
-	sequence uint64
-	phase    string
-	detail   string
+	self      uint64
+	stop      bool
+	body      bool
+	jump      bool
+	idleBound bool
+	unknown   bool
+	sequence  uint64
+	phase     string
+	detail    string
 }
 
 func (p *SessionPolicy) resolveBodyMovement(action map[string]any) (PolicyDispatch, error) {
@@ -49,8 +56,28 @@ func (p *SessionPolicy) resolveBodyMovement(action map[string]any) (PolicyDispat
 		"visit_id": protoreflect.ValueOfUint64(visitID), "sequence_id": protoreflect.ValueOfUint64(sequenceID),
 		"bearing_radians": protoreflect.ValueOfFloat32(float32(bearing)), "duration_ms": protoreflect.ValueOfUint32(uint32(duration)), "jump": protoreflect.ValueOfBool(jump),
 	}
+	if raw, supplied := action["idleToken"]; supplied {
+		token, ok := raw.(string)
+		if !ok || token == "" || len(token) > 128 || strings.TrimSpace(token) != token {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact bounded idle interaction token required")
+		}
+		_, method, err := p.manager.lookup(actionsModule, "move_body", true)
+		if err != nil {
+			return PolicyDispatch{}, err
+		}
+		field := method.Descriptor().Input().Fields().ByName("idle_token")
+		// An absent or retagged binding could be ignored by the native server,
+		// accidentally invoking its legacy tokenless path instead.
+		if method.Path() != actionsv1.BuddyActions_MoveBody_FullMethodName ||
+			method.Descriptor().Input().FullName() != (&actionsv1.BodyMovementRequest{}).ProtoReflect().Descriptor().FullName() ||
+			field == nil || field.Number() != 8 || field.Kind() != protoreflect.StringKind || field.IsList() || field.IsMap() {
+			return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "installed body input lacks the exact idle interaction binding")
+		}
+		values["idle_token"] = protoreflect.ValueOfString(token)
+	}
 	op := &policySpell{vm: p.vm, capability: "move_body", encounterVisit: visitID,
 		movement: &policyMovement{self: selfID, body: true, jump: jump, sequence: sequenceID}}
+	_, op.movement.idleBound = action["idleToken"]
 	dispatch, err := p.preparePolicyDispatch("move_body", values, op)
 	if err == nil {
 		dispatch.spell = nil
@@ -95,11 +122,48 @@ func (m *Manager) invokePolicyMovement(ctx context.Context, inst *instance, md m
 	outcome, payload := m.invokePolicySpell(ctx, inst, md, req, op)
 	m.policySpells.mu.Lock()
 	delete(m.policySpells.active, op.token)
+	if (op.movement.idleBound || op.capability == "release_interaction") && op.movement.unknown {
+		payload["reconciliationRequired"] = true
+	}
 	m.policySpells.mu.Unlock()
 	if outcome == behavior.ActionTransportAccepted || outcome == behavior.ActionUnknown {
 		outcome = behavior.ActionSettledUnverified
 	}
 	return outcome, payload
+}
+
+// Only a native idle-bound body/travel invocation may supply these scopes.
+// Lua chooses the input, never a transport scope or an unscoped fallback.
+func (m *Manager) writePolicyScopedMovement(ctx context.Context, token, sessionID, module string, code uint32, payload []byte, scope *modv1.TransportScope) (bool, error) {
+	registry := &m.policySpells
+	registry.mu.Lock()
+	op := registry.active[token]
+	if op == nil || op.movement == nil || !op.movement.idleBound && !(op.capability == "release_interaction" && op.movement.stop) {
+		registry.mu.Unlock()
+		return false, nil
+	}
+	movement := op.movement
+	allowed := movement.idleBound && (op.capability == "move_body" && movement.body || op.capability == "travel_to" && !movement.body) ||
+		op.capability == "release_interaction" && movement.stop
+	if !op.admitted || !allowed ||
+		op.origin.Writer != "lua" || op.origin.ActionID == "" || op.origin.SessionID != sessionID || op.origin.Module != module || module != actionsModule ||
+		movement.unknown || scope == nil || scope.ConnectionId == "" || !scope.VisitBound || scope.VisitRevision == 0 || scope.MotionRevision == 0 || scope.SelfGuid != movement.self ||
+		!op.matchesMovementPacket(code, payload) || ctx.Err() != nil || m.session.SendScopedPacket == nil {
+		registry.mu.Unlock()
+		return true, modcb.PacketNotDispatchedError("scoped callback is outside the exact idle movement dispatch")
+	}
+	op.attempted = true
+	origin := op.origin
+	registry.mu.Unlock()
+	err := m.session.SendScopedPacket(modsession.WithWriteOrigin(ctx, origin), code, append([]byte(nil), payload...), proto.Clone(scope).(*modv1.TransportScope))
+	registry.mu.Lock()
+	movement.unknown = movement.unknown || err != nil && !modcb.PacketWasNotDispatched(err)
+	op.written = op.written || err == nil
+	if modcb.PacketWasNotDispatched(err) && !op.written && !movement.unknown {
+		op.attempted = false
+	}
+	registry.mu.Unlock()
+	return true, err
 }
 
 func (op *policySpell) movementPayload(phase string, written bool) map[string]any {

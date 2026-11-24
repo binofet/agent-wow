@@ -147,6 +147,16 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		}
 		return nil, nil
 	}
+	if s.idleInteraction.token != "" {
+		scope, err := s.newIdleMotionScopeLocked(call, token, s.lastWorld, false)
+		if err != nil {
+			s.state.Reason = "exploration_idle_scope_unavailable"
+			s.mu.Unlock()
+			return nil, nil
+		}
+		ctx = context.WithValue(ctx, idleMotionScopeKey{}, scope)
+		call = context.WithValue(call, idleMotionScopeKey{}, scope)
+	}
 	from, revision, root := s.pos, s.positionRevision, s.navDataDir
 	if distance(from, to) > 200 {
 		s.state.Reason = "exploration_destination_exceeds_200_yards"

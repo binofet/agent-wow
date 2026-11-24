@@ -7491,8 +7491,11 @@ type BodyMovementRequest struct {
 	BearingRadians float32                `protobuf:"fixed32,5,opt,name=bearing_radians,json=bearingRadians,proto3" json:"bearing_radians,omitempty"`
 	// Positive ground input hold time, at most 500ms. An unsupported start settles
 	// under normal gravity before a subsequent input can step or jump.
-	DurationMs    uint32 `protobuf:"varint,6,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
-	Jump          bool   `protobuf:"varint,7,opt,name=jump,proto3" json:"jump,omitempty"`
+	DurationMs uint32 `protobuf:"varint,6,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	Jump       bool   `protobuf:"varint,7,opt,name=jump,proto3" json:"jump,omitempty"`
+	// Optional exact parent-owned AcquireIdleInteraction lease. No legacy
+	// acquisition or movement-ownership side effect is implied.
+	IdleToken     string `protobuf:"bytes,8,opt,name=idle_token,json=idleToken,proto3" json:"idle_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7574,6 +7577,13 @@ func (x *BodyMovementRequest) GetJump() bool {
 		return x.Jump
 	}
 	return false
+}
+
+func (x *BodyMovementRequest) GetIdleToken() string {
+	if x != nil {
+		return x.IdleToken
+	}
+	return ""
 }
 
 type BodyMovementState struct {
@@ -14022,7 +14032,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2(.warcraftbuddy.actions.v1.EncounterSpellR\x05value:\x028\x01B\t\n" +
 	"\a_map_idB\r\n" +
 	"\v_host_ownedB\x11\n" +
-	"\x0f_host_requested\"\xeb\x01\n" +
+	"\x0f_host_requested\"\x8a\x02\n" +
 	"\x13BodyMovementRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -14033,7 +14043,9 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0fbearing_radians\x18\x05 \x01(\x02R\x0ebearingRadians\x12\x1f\n" +
 	"\vduration_ms\x18\x06 \x01(\rR\n" +
 	"durationMs\x12\x12\n" +
-	"\x04jump\x18\a \x01(\bR\x04jump\"\x83\x02\n" +
+	"\x04jump\x18\a \x01(\bR\x04jump\x12\x1d\n" +
+	"\n" +
+	"idle_token\x18\b \x01(\tR\tidleToken\"\x83\x02\n" +
 	"\x11BodyMovementState\x12\x1f\n" +
 	"\vsequence_id\x18\x01 \x01(\x04R\n" +
 	"sequenceId\x12\x19\n" +

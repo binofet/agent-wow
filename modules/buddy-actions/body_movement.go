@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
 	"math"
@@ -15,8 +16,21 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
+
+// The optional parent lease permits this one normal body input while retaining
+// its exact already-admitted idle custody. It does not acquire, renew, release
+// or call the generic idle guard while its own physical movement is active.
+func (s *Service) bodyIdleLeaseCurrentLocked(r *actionsv1.BodyMovementRequest, now time.Time) bool {
+	b := s.idleInteraction
+	return r.IdleToken != "" && !s.closed && s.sessionID == r.SessionId && s.selfGUID == r.SelfGuid &&
+		s.encounterVisit.bound && s.encounterVisit.revision == r.VisitId && s.state.InteractionOwner == "exploration" &&
+		!s.state.InteractionHarvest && len(s.state.HarvestGuardGuids) == 0 && s.interactionUntil.Sub(now) >= time.Second &&
+		subtle.ConstantTimeCompare([]byte(r.IdleToken), []byte(s.interactionToken)) == 1 &&
+		b.sessionID == r.SessionId && b.selfGUID == r.SelfGuid && b.visit == r.VisitId && b.token == r.IdleToken
+}
 
 // MoveBody executes one caller-selected input. It neither chooses a direction
 // nor retries a failed route. Local physical proof does not call FindPath.
@@ -24,10 +38,12 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetVisitId() == 0 || r.GetSequenceId() == 0 ||
+		len(r.GetIdleToken()) > 128 ||
 		math.IsNaN(float64(r.BearingRadians)) || math.IsInf(float64(r.BearingRadians), 0) || math.Abs(float64(r.BearingRadians)) > math.Pi+.001 ||
 		!r.Jump && (r.DurationMs == 0 || r.DurationMs > 500) {
 		return nil, status.Error(codes.InvalidArgument, "current body, visit, sequence and bounded relative input required")
 	}
+	r = proto.Clone(r).(*actionsv1.BodyMovementRequest)
 	token, supplied := modcb.IncomingPolicySpell(ctx)
 	var decoded [32]byte
 	if n, err := hex.Decode(decoded[:], []byte(token)); !supplied || err != nil || n != len(decoded) || hex.EncodeToString(decoded[:]) != token {
@@ -41,7 +57,8 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	w, err := s.snapshot(ctx)
 	if err != nil || !s.matchesCurrentEncounterVisitLocked(w) || r.VisitId != s.encounterVisit.revision || !s.admitsPolicyEncounterLocked(ctx, w) ||
 		safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) || s.clientControlLost || s.clientControlRestoring || s.state.MotionUnconfirmed ||
-		s.state.CastPending || s.state.Traveling || s.state.InteractionOwner != "" || s.recovery.state.Active ||
+		s.state.CastPending || s.state.Traveling || r.IdleToken == "" && s.state.InteractionOwner != "" ||
+		r.IdleToken != "" && !s.bodyIdleLeaseCurrentLocked(r, s.now()) || s.recovery.state.Active ||
 		!w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) ||
 		r.Jump && w.Self.MovementFlags&0x20000000 != 0 {
 		return nil, status.Error(codes.FailedPrecondition, "current controllable ground body and its Lua writer required")
@@ -55,6 +72,16 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	}
 	view := &actionsv1.BodyMovementState{SequenceId: r.SequenceId, VisitId: r.VisitId, Phase: "checking_local_physics"}
 	s.state.BodyMovement = view
+	var motion *idleMotionScope
+	if r.IdleToken != "" {
+		ctx = modcb.ForwardPolicySpell(ctx)
+		motion, err = s.newIdleMotionScopeLocked(ctx, r.IdleToken, w, false)
+		if err != nil {
+			view.Phase, view.Detail = "body_scope_not_dispatched", boundedPolicyDiagnostic(err.Error(), 240)
+			return s.stateLocked(), nil
+		}
+		ctx = context.WithValue(ctx, idleMotionScopeKey{}, motion)
+	}
 	from, revision, mapID := s.pos, s.positionRevision, s.posMap
 	bearing := float64(from.o) + float64(r.BearingRadians)
 	plan := s.bodyMotionPlan
@@ -105,7 +132,12 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	valid := func() bool {
 		fresh, e := s.snapshot(ctx)
 		owner := s.hostEncounterKey == "" || s.trustedEncounterHostLocked(ctx) && s.hostEncounterVisit == r.VisitId && s.hostEncounterEpoch == ownerEpoch
-		if e != nil || s.closed || !owner || !s.matchesCurrentEncounterVisitLocked(fresh) || fresh.VisitRevision != r.VisitId ||
+		leaseCurrent := true
+		if r.IdleToken != "" {
+			now := s.now()
+			leaseCurrent = s.bodyIdleLeaseCurrentLocked(r, now) && s.idleMotionCurrentLocked(motion, fresh, now)
+		}
+		if e != nil || s.closed || !owner || !leaseCurrent || !s.matchesCurrentEncounterVisitLocked(fresh) || fresh.VisitRevision != r.VisitId ||
 			fresh.Self.PositionRevision != revision || fresh.Self.MapId != mapID ||
 			safeSelfCombat(fresh, s.selfGUID) != "" || s.clientControlLost || s.clientControlRestoring {
 			if s.state.Moving && (e != nil || fresh.GetSelf().GetPositionRevision() == revision) {
@@ -144,8 +176,23 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 			stamp = motionClock + uint32(elapsed/time.Millisecond)
 		}
 		packet := bodyMovementPacket(s.selfGUID, stamp, p, passive, elapsed, bearing, horizontalSpeed, verticalSpeed, falling, moving)
-		if _, e := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: code, Payload: packet}); e != nil {
+		var sendErr error
+		if motion != nil {
+			sendErr = s.sendPacketLocked(ctx, code, packet)
+		} else {
+			_, sendErr = s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: code, Payload: packet})
+		}
+		if sendErr != nil {
+			if motion != nil && motion.writes == 0 && modcb.PacketWasNotDispatched(sendErr) {
+				view.Phase, view.Detail = "body_scope_not_dispatched", boundedPolicyDiagnostic(sendErr.Error(), 240)
+				return false
+			}
 			view.Phase, s.state.MotionUnconfirmed = "transport_unconfirmed_no_retry", true
+			if motion != nil {
+				view.Phase = "body_scope_unconfirmed_no_retry"
+				view.TransportWritten = motion.writes > 0
+			}
+			view.Detail = boundedPolicyDiagnostic(sendErr.Error(), 240)
 			s.publishClientMovementLocked(ctx, nil, p, false)
 			return false
 		}
@@ -154,7 +201,9 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 			motionClock = stamp
 		}
 		view.X, view.Y, view.Z = p.x, p.y, p.z
-		s.state.TransportWrites++
+		if motion == nil {
+			s.state.TransportWrites++
+		}
 		s.pos, s.posEstimated, s.posAt, s.state.Moving = p, true, s.now(), moving || falling
 		s.posRevision++
 		s.publishClientMovementLocked(ctx, w, p, true)

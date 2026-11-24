@@ -38,6 +38,10 @@ func newInstanceEntryFixture(t *testing.T) *instanceEntryFixture {
 	t.Helper()
 	m, _, cb := friendlyEncounterManager(t)
 	x := &instanceEntryFixture{m: m, callback: cb}
+	m.session.SendScopedPacket = func(_ context.Context, code uint32, body []byte, scope *modv1.TransportScope) error {
+		cb.writes = append(cb.writes, &modv1.SendPacketRequest{Opcode: code, Payload: append([]byte(nil), body...), TransportScope: proto.Clone(scope).(*modv1.TransportScope)})
+		return nil
+	}
 	original := m.instances[actionsModule].conn
 	// These typed, synthetic boundary replies test the Runtime adapter. Native
 	// admission, physical writes and observed map entry have separate tests.
@@ -304,7 +308,10 @@ func TestPolicyInstanceEntryPacketWhitelistAndRetiredTravelToken(t *testing.T) {
 		x.handle = func(ctx context.Context, _ string, _, _ proto.Message) error {
 			incoming := instanceEntryIncoming(ctx)
 			token, _ = modcb.IncomingPolicySpell(incoming)
-			if err := x.m.modulePacketWriter(friendlyEncounterSession, actionsModule)(incoming, opcode.MSGMoveStartForward, policyMovementPacket(22)); err != nil {
+			if err := x.m.modulePacketWriter(friendlyEncounterSession, actionsModule)(incoming, opcode.MSGMoveStartForward, policyMovementPacket(22)); !modcb.PacketWasNotDispatched(err) {
+				t.Fatal("typed idle travel used unscoped movement", err)
+			}
+			if err := x.m.moduleScopedPacketWriter(friendlyEncounterSession, actionsModule)(incoming, opcode.MSGMoveStartForward, policyMovementPacket(22), instanceEntryScope()); err != nil {
 				t.Fatal("normal own travel movement refused", err)
 			}
 			return status.Error(codes.DeadlineExceeded, "synthetic canceled travel reply")
@@ -323,7 +330,7 @@ func TestPolicyInstanceEntryPacketWhitelistAndRetiredTravelToken(t *testing.T) {
 		x := newInstanceEntryFixture(t)
 		x.handle = func(ctx context.Context, _ string, _, result proto.Message) error {
 			incoming := instanceEntryIncoming(ctx)
-			if err := x.m.modulePacketWriter(friendlyEncounterSession, actionsModule)(incoming, opcode.MSGMoveStartForward, policyMovementPacket(22)); err != nil {
+			if err := x.m.moduleScopedPacketWriter(friendlyEncounterSession, actionsModule)(incoming, opcode.MSGMoveStartForward, policyMovementPacket(22), instanceEntryScope()); err != nil {
 				t.Fatal("normal own travel START refused", err)
 			}
 			// A native nil-error return after an uncertain owed STOP retains

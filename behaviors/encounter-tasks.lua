@@ -22,7 +22,8 @@ end
 local function finish(task,reason) task.finishing=task.finishing or reason end
 local function pop(task)
     state.last={id=task.id,kind=task.kind,phase="complete",reason=task.finishing}
-    state.retired[task.id]=task.finishing
+    if task.kind=="enter_instance" then state.retired[task.id]={reason=task.finishing,task=task}
+    else state.retired[task.id]=task.finishing end
     state.current=nil
 end
 local function request(v)

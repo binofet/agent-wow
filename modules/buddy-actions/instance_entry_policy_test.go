@@ -47,6 +47,7 @@ func newInstanceEntryPolicyFixture(t *testing.T) *instanceEntryPolicyFixture {
 	}
 	f.party.Group.GroupGuid, f.party.Group.LeaderGuid = 7, 3
 	activateEncounterWriter(t, s, f)
+	s.session = &idleBodyReportSession{sessionAPI: s.session, f: f}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, "python3", "-B", filepath.Join("..", "..", "dev", "encounter-bundle"))
@@ -121,6 +122,12 @@ func instanceEntryPolicyJSON(t *testing.T, value proto.Message) map[string]any {
 }
 
 func (p *instanceEntryPolicyFixture) currentTask() map[string]any {
+	state := p.taskState()
+	task, _ := state["current"].(map[string]any)
+	return task
+}
+
+func (p *instanceEntryPolicyFixture) taskState() map[string]any {
 	p.t.Helper()
 	s, err := p.vm.State(context.Background())
 	if err != nil {
@@ -129,8 +136,7 @@ func (p *instanceEntryPolicyFixture) currentTask() map[string]any {
 	data, _ := s.Checkpoint["data"].(map[string]any)
 	tasks, _ := data["tasks"].(map[string]any)
 	state, _ := tasks["data"].(map[string]any)
-	task, _ := state["current"].(map[string]any)
-	return task
+	return state
 }
 
 func (p *instanceEntryPolicyFixture) action(capability string) map[string]any {
@@ -201,7 +207,7 @@ func (p *instanceEntryPolicyFixture) native(action map[string]any) proto.Message
 		}
 	case "move_body":
 		r := &actionsv1.BodyMovementRequest{}
-		instanceEntryPolicyDecode(p.t, action, r, "sessionId", "selfGuid", "visitId", "sequenceId", "bearingRadians", "durationMs", "jump")
+		instanceEntryPolicyDecode(p.t, action, r, "sessionId", "selfGuid", "visitId", "sequenceId", "bearingRadians", "durationMs", "jump", "idleToken")
 		response, err = p.s.MoveBody(ctx, r)
 	default:
 		p.t.Fatal("entry fixture received an uncommissioned action", action)
@@ -243,7 +249,7 @@ func (p *instanceEntryPolicyFixture) receipt(id uint64, action map[string]any, r
 			payload["phase"] = phase
 			// Mirror the real Runtime receipt only for a native known full
 			// body write, including its final STOP. Refusals/unknowns stay false.
-			payload["transport_written"] = state.GetTransportWrites() > 0 && (phase == "body_input_written" || phase == "body_settled_written")
+			payload["transport_written"] = state.GetBodyMovement().GetTransportWritten() && (phase == "body_input_written" || phase == "body_settled_written")
 		}
 		if capability == "release_interaction" {
 			outcome = behavior.ActionSettledUnverified
@@ -276,8 +282,10 @@ func TestInstanceEntryPolicyFullBundleCASLostNotifyReconcilesAndRequiresFreshReg
 	p := newInstanceEntryPolicyFixture(t)
 	action := p.prepareNotify()
 	id := p.reserve()
+	p.f.failSend, p.f.failSendOpcode = true, opcode.CMSGAreatrigger
 	response := p.native(action).(*actionsv1.AreaTriggerOperation)
-	if !response.TransportWritten || !response.Pending || p.s.followPortal.portal.trigger != 0 || countPackets(p.f, opcode.CMSGAreatrigger) != 1 {
+	p.f.failSend = false
+	if !response.TransportUnknown || response.TransportWritten || !response.Pending || p.s.followPortal.portal.trigger != 0 || countPackets(p.f, opcode.CMSGAreatrigger) != 1 {
 		t.Fatal("real explicit notification was not retained", response, p.f.packets)
 	}
 	before, err := p.vm.State(context.Background())
@@ -345,6 +353,60 @@ func TestInstanceEntryPolicyFullBundleCASLostNotifyReconcilesAndRequiresFreshReg
 	want := []string{"instance_entry_status", "area_trigger_reference", "area_trigger_observation", "acquire_idle_interaction", "notify_area_trigger", "area_trigger_observation", "area_trigger_observation", "instance_entry_status", "release_interaction"}
 	if !reflect.DeepEqual(p.methods, want) {
 		t.Fatal("full bundle retried or added native mechanics", p.methods)
+	}
+	retired := p.taskState()["retired"].(map[string]any)["mara-entry-1"].(map[string]any)
+	archived := retired["task"].(map[string]any)
+	native := archived["native"].(map[string]any)
+	history := archived["history"].([]any)
+	if retired["reason"] != "regroup_observed" || native["transportUnknown"] != true || native["error"] != response.Error ||
+		native["sourceScope"].(map[string]any)["visitRevision"] != "9" || len(history) != 1 ||
+		history[0].(map[string]any)["receipt"].(map[string]any)["payload"].(map[string]any)["reconciliationRequired"] != true {
+		t.Fatal("completion discarded original UNKNOWN/source/history", retired)
+	}
+	beforeArchive, err := p.vm.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.vm.Reload(context.Background(), edited+"\n-- retained completed entry evidence", revision); err != nil {
+		t.Fatal(err)
+	}
+	afterArchive, err := p.vm.State(context.Background())
+	if err != nil || !reflect.DeepEqual(beforeArchive.Checkpoint, afterArchive.Checkpoint) {
+		t.Fatal("CAS lost retired UNKNOWN evidence", afterArchive, err)
+	}
+}
+
+func TestInstanceEntryPolicyKnownDeathRetiresOnlyItsOwnEntryCustody(t *testing.T) {
+	for _, acquired := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before acquisition", true: "after acquisition"}[acquired], func(t *testing.T) {
+			p := newInstanceEntryPolicyFixture(t)
+			p.command(instanceEntryPolicyCommand())
+			if acquired {
+				p.dispatch("instance_entry_status")
+				p.dispatch("area_trigger_reference")
+				p.dispatch("area_trigger_observation")
+				p.dispatch("acquire_idle_interaction")
+			}
+			p.f.world.Self.Alive, p.f.world.Self.Health = false, 0
+			if acquired {
+				p.dispatch("instance_entry_status")
+				p.dispatch("release_interaction")
+			}
+			out := p.step()
+			if out["task"].(map[string]any)["phase"] != "complete" || out["task"].(map[string]any)["reason"] != "dead" || p.currentTask() != nil ||
+				p.s.interactionToken != "" || len(p.f.packets) != 0 || p.s.areaTrigger.revision != 0 {
+				t.Fatal("dead body continued entry or kept known own lease", out, p.methods, p.f.packets)
+			}
+			// The full bundle's ordinary death policy may separately propose a
+			// release-spirit action. This test authorizes/dispatches no such RPC.
+			if !acquired && len(p.methods) != 0 {
+				t.Fatal("known death ran entry RPCs before custody", p.methods)
+			}
+			retired := p.taskState()["retired"].(map[string]any)["mara-entry-1"].(map[string]any)
+			if retired["reason"] != "dead" || retired["task"].(map[string]any)["finishing"] != "dead" {
+				t.Fatal("entry death evidence was not archived", retired)
+			}
+		})
 	}
 }
 
@@ -469,44 +531,89 @@ func TestInstanceEntryPolicyMalformedIntentCannotRequestNativeEntry(t *testing.T
 	}
 }
 
-func TestInstanceEntryPolicyExplicitRecoveryUsesFiniteNativeOwnerThenIdleLease(t *testing.T) {
-	p := newInstanceEntryPolicyFixture(t)
-	command := instanceEntryPolicyCommand()
-	command["startRecovery"] = map[string]any{"absoluteBearingRadians": 0, "durationMs": 50}
-	planCalls := 0
-	p.s.bodyMotionPlan = func(_ context.Context, _ string, _ uint32, start buddynav.Point, _, _ float64, d time.Duration, jump bool) ([]buddynav.BodyMotionSample, error) {
-		planCalls++
-		if d != 50*time.Millisecond || jump {
-			t.Fatal("Lua changed the explicit diagnostic input", d, jump)
-		}
-		end := start
-		end.X += .35
-		return []buddynav.BodyMotionSample{{Point: start}, {At: d, Point: end}}, nil
-	}
-	p.s.bodyMotionWait = func(_ context.Context, d time.Duration) error { p.advance(d); return nil }
-	p.command(command)
-	p.dispatch("instance_entry_status")
-	p.dispatch("area_trigger_reference")
-	p.dispatch("area_trigger_observation")
-	lease := p.dispatch("movement_owner").(*actionsv1.MovementOwnerLease)
-	if lease.Token == "" {
-		t.Fatal("native finite recovery owner was not acquired")
-	}
-	moved := p.dispatch("move_body").(*actionsv1.State)
-	if moved.GetBodyMovement().GetPhase() != "body_input_written" || planCalls != 1 || countPackets(p.f, opcode.MSGMoveStartForward) != 1 || countPackets(p.f, opcode.MSGMoveStop) != 1 {
-		t.Fatal("actual full-bundle recovery was blocked or unbounded", moved, p.f.packets)
-	}
-	p.dispatch("instance_entry_status")
-	release := p.action("movement_owner")
-	if release["mode"] != "release" || release["token"] != lease.Token {
-		t.Fatal("recovery did not release exact own movement custody", release)
-	}
-	id := p.reserve()
-	response := p.native(release)
-	p.receipt(id, release, response, false)
-	p.dispatch("acquire_idle_interaction")
-	if p.s.movementOwner.owner != "" || p.s.state.InteractionOwner != "exploration" || p.currentTask()["operation"].(map[string]any)["capability"] != "acquire_idle_interaction" {
-		t.Fatal("finite recovery did not progress to normal idle entry custody", p.currentTask(), p.s.stateLocked())
+func TestInstanceEntryPolicyRecoveryKeepsOneIdleLeaseThroughKnownSettleAndWalk(t *testing.T) {
+	for _, settle := range []bool{false, true} {
+		t.Run(map[bool]string{false: "walk", true: "known settle then one walk"}[settle], func(t *testing.T) {
+			p := newInstanceEntryPolicyFixture(t)
+			command := instanceEntryPolicyCommand()
+			command["startRecovery"] = map[string]any{"absoluteBearingRadians": 0, "durationMs": 50}
+			planCalls := 0
+			p.s.bodyMotionPlan = func(_ context.Context, _ string, _ uint32, start buddynav.Point, _, _ float64, d time.Duration, jump bool) ([]buddynav.BodyMotionSample, error) {
+				planCalls++
+				if d != 50*time.Millisecond || jump {
+					t.Fatal("Lua changed the explicit diagnostic input", d, jump)
+				}
+				end := start
+				if settle && planCalls == 1 {
+					end.Z -= .1
+					return []buddynav.BodyMotionSample{{Point: start, Settling: true}, {At: 100 * time.Millisecond, Point: end, Settling: true}}, nil
+				}
+				end.X += .35
+				return []buddynav.BodyMotionSample{{Point: start}, {At: d, Point: end}}, nil
+			}
+			p.s.bodyMotionWait = func(_ context.Context, d time.Duration) error { p.advance(d); return nil }
+			p.command(command)
+			p.dispatch("instance_entry_status")
+			p.dispatch("area_trigger_reference")
+			p.dispatch("area_trigger_observation")
+			lease := p.dispatch("acquire_idle_interaction").(*actionsv1.InteractionLease)
+			until := p.s.interactionUntil
+			body := p.action("move_body")
+			if body["idleToken"] != lease.Token {
+				t.Fatal("body input did not retain the exact parent idle lease", body)
+			}
+			id := p.reserve()
+			moved := p.native(body).(*actionsv1.State)
+			p.receipt(id, body, moved, false)
+			phase := "body_input_written"
+			if settle {
+				phase = "body_settled_written"
+			}
+			if moved.GetBodyMovement().GetPhase() != phase || !moved.BodyMovement.TransportWritten {
+				t.Fatal("actual idle-owned body input failed", moved, p.f.packets)
+			}
+			p.dispatch("instance_entry_status")
+			if settle {
+				next := p.action("move_body")
+				if next["idleToken"] != lease.Token || next["sequenceId"] == body["sequenceId"] {
+					t.Fatal("known settling did not request one new exact input", next, body)
+				}
+				id := p.reserve()
+				moved = p.native(next).(*actionsv1.State)
+				p.receipt(id, next, moved, false)
+				if moved.GetBodyMovement().GetPhase() != "body_input_written" {
+					t.Fatal("later normal step did not complete", moved)
+				}
+				p.dispatch("instance_entry_status")
+			}
+			notify := p.action("notify_area_trigger")
+			if notify["token"] != lease.Token {
+				t.Fatal("normal entry changed the parent's idle lease", notify)
+			}
+			nid := p.reserve()
+			op := p.native(notify).(*actionsv1.AreaTriggerOperation)
+			p.receipt(nid, notify, op, false)
+			wantCalls := 1
+			if settle {
+				wantCalls = 2
+			}
+			if !op.TransportWritten || planCalls != wantCalls || p.s.interactionToken != lease.Token || p.s.interactionUntil != until || p.s.movementOwner.owner != "" ||
+				countPackets(p.f, opcode.MSGMoveStartForward) != 1 || countPackets(p.f, opcode.CMSGAreatrigger) != 1 {
+				t.Fatal("recovery did not preserve finite same-lease continuation", op, p.methods, p.f.packets)
+			}
+			acquired := 0
+			for _, capability := range p.methods {
+				if capability == "movement_owner" {
+					t.Fatal("entry recovery used a separate legacy movement owner", p.methods)
+				}
+				if capability == "acquire_idle_interaction" {
+					acquired++
+				}
+			}
+			if acquired != 1 {
+				t.Fatal("entry recovery re-acquired or renewed instead of retaining its parent lease", p.methods)
+			}
+		})
 	}
 }
 

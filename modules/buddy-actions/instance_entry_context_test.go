@@ -78,6 +78,8 @@ func instanceEntryIdleTravelFixture(t *testing.T) (*Service, *fakeSession, func(
 	s.sessionID = f.party.SessionId
 	s.encounterVisit = encounterVisit{revision: 1, mapID: 1, bound: true}
 	f.world.VisitRevision = 1
+	seedSyntheticPortalWorldScope(f, 9)
+	s.session = &idleBodyReportSession{sessionAPI: s.session, f: f}
 	if _, err := s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{Owner: "exploration", Token: r.Token}); err != nil {
 		t.Fatal(err)
 	}

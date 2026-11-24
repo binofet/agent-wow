@@ -131,6 +131,9 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 			return modcb.PacketNotDispatchedError("transport scope is unsupported by this host")
 		}
 		if token, supplied := modcb.IncomingPolicySpell(ctx); supplied {
+			if handled, err := m.writePolicyScopedMovement(ctx, token, sessionID, module, opcode, payload, scope); handled {
+				return err
+			}
 			return m.writePolicyInstanceEntryScoped(ctx, token, sessionID, module, opcode, payload, scope)
 		}
 		origin := modsession.WriteOrigin{SessionID: sessionID, Module: module, Writer: "module"}

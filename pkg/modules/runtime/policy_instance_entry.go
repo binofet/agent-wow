@@ -123,7 +123,7 @@ func (p *SessionPolicy) resolveInstanceEntry(action map[string]any, capability s
 		method, path = capability, actionsv1.BuddyActions_TravelTo_FullMethodName
 		request, response = &actionsv1.TravelToRequest{}, &actionsv1.State{}
 		add("token", "mapId", "x", "y", "z", "arrivalDistance")
-		op.instanceEntry, op.movement = nil, &policyMovement{self: guid}
+		op.instanceEntry, op.movement = nil, &policyMovement{self: guid, idleBound: true}
 	default:
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "unsupported instance-entry capability")
 	}
@@ -224,7 +224,7 @@ func (p *SessionPolicy) resolveInstanceEntry(action map[string]any, capability s
 		callErr := p.manager.invoke(call, publicCall, "lua", actionsModule, inst, md, request, result)
 		registry.mu.Lock()
 		attempted, written := op.attempted, op.written
-		unknown := op.instanceEntry != nil && op.instanceEntry.unknown
+		unknown := op.instanceEntry != nil && op.instanceEntry.unknown || op.movement != nil && op.movement.unknown
 		registry.mu.Unlock()
 		payload["transport_written"] = written
 		mutation := capability == "notify_area_trigger" || capability == "travel_to"

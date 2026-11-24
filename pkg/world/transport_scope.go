@@ -253,12 +253,15 @@ func (t *transportScopeState) reserve(op uint32, payload []byte, requested *modv
 	if op == opcode.MSGMoveStop && requested != nil {
 		return t.reserveMovementStop(payload, requested)
 	}
+	if requested != nil && bodyMovementScopeOpcode(op) {
+		return t.reserveBodyMovement(op, payload, requested)
+	}
 	if op == opcode.CMSGAreatrigger && requested != nil {
 		return t.reserveAreaTrigger(payload, requested)
 	}
 	if op != opcode.CMSGMoveSplineDone {
 		if requested != nil {
-			return modcb.PacketNotDispatchedError("transport scope is only supported for spline completion, area triggers or ground STOP")
+			return modcb.PacketNotDispatchedError("transport scope is only supported for spline completion, area triggers or normal body movement")
 		}
 		return nil
 	}

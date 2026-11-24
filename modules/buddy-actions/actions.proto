@@ -771,6 +771,9 @@ message BodyMovementRequest {
   // under normal gravity before a subsequent input can step or jump.
   uint32 duration_ms = 6;
   bool jump = 7;
+  // Optional exact parent-owned AcquireIdleInteraction lease. No legacy
+  // acquisition or movement-ownership side effect is implied.
+  string idle_token = 8;
 }
 message BodyMovementState {
   uint64 sequence_id = 1;

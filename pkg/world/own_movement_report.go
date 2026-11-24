@@ -9,7 +9,7 @@ import (
 )
 
 func ownMovementReportOpcode(op uint32) bool {
-	return op == opcode.MSGMoveStartForward || op == opcode.MSGMoveHeartbeat || op == opcode.MSGMoveStop
+	return bodyMovementScopeOpcode(op) || op == opcode.MSGMoveStop
 }
 
 // Called only after a successful transport write and its scope advancement.
@@ -29,7 +29,12 @@ func (e *engine) retainOwnMovementReport(op uint32, body []byte) {
 		return
 	}
 	info, n, err := movementinfo.DecodePrefix(body[c.offset:])
-	if err != nil || n != len(body)-c.offset || !info.AllFinite() || !movementflags.GroundCompatible(info.Flags, uint32(info.ExtraFlags)) {
+	if err != nil || n != len(body)-c.offset || !info.AllFinite() {
+		return
+	}
+	legacyGround := (op == opcode.MSGMoveStartForward || op == opcode.MSGMoveHeartbeat || op == opcode.MSGMoveStop) &&
+		movementflags.GroundCompatible(info.Flags, uint32(info.ExtraFlags))
+	if !legacyGround && !normalBodyMovementImage(op, body, scope.SelfGuid) {
 		return
 	}
 	e.ownMovementReport = &modv1.WorldPacket{Opcode: op, Payload: append([]byte(nil), body...), TransportScope: cloneTransportScope(scope)}

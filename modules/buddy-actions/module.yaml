@@ -6,11 +6,11 @@ compose:
   file: compose.yaml
   service: module
 grpc:
+  descriptor_set: module.pb
+rpc:
   area_trigger_reference: /warcraftbuddy.actions.v1.BuddyActions/AreaTriggerReference
   notify_area_trigger: /warcraftbuddy.actions.v1.BuddyActions/NotifyAreaTrigger
   area_trigger_observation: /warcraftbuddy.actions.v1.BuddyActions/AreaTriggerObservation
-  descriptor_set: module.pb
-rpc:
   talent_state: /warcraftbuddy.actions.v1.BuddyActions/TalentState
   learn_talent: /warcraftbuddy.actions.v1.BuddyActions/LearnTalent
   cast_spell: /warcraftbuddy.actions.v1.BuddyActions/CastSpell

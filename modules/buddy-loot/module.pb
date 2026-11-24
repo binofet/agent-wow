@@ -761,7 +761,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-Èê
+àë
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"Ú
 SpellCastTargets
 mask (Rmask
@@ -1613,7 +1613,7 @@ navigation`
 value (2(.warcraftbuddy.actions.v1.EncounterSpellRvalue:8B	
 _map_idB
 _host_ownedB
-_host_requested"Î
+_host_requested"ä
 BodyMovementRequest
 
 session_id (	R	sessionId
@@ -1624,7 +1624,9 @@ sequenceId'
 bearing_radians (RbearingRadians
 duration_ms (R
 durationMs
-jump (Rjump"É
+jump (Rjump
+
+idle_token (	R	idleToken"É
 BodyMovementState
 sequence_id (R
 sequenceId
