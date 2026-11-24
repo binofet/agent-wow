@@ -25,6 +25,25 @@ def rank_trainers(rpc, state, self_guid, candidates, scope='nearby', *, bridge=N
 
 def class_training(rpc, state, self_guid, spells, eligibility, attempted, reserve_copper=None, *, bridge=None):
     """One accepted Lua service choice, bound to the current native offer."""
+    facts=dict(kind='class_training',copperKnown=state.get('copperKnown') is True,
+        copper=state.get('copper',0),nativePurchaseCap=NATIVE_CLASS_PURCHASE_CAP,reserveCopper=reserve_copper,
+        spells=spells,eligibility=eligibility,attempted={str(value):True for value in attempted})
+    return _training_plan(rpc,state,self_guid,facts,NATIVE_CLASS_PURCHASE_CAP,bridge)
+
+
+def profession_training(rpc,state,self_guid,own,primary_goals,secondary_goals,attempted,reserved_copper,goal_budget,*,budget_only=False,bridge=None):
+    facts=dict(kind='profession_training',copperKnown=state.get('copperKnown') is True,copper=state.get('copper',0),
+        nativePurchaseCap=10000,spells=[] if budget_only else state.get('offer',{}).get('spells',[]),eligibility={},
+        attempted={str(value):True for value in attempted},primaryGoals=list(primary_goals),secondaryGoals=list(secondary_goals),
+        levelKnown=own.get('levelKnown') is True,level=own.get('level',0),reservedCopper=reserved_copper,goalBudgetCopper=goal_budget,
+        professions=dict(known=state.get('professionsKnown') is True,primary=state.get('primaryProfessions',[]),
+            secondary=state.get('secondaryProfessions',[]),freePrimarySlotsKnown=state.get('freePrimarySlotsKnown') is True,
+            freePrimarySlots=state.get('freePrimarySlots',0)))
+    return _training_plan(rpc,state,self_guid,facts,10000,bridge)
+
+
+def _training_plan(rpc,state,self_guid,facts,native_cap,bridge):
+    spells=facts['spells'];consumer=facts['kind']
     identity=dict(sessionId=state['sessionId'],characterGuid=str(self_guid))
     view=rpc.call('session.policy_source',identity)
     source,revision,generation=view.get('source'),view.get('revision'),str(view.get('generation',''))
@@ -40,17 +59,20 @@ def class_training(rpc, state, self_guid, spells, eligibility, attempted, reserv
         'return {available=true,decision=policy.service_destination(input)} end}\n')
     evaluator=bridge or runtime.Bridge(ROOT/'data/bin/luapolicy',ROOT/'modules',
         source_bytes=max(limit,len(wrapped.encode())),value_bytes=8*1024*1024,execution_ms=1000)
-    result=evaluator.evaluate(wrapped,dict(kind='class_training',copperKnown=state.get('copperKnown') is True,
-        copper=state.get('copper',0),nativePurchaseCap=NATIVE_CLASS_PURCHASE_CAP,reserveCopper=reserve_copper,
-        spells=spells,eligibility=eligibility,attempted={str(value):True for value in attempted}))
-    class_training_current(rpc,state,self_guid,dict(policyRevision=revision,policyGeneration=generation),offer=bool(spells))
+    result=evaluator.evaluate(wrapped,facts)
+    class_training_current(rpc,state,self_guid,dict(policyRevision=revision,policyGeneration=generation),
+        offer=bool(spells),profession=consumer=='profession_training')
     decision=result.get('decision') if isinstance(result,dict) and result.get('available') is True else None
-    if (not isinstance(decision,dict) or decision.get('consumer')!='class_training'
-            or any(type(decision.get(key)) is not int or not 0<=decision[key]<=NATIVE_CLASS_PURCHASE_CAP
-                   for key in ('budgetCopper','reserveCopper','purchaseCapCopper'))
+    if (not isinstance(decision,dict) or decision.get('consumer')!=consumer
+            or any(type(decision.get(key)) is not int or not 0<=decision[key]<=native_cap
+                   for key in ('budgetCopper','purchaseCapCopper'))
+            or type(decision.get('reserveCopper')) is not int or not 0<=decision['reserveCopper']<=NATIVE_CLASS_PURCHASE_CAP
             or decision['budgetCopper']>decision['purchaseCapCopper']
             or decision['budgetCopper']+decision['reserveCopper']>state.get('copper',0) and decision['budgetCopper']>0):
-        raise Error('accepted_class_training_mode_required')
+        raise Error('accepted_'+consumer+'_mode_required')
+    if consumer=='profession_training' and (decision['budgetCopper']>facts['goalBudgetCopper']-facts['reservedCopper']
+            or decision['purchaseCapCopper']>facts['goalBudgetCopper']-facts['reservedCopper']):
+        raise Error('profession_training_goal_budget_exceeded')
     if 'nextCost' in decision and (type(decision['nextCost']) is not int
             or not decision['budgetCopper']<decision['nextCost']<=decision['purchaseCapCopper']
             or not any(row.get('costCopper',0)==decision['nextCost'] for row in spells)):
@@ -61,10 +83,14 @@ def class_training(rpc, state, self_guid, spells, eligibility, attempted, reserv
                 or type(decision.get('costCopper')) is not int or decision['costCopper']!=matches[0].get('costCopper',0)
                 or not 0<=decision['costCopper']<=decision['budgetCopper']):
             raise Error('class_training_must_select_exact_offered_spell')
+        if consumer=='profession_training' and (decision.get('skillId')!=matches[0].get('professionSkillId')
+                or decision.get('learnedSpellId')!=matches[0].get('learnedSpellId')
+                or decision['skillId'] not in facts['primaryGoals']+facts['secondaryGoals']):
+            raise Error('profession_training_must_match_bound_goal_and_offer')
     return dict(decision,policyRevision=revision,policyGeneration=generation)
 
 
-def class_training_current(rpc,state,self_guid,plan,*,offer=True):
+def class_training_current(rpc,state,self_guid,plan,*,offer=True,profession=False):
     observed=rpc.call('buddy-training.state',{})
     expected_offer,observed_offer=state.get('offer',{}),observed.get('offer',{})
     current=rpc.call('session.attach',dict(sessionId=state['sessionId'],characterGuid=str(self_guid)))
@@ -74,6 +100,8 @@ def class_training_current(rpc,state,self_guid,plan,*,offer=True):
             or policy.get('faulted',False) is not False or observed.get('sessionId')!=state['sessionId']
             or observed.get('revision')!=state.get('revision') or observed.get('copperKnown')!=state.get('copperKnown')
             or observed.get('copper',0)!=state.get('copper',0)
+            or profession and any(observed.get(key)!=state.get(key) for key in ('professionsKnown','professionsRevision',
+                'primaryProfessions','secondaryProfessions','freePrimarySlotsKnown','freePrimarySlots'))
             or offer and (any(observed_offer.get(key)!=expected_offer.get(key)
                              for key in ('revision','npcGuid','trainerType','spells'))
                 or int(observed_offer.get('expiresInMs',0))<=0)):
