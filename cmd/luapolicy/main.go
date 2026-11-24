@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -106,16 +107,9 @@ func run(args []string, in io.Reader, out io.Writer) error {
 			}
 			break
 		}
-		runtime, err := behavior.NewWithOptions(behavior.SessionOptions{
+		value, err = behavior.EvaluateSourceContext(context.Background(), string(code), input, behavior.SessionOptions{
 			SourceBytes: limit, ValueBytes: *valueBytes, ExecutionLimit: time.Duration(*executionMS) * time.Millisecond,
 		})
-		if err != nil {
-			return err
-		}
-		if _, err := runtime.Reload(string(code), ""); err != nil {
-			return err
-		}
-		value, err = runtime.Evaluate(input)
 		if err != nil {
 			return err
 		}
