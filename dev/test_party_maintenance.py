@@ -1711,6 +1711,24 @@ class ClassTrainingLuaTests(unittest.TestCase):
         self.tick()
         self.assertEqual(self.buys()[0]['spellId'],123)
 
+    def test_stop_during_final_attach_retires_unentered_row_without_buy(self):
+        stopped=[False]
+        self.agent.stopped=lambda:stopped[0]
+        original=self.rpc.call
+        def call(method,params):
+            result=original(method,params)
+            if (method=='session.attach' and self.agent.data['training']
+                    and self.agent.data['training'][-1]['status']=='reserved'):
+                stopped[0]=True
+            return result
+        self.rpc.call=call
+        self.tick()
+        self.assertEqual(self.buys(),[])
+        self.assertEqual(self.saved[-1]['training'],[])
+        self.assertEqual(self.saved[-1]['reservedCopper'],0)
+        self.assertEqual(self.saved[-1]['lastNotDispatched']['status'],'not_dispatched')
+        self.assertEqual(self.saved[-1]['lastNotDispatched']['spell'],123)
+
 
 from test_town_policy import VendorDestinationTests, TrainerDestinationTests
 

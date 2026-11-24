@@ -779,6 +779,7 @@ class Maintenance:
         try:
             if self.stopped():raise Error('class_training_stopped_before_dispatch')
             town_policy.class_training_current(self.rpc,state,self.guid,plan)
+            if self.stopped():raise Error('class_training_stopped_before_dispatch')
         except Exception as error:
             # This exact new reservation never entered Buy. Retire only it;
             # previously entered/uncertain purchases remain in their namespace.
