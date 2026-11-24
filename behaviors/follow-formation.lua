@@ -59,6 +59,26 @@ local function inventory_maintenance(input)
         for k in pairs(rows) do if not uint(k,max) or k<1 then return false end; n=n+1 end
         return n==#rows
     end
+    if input.stage=="claim_attachment" then
+        if not identity(input.mailboxGuid) or not identity(input.listRevision) or not identity(input.inventoryRevision) or
+           not array(input.candidates,200) then return {} end
+        local selected,seen,slots=nil,{},{}
+        for _,candidate in ipairs(input.candidates) do
+            if type(candidate)~="table" or not uint(candidate.mailId,4294967295) or candidate.mailId==0 or
+               not uint(candidate.attachmentIndex,3) or not uint(candidate.itemGuidLow,4294967295) or candidate.itemGuidLow==0 or
+               candidate.entry~=41599 or candidate.count~=1 then return {} end
+            local low=tostring(candidate.itemGuidLow)
+            local slot=tostring(candidate.mailId)..":"..candidate.attachmentIndex
+            if seen[low] or slots[slot] then return {} end
+            seen[low],slots[slot]=true,true
+            if not selected or candidate.mailId<selected.mailId or candidate.mailId==selected.mailId and
+               (candidate.attachmentIndex<selected.attachmentIndex or candidate.attachmentIndex==selected.attachmentIndex and
+                candidate.itemGuidLow<selected.itemGuidLow) then selected=candidate end
+        end
+        if not selected then return {choice={kind="no_attachment"}} end
+        return {choice={kind="claim_attachment",mailId=selected.mailId,
+            attachmentIndex=selected.attachmentIndex,itemGuidLow=selected.itemGuidLow}}
+    end
     local function item(row)
         return type(row)=="table" and uint(row.bag,4) and uint(row.slot,35) and identity(row.itemGuid)~=nil and
             uint(row.entry,4294967295) and row.entry>0 and uint(row.stackCount,4294967295) and row.stackCount>0
