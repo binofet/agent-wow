@@ -14,6 +14,59 @@ _loader.exec_module(runtime)
 Error = runtime.Error
 
 
+def verify_inn_route(rpc, binding):
+    identity = {key: binding[key] for key in ('sessionId', 'characterGuid')}
+    current = rpc.call('session.attach', identity)
+    policy = current.get('policy', {})
+    if (current.get('sessionId') != identity['sessionId'] or str(current.get('characterGuid')) != identity['characterGuid']
+            or not isinstance(policy, dict) or policy.get('faulted', False) is not False
+            or policy.get('revision') != binding['revision'] or str(policy.get('generation')) != binding['generation']):
+        raise Error('inn_route_policy_replaced_or_faulted_before_dispatch')
+
+
+def inn_route(rpc, state, self_guid, creature, own, position, direction='approach', *, bridge=None):
+    """Current accepted Lua chooses waypoints; the caller owns physical travel."""
+    identity = dict(sessionId=state['sessionId'], characterGuid=str(self_guid))
+    if direction not in ('approach', 'return') or str(own.get('guid')) != identity['characterGuid']:
+        raise Error('bound_inn_route_facts_required')
+    facts = dict(kind='inn_route', direction=direction, classKnown=own.get('classKnown') is True,
+        classId=own.get('classId', 0), trainer={key: creature.get(key, 0) for key in ('entry', 'mapId', 'x', 'y', 'z')},
+        position={key: position.get(key, 0) for key in ('mapId', 'x', 'y', 'z')})
+    view = rpc.call('session.policy_source', identity)
+    source, revision, generation = view.get('source'), view.get('revision'), str(view.get('generation', ''))
+    limit = view.get('sourceLimitBytes', runtime.MAX_SOURCE)
+    if (view.get('sessionId') != identity['sessionId'] or str(view.get('characterGuid')) != identity['characterGuid']
+            or not isinstance(source, str) or not source or not re.fullmatch('[a-f0-9]{64}', str(revision))
+            or hashlib.sha256(source.encode()).hexdigest() != revision or not re.fullmatch('[1-9][0-9]*', generation)
+            or view.get('faulted', False) is not False
+            or type(limit) is not int or limit <= 0 or len(source.encode()) > limit):
+        raise Error('current_town_policy_source_required')
+    wrapped = ('local policy=(function()\n'+source+'\nend)()\nreturn {decide=function(input) '
+        'if type(policy.service_destination)~="function" then return {available=false} end '
+        'return {available=true,decision=policy.service_destination(input)} end}\n')
+    bridge = bridge or runtime.Bridge(ROOT/'data/bin/luapolicy', ROOT/'modules',
+        source_bytes=max(limit, len(wrapped.encode())), value_bytes=8*1024*1024, execution_ms=1000)
+    result = bridge.evaluate(wrapped, facts)
+    binding = dict(identity, revision=revision, generation=generation)
+    verify_inn_route(rpc, binding)
+    observed = rpc.call('buddy-training.state', {})
+    if observed.get('sessionId') != identity['sessionId'] or str(observed.get('revision')) != str(state.get('revision')):
+        raise Error('inn_route_training_body_or_observation_changed')
+    decision = result.get('decision') if isinstance(result, dict) and result.get('available') is True else None
+    if not isinstance(decision, dict) or type(decision.get('eligible')) is not bool:
+        raise Error('inn_route_export_unavailable')
+    route = decision.get('route', [])
+    if route == {}: route = []
+    if (not isinstance(route, list) or len(route) > 8 or not decision['eligible'] and route
+            or any(not isinstance(row, dict) or set(row) != {'x', 'y', 'z', 'radius'}
+                or any(type(row.get(key)) not in (int, float) or not math.isfinite(row[key]) for key in row)
+                or not -9490 <= row['x'] <= -9410 or not 0 <= row['y'] <= 85
+                or not 54 <= row['z'] <= 65.5 or not 0 < row['radius'] <= 4 for row in route)):
+        raise Error('bounded_inn_waypoints_required')
+    return dict(eligible=decision['eligible'], route=[((row['x'], row['y'], row['z']), row['radius']) for row in route],
+                policyBinding=binding)
+
+
 def rank_vendors(rpc, state, candidates, scope, *, bridge=None):
     return rank_services(rpc,state,candidates,scope,'vendor',bridge=bridge)
 

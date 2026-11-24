@@ -48,10 +48,52 @@ local function at_target(self, target, radius)
     return dx*dx+dy*dy<=radius*radius and math.abs(self.z-target.z)<=1.5
 end
 
+local inn_trainers = {[5]=377,[8]=328,[4]=917}
+local inn_stairs = {{x=-9477,y=22.5,z=56.339386,radius=.75},
+    {x=-9477,y=14,z=60.184803,radius=.75}, {x=-9473.5,y=14,z=60.190014,radius=.75},
+    {x=-9473.5,y=23,z=63.820427,radius=.75}}
+
+local function inn_route(input)
+    local p,t=input.position,input.trainer
+    if (input.direction~="approach" and input.direction~="return") or
+       input.classKnown~=true or not number(input.classId) or not pose(p,false) or not pose(t,false) or
+       p.mapId~=0 or t.mapId~=0 or t.entry~=inn_trainers[input.classId] or
+       t.x < -9480 or t.x > -9455 or t.y < 8 or t.y > 39 or t.z < 63 or t.z > 65 or
+       p.x < -9490 or p.x > -9410 or p.y < 0 or p.y > 85 or p.z < 54 or p.z > 65.5 then
+        return {eligible=false}
+    end
+    local route={}
+    if input.direction=="return" then
+        if p.x < -9480 or p.x > -9455 or p.y < 8 or p.y > 39 or p.z < 62.8 then
+            return {eligible=false}
+        end
+        for i=#inn_stairs,1,-1 do route[#route+1]=inn_stairs[i] end
+    elseif p.z < 62.8 then
+        local first=1
+        if p.x>=-9474.5 and p.x<=-9472.5 and p.y>=14 and p.y<=23.5 and p.z>=60 then
+            first=4
+        elseif p.x>=-9478.5 and p.x<=-9473 and p.y>=13 and p.y<=15 and p.z>=59.5 and p.z<=61 then
+            first=3
+        elseif p.x>=-9478.5 and p.x<=-9475.5 and p.y>15 and p.y<=22.5 and p.z>=56.8 and p.z<=60.7 then
+            first=2
+        elseif p.x>=-9468 and p.x<=-9462 and p.y>=29 and p.y<=35.5 and p.z>=56 and p.z<=58.3 then
+            route[1]={x=-9467,y=30,z=56.96606,radius=.75}
+        else
+            if p.x > -9435 and p.y>=45 and p.y<=70 then
+                route[#route+1]={x=-9432,y=60,z=56.625515,radius=.5}
+            end
+            route[#route+1]={x=-9465.93,y=24.9355,z=56.52882,radius=.5}
+        end
+        for i=first,#inn_stairs do route[#route+1]=inn_stairs[i] end
+    end
+    return {eligible=true,route=route}
+end
+
 -- Town planning and the finite service workers consult this export from the
 -- character's current accepted policy. Callers supply mechanically validated
 -- observed NPCs; this policy owns the search radius and destination order.
 function M.service_destination(input)
+    if type(input)=="table" and input.kind=="inn_route" then return inn_route(input) end
     if type(input)~="table" or (input.kind~="vendor" and input.kind~="trainer") or
        (input.scope~="nearby" and input.scope~="interactable" and input.scope~="travel") or
        type(input.candidates)~="table" or #input.candidates>97 then return {} end

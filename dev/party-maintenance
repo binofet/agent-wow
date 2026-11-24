@@ -39,8 +39,6 @@ ROSTER = sync.ROSTER
 IDENTITY = {'version': 1, 'ownerGuid': 3, 'mode': 'training_stipend_and_class_training',
             'characters': [{'name': n, 'guid': g, 'port': p} for n,g,p in ROSTER]}
 INN_TRAINERS = {5:377, 8:328, 4:917}
-INN_STAIRS = ((-9477.,22.5,56.339386), (-9477.,14.,60.184803),
-              (-9473.5,14.,60.190014), (-9473.5,23.,63.820427))
 
 CLASS_PURCHASE_CAP = 1_000_000
 DEFAULT_RESERVE = 100
@@ -380,6 +378,7 @@ class Maintenance:
 
     def route_call(self, method, params, guard, deadline, renew=None):
         if time.monotonic()>=deadline:raise Error('Class trainer travel time limit reached')
+        guard()
         traveler=self.rpc.fork() if isinstance(self.rpc,RPC) else self.rpc
         result,finished=queue.Queue(maxsize=1),threading.Event()
         def route():
@@ -415,32 +414,25 @@ class Maintenance:
                 or integer(row.get('creature',{}).get('entry',0))==expected]
 
     @staticmethod
-    def inn_route(creature, own, pos):
-        if (integer(pos.get('mapId',0))!=0 or integer(creature.get('mapId',0))!=0
+    def inn_context(creature, own, pos):
+        return not (integer(pos.get('mapId',0))!=0 or integer(creature.get('mapId',0))!=0
                 or integer(creature.get('entry',0))!=INN_TRAINERS.get(integer(own.get('classId',0)))
                 or not -9480<=creature.get('x',0)<=-9455 or not 8<=creature.get('y',0)<=39
                 or not 63<=creature.get('z',0)<=65 or not -9490<=pos['x']<=-9410
-                or not 0<=pos['y']<=85 or not 54<=pos['z']<=65.5):
-            return None
-        x,y,z=(pos[k] for k in ('x','y','z'))
-        if z>=62.8:return []
-        if -9474.5<=x<=-9472.5 and 14<=y<=23.5 and z>=60:
-            return [(INN_STAIRS[3],.75)]
-        if -9478.5<=x<=-9473 and 13<=y<=15 and 59.5<=z<=61:
-            return [(p,.75) for p in INN_STAIRS[2:]]
-        if -9478.5<=x<=-9475.5 and 15<y<=22.5 and 56.8<=z<=60.7:
-            return [(p,.75) for p in INN_STAIRS[1:]]
-        if -9468<=x<=-9462 and 29<=y<=35.5 and 56<=z<=58.3:
-            return [((-9467.,30.,56.96606),.75)]+[(p,.75) for p in INN_STAIRS]
-        route=[]
-        if x>-9435 and 45<=y<=70:
-            route.append(((-9432.,60.,56.625515),.5))
-        route.append(((-9465.93,24.9355,56.52882),.5))
-        return route+[(p,.75) for p in INN_STAIRS]
+                or not 0<=pos['y']<=85 or not 54<=pos['z']<=65.5)
 
-    def travel_inn(self, body, creature, owner, controls, key, route, deadline, extra_guard=None):
+    def inn_plan(self, state, creature, own, pos, direction='approach'):
+        try:return town_policy.inn_route(self.rpc,state,self.guid,creature,own,pos,direction)
+        except town_policy.Error as error:raise Error(str(error)) from None
+
+    def inn_policy_current(self, plan):
+        try:town_policy.verify_inn_route(self.rpc,plan['policyBinding'])
+        except town_policy.Error as error:raise Error(str(error)) from None
+
+    def travel_inn(self, body, creature, owner, controls, key, plan, deadline, extra_guard=None):
         npc=integer(creature['guid'])
         binding=tuple(creature.get(k,0) for k in ('mapId','x','y','z','positionRevision'))
+        self.inn_policy_current(plan)
         lease=self.rpc.call('buddy-actions.acquire_interaction',{'owner':'exploration','leaseMs':30000})
         token=lease.get('token')
         control=lease.get('state',{})
@@ -460,12 +452,13 @@ class Maintenance:
                     or any(current.get(k) is not True for k in ('aliveKnown','alive','healthKnown'))
                     or integer(current.get('health',0))==0 or integer(current.get('npcFlags',0))&0x30!=0x30
                     or integer(current.get('movementFlags',0))&0x080000ff or integer(current.get('unitFlags',0))&0x80000
-                    or self.inn_route(current,scene[1]['self'],scene[2]['position']) is None):
+                    or not self.inn_context(current,scene[1]['self'],scene[2]['position'])):
                 raise Error('Actual inn trainer or character context changed')
             trajectory=current.get('trajectory',{})
             if trajectory.get('known') is True and (trajectory.get('stopped') is not True or trajectory.get('transportRelative') is True):
                 raise Error('Actual inn trainer moved')
             if extra_guard is not None:extra_guard(scene[0],scene[1])
+            self.inn_policy_current(plan)
             return scene
         renew_at=[0.]
         def renew(force=False):
@@ -481,7 +474,7 @@ class Maintenance:
                 raise Error('Inn exploration stop is unconfirmed')
             guard()
             if key is not None:self.travel_attempts[key]=self.travel_attempts.get(key,0)+1
-            for goal,radius in route:
+            for goal,radius in plan['route']:
                 renew(True)
                 self.status['phase']='traveling_verified_inn_stair_landings' if key is not None else 'returning_verified_inn_stair_landings'
                 response=self.route_call('buddy-actions.travel_to',{'token':token,'mapId':0,
@@ -505,7 +498,7 @@ class Maintenance:
                 or (self.data['mail'] or {}).get('status')=='reserved'):return
         state,world,actions,owner=self.travel_scene(body)
         pos=actions['position'];own=world['self']
-        if (self.inn_route(creature,own,pos)!=[] or not -9480<=pos['x']<=-9455
+        if (not self.inn_context(creature,own,pos) or not -9480<=pos['x']<=-9455
                 or not 8<=pos['y']<=39 or not 62.8<=pos['z']<=65.5
                 or npc>>48!=0xf130 or not npc&0xffffff or npc>>24&0xffffff!=integer(creature.get('entry',0))
                 or creature.get('present') is not True or not point(creature)
@@ -513,12 +506,14 @@ class Maintenance:
                 or not integer(creature.get('health',0)) or integer(creature.get('npcFlags',0))&0x30!=0x30
                 or integer(creature.get('movementFlags',0))&0x080000ff or integer(creature.get('unitFlags',0))&0x80000
                 or not self.trainer_exhausted(body,npc,world,state)):return
+        plan=self.inn_plan(state,creature,own,pos,'return')
+        if not plan['eligible']:return
         controls={k:actions.get(k,False) for k in ('following','healing','assisting','buffing')}
         def still_exhausted(state,world):
             if self.exhausted_trainers.get(npc) is not cached or not self.trainer_exhausted(body,npc,world,state):
                 raise Error('Inn return no longer has a current exhausted class offer')
         cached['returnAttempted']=True  # One finite route per positively observed exhausted visit.
-        if self.travel_inn(body,creature,owner,controls,None,[(p,.75) for p in reversed(INN_STAIRS)],
+        if self.travel_inn(body,creature,owner,controls,None,plan,
                 time.monotonic()+75,extra_guard=still_exhausted):
             self.status['phase']='no_affordable_unattempted_class_training'
 
@@ -552,20 +547,26 @@ class Maintenance:
             self.status['phase']='class_trainer_outside_local_travel_or_attempt_limit'
             return None
         controls={k:actions.get(k,False) for k in ('following','healing','assisting','buffing')}
-        route=self.inn_route(creature,world['self'],pos)
+        plan=self.inn_plan(state,creature,world['self'],pos)
+        route=plan['route'] if plan['eligible'] else None
         deadline=time.monotonic()+(75 if route else 36)
-        if route and not self.travel_inn(body,creature,owner,controls,key,route,deadline):
+        if route and not self.travel_inn(body,creature,owner,controls,key,plan,deadline):
             return None
+        self.inn_policy_current(plan)
         lease=self.rpc.call('buddy-actions.acquire_interaction',{'owner':'training','leaseMs':30000})
         token=lease.get('token')
         if not isinstance(token,str) or not 1<=len(token)<=128:
             raise Error('Class trainer lease is unconfirmed')
         try:
-            self.travel_scene(body,anchor=(owner,),controls=controls,leased=True)
+            def guard():
+                scene=self.travel_scene(body,anchor=(owner,),controls=controls,leased=True)
+                self.inn_policy_current(plan)
+                return scene
+            guard()
             if not route:self.travel_attempts[key]=self.travel_attempts.get(key,0)+1
             self.status['phase']='traveling_to_observed_class_trainer'
             response=self.route_call('buddy-actions.travel_trainer',{'token':token,'npcGuid':str(npc)},
-                lambda:self.travel_scene(body,anchor=(owner,),controls=controls,leased=True),deadline)
+                guard,deadline)
             if (response.get('reason')!='trainer_travel_within_distance' or response.get('moving') is True
                     or response.get('motionUnconfirmed') is True):
                 self.status['phase']='class_trainer_route_stopped_before_arrival'
