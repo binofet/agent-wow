@@ -138,7 +138,7 @@ class TownTests(unittest.TestCase):
     def setUp(self):
         self.bridge = mock.patch.object(m.destination_policy.runtime,'Bridge',side_effect=bridge_factory(m.destination_policy.runtime.Bridge))
         self.bridge.start();self.addCleanup(self.bridge.stop)
-        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
+        self.temp = tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve())
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)/"private"/"town.json"
         self.rpc = FakeRPC()
