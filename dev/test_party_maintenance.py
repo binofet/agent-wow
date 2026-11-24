@@ -388,6 +388,15 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(self.agent.data['training'],saved['training'])
         self.assertEqual(self.methods().count('buddy-training.buy'),1)
 
+    def test_exhausted_non_inn_lua_target_never_enters_inn_return_or_movement(self):
+        self.rpc.offer['spells']=[dict(spellId=123,usable=2,pointCost=[0,0])]
+        self.tick()
+        self.assertEqual(self.agent.status['phase'],'no_affordable_unattempted_class_training')
+        self.assertNotIn('buddy-actions.acquire_interaction',self.methods())
+        self.assertNotIn('buddy-actions.travel_to',self.methods())
+        self.assertNotIn('buddy-actions.travel_trainer',self.methods())
+        self.assertNotIn('buddy-training.buy',self.methods())
+
     def test_inn_landmarks_never_apply_on_another_map_or_from_a_distant_city(self):
         self.inn_rig()
         self.rpc.world['self']['mapId']=1;self.rpc.actions['position']['mapId']=1

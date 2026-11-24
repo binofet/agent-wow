@@ -75,7 +75,10 @@ class TrainerDestinationTests(unittest.TestCase):
         rpc=TrainingRPC()
         rows=[(1.,guid(328),True,328),(2.,guid(377),True,377),(3.,guid(917),True,917),(4.,guid(9000),True,9000)]
         def choose(known,class_id):
-            return [g for _,g in self.rank(rpc,rows,purpose='class',class_context=dict(classKnown=known,classId=class_id))['candidates']]
+            plan=self.rank(rpc,rows,purpose='class',class_context=dict(classKnown=known,classId=class_id))
+            self.assertNotIn(str(guid(9000)),plan['innCandidates'])
+            self.assertEqual(len(plan['innCandidates']),1 if known and class_id==5 else 0)
+            return [g for _,g in plan['candidates']]
         self.assertEqual(choose(True,5),[guid(377),guid(9000)])
         self.assertEqual(choose(False,5),[guid(9000)])
         self.assertEqual(choose(True,9),[guid(9000)])
@@ -89,6 +92,11 @@ class TrainerDestinationTests(unittest.TestCase):
             self.rank(rpc,[(1.,VENDOR,True,VENDOR>>24&0xffffff)],purpose='class',class_context={})
         with self.assertRaisesRegex(policy.Error,'observed_class_trainer_entry_required'):
             self.rank(TrainingRPC(),[(1.,VENDOR,True,377)],purpose='class',class_context={})
+        for suffix in ('',',innTrainers={"1"}'):
+            rpc=TrainingRPC('return {service_destination=function() return {trainers={"'+str(VENDOR)+
+                '"},purpose="class"'+suffix+'} end}')
+            with self.subTest(suffix=suffix),self.assertRaisesRegex(policy.Error,'class_trainer_inn_membership_required'):
+                self.rank(rpc,[(1.,VENDOR,True,VENDOR>>24&0xffffff)],purpose='class',class_context={})
 
     def test_actual_bundle_interaction_priority_range_ties_and_same_body_tuning(self):
         source=subprocess.check_output(['python3','-B',str(ROOT/'dev/encounter-bundle')],text=True)

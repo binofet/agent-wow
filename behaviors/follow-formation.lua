@@ -262,12 +262,13 @@ function M.service_destination(input)
             ranked[index]=candidate
         end
     end
-    local vendors={}
+    local vendors,inn={},{}
     for i,candidate in ipairs(ranked) do
         if not profession or i<=profession_trainers.max_candidates then vendors[#vendors+1]=candidate.guid end
+        if class and input.classKnown==true and candidate.entry==inn_trainers[input.classId] then inn[#inn+1]=candidate.guid end
     end
     if profession then return {trainers=vendors,purpose="profession"} end
-    if class then return {trainers=vendors,purpose="class"} end
+    if class then return {trainers=vendors,purpose="class",innTrainers=inn} end
     if trainer then return {trainers=vendors} end
     return {vendors=vendors}
 end

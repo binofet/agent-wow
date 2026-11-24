@@ -502,6 +502,7 @@ class Maintenance:
             self.release_route(body,'exploration',token)
 
     def return_from_exhausted_inn(self,body,trainer):
+        if trainer['_classTrainerPolicy']['innTrainer'] is not True:return
         creature=trainer.get('creature',{})
         npc=integer(creature.get('guid',0));cached=self.exhausted_trainers.get(npc)
         if (cached is None or cached.get('returnAttempted') is True or self.exhausted_body!=body
@@ -623,7 +624,8 @@ class Maintenance:
         proof={key:plan[key] for key in ('policyRevision','policyGeneration')}
         proof.update(sessionId=sync.session_id(state),characterGuid=str(self.guid),
             classKnown=own.get('classKnown') is True,classId=own.get('classId',0))
-        return [dict(observed[guid],_classTrainerPolicy=proof) for _,guid in plan['candidates']]
+        return [dict(observed[guid],_classTrainerPolicy=dict(proof,innTrainer=str(guid) in plan['innCandidates']))
+                for _,guid in plan['candidates']]
 
     def tick(self):
         if self.persistence_failed:raise Error('Maintenance persistence failed; restart from the durable journal')

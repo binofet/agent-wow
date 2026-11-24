@@ -240,5 +240,12 @@ def rank_services(rpc, state, candidates, scope, kind, *, purpose=None, class_co
             or len(set(vendors))!=len(vendors)):
         raise Error('lua_must_select_current_observed_'+kind+'s')
     ranked=[(distances[int(guid)],int(guid)) for guid in vendors]
+    if purpose=='class':
+        inn=decision.get('innTrainers')
+        if inn=={}:inn=[]
+        if (not isinstance(inn,list) or len(inn)>len(vendors) or any(not isinstance(guid,str) or guid not in vendors for guid in inn)
+                or len(set(inn))!=len(inn)):
+            raise Error('class_trainer_inn_membership_required')
+        return dict(candidates=ranked,innCandidates=inn,policyRevision=revision,policyGeneration=generation)
     if purpose:return dict(candidates=ranked,policyRevision=revision,policyGeneration=generation)
     return ranked
