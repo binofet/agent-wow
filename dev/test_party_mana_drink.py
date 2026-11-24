@@ -211,7 +211,7 @@ end}
         worker = importlib.util.module_from_spec(spec)
         loader.exec_module(worker)
         with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
+            root = Path(folder).resolve()
             catalog = root / 'pkg/gamecatalog/catalog.json'
             catalog.parent.mkdir(parents=True)
             catalog.write_text('{"items": {}}')
