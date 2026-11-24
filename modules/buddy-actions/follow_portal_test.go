@@ -21,12 +21,14 @@ func TestFollowDungeonPortalUsesOrdinaryEntryAfterOwnerDisappears(t *testing.T) 
 	for _, portal := range dungeonEntrances {
 		t.Run(strconv.FormatUint(uint64(portal.trigger), 10), func(t *testing.T) {
 			ctx := context.Background()
-			s, f, advance := rig(t)
+			s, f, advance := portalEntryRig(t)
 			s.navDataDir = "fixture"
 			start := portal.center
 			start.y -= float32(portal.radius + 2)
 			putAtPortal(f.world.Self, portal.source, start)
 			putAtPortal(f.world.Owner, portal.source, portal.center)
+			s.encounterVisit.mapID = portal.source
+			seedSyntheticPortalWorldScope(f, 9)
 			toggle(t, s, true)
 			s.Tick(ctx)
 			f.world.Owner.Present, f.world.Owner.MapKnown, f.world.Owner.PositionKnown = false, false, false
@@ -47,8 +49,7 @@ func TestFollowDungeonPortalUsesOrdinaryEntryAfterOwnerDisappears(t *testing.T) 
 				distance(s.pos, portal.center) >= portal.radius {
 				t.Fatalf("portal writes %d, reason %s, pose %+v, follow %t", triggerWrites, s.state.Reason, s.pos, s.state.Following)
 			}
-			f.world.Self.MapId = portal.destination
-			f.world.Self.PositionRevision++
+			portalFixtureArrive(t, s, f, portal.destination)
 			advance(250 * time.Millisecond)
 			s.Tick(ctx)
 			if s.state.Reason != "follow_instance_transfer_observed" || !s.state.Following {
@@ -59,13 +60,15 @@ func TestFollowDungeonPortalUsesOrdinaryEntryAfterOwnerDisappears(t *testing.T) 
 }
 
 func TestFollowDungeonPortalCatchesUpThroughVerifiedBend(t *testing.T) {
-	s, f, advance := rig(t)
+	s, f, advance := portalEntryRig(t)
 	ctx := context.Background()
 	portal := dungeonEntrances[3]
 	start := portal.center
 	start.y -= 200
 	putAtPortal(f.world.Self, portal.source, start)
 	putAtPortal(f.world.Owner, portal.source, portal.center)
+	s.encounterVisit.mapID = portal.source
+	seedSyntheticPortalWorldScope(f, 9)
 	s.navDataDir = "fixture"
 	bend := position{x: start.x + 6, y: start.y + 8, z: start.z}
 	s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
@@ -105,7 +108,7 @@ func TestFollowDungeonPortalCatchesUpThroughVerifiedBend(t *testing.T) {
 
 func TestFollowScarletGraveyardFromLastObservedOwnerPosition(t *testing.T) {
 	ctx := context.Background()
-	s, f, advance := rig(t)
+	s, f, advance := portalEntryRig(t)
 	s.navDataDir = "fixture"
 	// Joel's last observed position before the real transfer was near the
 	// trigger boundary and below its center. Start the companion outside it.
@@ -129,8 +132,7 @@ func TestFollowScarletGraveyardFromLastObservedOwnerPosition(t *testing.T) {
 			t.Fatalf("wrong Graveyard trigger: %x", packet.Payload)
 		}
 	}
-	f.world.Self.MapId = 189
-	f.world.Self.PositionRevision++
+	portalFixtureArrive(t, s, f, 189)
 	advance(250 * time.Millisecond)
 	s.Tick(ctx)
 	if s.state.Reason != "follow_instance_transfer_observed" || !s.state.Following {
@@ -153,10 +155,12 @@ func TestFollowDungeonPortalDoesNotEnterWithoutCurrentAuthority(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			s, f, advance := rig(t)
+			s, f, advance := portalEntryRig(t)
 			portal := dungeonEntrances[0]
 			putAtPortal(f.world.Self, portal.source, portal.center)
 			putAtPortal(f.world.Owner, portal.source, portal.center)
+			s.encounterVisit.mapID = portal.source
+			seedSyntheticPortalWorldScope(f, 9)
 			toggle(t, s, true)
 			s.Tick(ctx)
 			f.world.Owner.Present = false

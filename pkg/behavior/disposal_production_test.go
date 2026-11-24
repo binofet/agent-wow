@@ -24,6 +24,22 @@ const disposalProcessLimit = 5 * time.Second
 
 var errDisposalOutputLimit = errors.New("production evaluator output limit exceeded")
 
+const disposalDefaultDecideResource = "decide: Lua execution budget exhausted (5ms configured): context deadline exceeded\n"
+
+type disposalProductionResourceError struct {
+	phase, diagnostic string
+	cause             error
+}
+
+func (e *disposalProductionResourceError) Error() string {
+	return fmt.Sprintf("production evaluator: %v; stderr=%q", e.cause, e.diagnostic)
+}
+func (e *disposalProductionResourceError) Unwrap() error { return ErrExecutionBudget }
+
+func disposalDefaultResourceTurn(exitCode int, processErr error, output []byte, diagnostic string) bool {
+	return processErr == nil && exitCode == 1 && len(output) == 0 && diagnostic == disposalDefaultDecideResource
+}
+
 type disposalBoundedOutput struct {
 	buffer   bytes.Buffer
 	limit    int
@@ -259,12 +275,48 @@ func evaluateDisposalProduction(t *testing.T, source string, frame map[string]an
 		return nil, errDisposalOutputLimit
 	}
 	if runErr != nil {
+		var exit *exec.ExitError
+		if errors.As(runErr, &exit) && disposalDefaultResourceTurn(exit.ExitCode(), processErr, out.Bytes(), diagnostic.String()) {
+			// Preserve unavailability as an error and never decode or fabricate a
+			// decision. Existing callers remain strict unless they explicitly test
+			// the Runtime resource-turn contract.
+			return nil, &disposalProductionResourceError{"decide", diagnostic.String(), runErr}
+		}
 		return nil, fmt.Errorf("production evaluator: %w; stderr=%q", runErr, diagnostic.String())
 	}
 	if diagnostic.Len() != 0 {
 		return nil, fmt.Errorf("production evaluator unexpected stderr: %q", diagnostic.String())
 	}
 	return decodeDisposalProduct(out.Bytes())
+}
+
+func TestDisposalProductionResourceTurnRequiresExactNoDecision(t *testing.T) {
+	if !disposalDefaultResourceTurn(1, nil, nil, disposalDefaultDecideResource) {
+		t.Fatal("exact default decide resource turn was not recognized")
+	}
+	for _, tc := range []struct {
+		name       string
+		exit       int
+		processErr error
+		output     []byte
+		diagnostic string
+	}{
+		{"success", 0, nil, nil, disposalDefaultDecideResource},
+		{"other_exit", 2, nil, nil, disposalDefaultDecideResource},
+		{"process_deadline", 1, context.DeadlineExceeded, nil, disposalDefaultDecideResource},
+		{"partial_output", 1, nil, []byte(`{"kind":`), disposalDefaultDecideResource},
+		{"empty_decision", 1, nil, []byte("{}\n"), disposalDefaultDecideResource},
+		{"accept", 1, nil, []byte(`{"kind":"accept"}`), disposalDefaultDecideResource},
+		{"other_budget", 1, nil, nil, strings.Replace(disposalDefaultDecideResource, "5ms", "50ms", 1)},
+		{"other_phase", 1, nil, nil, strings.Replace(disposalDefaultDecideResource, "decide:", "chunk_initialize:", 1)},
+		{"lua_error", 1, nil, nil, "policy:2: " + disposalDefaultDecideResource + "stack traceback\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if disposalDefaultResourceTurn(tc.exit, tc.processErr, tc.output, tc.diagnostic) {
+				t.Fatal("noncanonical failure or production output became safe unavailability")
+			}
+		})
+	}
 }
 
 func TestDisposalProductionArtifactIdentityRejectsWrongCohortAndInstrumentation(t *testing.T) {

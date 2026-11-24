@@ -85,7 +85,9 @@ func planBodyMotion(ctx context.Context, start Point, bearing, speed float64, du
 		return nil, fmt.Errorf("body start support unknown: start_z=%g measured_z=%g known=%t fall_horizon=%s", start.Z, h, known, BodyMotionHorizon)
 	}
 	drop := float64(start.Z) - float64(h)
-	if drop < 0 || drop > maxDrop {
+	// The same measured contact band applies on either side of the observed
+	// pose; float32 floor sampling may place support slightly above its Z.
+	if drop < -.025 || drop > maxDrop {
 		return nil, fmt.Errorf("body start outside measured support: start_z=%g measured_z=%g drop=%g maximum_gravity_drop=%g", start.Z, h, drop, maxDrop)
 	}
 	if drop > .025 {

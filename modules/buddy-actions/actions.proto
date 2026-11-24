@@ -771,6 +771,9 @@ message BodyMovementRequest {
   // under normal gravity before a subsequent input can step or jump.
   uint32 duration_ms = 6;
   bool jump = 7;
+  // Optional exact parent-owned AcquireIdleInteraction lease. No legacy
+  // acquisition or movement-ownership side effect is implied.
+  string idle_token = 8;
 }
 message BodyMovementState {
   uint64 sequence_id = 1;
@@ -898,6 +901,10 @@ message EncounterPlayer {
   uint64 combo_target_guid = 32;
   uint32 combo_points = 33;
   uint32 player_flags = 34;
+  uint64 position_age_ms = 35;
+  bool position_inferred = 36;
+  bool position_estimated = 37;
+  bool position_age_known = 38;
 }
 message EncounterCreature {
   uint64 guid = 1;
@@ -1332,7 +1339,72 @@ message FlightpathReferenceResponse {
   bool live_route_known = 7;
 }
 
+// Static client geometry only. A destination request is intent, not owner pose
+// or realm admission; native notification still requires the actor in volume.
+message AreaTriggerReferenceRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint32 destination_map_id = 4;
+}
+message AreaTriggerVolume {
+  uint32 trigger_id = 1;
+  uint32 source_map_id = 2;
+  uint32 destination_map_id = 3;
+  double x = 4;
+  double y = 5;
+  double z = 6;
+  double radius = 7;
+  double length = 8;
+  double width = 9;
+  double height = 10;
+  double orientation = 11;
+  bool reference_only = 12;
+}
+message AreaTriggerReferences {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  repeated AreaTriggerVolume volumes = 4;
+  string source_commit = 5;
+}
+message NotifyAreaTriggerRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  string token = 4;
+  uint32 trigger_id = 5;
+  uint64 expected_position_revision = 6;
+  uint64 expected_revision = 7;
+  string client_request_id = 8;
+}
+// Retained immutable request identity and delivery facts. Destination observation
+// establishes adjacent observed continuity, never server trigger causality,
+// party-copy admission, or owner regroup.
+message AreaTriggerOperation {
+  uint64 revision = 1;
+  string client_request_id = 2;
+  string session_id = 3;
+  uint64 self_guid = 4;
+  uint64 visit_id = 5;
+  uint32 trigger_id = 6;
+  uint64 expected_position_revision = 7;
+  string phase = 8;
+  bool pending = 9;
+  bool transport_written = 10;
+  bool transport_unknown = 11;
+  bool not_dispatched = 12;
+  uint32 destination_map_id = 13;
+  uint64 observed_visit_id = 14;
+  bool destination_observed = 15;
+  string error = 16;
+  agentwow.module.v1.TransportScope source_scope = 17;
+}
+
 service BuddyActions {
+  rpc AreaTriggerReference(AreaTriggerReferenceRequest) returns (AreaTriggerReferences);
+  rpc NotifyAreaTrigger(NotifyAreaTriggerRequest) returns (AreaTriggerOperation);
+  rpc AreaTriggerObservation(google.protobuf.Empty) returns (AreaTriggerOperation);
   rpc TalentState(TalentStateRequest) returns (TalentStateResponse);
   rpc LearnTalent(LearnTalentRequest) returns (TalentStateResponse);
   rpc CastSpell(CastSpellRequest) returns (State);
