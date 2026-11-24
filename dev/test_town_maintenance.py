@@ -213,6 +213,7 @@ class TownTests(unittest.TestCase):
         self.rpc.current['inventoryBags'][0]['slots'][2] = {'slot': 2}
         self.rpc.current['items'] = self.rpc.current['items'][1:]
         self.rpc.mail['listAgeMs'] = '0'
+        self.rpc.mail['bagMails'][0]['attachments'] = self.rpc.mail['bagMails'][0]['attachments'][:1]
         original = self.rpc.call
         def call(method, params):
             value = original(method, params)
@@ -223,6 +224,14 @@ class TownTests(unittest.TestCase):
         self.assertEqual(result['phase'], 'not_dispatched')
         self.assertEqual(self.rpc.mutations(), [])
         self.assertEqual(self.worker('reconcile')['phase'], 'not_dispatched')
+        first = json.loads(self.path.read_text())['attempts'][0]
+        self.rpc.call, self.rpc.policy_source = original, service_source()
+        self.assertEqual(self.worker('run', mailbox_guid=MAILBOX, claims_only=True)['phase'], 'complete')
+        claims = [request for method, request in self.rpc.mutations() if method == 'buddy-mail.claim_bag_attachment']
+        self.assertEqual(len(claims), 1)
+        self.assertEqual(claims[0]['itemGuidLow'], first['request']['itemGuidLow'])
+        self.assertNotEqual(claims[0]['requestId'], first['requestId'])
+        self.assertEqual(json.loads(self.path.read_text())['attempts'][0], first)
 
     def test_local_refusal_save_failure_retains_reservation_without_sending(self):
         original_save = m.Journal.save

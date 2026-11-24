@@ -558,7 +558,8 @@ class Worker:
         rows = mail.get("bagMails", [])
         if not isinstance(rows, list) or len(rows) > 50:
             raise Error("bounded_bag_mail_list_required")
-        done = {number(r["request"]["itemGuidLow"]) for r in self.journal.data["attempts"] if r["kind"] == "claim"}
+        done = {number(r["request"]["itemGuidLow"]) for r in self.journal.data["attempts"] if r["kind"] == "claim"
+                and not (r["phase"] == "not_dispatched" and r.get("localNotDispatched") is True)}
         candidates, seen, lows, indices = [], set(), set(), set()
         for row in rows:
             mid = positive(row.get("mailId", 0), 2**32-1)
