@@ -20,6 +20,7 @@ def main():
         ("encounter_stipend_selection", behaviors / "stipend-selection.lua"),
         ("encounter_quest_rewards", behaviors / "quest-rewards.lua"),
         ("encounter_corpse_loot", behaviors / "corpse-loot.lua"),
+        ("encounter_gathering", behaviors / "gathering.lua"),
         ("encounter_spells", behaviors / "encounter-spells.lua"),
         ("encounter_healing", behaviors / "healing.lua"),
         ("encounter_starter_objectives", behaviors / "starter-objectives.lua"),
