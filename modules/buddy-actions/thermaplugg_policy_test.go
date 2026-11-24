@@ -32,7 +32,7 @@ func TestThermapluggSharedSelectorUsesActualDefaultFiveMillisecondRuntime(t *tes
 	s, f, _ := thermapluggRig(t)
 	// Override only this semantic fixture: actual production constructor,
 	// source initialization and both pure reads retain the default watchdog.
-	s.starterSpells.runtime = behavior.New()
+	s.starterSpells.runtime = nil // Exercise the production lazy default constructor and source reload.
 	f.objects[142211].State = 0
 	if behavior.EvaluationLimit != 5*time.Millisecond {
 		t.Fatal("production evaluation limit changed")

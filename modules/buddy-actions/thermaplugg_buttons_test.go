@@ -56,6 +56,7 @@ func (f *thermapluggTestSession) SendPacket(ctx context.Context, r *modv1.SendPa
 func thermapluggRig(t *testing.T) (*Service, *thermapluggTestSession, func(time.Duration)) {
 	t.Helper()
 	s, f, advance := rig(t)
+	s.sessionID = f.party.SessionId
 	useStarterSemanticPolicy(t, s) // Real source; isolate physical semantics from the separate production watchdog.
 	f.world.Self.MapId, f.world.Owner.MapId, f.world.Self.ClassId = thermapluggMap, thermapluggMap, 4
 	f.world.VisitRevision = 1
