@@ -24,6 +24,10 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 c = importlib.util.module_from_spec(spec)
 loader.exec_module(c)
 Error, integer = c.ConversationError, c.integer
+policy_loader = importlib.machinery.SourceFileLoader("quest_objective_policy", str(Path(__file__).with_name("party-quest-policy.py")))
+policy_spec = importlib.util.spec_from_loader(policy_loader.name, policy_loader)
+quest_policy = importlib.util.module_from_spec(policy_spec)
+policy_loader.exec_module(quest_policy)
 
 # Data for the installed normal-item actuator. The executor and model do not
 # invent additional item spells, targets or packet layouts for other quests.
@@ -260,27 +264,82 @@ class QuestTask:
             self.done, self.status["phase"] = True, "owned_item_operation_cancelled"
         return True
 
+    def policy(self, context):
+        state, own = context["state"], context["actions"]["position"]
+        def position(value, known="positionKnown"):
+            if not point(value, known): return {"known": False}
+            return dict(known=True, mapId=integer(value.get("mapId", 0)),
+                **{key: value[key] for key in ("x", "y", "z")})
+        collections, observed = {}, {}
+        for collection in ("barrels", "fires"):
+            rows = state.get(collection, [])
+            if not isinstance(rows, list) or len(rows) > 32:
+                raise Error("Quest target observations exceed their bound")
+            entry, high = (self.recipe["sourceEntry"], 0xf110) if collection == "barrels" else (self.recipe["targetEntry"], 0xf130)
+            collections[collection], observed[collection] = [], {}
+            for raw in rows:
+                row = raw if isinstance(raw, dict) else {}
+                guid = integer(row.get("guid", 0))
+                identity = (guid >> 48 == high and bool(guid & 0xffffff) and guid >> 24 & 0xffffff == entry
+                    and integer(row.get("entry", 0)) == entry)
+                key = str(guid)
+                collections[collection].append(dict(guid=key, entry=integer(row.get("entry", 0)),
+                    present=row.get("present") is True, identityMatches=identity, position=position(row),
+                    travelAttempts=self.travel_attempts.get(key, 0), cooldownAt=self.data["targetCooldowns"].get(key, 0)))
+                # Preserve the exact first admissible native row as the action
+                # binding. Lua may order it, but cannot invent a target/pose.
+                if (identity and point(row) and row.get("present") is True
+                        and integer(row.get("mapId", 0)) == integer(own.get("mapId", 0))):
+                    observed[collection].setdefault(key, row)
+        bucket = state.get("bucket", {})
+        if not isinstance(bucket, dict):
+            raise Error("Observed quest item binding is invalid")
+        facts = dict(mode="quest_objective", sessionId=self.session, selfGuid=str(self.guid), questId=self.qid,
+            now=self.now(), selfPosition=position(own, "known"), ready=state.get("ready") is True,
+            recipe={key: self.recipe[key] for key in ("sourceEntry", "targetEntry", "itemEntry", "sourceRange", "targetRange")},
+            bucket=dict(itemGuid=str(integer(bucket.get("itemGuid", 0))), entry=integer(bucket.get("entry", 0)),
+                count=integer(bucket.get("count", 0))), collections=collections)
+        result = quest_policy.evaluate(facts)
+        if (not isinstance(result, dict) or result.get("status") != "ready" or result.get("sessionId") != self.session
+                or result.get("selfGuid") != str(self.guid) or result.get("questId") != self.qid
+                or not isinstance(result.get("collections"), dict) or not isinstance(result.get("exhausted"), dict)):
+            raise Error("Shared Lua quest objective policy is unavailable or rejected its observations")
+        bound = {}
+        for collection in ("barrels", "fires"):
+            rows = result["collections"].get(collection)
+            if rows == {}: rows = []
+            if not isinstance(rows, list) or len(rows) > 32 or type(result["exhausted"].get(collection)) is not bool:
+                raise Error("Lua quest objective policy returned invalid targets")
+            seen, bound[collection] = set(), []
+            for row in rows:
+                key = row.get("guid") if isinstance(row, dict) else None
+                raw = observed[collection].get(key) if isinstance(key, str) else None
+                if (raw is None or row["guid"] in seen or type(row.get("distance")) not in (int, float)
+                        or not math.isfinite(row["distance"]) or not math.isclose(row["distance"], distance(own, raw), rel_tol=0, abs_tol=1e-8)):
+                    raise Error("Lua quest objective policy returned an unobserved target")
+                seen.add(row["guid"])
+                bound[collection].append(dict(guid=integer(row["guid"]), point=raw, distance=row["distance"]))
+        choice = result.get("choice")
+        if (not isinstance(choice, dict) or choice.get("kind") not in ("wait", "travel", "attempt")
+                or not isinstance(choice.get("collection"), str)):
+            raise Error("Lua quest objective policy returned an invalid action")
+        if choice["kind"] == "wait":
+            if choice.get("collection") not in bound or choice.get("phase") not in ("waiting_for_observed_practice_fire_or_reset", "waiting_for_observed_quest_barrel",
+                    "waiting_for_quest_item_capability"):
+                raise Error("Lua quest objective policy returned an invalid wait state")
+        elif (choice.get("collection") not in bound or not any(str(row["guid"]) == choice.get("targetGuid")
+                for row in bound[choice["collection"]])):
+            raise Error("Lua quest objective policy returned an unobserved action identity")
+        elif choice["kind"] == "attempt" and choice.get("action") not in ("FILL_BUCKET", "THROW_BUCKET"):
+            raise Error("Lua quest objective policy returned an invalid item action")
+        result["_collections"] = bound
+        return result
+
     def candidates(self, context, collection):
-        rows = context["state"].get(collection, [])
-        if not isinstance(rows, list) or len(rows) > 32:
-            raise Error("Quest target observations exceed their bound")
-        own, seen, result = context["actions"]["position"], set(), []
-        entry, high = (self.recipe["sourceEntry"], 0xf110) if collection == "barrels" else (self.recipe["targetEntry"], 0xf130)
-        for row in rows:
-            if not isinstance(row, dict) or not point(row) or row.get("present") is not True:
-                continue
-            guid = integer(row.get("guid", 0))
-            if (guid in seen or guid>>48 != high or not guid & 0xffffff or guid>>24 & 0xffffff != entry
-                    or integer(row.get("entry", 0)) != entry or integer(row.get("mapId", 0)) != integer(own.get("mapId", 0))):
-                continue
-            seen.add(guid)
-            d = distance(own, row)
-            limit = self.recipe["sourceRange"] if collection == "barrels" else self.recipe["targetRange"]
-            if d > limit and self.travel_attempts.get(str(guid), 0) >= 3:
-                self.status["blockedReason"] = "observed_candidate_exhausted_travel_limit"
-                continue
-            result.append({"guid": guid, "point": row, "distance": d})
-        return sorted(result, key=lambda row: (row["distance"], row["guid"]))
+        result = self.policy(context)
+        if result["exhausted"][collection]:
+            self.status["blockedReason"] = "observed_candidate_exhausted_travel_limit"
+        return result["_collections"][collection]
 
     def release_travel(self):
         if self.travel_token is None:
@@ -482,30 +541,39 @@ class QuestTask:
         if self.now() < self.data.get("nextAttemptAt", 0):
             self.status["phase"] = "waiting_for_observed_operation_settlement"
             return
-        bucket = state.get("bucket", {})
-        if not isinstance(bucket, dict):
-            raise Error("Observed quest item binding is invalid")
-        has_bucket = (integer(bucket.get("itemGuid", 0)) > 0 and integer(bucket.get("entry", 0)) == self.recipe["itemEntry"]
-                      and integer(bucket.get("count", 0)) > 0)
-        field, action, limit = ("fires", "THROW_BUCKET", self.recipe["targetRange"]) if has_bucket else ("barrels", "FILL_BUCKET", self.recipe["sourceRange"])
-        targets = self.candidates(context, field)
-        if field == "fires":
-            targets = [row for row in targets if self.data["targetCooldowns"].get(str(row["guid"]), 0) <= self.now()]
-        if not targets:
-            self.status["phase"] = "waiting_for_observed_practice_fire_or_reset" if has_bucket else "waiting_for_observed_quest_barrel"
+        try:
+            selected = self.policy(context)
+        except Error:
+            self.status["phase"] = "waiting_for_shared_lua_quest_objective_policy"
             return
-        target = targets[0]
-        if target["distance"] > limit:
+        choice = selected["choice"]
+        field = choice["collection"]
+        if selected["exhausted"][field]:
+            self.status["blockedReason"] = "observed_candidate_exhausted_travel_limit"
+        if choice["kind"] == "wait":
+            self.status["phase"] = choice["phase"]
+            if choice["phase"] == "waiting_for_quest_item_capability":
+                reason = state.get("reason", "")
+                if isinstance(reason, str) and re.fullmatch(r"[a-z0-9_]{1,120}", reason):
+                    self.status["blockedReason"] = reason
+            return
+        target = next(row for row in selected["_collections"][field] if str(row["guid"]) == choice["targetGuid"])
+        if choice["kind"] == "travel":
             self.travel(context, target)
             return
-        if state.get("ready") is not True:
-            self.status["phase"] = "waiting_for_quest_item_capability"
-            reason = state.get("reason", "")
-            if isinstance(reason, str) and re.fullmatch(r"[a-z0-9_]{1,120}", reason):
-                self.status["blockedReason"] = reason
-            return
+        # This is final native item/range admission, never a replacement
+        # chooser when Lua is missing, rejected or asks for an invalid action.
+        action, bucket = choice["action"], state.get("bucket", {})
+        if not isinstance(bucket, dict): raise Error("Observed quest item binding is invalid")
+        bound_bucket = (integer(bucket.get("itemGuid", 0)) > 0 and integer(bucket.get("entry", 0)) == self.recipe["itemEntry"]
+            and integer(bucket.get("count", 0)) > 0)
+        if (state.get("ready") is not True or action == "THROW_BUCKET" and
+                (field != "fires" or not bound_bucket or target["distance"] > self.recipe["targetRange"])
+                or action == "FILL_BUCKET" and
+                (field != "barrels" or bound_bucket or target["distance"] > self.recipe["sourceRange"])):
+            raise Error("Lua quest item action does not match the current native binding")
         self.status.pop("blockedReason", None)
-        self.attempt(context, action, target, bucket if has_bucket else {})
+        self.attempt(context, action, target, bucket if action == "THROW_BUCKET" else {})
 
     def cleanup(self):
         self.release_travel()

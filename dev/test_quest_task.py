@@ -145,6 +145,83 @@ class QuestTaskTests(unittest.TestCase):
                 actor.tick()
                 now[0] += 10
 
+    def test_real_lua_bucket_direction_exact_guid_order_and_cooldown(self):
+        actor, rpc, now, _ = self.rig()
+        context = actor.read()
+        context["state"]["barrels"] = [rpc.target(guid, 186234, 2) for guid in (BARREL+1, BARREL)]
+        result = actor.policy(context)
+        self.assertGreater(BARREL, 2**53)
+        self.assertEqual([row["guid"] for row in result["collections"]["barrels"]], [str(BARREL), str(BARREL+1)])
+        self.assertEqual(result["choice"], dict(kind="attempt", collection="barrels", targetGuid=str(BARREL), action="FILL_BUCKET"))
+        context["state"]["bucket"] = dict(itemGuid=str(ITEM), entry=32971, count=1)
+        context["state"]["fires"] = [rpc.target(guid, 23537, x) for guid, x in ((FIRE, 10), (FIRE+1, 12))]
+        actor.data["targetCooldowns"][str(FIRE)] = now[0]+6
+        self.assertEqual(actor.policy(context)["choice"], dict(kind="attempt", collection="fires", targetGuid=str(FIRE+1), action="THROW_BUCKET"))
+        actor.data["targetCooldowns"][str(FIRE+1)] = now[0]+6
+        self.assertEqual(actor.policy(context)["choice"]["phase"], "waiting_for_observed_practice_fire_or_reset")
+        now[0] += 6
+        self.assertEqual(actor.policy(context)["choice"]["targetGuid"], str(FIRE))
+        self.assertFalse(any(method == "buddy-quest-items.attempt" for method, _ in rpc.calls))
+
+    def test_editing_shared_lua_changes_actual_target_without_python_reselection(self):
+        actor, rpc, now, _ = self.rig()
+        rpc.following = False
+        original_state = rpc.state
+        def state():
+            value = original_state()
+            value["barrels"].append(rpc.target(BARREL+1, 186234, 1))
+            return value
+        rpc.state = state
+        self.assertEqual(actor.policy(actor.read())["choice"]["targetGuid"], str(BARREL+1))
+        source = task.quest_policy.SOURCE.read_text()
+        needle = "candidate.distance<result[i-1].distance"
+        self.assertEqual(source.count(needle), 1)
+        with tempfile.TemporaryDirectory() as folder:
+            policy = Path(folder)/"objective.lua"
+            policy.write_text(source.replace(needle, "candidate.distance>result[i-1].distance"))
+            with patch.object(task.quest_policy, "SOURCE", policy): self.tick(actor, now)
+        requests = [params for method, params in rpc.calls if method == "buddy-quest-items.attempt"]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual((requests[0]["action"], requests[0]["sourceObjectGuid"]), ("FILL_BUCKET", str(BARREL)))
+        self.assertEqual(actor.data["attempts"][0]["status"], "reserved")  # ACK is not completion.
+
+    def test_missing_lua_has_no_native_objective_chooser_or_new_reservation(self):
+        actor, rpc, now, _ = self.rig()
+        rpc.following = False
+        before = copy.deepcopy(actor.data["attempts"])
+        with patch.object(task.quest_policy, "evaluate", return_value=dict(status="pending")):
+            self.tick(actor, now)
+        self.assertEqual(actor.status["phase"], "waiting_for_shared_lua_quest_objective_policy")
+        self.assertEqual(actor.data["attempts"], before)
+        self.assertFalse(any(method in ("buddy-actions.acquire_interaction", "buddy-actions.travel_to", "buddy-quest-items.attempt")
+            for method, _ in rpc.calls))
+
+    def test_invalid_lua_action_does_not_replace_actual_item_binding(self):
+        actor, rpc, now, _ = self.rig()
+        rpc.following = False
+        result = actor.policy(actor.read())
+        result["choice"]["action"] = "THROW_BUCKET"
+        with patch.object(task.quest_policy, "evaluate", return_value=result), self.assertRaises(task.Error):
+            self.tick(actor, now)
+        self.assertEqual(actor.data["attempts"], [])
+        self.assertFalse(any(method == "buddy-quest-items.attempt" for method, _ in rpc.calls))
+
+    def test_lua_rejects_foreign_or_unobserved_targets_before_any_native_effect(self):
+        for change in ("body", "target", "target_shape", "collection_shape"):
+            actor, rpc, now, _ = self.rig()
+            rpc.following = False
+            result = actor.policy(actor.read())
+            if change == "body": result["sessionId"] = "foreign"
+            elif change == "target":
+                result["collections"]["barrels"][0]["guid"] = "123"
+                result["choice"]["targetGuid"] = "123"
+            elif change == "target_shape": result["collections"]["barrels"][0]["guid"] = {}
+            else: result["choice"]["collection"] = {}
+            with patch.object(task.quest_policy, "evaluate", return_value=result): self.tick(actor, now)
+            self.assertEqual(actor.status["phase"], "waiting_for_shared_lua_quest_objective_policy")
+            self.assertEqual(actor.data["attempts"], [])
+            self.assertFalse(any(method in ("buddy-actions.travel_to", "buddy-quest-items.attempt") for method, _ in rpc.calls))
+
     def test_complete_five_individual_credits_uses_module_owned_item_steps_only(self):
         actor, rpc, now, saved = self.rig()
         rpc.auto = True
