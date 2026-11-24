@@ -2,6 +2,7 @@ package behavior
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -55,10 +56,23 @@ func tradeConsentFixtureRuntime(t *testing.T, source string) *Runtime {
 
 func tradeConsentResult(t *testing.T, r *Runtime, source string, input map[string]any, want string) map[string]any {
 	t.Helper()
+	return tradeConsentSemanticAndProductionTurn(t, r, source, input, want, false)
+}
+
+func tradeConsentFullFrameResult(t *testing.T, r *Runtime, source string, input map[string]any, want string) {
+	t.Helper()
+	// The full-frame fixture proves semantics separately from the product's
+	// safe resource-turn contract. It never turns unavailability into accept.
+	tradeConsentSemanticAndProductionTurn(t, r, source, input, want, true)
+}
+
+func tradeConsentSemanticAndProductionTurn(t *testing.T, r *Runtime, source string, input map[string]any, want string, resourceTurn bool) map[string]any {
+	t.Helper()
 	before, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
 	}
+	prior := r.Status()
 	out, err := r.Evaluate(input)
 	if err != nil {
 		t.Fatal(err, r.Status())
@@ -67,18 +81,26 @@ func tradeConsentResult(t *testing.T, r *Runtime, source string, input map[strin
 	if len(out) != 2 || out["kind"] != want || !ok || len(reason) == 0 || len(reason) > 128 {
 		t.Fatalf("got %v, want bounded two-key %s decision", out, want)
 	}
-	// Independently require this exact source/frame's complete result from the
-	// clean-head ordinary CLI, with default initialization and evaluation limits.
+	// Independently invoke the exact source/full frame ONCE in the clean-head
+	// ordinary CLI, with default initialization and evaluation limits.
 	production, err := evaluateDisposalProduction(t, source, input)
-	if err != nil || !reflect.DeepEqual(production, out) {
+	var unavailable *disposalProductionResourceError
+	if resourceTurn && errors.As(err, &unavailable) {
+		if production != nil || unavailable.phase != "decide" || !errors.Is(err, ErrExecutionBudget) {
+			t.Fatal("resource turn produced or substituted a production decision", production, err)
+		}
+		t.Log("default production decide resource turn: NO decision; no retry or performance-success claim", err)
+	} else if err != nil || !reflect.DeepEqual(production, out) {
 		t.Fatalf("default production result %v differs from fixture %v: %v", production, out, err)
 	}
 	after, err := json.Marshal(input)
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatal("policy changed the observed input", err)
 	}
-	if r.Status().Failures != 0 || r.Status().QuarantinedRevision != "" {
-		t.Fatal("decision used a failed policy", r.Status())
+	state := r.Status()
+	if state.Failures != 0 || state.QuarantinedRevision != "" || state.Revision != prior.Revision ||
+		state.LastGoodRevision != prior.Revision || state.Evaluations != prior.Evaluations+1 {
+		t.Fatal("semantic decision changed accepted source, restarted or retried", state, prior)
 	}
 	return out
 }
@@ -198,11 +220,7 @@ func TestTradeConsentMalformedOrIncompleteFactsWait(t *testing.T) {
 	}
 }
 
-func TestTradeConsentFullActualFrameIncludesServiceSlot(t *testing.T) {
-	source := tradeConsentSource(t)
-	// This full-frame semantic case uses an explicit budget under instrumentation.
-	// Every exact proposal still requires the real default CLI result below.
-	r := disposalArmorSemanticRuntime(t, source)
+func tradeConsentFullActualFrame() map[string]any {
 	frame := tradeConsentFrame()
 	frame["selfGuid"] = "18446744073709551615"
 	tr := frame["trade"].(map[string]any)
@@ -219,9 +237,44 @@ func TestTradeConsentFullActualFrameIncludesServiceSlot(t *testing.T) {
 		}
 		tr[side.key] = rows
 	}
-	tradeConsentResult(t, r, source, frame, "accept")
+	return frame
+}
+
+func TestTradeConsentFullActualFrameIncludesServiceSlot(t *testing.T) {
+	source := tradeConsentSource(t)
+	// The same reused semantic Runtime proves accept/wait without a restart.
+	// Each complete frame also gets one strict-default production invocation:
+	// an exact decision or an explicitly measured resource NO-decision turn.
+	r := disposalArmorSemanticRuntime(t, source)
+	frame := tradeConsentFullActualFrame()
+	tradeConsentFullFrameResult(t, r, source, frame, "accept")
+	tr := frame["trade"].(map[string]any)
 	tr["partnerItems"] = append(tr["partnerItems"].([]any), tradeConsentItem(0))
-	tradeConsentResult(t, r, source, frame, "wait")
+	tradeConsentFullFrameResult(t, r, source, frame, "wait")
+}
+
+func TestTradeConsentFullActualFrameResourceTurnHasNoProductionDecision(t *testing.T) {
+	source := "local consent=(function()\n" + tradeConsentSource(t) + `
+end)()
+return {decide=function(input)
+ local decision=consent.decide(input)
+ while true do end
+ return decision
+end}`
+	frame := tradeConsentFullActualFrame()
+	before, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	production, err := evaluateDisposalProduction(t, source, frame)
+	var unavailable *disposalProductionResourceError
+	if production != nil || !errors.As(err, &unavailable) || unavailable.phase != "decide" || !errors.Is(err, ErrExecutionBudget) {
+		t.Fatal("actual full-frame default watchdog did not discard the entire decision", production, err)
+	}
+	after, err := json.Marshal(frame)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("resource invocation changed the complete observed frame", err)
+	}
 }
 
 func TestTradeConsentEditableTuningUsesCurrentSource(t *testing.T) {

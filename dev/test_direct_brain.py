@@ -481,8 +481,9 @@ class DirectBrainIntegrationTests(unittest.TestCase):
         self.assertEqual(lazy['reference']['value'],reference)
         self.assertEqual(initial['directTools']['start'],'gm_task_start(goal)')
         self.assertEqual(initial['directTools']['execute'],'gm_execute(command, select_guid?)')
-        self.assertIn('no new Lua, workspace file, transport-config read or CLI invocation',initial['instructions'])
-        self.assertIn('a task is not mandatory',initial['instructions'])
+        self.assertTrue(initial['instructions'].startswith('Choose native GM commands from the actual owner'))
+        self.assertIn('It is not necessary to create a task, write Lua, read a transport file or ask an operator',initial['instructions'])
+        self.assertIn('gm_task_start(goal) remains an OPTIONAL',initial['instructions'])
         self.assertEqual(initial['cliReference']['transportConfig'],metadata['transportConfig'])
         self.assertEqual(initial['cliReference']['start'],metadata['start'])
         self.assertNotIn('transportConfig',initial);self.assertNotIn('start',initial)
@@ -904,7 +905,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             names = {row['function']['name'] for row in http.requests[0]['body']['tools']}
             self.assertIn('party_invite', names)
             self.assertFalse(names & {'workspace_read','workspace_write','policy_show','policy_apply','policy_input',
-                                     'spell_inspect','gm_execute','gm_task_start','gm_inspect'})
+                                     'gm_execute','gm_task_start','gm_inspect'})
             returned = json.loads(http.requests[1]['body']['messages'][-1]['content'])['result']
             self.assertTrue(returned['transportWritten'])
             self.assertFalse(returned['gameEffectClaimed'])
@@ -932,6 +933,101 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             self.assertEqual(native.writes, [('buddy-party.invite', dict(name='Joel'))])
             self.assertEqual(len(list((self.state/'api-conversations').glob('*.json'))), 2)
             for path, body in original.items(): self.assertEqual(Path(path).read_bytes(), body)
+
+    @contextlib.contextmanager
+    def ordinary_control_rpc(self):
+        from test_direct_tools import OwnerControlToolTests
+        native=OwnerControlToolTests.ControlRPC()
+        native.sid=native.state['sessionId']=self.rpc.core
+        native.guid=native.state['selfGuid']=self.rpc.guid
+        original=self.rpc.call
+        def call(method,params,**kwargs):
+            if method in ('session.describe','session.policy_source','session.policy_state','session.send_event',
+                          'buddy-actions.status','buddy-actions.follow','buddy-actions.buffs'):
+                return native.call(method,params,**kwargs)
+            return original(method,params,**kwargs)
+        runtime=direct_tools.load_helper(Path(__file__).with_name('task-runtime'),'ordinary_brain_store')
+        helper=direct_tools.DirectTools._helper
+        def load(tools,name):
+            return runtime if name=='task_runtime' else helper(tools,name)
+        with patch.object(self.rpc,'call',side_effect=call),patch.object(direct_tools.DirectTools,'_helper',load):
+            yield native
+
+    def test_ordinary_owner_uses_actual_follow_handoff_lua_input_and_buff_tools(self):
+        intent=dict(task='wait_for_pull',id='wait-1',ownerGuid='3',responseYards=10)
+        responses=[chat(('follow','follow',dict(enabled=True))),
+                   chat(('wait','gameplay_command',dict(value=intent))),
+                   chat(('buffs','request_buffs',{})),spoken()]
+        events=[]
+        with self.ordinary_control_rpc() as native,self.rig(responses,developer=False) as (loop,brain,state,http):
+            controls=converse.BuddyControls(self.rpc,character_guid=4,character_class='mage')
+            controls.actions_available=True;controls.actions=copy.deepcopy(native.state);loop.controls=controls
+            def marker(name):
+                def changed(*_,**__):events.append(name);return {}
+                return changed
+            with patch.object(converse,'mission_control_snapshot',return_value=dict(known=True,runtimes={})) as mission, \
+                    patch.object(converse,'party_town_snapshot',side_effect=marker('town')) as town, \
+                    patch.object(converse,'area_quest_snapshot',side_effect=marker('area')) as area, \
+                    patch.object(converse,'quest_task_snapshot',side_effect=marker('quest')) as quest:
+                self.assertEqual(loop.generate_reply([],state),REPLY)
+            self.assertEqual(events,['town','area','quest'])
+            self.assertTrue(mission.call_args.kwargs['stop'])
+            self.assertTrue(town.call_args.kwargs['revoke_follow'])
+            self.assertFalse(area.call_args.kwargs['restore_follow']);self.assertFalse(quest.call_args.kwargs['restore_follow'])
+            self.assertEqual(native.writes,[('buddy-actions.follow',dict(enabled=True)),
+                ('session.send_event',dict(sessionId=self.rpc.core,characterGuid='4',kind='command',value=intent)),
+                ('buddy-actions.buffs',dict(enabled=True))])
+            names={row['function']['name'] for row in http.requests[0]['body']['tools']}
+            self.assertTrue({'follow','gameplay_command','request_buffs','spell_inspect'}<=names)
+            self.assertFalse(names & {'policy_input','policy_apply','workspace_write','gm_execute','final_reply'})
+            returned=[json.loads(row['content'])['result'] for row in http.requests[-1]['body']['messages'] if row['role']=='tool']
+            self.assertTrue(returned[0]['followDispatched']);self.assertFalse(returned[0]['gameEffectClaimed'])
+            self.assertTrue(returned[1]['deliveryOnly']);self.assertTrue(returned[2]['deliveryOnly'])
+            self.assertTrue(brain.last_development_result['mutationToolEntered'])
+
+    def test_ordinary_follow_preserves_pending_mission_and_never_sends_follow(self):
+        with self.ordinary_control_rpc() as native,self.rig([
+                chat(('follow','follow',dict(enabled=True))),spoken()],developer=False) as (loop,_,state,http):
+            loop.controls=converse.BuddyControls(self.rpc,character_guid=4,character_class='mage')
+            retained=dict(known=True,runtimes=dict(expedition=dict(instance='same-owned-task',pendingCount=1)))
+            before=copy.deepcopy(retained)
+            with patch.object(converse,'mission_control_snapshot',return_value=retained), \
+                    patch.object(converse,'party_town_snapshot') as town:
+                self.assertEqual(loop.generate_reply([],state),REPLY)
+            town.assert_not_called();self.assertEqual(retained,before);self.assertEqual(native.writes,[])
+            result=json.loads(http.requests[-1]['body']['messages'][-1]['content'])['result']
+            self.assertFalse(result['followDispatched']);self.assertIn('uncertain',result['reason'])
+
+    def test_owner_or_body_change_during_follow_handoff_prevents_native_follow(self):
+        for change in ('owner','body'):
+            with self.subTest(change=change),self.ordinary_control_rpc() as native,self.rig([
+                    chat(('follow','follow',dict(enabled=True)))],developer=False) as (loop,_,state,_):
+                self.rpc.new_owner=False
+                loop.controls=converse.BuddyControls(self.rpc,character_guid=4,character_class='mage')
+                def replaced(*_,**__):
+                    if change=='owner':self.rpc.new_owner=True
+                    else:native.guid='5'
+                    return {}
+                with patch.object(converse,'mission_control_snapshot',return_value=dict(known=True,runtimes={})), \
+                        patch.object(converse,'party_town_snapshot',side_effect=replaced), \
+                        patch.object(converse,'area_quest_snapshot') as area:
+                    with self.assertRaises(converse.ConversationError):loop.generate_reply([],state)
+                area.assert_not_called();self.assertEqual(native.writes,[])
+                self.rpc.new_owner=False
+
+    def test_unknown_owner_command_cannot_reenter_with_new_model_and_task_id(self):
+        with self.ordinary_control_rpc() as native:
+            native.fail_method='session.send_event'
+            with self.rig([chat(('first','gameplay_command',dict(value=dict(task='cast_spell',id='cast-1',spellId=1449))))],developer=False) as (loop,brain,state,_):
+                with self.assertRaisesRegex(converse.ConversationError,'tool_outcome_unknown'):
+                    loop.generate_reply([],state,tool_request_id='original-logical-owner')
+                self.assertFalse(brain.last_failure_receipt['tools'][-1]['unknownReceipt']['replayAllowed'])
+            native.fail_method=None
+            with self.rig([chat(('second','gameplay_command',dict(value=dict(task='cast_spell',id='fresh-id',spellId=1449))))],developer=False) as (loop,brain,state,_):
+                brain.client.model=brain.model='another-model'
+                with self.assertRaisesRegex(converse.ConversationError,'tool_outcome_unknown'):
+                    loop.generate_reply([],state,tool_request_id='original-logical-owner')
+            self.assertEqual(len(native.writes),1)
 
     def test_invalid_final_schema_retains_failed_api_receipt_without_fallback(self):
         with self.rig([chat(("invalid-final", "final_reply", dict(text="Incomplete reply")))]) as (loop, brain, state, http):
@@ -1062,7 +1158,8 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                 "Current observations and control state JSON:\n", 1)[1])
             self.assertIs(prepared["current_request"]["repair_requests_allowed"], False)
             tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
-            self.assertEqual(set(tools), {"context_read", "chat_read", "session_catalog", "read_observation", "party_invite"})
+            self.assertEqual(set(tools), {"context_read", "chat_read", "session_catalog", "read_observation", "party_invite",
+                "gameplay_command", "request_buffs", "spell_inspect"})
             self.assertNotIn("final_reply", tools)
             self.assertFalse(brain.model_selection()["codexInvoked"])
 

@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 
 class ToolError(ValueError):
@@ -49,6 +50,11 @@ _CONTEXT_DEFAULT_LIMIT = object()
 GM_COMMAND_REFERENCE = (
     "Public command syntax: .go xyz <x> <y> <z> [mapId] [orientation] teleports this GM; "
     ".appear <playerName> moves this GM to that player; .summon <playerName> moves that player to this GM. "
+    ".groupsummon <playerName> moves that player's current group TO the issuing GM's CURRENT location; "
+    "the name identifies the group, NOT the destination, and this command does not first move the GM to that player. "
+    "Realm teleport/instance rules still apply: matching map/XYZ alone does not establish the same instance copy. "
+    "A person named as the requested destination is not automatically a person to move. "
+    "The explicit-name .appear and .summon forms resolve the player on the realm without select_guid or local visibility; "
     "Literal named-location examples: .teleport Maraudon moves this GM; .teleport name Joel Maraudon "
     "addresses the named player. Published #location and #playername are placeholders: substitute names, "
     "do not send the # prefix. Prefer the exact observed location NAME over an unverified numeric ID; "
@@ -202,6 +208,7 @@ def _gm_inspect_view(observed):
     return dict(observedAtUnixMs=observed.get("observedAtUnixMs"), clients=rows, gameEffectClaimed=False,
         presentation=dict(kind="compact_identity_scoped_observations", byteLimit=GM_INSPECT_BYTES,
             witnessScope="fixed owner, configured clients, and GUIDs in observed party rosters; membership knownness is unchanged",
+            readTime="observedAtUnixMs is this client-read time, not a refreshed server pose. Preserve each fact's position/vitals age, revision, knownness and estimated provenance; a newly read old pose is still old.",
             scalarDefaults="Known PlayerState omitted alive/map/pose scalars use proto3 false/zero; unknown alive or omitted unknown map/pose is null. Exact raw values remain at rawPath.",
             rawAccess="gm_inspect(path=<nonempty rawPath or field path>, offset=0, limit=20). All explicit paths address the original unprojected tree."))
 
@@ -274,7 +281,7 @@ class DirectTools:
                  allowed=lambda: False, cancelled=lambda: False, request_id=None,
                  helpers=None, runner=None, max_bytes=8 * 1024 * 1024, execution_ms=1000, context=None,
                  gm_allowed=lambda: False, chat_session_id=None, chat_cursor=None,
-                 owner_allowed=lambda: False, receipt_root=None):
+                 owner_allowed=lambda: False, receipt_root=None, follow_prepare=None):
         require(isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", session_id),
                 "explicit_session_required")
         require(str(self_guid).isdigit() and 0 < int(self_guid) < 2**48, "explicit_actor_required")
@@ -291,6 +298,8 @@ class DirectTools:
         self.receipt_root = Path(receipt_root).absolute() if receipt_root is not None else self.root / 'data/converse'
         self.allowed, self.cancelled, self.request_id = allowed, cancelled, request_id
         self.owner_allowed = owner_allowed
+        require(follow_prepare is None or callable(follow_prepare), 'invalid_follow_preparation')
+        self.follow_prepare = follow_prepare
         self.gm_allowed = gm_allowed
         self.helpers, self.runner = dict(helpers or {}), runner or subprocess.run
         self.max_bytes, self.execution_ms = max_bytes, execution_ms
@@ -618,6 +627,177 @@ class DirectTools:
         except Exception as error:
             self._unknown("policy_input", dict(valueSHA256=sha(value)), error)
         return dict(result=result, deliveryOnly=True, gameEffectClaimed=False)
+
+    def _ordinary_binding(self, name, *, settling_written=False):
+        catalog = self._catalog(settling_written=settling_written)
+        methods = self._methods(catalog)
+        prefix = 'buddy-actions::warcraftbuddy.actions.v1.'
+        status_method = methods.get('buddy-actions.status', {})
+        require(status_method.get('module') == 'buddy-actions' and status_method.get('effect') == 'read'
+                and status_method.get('path') == '/warcraftbuddy.actions.v1.BuddyActions/Status'
+                and status_method.get('outputType') == prefix+'State', 'canonical_control_status_required')
+        state_shape = catalog.get('messages', {}).get(prefix+'State', {})
+        state_fields = {row.get('name'):row for row in state_shape.get('fields', []) if isinstance(row, dict)}
+        require(state_shape.get('protobufName') == 'warcraftbuddy.actions.v1.State' and
+                state_shape.get('syntax') == 'proto3', 'canonical_control_state_required')
+        for field, number, kind in (('following', 1, 'bool'), ('sessionId', 106, 'string'), ('selfGuid', 107, 'uint64')):
+            row = state_fields.get(field, {})
+            require(row.get('number') == number and row.get('kind') == kind and row.get('type') == kind
+                    and not any(row.get(key) for key in ('repeated', 'map', 'required', 'optional', 'oneof')),
+                    'canonical_control_state_required')
+        if name == 'gameplay_command':
+            require(methods.get('session.send_event', {}).get('effect') == 'mutation',
+                    'installed_policy_input_required')
+        else:
+            alias, route = ('follow', 'Follow') if name == 'follow' else ('buffs', 'Buffs')
+            method = methods.get('buddy-actions.'+alias, {})
+            require(method.get('module') == 'buddy-actions' and
+                    method.get('path') == '/warcraftbuddy.actions.v1.BuddyActions/'+route and
+                    method.get('inputType') == prefix+'ToggleRequest' and method.get('outputType') == prefix+'State'
+                    and method.get('effect') in ('unspecified', 'mutation'), 'canonical_control_contract_required')
+            fields = catalog.get('messages', {}).get(prefix+'ToggleRequest', {}).get('fields', [])
+            require(len(fields) == 1 and fields[0].get('name') == 'enabled' and
+                    fields[0].get('number') == 1 and fields[0].get('kind') == 'bool' and
+                    fields[0].get('type') == 'bool' and not any(fields[0].get(key)
+                    for key in ('repeated', 'map', 'required', 'optional', 'oneof')),
+                    'canonical_control_schema_required')
+            if name == 'request_buffs':
+                exact = methods.get('buddy-actions.cast_buff', {})
+                require(exact.get('module') == 'buddy-actions' and
+                        exact.get('path') == '/warcraftbuddy.actions.v1.BuddyActions/CastBuff',
+                        'lua_buff_request_route_required')
+        status = self.rpc.call('buddy-actions.status', {})
+        require(isinstance(status, dict) and status.get('sessionId') == self.session_id and
+                str(status.get('selfGuid')) == self.self_guid, 'control_body_changed')
+        revision = None
+        if name != 'follow':
+            require(methods.get('session.policy_source', {}).get('effect') == 'read',
+                    'accepted_policy_source_required')
+            source = self.rpc.call('session.policy_source', dict(sessionId=self.session_id, characterGuid=self.self_guid))
+            require(isinstance(source, dict) and source.get('sessionId') == self.session_id and
+                    str(source.get('characterGuid')) == self.self_guid and isinstance(source.get('source'), str)
+                    and isinstance(source.get('revision'), str) and source['revision'], 'accepted_policy_source_required')
+            revision = source['revision']
+        after = self._catalog(settling_written=settling_written)
+        require(after['revision'] == catalog['revision'], 'catalog_changed_during_control_binding')
+        return (after['revision'], revision, methods.get('session.policy_state', {}).get('effect') == 'read'), status
+
+    def _ordinary_control(self, name, args, operation_id):
+        self._authorise_owner()
+        require(isinstance(self.request_id, str) and 0 < len(self.request_id) <= 512, 'host_request_identity_required')
+        require(operation_id is None or isinstance(operation_id, str) and
+                re.fullmatch(r'[A-Za-z0-9._:-]{1,512}', operation_id), 'host_operation_identity_required')
+        operation_id = operation_id or uuid.uuid4().hex
+        if name == 'follow':
+            require(type(args.get('enabled')) is bool, 'follow_boolean_required')
+            require(callable(self.follow_prepare), 'maintained_follow_preparation_required')
+            key = [name, args['enabled']]
+        elif name == 'gameplay_command':
+            value = args.get('value')
+            require(isinstance(value, dict) and isinstance(value.get('task'), str) and value['task'],
+                    'structured_gameplay_command_required')
+            require(len(packed(value)) <= self.max_bytes, 'command_value_size_bound')
+            key = [name, value['task'], value.get('id')] if isinstance(value.get('id'), str) and value['id'] else [name, sha(packed(value))]
+        else:
+            key = [name]
+        binding, actions = self._ordinary_binding(name)
+        arguments_hash = sha(packed(args))
+        def current():
+            now, status = self._ordinary_binding(name)
+            require(now == binding, 'control_binding_changed_before_dispatch')
+            self._authorise_owner()  # After the last body/source read.
+            return status
+        runtime = self._helper('task_runtime')
+        identity = dict(sessionId=self.session_id, guid=self.self_guid, rpcUrl=self.rpc.url)
+        target = self.receipt_root / 'owner-controls' / sha(packed([self.session_id, self.self_guid, name]))
+        operation = target / sha(packed([self.request_id, operation_id, arguments_hash]))
+        with runtime.Store(target):
+            accepted, exact, order = [], None, 0
+            for folder in sorted(target.iterdir()):
+                if folder.name == 'lock': continue
+                require(re.fullmatch(r'[a-f0-9]{64}', folder.name) is not None and folder.is_dir(), 'control_receipt_directory_invalid')
+                with runtime.Store(folder) as previous: prior = previous.load()
+                if prior is None: continue
+                require(prior.get('identity') == identity, 'control_receipt_identity_changed')
+                ordinal = prior.get('order', 0)
+                require(type(ordinal) is int and ordinal >= 0, 'control_receipt_order_invalid')
+                order = max(order, ordinal)
+                if prior.get('knownNotDispatched') is True: continue
+                if prior.get('result') is not None:
+                    accepted.append(prior)
+                    if folder == operation: exact = prior
+                    continue
+                if prior.get('requestId') == self.request_id or prior.get('key') == key:
+                    self._unknown(name, dict(stateDir=str(folder), valueSHA256=prior.get('argumentsSHA256')),
+                                  ToolError('retained_control_outcome_unconfirmed'))
+            # Check all unknowns first. A fresh A after accepted A→B is a new
+            # intent, while retrying an exact operation can only read its receipt.
+            latest = max(accepted, key=lambda row:row.get('order', 0), default=None)
+            if exact is not None:
+                return dict(exact['result'], historicalReceipt=True, superseded=exact is not latest)
+            same_latest = (latest is not None and latest.get('order', 0) > 0
+                and latest.get('requestId') == self.request_id and latest.get('argumentsSHA256') == arguments_hash)
+            if same_latest and (type(actions.get('following', False)) is bool
+                    and actions.get('following', False) == args['enabled'] if name == 'follow'
+                    else latest['result'].get('policyRevision') == binding[1]):
+                result = dict(latest['result'], historicalReceipt=True)
+                if name == 'follow': result['state'] = dict(actions, following=actions.get('following', False))
+                return result
+            with runtime.Store(operation) as store:
+                record = dict(identity=identity, key=key, requestId=self.request_id, operationId=operation_id,
+                              arguments=copy.deepcopy(args), argumentsSHA256=arguments_hash, order=order+1)
+                store.save(record)
+                entered, preparing = False, False
+                try:
+                    actions = current()
+                    if name == 'follow':
+                        preparing = True
+                        reason = self.follow_prepare(copy.deepcopy(actions), current)
+                        preparing = False
+                        if reason:
+                            result = dict(followDispatched=False, preparationRequested=True, reason=reason,
+                                          gameEffectClaimed=False)
+                            store.save(dict(record, knownNotDispatched=True, result=result))
+                            return result
+                    current()
+                    entered = True
+                    if name == 'gameplay_command':
+                        result = self.rpc.call('session.send_event', dict(sessionId=self.session_id,
+                            characterGuid=self.self_guid, kind='command', value=copy.deepcopy(args['value'])))
+                        require(isinstance(result, dict) and result.get('status') == 'queued' and
+                                result.get('sessionId') == self.session_id and str(result.get('characterGuid')) == self.self_guid
+                                and isinstance(result.get('sequence'), str) and result['sequence'].isdigit(), 'policy_delivery_unconfirmed')
+                        result = dict(result=result, policyRevision=binding[1], deliveryOnly=True, gameEffectClaimed=False)
+                    else:
+                        method = 'buddy-actions.follow' if name == 'follow' else 'buddy-actions.buffs'
+                        result = self.rpc.call(method, dict(enabled=args['enabled'] if name == 'follow' else True))
+                        require(isinstance(result, dict) and result.get('sessionId') == self.session_id and
+                                str(result.get('selfGuid')) == self.self_guid, 'control_result_body_changed')
+                        if name == 'follow':
+                            require(type(result.get('following', False)) is bool, 'follow_result_unconfirmed')
+                            # Canonical proto3 State omits a false scalar on the wire.
+                            result = dict(result, following=result.get('following', False))
+                            result = dict(state=result, requestedEnabled=args['enabled'], followDispatched=True,
+                                completion='controller_state_returned; physical_movement_unverified', gameEffectClaimed=False)
+                        else:
+                            require(str(result.get('reason', '')).startswith('lua_buff_request_queued:'), 'lua_buff_delivery_unconfirmed')
+                            result = dict(state=result, policyRevision=binding[1], deliveryOnly=True, gameEffectClaimed=False)
+                    if name != 'follow' and binding[2]:
+                        result['observe'] = dict(tool='read_observation', arguments=dict(method='session.policy_state', params={}))
+                    require(len(packed(result)) <= self.max_bytes, 'control_result_size_bound')
+                    store.save(dict(record, returned=result))
+                    # A newer owner may cancel the generation after a known return.
+                    # Preserve that return, while still checking the body/source.
+                    after, _ = self._ordinary_binding(name, settling_written=True)
+                    require(after == binding, 'control_binding_changed_after_dispatch')
+                    store.save(dict(record, result=result))
+                    return result
+                except BaseException as error:
+                    if entered or preparing:
+                        self._unknown(name, dict(stateDir=str(operation), controlDispatched=entered,
+                            preparationUnconfirmed=preparing, valueSHA256=arguments_hash), error)
+                    store.save(dict(record, knownNotDispatched=True))
+                    raise
 
     def _party_invite_binding(self, *, settling_written=False):
         catalog = self._catalog(settling_written=settling_written)
@@ -1140,8 +1320,36 @@ class DirectTools:
             ("workspace_read", "Read owned Lua/JSON text and full SHA256; literal find/start_line locates a section. Large windows page content by character offset/limit; nextOffset continues without losing a long source line.", {"path": string, "start_line": {"type": "integer", "minimum": 1}, "max_lines": {"type": "integer", "minimum": 1, "maximum": 1000}, "find": string, "offset": paging["offset"], "limit": paging["limit"]}, ["path"]),
         ]
         if self.workspace is None:
-            specs = [row for row in specs if row[0] not in ('policy_show','spell_inspect','workspace_read')]
+            specs = [row for row in specs if row[0] not in ('policy_show','workspace_read')
+                     and (row[0] != 'spell_inspect' or self.owner_allowed() is True)]
         if self.owner_allowed() is True:
+            specs += [
+                ('gameplay_command', 'Send structured intent to your current accepted Lua: value is an object with task. '
+                 'Stock handlers: engage/control/cancel_control/focus/kill_order; wait_for_pull/cancel_task; cast_spell/cancel_spell. '
+                 'Examples: {task:"engage",targetGuid:"123"}; {task:"control",technique:"polymorph",mark:"moon",maintain:true}; '
+                 '{task:"focus",targetGuid:"123"}; {task:"kill_order",order:["skull","123"]}; '
+                 '{task:"wait_for_pull",id:"wait-1",ownerGuid:"3",responseYards:10}; {task:"cancel_task",id:"wait-1"}; '
+                 '{task:"cast_spell",id:"cast-1",spellId:1449}; {task:"cancel_spell",id:"cancel-1",spellId:10,expectedOperationRevision:"observed",channel:true}. '
+                 'Use learned IDs from spell_inspect; ground casts pass targets:{mask:64,destination:{x,y,z}} with observed coordinates. '
+                 'Handler availability depends on the accepted source; inspect it if unknown. Lua owns choices and task lifecycle. '
+                 'A queued input is delivery only, not a cast, movement or completion. No source edit or GM permission is granted.',
+                 {'value': dict(type='object', properties=dict(
+                     task=dict(type='string', description='Existing accepted Lua handler name.'),
+                     id=dict(type='string', description='Task identity; retain it to inspect/cancel the same task.'),
+                     targetGuid=string, mark=dict(type='string', enum=['star','circle','diamond','triangle','moon','square','x','skull']),
+                     technique=dict(type='string', enum=['polymorph','sap']), spellId=dict(type='integer',minimum=1,maximum=4294967295),
+                     enabled=dict(type='boolean'), cancel=dict(type='boolean'), maintain=dict(type='boolean'), auto=dict(type='boolean'),
+                     ownerGuid=string, responseYards=dict(type='number'), order=dict(type='array',items=string),
+                     targets=obj, trajectory=obj, requirements=obj, expectedOperationRevision=string, channel=dict(type='boolean')),
+                     required=['task'])}, ['value']),
+                ('request_buffs', 'Ask your current Lua policy to check useful buffs. Lua selects spells, targets and timing. '
+                 'This is queued intent, not a confirmed buff; it does not disable buffs or combat.', {}, []),
+            ]
+            if callable(self.follow_prepare):
+                specs.append(('follow', 'Set ordinary owner-follow intent after the maintained mission/task handoff. '
+                    'enabled=true follows; false stops following. Unsettled task cleanup can block it. '
+                    'A returned controller state is not physical arrival. Use Lua wait_for_pull for a temporary hold that preserves defense.',
+                    {'enabled': {'type':'boolean'}}, ['enabled']))
             specs.append(('party_invite', 'Send one normal party invitation to the explicitly supplied local character name. '
                 'No GM privilege, position, selection, workspace or Lua edit is required. Exact installed native route/schema '
                 'is checked, including legacy unspecified metadata; no generic mutation RPC is exposed. A transport ACK '
@@ -1157,10 +1365,10 @@ class DirectTools:
                 ("policy_input", "Deliver one structured command to an already-present Lua handler. Delivery is not game success; no arbitrary receipt/event injection.", {"value": obj}, ["value"]),
             ]
             if self.self_guid == "87" and self.request_id and self.gm_allowed() is True:
-                specs += [("gm_task_start", "Start the whole commissioned GM recovery/regroup using the existing ordered Lua task. Goal uses current observed roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": {"type":"object", "description":"Recovery goal: members=[{guid,name,rpcUrl?}] for the currently observed original party, plus destination={mapId,x,y,z,tolerance?} OR player={guid,name,tolerance?}. Companion rpcUrl must match current bindings. The shared Lua initializer validates admission before any hold or child starts."}}, ["goal"]),
+                specs += [("gm_task_start", "Optional ordered Lua recovery/regroup task, not a prerequisite for gm_execute. Goal uses current observed original roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": {"type":"object", "description":"Recovery goal: members=[{guid,name,rpcUrl?}] for the currently observed original party, plus destination={mapId,x,y,z,tolerance?} OR player={guid,name,tolerance?}. Companion rpcUrl must match current bindings. The shared Lua initializer validates admission before any hold or child starts."}}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),
                           ("gm_task_resume", "Resume only gm_current_task's same stored goal/invocation and receipts. Runner started is not a GM effect; no new task or replay of uncertain actions.", {"task_id": string}, ["task_id"]),
-                          ("gm_execute", "Send one native dot command through this exact GM session. Optional select_guid binds the observed server target GUID; zero clears UI selection. Local visibility/resolution is reported separately because command families resolve selected units differently. A command is sent only when that target GUID is actually observed at the final packet boundary. If selection was written but not observed, no command is queued: inspect facts before a fresh tool invocation. Each actual tool call has its own host operation identity; exact-operation receipt/unknown is never replayed. Equivalent same-request effects also retain their original receipt until substantive observed context changes; a new tool call alone is not retry authority. Returns a fresh Chat baseline/window within the same writer, with explicit no-reply/cursor loss/read failure; SYSTEM text is temporal evidence, never target/effect proof. Active task writers still block competing commands; realm permissions apply. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]
+                          ("gm_execute", "Send one native dot command through this exact GM session. Optional select_guid binds an intentional UI-selection change; zero clears selection. ONLY when select_guid is supplied, the command waits for that GUID to be observed at the final packet boundary. Explicit named commands need no select_guid; each realm handler resolves its own arguments. Local visibility/resolution is reported separately because command families resolve selected units differently; GPS retains its selected-unit/self caveat below. If selection was written but not observed, no command is queued: inspect facts before a fresh tool invocation. Each actual tool call has its own host operation identity; exact-operation receipt/unknown is never replayed. Equivalent same-request effects also retain their original receipt until substantive observed context changes; a new tool call alone is not retry authority. Returns a fresh Chat baseline/window within the same writer, with explicit no-reply/cursor loss/read failure; SYSTEM text is temporal evidence, never target/effect proof. Active task writers still block competing commands; realm permissions apply. " + GM_COMMAND_REFERENCE, {"command": string, "select_guid": string}, ["command"])]
         if self.workspace is not None and self.self_guid == "87":
             specs += [("gm_inspect", "Default: readable compact facts for EVERY configured client: own life/pose, exact Actions position provenance, group, fixed owner and visible configured/observed-party player witnesses. Unknown and false remain distinct; witnesses are scoped to their observer, not proof of a cleared area. Bulk NPCs/nested fields have explicit omitted counts/rawPath. Nonempty JSON path reads the FULL original raw tree; rawPath on each witness gives its original index. Raw pages use offset/limit; default compact output is bounded separately. No caller URL, game write or task.", paging, []),
                       ("gm_current_task", "Discover only this GM session's maintained active writer-owned task and actual retained status. No caller path, new task or execution. Page large observations/memory with JSON path/offset/limit.", paging, []),
@@ -1271,6 +1479,8 @@ class DirectTools:
                 result = self._policy_input(args)
             elif name == 'party_invite':
                 result = self._party_invite(args, operation_id)
+            elif name in ('follow', 'gameplay_command', 'request_buffs'):
+                result = self._ordinary_control(name, args, operation_id)
             elif name.startswith("gm_task_") or name in ("gm_current_task", "gm_execute", "gm_inspect"):
                 result = self._gm(name, args, operation_id)
                 if name == "gm_inspect" and args.get("path",[])==[] and type(args.get("offset",0)) is int and args.get("offset",0)==0 and type(args.get("limit",20)) is int and args.get("limit",20)==20:

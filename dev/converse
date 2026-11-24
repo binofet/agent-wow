@@ -2664,7 +2664,10 @@ class DirectBrain(AgentBrain):
             "and validate mechanics. Tools enforce current body, permission and action-specific limits. "
             "Reply with ordinary assistant text; use the advertised tools for requested actions.")
         if character_name.casefold() == "lotharen":
-            self.persona += " You are Joel's authenticated rank 2 GM character, GUID 87; the realm validates command permissions."
+            self.persona += (" You are Joel's authenticated rank 2 GM character, GUID 87; the realm validates command permissions. "
+                "For an authorized GM request, choose and invoke native GM commands yourself from the actual goal, "
+                "current observations and command reference. These GM actions do not require writing Lua, a Codex operator "
+                "or an ordered task; accepted Lua still owns ordinary companion gameplay and persistent behavior.")
         self.developer_persona = self.persona
 
     def model_selection(self):
@@ -2760,17 +2763,21 @@ class DirectBrain(AgentBrain):
                 "policy", "holdPolicy", "transportConfig", "stateRoot", "start", "run", "bindings",
                 "source", "execute", "select", "inspect", "status", "cancel", "resume") if key in gm_context}
             gm_context["instructions"] = (
-                "Use the advertised structured tools directly. gm_task_start(goal) runs the EXISTING ordered Lua "
-                "recovery/regroup task; provide the current observed original members and either a destination pose "
-                "or player anchor. Existing tasks require no new Lua, workspace file, transport-config read or CLI invocation. "
-                "gm_execute(command, select_guid?) sends an individual native command. Choose the tool suited to the "
-                "request; a task is not mandatory for every GM action. gm_inspect reads current client facts; "
+                "Choose native GM commands from the actual owner's goal and current facts, and invoke the advertised "
+                "gm_execute(command, select_guid?) tool directly. It is not necessary to create a task, write Lua, read a "
+                "transport file or ask an operator to issue these commands. Optional select_guid is only for an intentional "
+                "UI-selection change; explicit named commands use their own realm handlers. In particular, .groupsummon "
+                "moves the named player's group TO the GM's CURRENT location, not to the named player; preserve the "
+                "goal's distinction between destination anchor and people to move. gm_inspect reads client facts, whose "
+                "read time does not refresh their server pose ages or establish an instance copy. "
+                "gm_task_start(goal) remains an OPTIONAL existing ordered Lua recovery/regroup convenience; it requires "
+                "the current observed original members and a destination pose or player anchor. "
                 "gm_current_task, gm_task_status, gm_task_resume and gm_task_cancel inspect or continue retained work. "
                 "Tools already bind the current session and transport; cliReference is optional operator reference, "
                 "not workspace input. Tool contracts, current observations and the full command reference are already "
                 "supplied; inspect needed missing facts or unfamiliar realm syntax. Preserve uncertain receipts and verify "
                 "effects separately from helper start or packet ACK. These mappings grant no additional authority.")
-            gm_context["directTools"] = dict(start="gm_task_start(goal)", execute="gm_execute(command, select_guid?)",
+            gm_context["directTools"] = dict(execute="gm_execute(command, select_guid?)", start="gm_task_start(goal)",
                 inspect="gm_inspect()", current="gm_current_task()", status="gm_task_status(task_id)",
                 resume="gm_task_resume(task_id)", cancel="gm_task_cancel(task_id)")
         reference=gm_reference_context(self.gm_reference) if allow_gm and self.gm_reference else None
@@ -2793,7 +2800,8 @@ class DirectBrain(AgentBrain):
                 cancelled=interrupted, request_id=self._generation['toolCustodyRequestId'], context=full_context,
                 gm_allowed=gm_authorised, chat_session_id=self._generation.get("chatSessionId"),
                 chat_cursor=str(self._generation["cursor"]) if self._generation.get("cursor") is not None else None,
-                owner_allowed=owner_authorised, receipt_root=self.state_dir)
+                owner_allowed=owner_authorised, receipt_root=self.state_dir,
+                follow_prepare=private_context.get('followPrepare'))
         if tools is not None and gm_authorised():
             read_started = int(time.time()*1000)
             observed = tools.dispatch("gm_inspect", {})
@@ -2822,7 +2830,7 @@ class DirectBrain(AgentBrain):
             if interrupted():
                 raise OwnerInputPending("Fresh owner input is waiting")
             serial[0] += 1
-            if name in ("workspace_write", "workspace_patch", "policy_apply", "policy_input", "party_invite", "gm_task_start", "gm_task_cancel", "gm_task_resume", "gm_execute"):
+            if name in ("workspace_write", "workspace_patch", "policy_apply", "policy_input", "party_invite", "follow", "gameplay_command", "request_buffs", "gm_task_start", "gm_task_cancel", "gm_task_resume", "gm_execute"):
                 mutation_entered[0] = True
                 record["mutationToolEntered"] = True
             identity = self.last_request_id + ":" + str(serial[0])
@@ -2849,7 +2857,8 @@ class DirectBrain(AgentBrain):
                 if isinstance(receipt, dict):
                     safe_keys = ("tool", "sessionId", "characterGuid", "outcome", "replayAllowed", "path",
                         "expectedSHA256", "targetSHA256", "expectedRevision", "targetRevision",
-                        "valueSHA256", "taskId", "stateDir", "name", "transportWritten")
+                        "valueSHA256", "taskId", "stateDir", "name", "transportWritten",
+                        "controlDispatched", "preparationUnconfirmed")
                     row["unknownReceipt"] = {key: receipt[key] for key in safe_keys if key in receipt
                         and (type(receipt[key]) in (bool, int) or isinstance(receipt[key], str)
                              and len(receipt[key]) <= 512)}
@@ -4023,7 +4032,8 @@ class BuddyControls:
         except (OSError,ValueError,KeyError,TypeError,RuntimeError):
             return "I couldn't submit the workshop report. That repair is still unconfirmed."
 
-    def mission_handoff(self, follow=False, wait_seconds=40):
+    def mission_handoff(self, follow=False, wait_seconds=40, check_current=None):
+        if check_current is not None: check_current()
         if follow: self.mission_follow_binding=None
         sid=self.actions.get('sessionId') if self.actions_available else None
         url=getattr(self.rpc,'url',None)
@@ -4039,6 +4049,7 @@ class BuddyControls:
         bindings={kind:row['instance'] for kind,row in initial['runtimes'].items()}
         deadline=time.monotonic()+wait_seconds
         while True:
+            if check_current is not None: check_current()
             current=mission_control_snapshot(self.character_guid,sid,url)
             if not current['known'] or {kind:row['instance'] for kind,row in current['runtimes'].items()}!=bindings:
                 return "My mission instance changed during handoff. Following is unchanged."
@@ -4065,6 +4076,23 @@ class BuddyControls:
             if time.monotonic()>=deadline:
                 return "Mission stop requested; its current step is still settling. Following is unchanged."
             time.sleep(.2)
+
+    def prepare_follow(self, actions, current):
+        """Existing mission/task handoff only; the typed tool owns the follow write."""
+        current()
+        self.actions, self.actions_available = actions, True
+        reason = self.mission_handoff(follow=True, check_current=current)
+        if reason: return reason
+        current()
+        party_town_snapshot(self.character_guid, revoke_follow=True)
+        current()
+        area_quest_snapshot(self.character_guid, stop=True, restore_follow=False)
+        current()
+        quest_task_snapshot(self.character_guid, getattr(self.rpc, 'url', None), stop=True, restore_follow=False)
+        current()
+        reason = self.mission_follow_recheck()
+        current()
+        return reason
 
     def mission_follow_recheck(self):
         if self.mission_follow_binding is None: return None
@@ -4769,7 +4797,9 @@ class Conversation:
                     context.update(sessionId=native_sid, rpcUrl=self.rpc.url,
                         ownerAllowed=lambda: (not self.stopped() and self.session_id == chat_sid
                             and self.character_guid == guid and request.get('source') == 'owner'
-                            and request.get('senderGuid') == str(self.player_guid)))
+                            and request.get('senderGuid') == str(self.player_guid) and self.same_body(timeout=.5)))
+                    prepare = getattr(self.controls, 'prepare_follow', None)
+                    if callable(prepare): context['followPrepare'] = prepare
             except ConversationError:
                 pass  # Conversation remains available; no ordinary mutation tool is granted.
         if tool_request_id is not None:context['toolCustodyRequestId'] = tool_request_id
@@ -5066,6 +5096,7 @@ class Conversation:
             if continuation is not None:state['current_request']['continuation'] = dict(continuation)
         if allow_gm:
             state["gm_controls_available"] = True
+        previous_brain_request = getattr(self.brain, 'last_request_id', None)
         try:
             reply = validate_reply(self.generate_reply(self.history[history_key], state,
                 tool_request_id=continuation['requestId'] if continuation is not None else None),self.reply_emotes,
@@ -5083,7 +5114,37 @@ class Conversation:
             if acknowledged in ('transport_written','transport_unconfirmed'):
                 try:
                     if not self.stopped() and self.same_body():
-                        self.send_reply({'text':"I couldn't finish confirming that request. Its outcome still needs checking.",
+                        failure_text = "I couldn't finish confirming that request. Its outcome still needs checking."
+                        api = getattr(self.brain, 'last_api_receipt', None)
+                        failure = getattr(self.brain, 'last_failure_receipt', None)
+                        current = getattr(self.brain, 'last_request_id', None)
+                        if isinstance(self.brain, DirectBrain) and isinstance(api, dict) and isinstance(failure, dict):
+                            counts = failure.get('counts', {})
+                            http = api.get('httpStatus')
+                            # This API attempt only: do not reinterpret a prior
+                            # request, an entered tool or any uncertain receipt.
+                            if (current is not None and current != previous_brain_request
+                                    and api.get('requestId') == current == failure.get('requestId')
+                                    and failure.get('toolCustodyRequestId') == current
+                                    and failure.get('chatSessionId') == self.session_id
+                                    and failure.get('selfGuid') == str(self.character_guid)
+                                    and failure.get('cursor') == self.cursor
+                                    and api.get('outcome') == failure.get('outcome') == 'failed'
+                                    and api.get('reason') == failure.get('reason') == 'provider_http_error'
+                                    and type(http) is int and 100 <= http <= 599 and not 200 <= http < 300
+                                    and type(api.get('toolCalls')) is int and api['toolCalls'] == 0
+                                    and isinstance(counts, dict) and counts.get('completedTools') == counts.get('failedTools') == 0
+                                    and not failure.get('tools') and not failure.get('pendingTools')
+                                    and not failure.get('omittedTools') and not failure.get('omittedPendingTools')
+                                    and failure.get('mutationToolEntered') is not True):
+                                detail = api.get('providerError')
+                                cause = next((detail.get(key) for key in ('message','reason','code','type')
+                                    if isinstance(detail, dict) and isinstance(detail.get(key), str) and detail[key]), 'unknown')
+                                cause = cause.encode('utf-8', 'replace')[:140].decode('utf-8', 'ignore')
+                                service = 'local model' if api.get('provider') == 'local' else 'model'
+                                failure_text = (f"This {service} API request failed before any model tool ran "
+                                    f"(HTTP {http}). Cause: {cause}")
+                        self.send_reply({'text':failure_text,
                             'emote':'NONE'},channel,target_guid=sender,history_key=history_key)
                 except ConversationError:
                     self.status(ownerAcknowledgement='failure_reply_unconfirmed')

@@ -32,6 +32,7 @@ type transportScopeState struct {
 	transfer                    worldTransferState
 	completionAttempt           *modv1.TransportScope
 	completionReport            *modv1.TransportScope
+	areaTriggerAttempts         map[areaTriggerAttempt]struct{}
 }
 
 func newTransportScope(self uint64) (*modv1.TransportScope, error) {
@@ -249,9 +250,18 @@ func (t *transportScopeState) sent(op uint32) {
 // Its attempt key is independent of the general barrier: fetching a fresh
 // scope after the write can never make the same spline replayable.
 func (t *transportScopeState) reserve(op uint32, payload []byte, requested *modv1.TransportScope) error {
+	if op == opcode.MSGMoveStop && requested != nil {
+		return t.reserveMovementStop(payload, requested)
+	}
+	if requested != nil && bodyMovementScopeOpcode(op) {
+		return t.reserveBodyMovement(op, payload, requested)
+	}
+	if op == opcode.CMSGAreatrigger && requested != nil {
+		return t.reserveAreaTrigger(payload, requested)
+	}
 	if op != opcode.CMSGMoveSplineDone {
 		if requested != nil {
-			return modcb.PacketNotDispatchedError("transport scope is only supported for spline completion")
+			return modcb.PacketNotDispatchedError("transport scope is only supported for spline completion, area triggers or normal body movement")
 		}
 		return nil
 	}
@@ -313,6 +323,7 @@ func (e *engine) publishTransportScope() {
 	}
 	e.s.mu.Lock()
 	e.s.transportScopeSnapshot = e.transport.snapshot()
+	e.s.ownMovementReportSnapshot = e.ownMovementReport
 	e.s.mu.Unlock()
 }
 

@@ -526,7 +526,7 @@ local function decide_encounter(frame)
         task_view=transient_tasks.step(obs,frame,state.sequence,targets,in_combat,current)
         out.task=task_view.status
         if current and not alive(self) and task_view.action then
-            out.action=task_view.action;transient_tasks.commit(task_view,out.action);return out
+            out.action=task_view.action;return out
         end
     end
     if not host_can_decide(obs) or fallback and obs.hostOwned ~= true or
@@ -603,7 +603,7 @@ local function decide_encounter(frame)
         return out
     end
     if task_view and task_view.action then
-        out.action=task_view.action;transient_tasks.commit(task_view,out.action);return out
+        out.action=task_view.action;return out
     end
     local command_action, command_status
     if commands then command_action, command_status = commands.control_action(obs, frame, first_focus or out.focusGuid, control ~= nil and control ~= false,
@@ -848,6 +848,7 @@ local function decide(frame)
         out.spellCancellation=status
         if cancel then out.action=cancel;out.followFormation=nil;out.portalCatchup=nil end
     end
+    if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
     if spell_invocation then spell_invocation.commit(out.action) end
     if loot_roll then loot_roll.commit(out.action) end
     return out

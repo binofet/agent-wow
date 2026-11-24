@@ -53,6 +53,7 @@ type policySpell struct {
 	recovery       *policyRecovery
 	consumable     *policyConsumable
 	corpse         *policyCorpse
+	instanceEntry  *policyInstanceEntry
 	genericRequest *actionsv1.CastSpellRequest
 	cancelRequest  *actionsv1.CancelSpellRequest
 	roll           *policyRoll
@@ -67,6 +68,10 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	switch capability {
+	case "area_trigger_reference", "area_trigger_observation", "notify_area_trigger", "instance_entry_status", "plan_route_leg", "travel_to":
+		return p.resolveInstanceEntry(action, capability)
+	}
 	if capability == "cast_spell" || capability == "cancel_spell" {
 		return p.resolveGenericSpell(action, capability == "cancel_spell")
 	}
@@ -328,6 +333,9 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 			op.movement.phase = actions.BodyMovement.Phase
 			op.movement.detail = actions.BodyMovement.Detail
 		}
+		if op.movement != nil && op.movement.idleBound {
+			op.movement.unknown = op.movement.unknown || actions.MotionUnconfirmed
+		}
 		if err == nil && op.capability == "release_interaction" && actions.InteractionOwner == "" {
 			// The exact lease is released. A STOP write/returned metadata is not a
 			// server movement effect, and has no future spell-effect receipt.
@@ -348,7 +356,7 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	case op.attempted:
 		return behavior.ActionUnknown, policyDispatchError(op.payload("transport_unconfirmed_no_retry", false, false, false), err)
 	}
-	if err == nil && op.movement != nil && op.movement.body && op.movement.phase == "local_physics_refused" {
+	if err == nil && op.movement != nil && op.movement.body && (op.movement.phase == "local_physics_refused" || op.movement.idleBound && op.movement.phase == "body_scope_not_dispatched") {
 		// The binding measured and refused the input before any packet write.
 		// This is a known non-dispatch, not an ambiguous transport outcome.
 		return behavior.ActionNotDispatched, op.payload(op.movement.phase, false, false, false)
@@ -377,7 +385,7 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 	spells := &m.policySpells
 	spells.mu.Lock()
 	op := spells.active[token]
-	if op == nil || !op.admitted || op.attempted && op.movement == nil || op.origin.SessionID != sessionID ||
+	if op == nil || !op.admitted || op.instanceEntry != nil || op.movement != nil && op.movement.idleBound || op.attempted && op.movement == nil || op.origin.SessionID != sessionID ||
 		op.origin.Module != module || !op.matchesActionPacket(code, payload) {
 		spells.mu.Unlock()
 		return modcb.PacketNotDispatchedError("invalid policy spell callback")
@@ -396,6 +404,9 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 }
 
 func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
+	if op.instanceEntry != nil {
+		return op.matchesInstanceEntryPacket(code, payload)
+	}
 	if op.capability == "acquire_idle_interaction" {
 		return false // Custody metadata cannot authorize any physical packet.
 	}

@@ -36,6 +36,7 @@ type engine struct {
 	transport             transportScopeState
 	writeSerial           uint64
 	beforeScopedWrite     func() error
+	ownMovementReport     *modv1.WorldPacket
 }
 
 func (e *engine) write(op uint32, body []byte) error {
@@ -44,6 +45,12 @@ func (e *engine) write(op uint32, body []byte) error {
 }
 
 func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scopes ...*modv1.TransportScope) (GameplayWriteOutcome, bool, error) {
+	if ownMovementReportOpcode(op) {
+		// A failed or unsupported new write must not leave the prior report
+		// available as the most recent known own movement during transport.
+		e.ownMovementReport = nil
+		e.publishTransportScope()
+	}
 	deadline := time.Now().Add(e.timing.write)
 	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
 		deadline = callerDeadline
@@ -58,7 +65,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	if requested != nil || op == opcode.CMSGMoveSplineDone {
 		for {
 			if !e.scopedWriteAvailable(ctx) {
-				return "", false, modcb.PacketNotDispatchedError("scoped completion requires the uncanceled current live world session")
+				return "", false, modcb.PacketNotDispatchedError("scoped gameplay write requires the uncanceled current live world session")
 			}
 			serial := e.writeSerial
 			if e.beforeScopedWrite != nil {
@@ -77,7 +84,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 			}
 		}
 		if !e.scopedWriteAvailable(ctx) {
-			return "", false, modcb.PacketNotDispatchedError("scoped completion requires the uncanceled current live world session")
+			return "", false, modcb.PacketNotDispatchedError("scoped gameplay write requires the uncanceled current live world session")
 		}
 	}
 	// No callback, deadline setter or owner-state transition follows the final
@@ -92,6 +99,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	}
 	e.movement.sent(op, body, e.s.state.Character.GUID)
 	e.transport.sent(op)
+	e.retainOwnMovementReport(op, body)
 	e.publishTransportScope()
 	logPacket(e.s.logger, "write", op, len(body))
 	return GameplayWritten, anyBytes, nil
@@ -157,7 +165,7 @@ func (e *engine) loop(packets <-chan packet) error {
 				continue
 			}
 			if (r.transportScope != nil || r.op == opcode.CMSGMoveSplineDone) && (e.phase != InWorld || e.logout != nil || e.finalPackets != nil) {
-				r.reply <- modcb.PacketNotDispatchedError("scoped completion requires the current live world session")
+				r.reply <- modcb.PacketNotDispatchedError("scoped gameplay write requires the current live world session")
 				continue
 			}
 			if r.transportScope != nil || r.op == opcode.CMSGMoveSplineDone {

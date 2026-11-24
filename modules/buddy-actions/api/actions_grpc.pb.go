@@ -21,6 +21,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	BuddyActions_AreaTriggerReference_FullMethodName    = "/warcraftbuddy.actions.v1.BuddyActions/AreaTriggerReference"
+	BuddyActions_NotifyAreaTrigger_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/NotifyAreaTrigger"
+	BuddyActions_AreaTriggerObservation_FullMethodName  = "/warcraftbuddy.actions.v1.BuddyActions/AreaTriggerObservation"
 	BuddyActions_TalentState_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/TalentState"
 	BuddyActions_LearnTalent_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/LearnTalent"
 	BuddyActions_CastSpell_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/CastSpell"
@@ -90,6 +93,9 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyActionsClient interface {
+	AreaTriggerReference(ctx context.Context, in *AreaTriggerReferenceRequest, opts ...grpc.CallOption) (*AreaTriggerReferences, error)
+	NotifyAreaTrigger(ctx context.Context, in *NotifyAreaTriggerRequest, opts ...grpc.CallOption) (*AreaTriggerOperation, error)
+	AreaTriggerObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*AreaTriggerOperation, error)
 	TalentState(ctx context.Context, in *TalentStateRequest, opts ...grpc.CallOption) (*TalentStateResponse, error)
 	LearnTalent(ctx context.Context, in *LearnTalentRequest, opts ...grpc.CallOption) (*TalentStateResponse, error)
 	CastSpell(ctx context.Context, in *CastSpellRequest, opts ...grpc.CallOption) (*State, error)
@@ -163,6 +169,36 @@ type buddyActionsClient struct {
 
 func NewBuddyActionsClient(cc grpc.ClientConnInterface) BuddyActionsClient {
 	return &buddyActionsClient{cc}
+}
+
+func (c *buddyActionsClient) AreaTriggerReference(ctx context.Context, in *AreaTriggerReferenceRequest, opts ...grpc.CallOption) (*AreaTriggerReferences, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AreaTriggerReferences)
+	err := c.cc.Invoke(ctx, BuddyActions_AreaTriggerReference_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) NotifyAreaTrigger(ctx context.Context, in *NotifyAreaTriggerRequest, opts ...grpc.CallOption) (*AreaTriggerOperation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AreaTriggerOperation)
+	err := c.cc.Invoke(ctx, BuddyActions_NotifyAreaTrigger_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) AreaTriggerObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*AreaTriggerOperation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AreaTriggerOperation)
+	err := c.cc.Invoke(ctx, BuddyActions_AreaTriggerObservation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *buddyActionsClient) TalentState(ctx context.Context, in *TalentStateRequest, opts ...grpc.CallOption) (*TalentStateResponse, error) {
@@ -799,6 +835,9 @@ func (c *buddyActionsClient) SelfManaObservation(ctx context.Context, in *emptyp
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
 type BuddyActionsServer interface {
+	AreaTriggerReference(context.Context, *AreaTriggerReferenceRequest) (*AreaTriggerReferences, error)
+	NotifyAreaTrigger(context.Context, *NotifyAreaTriggerRequest) (*AreaTriggerOperation, error)
+	AreaTriggerObservation(context.Context, *emptypb.Empty) (*AreaTriggerOperation, error)
 	TalentState(context.Context, *TalentStateRequest) (*TalentStateResponse, error)
 	LearnTalent(context.Context, *LearnTalentRequest) (*TalentStateResponse, error)
 	CastSpell(context.Context, *CastSpellRequest) (*State, error)
@@ -874,6 +913,15 @@ type BuddyActionsServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBuddyActionsServer struct{}
 
+func (UnimplementedBuddyActionsServer) AreaTriggerReference(context.Context, *AreaTriggerReferenceRequest) (*AreaTriggerReferences, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AreaTriggerReference not implemented")
+}
+func (UnimplementedBuddyActionsServer) NotifyAreaTrigger(context.Context, *NotifyAreaTriggerRequest) (*AreaTriggerOperation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method NotifyAreaTrigger not implemented")
+}
+func (UnimplementedBuddyActionsServer) AreaTriggerObservation(context.Context, *emptypb.Empty) (*AreaTriggerOperation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AreaTriggerObservation not implemented")
+}
 func (UnimplementedBuddyActionsServer) TalentState(context.Context, *TalentStateRequest) (*TalentStateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TalentState not implemented")
 }
@@ -1082,6 +1130,60 @@ func RegisterBuddyActionsServer(s grpc.ServiceRegistrar, srv BuddyActionsServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&BuddyActions_ServiceDesc, srv)
+}
+
+func _BuddyActions_AreaTriggerReference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AreaTriggerReferenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).AreaTriggerReference(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_AreaTriggerReference_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).AreaTriggerReference(ctx, req.(*AreaTriggerReferenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_NotifyAreaTrigger_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NotifyAreaTriggerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).NotifyAreaTrigger(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_NotifyAreaTrigger_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).NotifyAreaTrigger(ctx, req.(*NotifyAreaTriggerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_AreaTriggerObservation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).AreaTriggerObservation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_AreaTriggerObservation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).AreaTriggerObservation(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BuddyActions_TalentState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -2225,6 +2327,18 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "warcraftbuddy.actions.v1.BuddyActions",
 	HandlerType: (*BuddyActionsServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "AreaTriggerReference",
+			Handler:    _BuddyActions_AreaTriggerReference_Handler,
+		},
+		{
+			MethodName: "NotifyAreaTrigger",
+			Handler:    _BuddyActions_NotifyAreaTrigger_Handler,
+		},
+		{
+			MethodName: "AreaTriggerObservation",
+			Handler:    _BuddyActions_AreaTriggerObservation_Handler,
+		},
 		{
 			MethodName: "TalentState",
 			Handler:    _BuddyActions_TalentState_Handler,

@@ -8,6 +8,9 @@ compose:
 grpc:
   descriptor_set: module.pb
 rpc:
+  area_trigger_reference: /warcraftbuddy.actions.v1.BuddyActions/AreaTriggerReference
+  notify_area_trigger: /warcraftbuddy.actions.v1.BuddyActions/NotifyAreaTrigger
+  area_trigger_observation: /warcraftbuddy.actions.v1.BuddyActions/AreaTriggerObservation
   talent_state: /warcraftbuddy.actions.v1.BuddyActions/TalentState
   learn_talent: /warcraftbuddy.actions.v1.BuddyActions/LearnTalent
   cast_spell: /warcraftbuddy.actions.v1.BuddyActions/CastSpell
@@ -130,6 +133,9 @@ script_api:
   move_body: {effect: mutation, description: Execute one bounded body-relative step or hop at observed speed; unsupported starts settle to measured ground on the current visit}
   break_control: {effect: mutation, description: Execute the exact learned or equipped fear break against the selected observed self aura without movement preparation}
   interrupt_cast: {effect: mutation, description: Cast one exact learned interrupt on the selected observed enemy cast revision}
+  area_trigger_reference: {effect: read, description: Static current-map trigger volumes for explicit destination intent; no route or realm admission proof}
+  notify_area_trigger: {effect: mutation, description: One exact actor-in-volume normal trigger notification under current idle custody and scoped movement authority}
+  area_trigger_observation: {effect: read, description: Retained trigger delivery and adjacent observed destination facts; no party-copy or regroup claim}
   plan_route_leg: {effect: read, description: Physically verified next endpoint along a complete bounded same-map corridor; no movement authority}
   status: {effect: read}
   behavior: {effect: read}
