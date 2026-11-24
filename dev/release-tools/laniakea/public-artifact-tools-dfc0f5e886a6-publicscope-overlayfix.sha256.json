@@ -1,0 +1,16 @@
+{
+  "archive": "public-artifact-tools-dfc0f5e886a6-publicscope-overlayfix.tar.gz",
+  "bytes": 39874,
+  "sha256": "0bb718bf626434406e5dee40d02bf3b1ca0e67501697915b741b8467e0a19458",
+  "sourceCommit": "dfc0f5e886a647955210fec667f13b137ef3e282",
+  "sourceTree": "e19952e770039a704e7eb126c52bdf984308c1c6",
+  "packageManifest": {
+    "bytes": 3121,
+    "sha256": "0a89816ccf8f390c4c95f9a2cc30c7b42e4a7e676727a90fa36c813a7b6771c6"
+  },
+  "regularFiles": 18,
+  "privatePayloadIncluded": false,
+  "fullRuntimeReady": false,
+  "executed": false,
+  "previousUnpublishedPacketPreserved": "c8bfc4851a8c0b3e97800b7ffcf3270291776b405360e67cded6dbefc110f387"
+}
