@@ -13,6 +13,9 @@ local vendor_search_yards, vendor_interaction_yards = 35,4.5
 local vendor_prefer_nearest = true
 local trainer_search_yards, trainer_interaction_yards = 100,4
 local trainer_prefer_nearest = true
+local profession_trainers={search_yards=120,anchor_yards=160,max_candidates=32,prefer_nearest=true}
+local class_training={purchase_cap_copper=1000000,reserve_copper=100,prefer_cheapest=true}
+local profession_training={purchase_cap_copper=10000,reserve_copper=0,prefer_cheapest=true,primary_first=true}
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
 
 local function number(value)
@@ -89,29 +92,139 @@ local function inn_route(input)
     return {eligible=true,route=route}
 end
 
+local function training_choice(input)
+    local function uint(v) return number(v) and v>=0 and v<=4294967295 and v%1==0 end
+    local profession=input.kind=="profession_training"
+    local tuning=profession and profession_training or class_training
+    if input.copperKnown~=true or not uint(input.copper) or not uint(input.nativePurchaseCap)
+        or not uint(tuning.purchase_cap_copper) or not uint(tuning.reserve_copper)
+        or type(tuning.prefer_cheapest)~="boolean" or type(input.spells)~="table" or #input.spells>256
+        or type(input.eligibility)~="table" or type(input.attempted)~="table" then return {} end
+    local reserve=input.reserveCopper
+    if reserve==nil then reserve=tuning.reserve_copper end
+    if not uint(reserve) then return {} end
+    local cap=math.min(tuning.purchase_cap_copper,input.nativePurchaseCap)
+    local assigned,wanted,observed,primary_count,conflict={},{},{},0,false
+    local profession_state=input.professions or {}
+    if profession then
+        if profession_state.known~=true or type(tuning.primary_first)~="boolean" or input.levelKnown~=true or not uint(input.level)
+            or not uint(input.goalBudgetCopper) or not uint(input.reservedCopper) or input.reservedCopper>input.goalBudgetCopper
+            or type(input.primaryGoals)~="table" or #input.primaryGoals>2 or type(input.secondaryGoals)~="table" or #input.secondaryGoals>3
+            or type(profession_state.primary)~="table" or #profession_state.primary>11
+            or type(profession_state.secondary)~="table" or #profession_state.secondary>3 then return {} end
+        cap=math.min(cap,input.goalBudgetCopper-input.reservedCopper)
+        for _,skill in ipairs(input.primaryGoals) do
+            if not uint(skill) or skill==0 or wanted[tostring(skill)] then return {} end
+            assigned[tostring(skill)]=true;wanted[tostring(skill)]=true
+        end
+        for _,skill in ipairs(input.secondaryGoals) do
+            if not uint(skill) or skill==0 or wanted[tostring(skill)] then return {} end
+            wanted[tostring(skill)]=true
+        end
+        for _,rows in ipairs({profession_state.primary,profession_state.secondary}) do
+            for _,row in ipairs(rows) do
+                if type(row)~="table" or not uint(row.skillId) or row.skillId==0 or observed[tostring(row.skillId)] then return {} end
+                observed[tostring(row.skillId)]=true
+                if rows==profession_state.primary then
+                    primary_count=primary_count+1
+                    if not assigned[tostring(row.skillId)] then conflict=true end
+                end
+            end
+        end
+    end
+    local budget=math.min(cap,math.max(0,input.copper-reserve))
+    local out={consumer=profession and "profession_training" or "class_training",budgetCopper=budget,reserveCopper=reserve,purchaseCapCopper=cap}
+    local best,seen
+    seen={}
+    for _,spell in ipairs(input.spells) do
+        if type(spell)~="table" then return {} end
+        local id,cost,level=spell.spellId,spell.costCopper or 0,spell.requiredLevel or 0
+        local usable,points=spell.usable or 0,spell.pointCost or {}
+        if not uint(id) or id==0 or seen[tostring(id)] or not uint(cost)
+            or not uint(level) or not uint(usable) or usable>2 or type(points)~="table" or #points>2 then return {} end
+        seen[tostring(id)]=true
+        local no_points=true
+        for _,value in ipairs(points) do if not uint(value) then return {} end;if value~=0 then no_points=false end end
+        local evidence=input.eligibility[tostring(id)] or {}
+        local eligible=evidence.known==true and evidence.retryAllowed==true and uint(evidence.level) and level<=evidence.level
+            and usable==0 and no_points and input.attempted[tostring(id)]~=true
+        local order_id,priority,skill,learned=id,0
+        if profession then
+            skill,learned=spell.professionSkillId,spell.learnedSpellId
+            local primary=assigned[tostring(skill)]==true
+            local abilities=spell.requiredAbilities or {};local abilities_clear=type(abilities)=="table" and #abilities<=3
+            for _,value in ipairs(abilities_clear and abilities or {}) do
+                if not uint(value) or value~=0 then abilities_clear=false end
+            end
+            eligible=uint(skill) and skill>0 and uint(learned) and learned>0
+                and wanted[tostring(skill)]==true and not observed[tostring(skill)] and input.attempted[tostring(skill)]~=true
+                and usable==0 and id<2147483648 and learned<2147483648 and (spell.primaryProfession==true)==primary
+                and #points==2 and points[1]==0 and points[2]==(primary and 1 or 0) and level<=input.level
+                and (spell.requiredSkill or 0)==0 and (spell.requiredSkillRank or 0)==0 and abilities_clear
+            if primary and (conflict or primary_count>=2 or profession_state.freePrimarySlotsKnown~=true
+                or not uint(profession_state.freePrimarySlots) or profession_state.freePrimarySlots<1
+                or profession_state.freePrimarySlots>2 or input.level<5) then eligible=false end
+            order_id=skill;priority=tuning.primary_first and not primary and 1 or 0
+        end
+        if ((not profession and usable==0 and input.attempted[tostring(id)]~=true) or profession and eligible)
+            and cost>budget and cost<=cap
+            and (not out.nextCost or cost<out.nextCost) then out.nextCost=cost end
+        if eligible and cost<=budget then
+            if not best or priority<best.priority or priority==best.priority and
+                (cost~=best.costCopper and (tuning.prefer_cheapest and cost<best.costCopper or not tuning.prefer_cheapest and cost>best.costCopper)
+                or cost==best.costCopper and order_id<best.orderId) then
+                best={spellId=id,costCopper=cost,priority=priority,orderId=order_id,skillId=skill,learnedSpellId=learned}
+            end
+        end
+    end
+    if best then
+        out.spellId=best.spellId;out.costCopper=best.costCopper
+        out.skillId=best.skillId;out.learnedSpellId=best.learnedSpellId
+    end
+    return out
+end
+
 -- Town planning and the finite service workers consult this export from the
 -- character's current accepted policy. Callers supply mechanically validated
 -- observed NPCs; this policy owns the search radius and destination order.
 function M.service_destination(input)
     if type(input)=="table" and input.kind=="inn_route" then return inn_route(input) end
+    if type(input)=="table" and (input.kind=="class_training" or input.kind=="profession_training") then return training_choice(input) end
     if type(input)~="table" or (input.kind~="vendor" and input.kind~="trainer") or
        (input.scope~="nearby" and input.scope~="interactable" and input.scope~="travel") or
        type(input.candidates)~="table" or #input.candidates>97 then return {} end
     local trainer=input.kind=="trainer"
+    local profession=trainer and input.purpose=="profession"
+    if input.purpose~=nil and not profession then return {} end
     if not trainer and (input.scope=="travel" or #input.candidates>96) then return {} end
     local radius=trainer and trainer_search_yards or
         (input.scope=="nearby" and vendor_search_yards or vendor_interaction_yards)
     local prefer_nearest=trainer and trainer_prefer_nearest or not trainer and vendor_prefer_nearest
+    if profession then
+        radius=profession_trainers.search_yards
+        prefer_nearest=profession_trainers.prefer_nearest
+        if input.scope~="nearby" or not number(profession_trainers.anchor_yards) or profession_trainers.anchor_yards<0 or
+           not number(profession_trainers.max_candidates) or profession_trainers.max_candidates%1~=0 or
+           profession_trainers.max_candidates<1 or profession_trainers.max_candidates>97 or
+           type(prefer_nearest)~="boolean" then return {} end
+    end
     if not number(radius) or radius<=0 then return {} end
     local ranked,seen={},{}
     for _,candidate in ipairs(input.candidates) do
         if type(candidate)~="table" or not identity(candidate.guid) or seen[candidate.guid] or
            not number(candidate.distance) or candidate.distance<0 or
-           trainer and type(candidate.interactable)~="boolean" then return {} end
+           trainer and type(candidate.interactable)~="boolean" or
+           profession and (not number(candidate.anchorDistance) or candidate.anchorDistance<0 or
+               type(candidate.blockedReason)~="string") then return {} end
         seen[candidate.guid]=true
         local within=candidate.distance<=radius
         local eligible=false
-        if trainer then
+        if profession then
+            -- Native List acquires its own stop lease and revalidates the exact
+            -- NPC. Current interactability is an observation, not a claim that
+            -- a stationary nearby trainer cannot be prepared for interaction.
+            eligible=within and candidate.anchorDistance<=profession_trainers.anchor_yards
+        elseif trainer then
             if candidate.interactable then
                 if input.scope~="travel" then eligible=true end
             elseif input.scope~="interactable" and candidate.distance>trainer_interaction_yards and within then
@@ -127,7 +240,7 @@ function M.service_destination(input)
                 if candidate.distance==other.distance then
                     before=#candidate.guid<#other.guid or #candidate.guid==#other.guid and candidate.guid<other.guid
                 end
-                if trainer and candidate.interactable~=other.interactable then before=candidate.interactable end
+                if trainer and not profession and candidate.interactable~=other.interactable then before=candidate.interactable end
                 if before then index=i;break end
             end
             for i=#ranked,index,-1 do ranked[i+1]=ranked[i] end
@@ -135,7 +248,10 @@ function M.service_destination(input)
         end
     end
     local vendors={}
-    for i,candidate in ipairs(ranked) do vendors[i]=candidate.guid end
+    for i,candidate in ipairs(ranked) do
+        if not profession or i<=profession_trainers.max_candidates then vendors[#vendors+1]=candidate.guid end
+    end
+    if profession then return {trainers=vendors,purpose="profession"} end
     if trainer then return {trainers=vendors} end
     return {vendors=vendors}
 end
