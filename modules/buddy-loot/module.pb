@@ -761,7 +761,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-’ÿ
+ˆ‘
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1613,7 +1613,7 @@ navigation`
 value (2(.warcraftbuddy.actions.v1.EncounterSpellRvalue:8B	
 _map_idB
 _host_ownedB
-_host_requested"ë
+_host_requested"Š
 BodyMovementRequest
 
 session_id (	R	sessionId
@@ -1624,7 +1624,9 @@ sequenceId'
 bearing_radians (RbearingRadians
 duration_ms (R
 durationMs
-jump (Rjump"ƒ
+jump (Rjump
+
+idle_token (	R	idleToken"ƒ
 BodyMovementState
 sequence_id (R
 sequenceId
@@ -1719,7 +1721,7 @@ candidates"­
 EncounterParty3
 group (2.warcraftbuddy.party.v1.GroupRgroupJ
 raid_targets (2'.warcraftbuddy.party.v1.RaidTargetStateRraidTargets
-revision (Rrevision"ž
+revision (Rrevision"Ð	
 EncounterPlayer
 guid (Rguid
 present (Rpresent
@@ -1763,7 +1765,11 @@ power_type (R	powerType
 comboKnown*
 combo_target_guid  (RcomboTargetGuid!
 combo_points! (RcomboPoints!
-player_flags" (RplayerFlagsB	
+player_flags" (RplayerFlags&
+position_age_ms# (RpositionAgeMs+
+position_inferred$ (RpositionInferred-
+position_estimated% (RpositionEstimated,
+position_age_known& (RpositionAgeKnownB	
 _map_idB
 _alive"­
 EncounterCreature
@@ -2203,8 +2209,71 @@ node_found (R	nodeFoundE
 outgoing_paths (21.warcraftbuddy.actions.v1.FlightpathReferencePathRoutgoingPathsE
 info (21.warcraftbuddy.actions.v1.FlightpathReferenceInfoRinfo&
 live_fare_known (RliveFareKnown(
-live_route_known (RliveRouteKnown2â/
-BuddyActionsj
+live_route_known (RliveRouteKnown"¢
+AreaTriggerReferenceRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId,
+destination_map_id (RdestinationMapId"Õ
+AreaTriggerVolume
+
+trigger_id (R	triggerId"
+source_map_id (RsourceMapId,
+destination_map_id (RdestinationMapId
+x (Rx
+y (Ry
+z (Rz
+radius (Rradius
+length (Rlength
+width	 (Rwidth
+height
+ (Rheight 
+orientation (Rorientation%
+reference_only (RreferenceOnly"Ú
+AreaTriggerReferences
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitIdE
+volumes (2+.warcraftbuddy.actions.v1.AreaTriggerVolumeRvolumes#
+source_commit (	RsourceCommit"½
+NotifyAreaTriggerRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+token (	Rtoken
+
+trigger_id (R	triggerId<
+expected_position_revision (RexpectedPositionRevision+
+expected_revision (RexpectedRevision*
+client_request_id (	RclientRequestId"­
+AreaTriggerOperation
+revision (Rrevision*
+client_request_id (	RclientRequestId
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+
+trigger_id (R	triggerId<
+expected_position_revision (RexpectedPositionRevision
+phase (	Rphase
+pending	 (Rpending+
+transport_written
+ (RtransportWritten+
+transport_unknown (RtransportUnknown%
+not_dispatched (RnotDispatched,
+destination_map_id (RdestinationMapId*
+observed_visit_id (RobservedVisitId1
+destination_observed (RdestinationObserved
+error (	RerrorE
+source_scope (2".agentwow.module.v1.TransportScopeRsourceScope2½2
+BuddyActions~
+AreaTriggerReference5.warcraftbuddy.actions.v1.AreaTriggerReferenceRequest/.warcraftbuddy.actions.v1.AreaTriggerReferencesw
+NotifyAreaTrigger2.warcraftbuddy.actions.v1.NotifyAreaTriggerRequest..warcraftbuddy.actions.v1.AreaTriggerOperation`
+AreaTriggerObservation.google.protobuf.Empty..warcraftbuddy.actions.v1.AreaTriggerOperationj
 TalentState,.warcraftbuddy.actions.v1.TalentStateRequest-.warcraftbuddy.actions.v1.TalentStateResponsej
 LearnTalent,.warcraftbuddy.actions.v1.LearnTalentRequest-.warcraftbuddy.actions.v1.TalentStateResponseX
 	CastSpell*.warcraftbuddy.actions.v1.CastSpellRequest.warcraftbuddy.actions.v1.State\

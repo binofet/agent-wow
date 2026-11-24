@@ -58,6 +58,7 @@ func healthyPortalTimingFixture(t *testing.T, catchingUp bool) (*Service, *fakeS
 	putAtPortal(f.world.Self, portal.source, start)
 	putAtPortal(f.world.Owner, portal.source, portal.center)
 	activateEncounterWriter(t, s, f)
+	seedSyntheticPortalWorldScope(f, 9)
 	toggle(t, s, true)
 	if !s.refreshPositionLocked(f.world) {
 		t.Fatal("fixture could not observe its current pose")
@@ -261,7 +262,7 @@ func TestPortalFollowPolicyChangedBeforeFinalTriggerReadBlocksEntry(t *testing.T
 	s.session = hook
 	s.UseHostFollowPolicy()
 	s.Tick(context.Background())
-	if !injected || countPackets(f, opcode.CMSGAreatrigger) != 0 || s.followPortal.notified || len(f.packets) != 0 || s.formation.sourceRevision != host.runtime.Status().Revision {
+	if !injected || countPackets(f, opcode.CMSGAreatrigger) != 0 || s.followPortal.notified || countPackets(f, opcode.MSGMoveStop) != 1 || len(f.packets) != 1 || s.formation.sourceRevision != host.runtime.Status().Revision {
 		t.Fatal("a superseded ready decision authorized the irreversible trigger", injected, s.followPortal, f.packets)
 	}
 }
@@ -276,6 +277,7 @@ func TestPortalFollowPolicyReloadDoesNotReplayUnknownTrigger(t *testing.T) {
 	s.followPortal.lostAt = s.now().Add(-time.Second)
 	host := newFollowPolicySession(t, s, f)
 	s.UseHostFollowPolicy()
+	f.failSendOpcode = opcode.CMSGAreatrigger
 	f.failSend = true
 	s.Tick(context.Background())
 	if countPackets(f, opcode.CMSGAreatrigger) != 1 || !s.followPortal.notified {

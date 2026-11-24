@@ -53,6 +53,7 @@ func newFinitePortalIntentFixture(t *testing.T, far bool) *finitePortalIntentFix
 	}
 	s.formation.runtime = runtime
 	activateEncounterWriter(t, s, f)
+	seedSyntheticPortalWorldScope(f, 9)
 	x := &finitePortalIntentFixture{s: s, f: f, ctx: encounterHostContext(testEncounterKey, 1), advance: advance, portal: portal}
 	x.admitFormation(t)
 	s.Tick(context.Background())
@@ -417,7 +418,9 @@ func TestFinitePortalIntentFinalWorldReadCannotAuthorizeAStaleTrigger(t *testing
 				}
 			}}
 			x.s.Tick(context.Background())
-			if readyReads != 2 || !injected || armed || len(x.f.packets) != 0 || x.s.followPortal.notified || x.s.state.Moving || x.s.state.Following {
+			// A known safe STOP precedes this seam; the later revocation must
+			// prevent the ID-only trigger without inventing unknown movement.
+			if readyReads != 2 || !injected || armed || len(x.f.packets) != 1 || countPackets(x.f, opcode.MSGMoveStop) != 1 || x.s.followPortal.notified || x.s.state.Moving || x.s.state.Following {
 				t.Fatal("late final-read authority change reached the trigger", injected, readyReads, reads, x.s.followPortal, x.s.stateLocked(), x.f.packets)
 			}
 			if change == "goal replacement" && !reflect.DeepEqual(replacement, x.s.portalGoal) {
@@ -474,6 +477,7 @@ func TestFinitePortalIntentNotifiedTriggerNeverReplaysAfterExpiryAndCleansUpAtDe
 				t.Fatal("could not apply the observed entrance pose")
 			}
 			old := x.renew(t)
+			x.f.failSendOpcode = opcode.CMSGAreatrigger
 			x.f.failSend = uncertain
 			x.s.Tick(context.Background())
 			if countPackets(x.f, opcode.CMSGAreatrigger) != 1 || !x.s.followPortal.notified {
