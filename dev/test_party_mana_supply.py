@@ -310,6 +310,39 @@ class SupplyTest(unittest.TestCase):
         self.observations[8086]=saved
         self.assertEqual(self.turn(state),'recipient_reservation_unconfirmed');self.assertEqual(len(self.calls),1)
 
+    def anonymous_receiver_arm(self):
+        carried(self.mira,2136,8);self.arlen['trade']['revision']='0';state={}
+        self.assertEqual(self.turn(state),'recipient_water_reservation_requested')
+        for receipt in (state['last']['result'],self.arlen['trade']):
+            receipt.pop('partnerGuid',None);receipt.update(phase='IDLE',waterGiftArmed=True,reason='waiting_for_water_gift_invitation')
+        self.assertEqual(state['last']['result']['revision'],'1')
+        return state
+
+    def test_native_idle_anonymous_arm_then_offer_and_actual_completion(self):
+        state=self.anonymous_receiver_arm()
+        self.assertEqual(self.turn(state),'water_gift_offer_requested');self.assertEqual(len(self.calls),2)
+        self.assertNotIn('partnerGuid',self.arlen['trade'])
+        for view,partner in ((self.mira,'1'),(self.arlen,'4')):
+            view['trade'].update(phase='COMPLETE',partnerGuid=partner,lastServerStatus=8,completedTrades='1')
+        self.assertEqual(self.turn(state),'server_confirmed_peer_trade');self.assertNotIn('pending',state['memory'])
+
+    def test_native_idle_anonymous_arm_expired_without_donor_replay(self):
+        state=self.anonymous_receiver_arm();self.arlen['trade'].update(waterGiftArmed=False,revision='2')
+        self.assertEqual(self.turn(state),'recipient_reservation_ended_before_offer');self.assertEqual(len(self.calls),1);self.assertNotIn('pending',state['memory'])
+
+    def test_anonymous_arm_wrong_peer_changed_revision_unknown_or_body_blocks(self):
+        for fault in ('wrong_peer','changed_revision','unknown','receipt_reason','peer_reason','body','count','source_revision'):
+            self.setUp();state=self.anonymous_receiver_arm()
+            if fault=='wrong_peer':self.arlen['trade']['partnerGuid']='8'
+            elif fault=='changed_revision':self.arlen['trade']['revision']='2'
+            elif fault=='unknown':state['last']['outcome']='transport_unconfirmed'
+            elif fault=='receipt_reason':state['last']['result']['reason']='other'
+            elif fault=='peer_reason':self.arlen['trade']['reason']='other'
+            elif fault=='body':self.arlen['trade']['sessionId']='different'
+            elif fault=='count':self.mira['world']['backpack'][0]['stackCount']=7
+            else:self.mira['world']['backpackRevision']='6'
+            self.turn(state);self.assertEqual(len(self.calls),1,fault);self.assertIn('pending',state['memory'],fault)
+
     def test_receiver_reservation_requires_new_exact_partner_receipt_and_current_body_before_offer(self):
         carried(self.mira,2136,8);state={}
         self.assertEqual(self.turn(state),'recipient_water_reservation_requested')
