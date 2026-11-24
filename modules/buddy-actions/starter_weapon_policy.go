@@ -68,10 +68,16 @@ func (s *Service) practiceTaskObservationsLocked(ctx context.Context, targetGUID
 	} else if self.PowerType != 0 || self.UnitFlags&0x2000 != 0 || self.ClassId == 5 && !s.state.KnownSmite || self.ClassId == 8 && !s.state.KnownFireball {
 		return nil, nil, position{}, false
 	}
-	active, incomplete := ownWolfQuest(w)
-	goal := incomplete && self.Level >= 1 && self.Level <= 5 || !active && self.Level == 1 && self.ClassId != 5 && !s.practiceQuestGoal
-	finishing := s.practicePullStarted && self.UnitFlags&0x80000 != 0 && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
-	if !goal && !finishing {
+	// The same accepted lifecycle owns goal continuation before movement and
+	// offense. Rechecking legality must not reinstall a compiled quest/XP rule.
+	lifecycle, fresh, valid := s.practiceLifecycleDecisionLocked(ctx, w, "tick")
+	if !valid || !current() || lifecycle.kind != "continue" || lifecycle.target != targetGUID {
+		return nil, nil, position{}, false
+	}
+	w = fresh
+	target = practiceTargetObservation(w, targetGUID)
+	point, known, _ = creaturePosition(target)
+	if !known {
 		return nil, nil, position{}, false
 	}
 	for _, other := range w.NearbyCreatures {

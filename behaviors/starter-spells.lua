@@ -128,6 +128,11 @@ local function weapon_choice(obs, target, self, override)
 end
 
 function M.decide(input, override, movement, objectives)
+    if type(input)=="table" and (input.selection=="practice_lifecycle" or input.selection=="coldridge_lifecycle") then
+        objectives=objectives or starter_objectives
+        if type(objectives)~="table" or type(objectives[input.selection])~="function" then return {kind="wait"} end
+        return objectives[input.selection](input)
+    end
     if type(input)=="table" and input.selection=="thermaplugg_buttons" then
         if type(encounter_button_policy)~="table" or type(encounter_button_policy.decide)~="function" then return {kind="wait"} end
         return encounter_button_policy.decide(input)

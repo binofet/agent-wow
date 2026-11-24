@@ -124,7 +124,7 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 				quest179 = false
 			}
 			coldridgeCorpse = w.Self.MapId == 0 && quest179 && corpse.Entry == 705 && uint32(corpse.Guid>>24&0xffffff) == 705 && coldridge(s.pos)
-			if s.ownColdridgeGoalCorpseLocked(w, corpse) {
+			if s.ownColdridgeGoalCorpseLocked(ctx, w, corpse) {
 				coldridgeCorpse = true
 				coldridgeNavigationGoal = s.coldridgeGoal
 			}
@@ -383,12 +383,12 @@ func approachCorpse(w *worldv1.SnapshotResponse, guid uint64) *worldv1.CreatureS
 // Only corpses matching the explicitly bound170/183/182 combat goal enter this
 // exception. The world's actual corpse retains the verified living profile;
 // quest completion may precede looting.
-func (s *Service) ownColdridgeGoalCorpseLocked(w *worldv1.SnapshotResponse, corpse *worldv1.CreatureState) bool {
+func (s *Service) ownColdridgeGoalCorpseLocked(ctx context.Context, w *worldv1.SnapshotResponse, corpse *worldv1.CreatureState) bool {
 	goal := &s.coldridgeGoal
 	if goal.questID != 170 && goal.questID != 183 && goal.questID != 182 || !s.now().Before(s.practiceUntil) || w == nil || w.Self == nil || corpse == nil {
 		return false
 	}
-	active, _ := goal.observe(w, s.selfGUID)
+	active, _ := s.observeColdridgeGoalLocked(ctx, w)
 	if goal.questID == 182 {
 		return active && matches182Profile(corpse) && goal.positionEvidenceWithin(corpse) && corpse.Guid>>48 == 0xf130 && corpse.Guid&0xffffff != 0 && uint32(corpse.Guid>>24&0xffffff) == corpse.Entry && w.Self.MapKnown && w.Self.MapId == 0 && goal.baselineContains(playerPosition(w.Self)) && goal.contains(s.pos)
 	}

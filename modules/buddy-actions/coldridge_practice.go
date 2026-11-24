@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"math"
+	"reflect"
+	"strconv"
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
@@ -106,15 +108,43 @@ func unclaimedColdridgePull(c *worldv1.CreatureState) bool {
 }
 
 func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.SnapshotResponse) (*actionsv1.State, error) {
-	goal, incomplete := selectColdridgePracticeGoal(w, s.selfGUID)
+	if !s.refreshPositionLocked(w) {
+		return nil, status.Error(codes.FailedPrecondition, "current Coldridge client baseline required")
+	}
+	chosen, fresh, owned := s.coldridgeLifecycleLocked(ctx, w, "start")
+	if !owned || !chosen.Valid || chosen.Kind != "start" {
+		return nil, status.Error(codes.FailedPrecondition, "current Lua Coldridge lifecycle did not select a goal")
+	}
+	goal := coldridgePracticeGoal{}
+	goal.applyLifecycle(chosen)
+	w = fresh
+	incomplete := chosen.Active && chosen.Needed
 	if !incomplete || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.MapKnown || w.Self.MapId != 0 || !goal.baselineContains(playerPosition(w.Self)) || !s.state.KnownShadowBolt {
 		return nil, status.Error(codes.FailedPrecondition, "Coldridge practice requires actual level1..5 warlock (quest182 level4..6), knownShadowBolt and own supported incompletequest179,170,183 or182")
 	}
 	if goal.questID == 182 && (!s.refreshPositionLocked(w) || !goal.contains(s.pos)) {
 		return nil, status.Error(codes.FailedPrecondition, "quest182 practice requires a stopped client position in its verified troll area")
 	}
-	if !s.stopAutoAttackLocked(ctx) || !s.stopLocked(ctx) {
-		return nil, status.Error(codes.FailedPrecondition, "practice stop is unconfirmed")
+	binding, previousGoal := chosen.binding, s.coldridgeGoal
+	facts, _ := s.coldridgeLifecycleFacts(w, "start")
+	current := func() bool {
+		return binding.sameTask(s, ctx) && s.coldridgeGoal == previousGoal && s.practiceLifecycleSourceCurrentLocked(chosen.source)
+	}
+	if !current() || !s.stopAutoAttackLocked(ctx) || !current() || !s.stopLocked(ctx) || !current() {
+		return nil, status.Error(codes.FailedPrecondition, "practice stop or original task binding is unconfirmed")
+	}
+	now := s.now()
+	observed, err := s.snapshot(ctx)
+	latest, known := s.coldridgeLifecycleFacts(observed, "start")
+	if err != nil || !known || !current() || !reflect.DeepEqual(practiceLifecycleStable(facts), practiceLifecycleStable(latest)) {
+		return nil, status.Error(codes.FailedPrecondition, "Coldridge start observations changed during stop")
+	}
+	// An attached source can change during STOP callbacks without altering the
+	// native cache. Read the same pure selector once more before binding a task.
+	confirmed, _, owned := s.coldridgeLifecycleLocked(ctx, observed, "start")
+	if !owned || !confirmed.Valid || !current() || confirmed.source != chosen.source || confirmed.Kind != "start" ||
+		confirmed.QuestID != chosen.QuestID || confirmed.LeaseMS != chosen.LeaseMS || !reflect.DeepEqual(confirmed.Counts, chosen.Counts) || !reflect.DeepEqual(confirmed.NeededEntries, chosen.NeededEntries) {
+		return nil, status.Error(codes.FailedPrecondition, "Coldridge start source changed during stop")
 	}
 	s.state.Practicing, s.state.PracticePhase = true, "waiting_for_safe_coldridge_pull"
 	s.coldridgeGoal = goal
@@ -125,10 +155,10 @@ func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.S
 	} else if goal.questID == 182 {
 		s.state.PracticePhase = "waiting_for_safe_quest_182_pull"
 	}
-	s.practiceUntil, s.practiceQuestGoal = s.now().Add(10*time.Minute), true
+	s.practiceUntil, s.practiceQuestGoal = now.Add(time.Duration(chosen.LeaseMS)*time.Millisecond), true
 	s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
 	s.practiceRoute, s.practicePullStarted, s.failedAssistTarget = nil, false, 0
-	s.lastStep = s.now()
+	s.lastStep = now
 	return s.stateLocked(), nil
 }
 
@@ -156,23 +186,28 @@ func (s *Service) coldridgeObservedPracticeTickLocked(ctx context.Context, w *wo
 		return
 	}
 	target := practiceTargetObservation(w, s.practiceTarget)
-	active, needed := goal.observe(w, s.selfGUID)
-	selectedObjectiveComplete := target != nil && !goal.targetNeeded(target.Entry)
-	finishing := active && (!needed || selectedObjectiveComplete) && s.practicePullStarted && self.UnitFlags&0x80000 != 0 && goal.eligible(target, self) && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
-	if !needed && !finishing {
-		why := "quest_179_complete_absent_or_level_limit"
-		if goal.questID == 170 {
-			why = "quest_170_complete_absent_or_invalid"
-		} else if goal.questID == 183 {
-			why = "quest_183_complete_absent_or_invalid"
-		} else if goal.questID == 182 {
-			why = "quest_182_complete_absent_or_invalid"
-		}
-		s.stopPracticeLocked(ctx, why)
+	lifecycle, fresh, owned := s.coldridgeLifecycleLocked(ctx, w, "tick")
+	if !owned {
 		return
 	}
-	if needed && selectedObjectiveComplete && s.practicePullStarted && !finishing {
-		s.stopPracticeLocked(ctx, "selected_quest_objective_complete_without_owned_fight")
+	if !lifecycle.Valid {
+		s.pauseColdridgeLifecycleLocked(ctx, lifecycle.binding)
+		return
+	}
+	w, self = fresh, fresh.Self
+	target = practiceTargetObservation(w, s.practiceTarget)
+	goal.applyLifecycle(lifecycle)
+	finishing := lifecycle.Finishing
+	if finishing && (!s.practicePullStarted || self.UnitFlags&0x80000 == 0 || !goal.eligible(target, self) || !target.AttackVictimKnown || target.AttackVictimGuid != s.selfGUID || target.AttackAgeMs > 30000) {
+		s.pauseColdridgeLifecycleLocked(ctx, lifecycle.binding)
+		return
+	}
+	if lifecycle.Kind == "stop" {
+		s.stopPracticeLocked(ctx, lifecycle.Phase)
+		return
+	}
+	if lifecycle.Kind == "wait" {
+		s.pauseColdridgeLifecycleLocked(ctx, lifecycle.binding)
 		return
 	}
 	if finishing {
@@ -199,7 +234,12 @@ func (s *Service) coldridgeObservedPracticeTickLocked(ctx context.Context, w *wo
 			return
 		}
 	}
-	if target != nil && target.HealthKnown && target.Health == 0 && target.AliveKnown && !target.Alive {
+	if lifecycle.Kind == "target_dead" && (target == nil || !target.HealthKnown || target.Health != 0 || !target.AliveKnown || target.Alive) ||
+		lifecycle.Kind == "clear_target" && (target == nil || s.practicePullStarted) {
+		s.pauseColdridgeLifecycleLocked(ctx, lifecycle.binding)
+		return
+	}
+	if lifecycle.Kind == "target_dead" && target != nil && target.HealthKnown && target.Health == 0 && target.AliveKnown && !target.Alive {
 		s.stopLocked(ctx)
 		s.stopAutoAttackLocked(ctx)
 		s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
@@ -210,7 +250,7 @@ func (s *Service) coldridgeObservedPracticeTickLocked(ctx context.Context, w *wo
 	// Another actual objective update may satisfy this target while a route is
 	// being planned. A selected but unpulled target never creates authority to
 	// begin an unnecessary fight, even when the other objective still needs work.
-	if target != nil && !s.practicePullStarted && !goal.targetNeeded(target.Entry) {
+	if lifecycle.Kind == "clear_target" && target != nil && !s.practicePullStarted {
 		s.stopLocked(ctx)
 		s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
 		s.practiceRoute = nil
@@ -257,25 +297,33 @@ func (s *Service) coldridgeObservedPracticeTickLocked(ctx context.Context, w *wo
 		if !current() || !s.starterSpellFactsMatchLocked(*readiness, w, nil, position{}) {
 			return
 		}
-		best := float64(120)
-		for _, c := range w.NearbyCreatures {
-			if !goal.eligible(c, self) || !goal.positionEvidenceWithin(c) || !goal.targetNeeded(c.Entry) || !unclaimedColdridgePull(c) {
-				continue
-			}
-			p, known, _ := creaturePosition(c)
-			if d := distance(s.pos, p); known && goal.contains(p) && d < best {
-				best, target = d, c
-			}
+		selected, observed, owned := s.coldridgeLifecycleLocked(ctx, w, "targets")
+		if !owned || !current() {
+			return
 		}
-		if target == nil {
-			s.state.PracticePhase = "waiting_for_observed_level_one_ragged_young_wolf"
-			if goal.questID == 170 {
-				s.state.PracticePhase = "waiting_for_observed_required_quest_170_target"
-			} else if goal.questID == 183 {
-				s.state.PracticePhase = "waiting_for_observed_required_quest_183_target"
-			} else if goal.questID == 182 {
-				s.state.PracticePhase = "waiting_for_observed_required_quest_182_target"
-			}
+		if !selected.Valid {
+			s.pauseColdridgeLifecycleLocked(ctx, selected.binding)
+			return
+		}
+		w, self = observed, observed.Self
+		goal.applyLifecycle(selected)
+		if selected.Kind == "stop" {
+			s.stopPracticeLocked(ctx, selected.Phase)
+			return
+		}
+		if selected.Kind != "select" {
+			s.state.PracticePhase = selected.Phase
+			return
+		}
+		guid, _ := strconv.ParseUint(selected.TargetGUID, 10, 64)
+		target = practiceTargetObservation(w, guid)
+		if target == nil || !goal.eligible(target, self) || !goal.positionEvidenceWithin(target) || !goal.targetNeeded(target.Entry) || !unclaimedColdridgePull(target) {
+			s.pauseColdridgeLifecycleLocked(ctx, selected.binding)
+			return
+		}
+		point, known, _ := creaturePosition(target)
+		if !known || !goal.contains(point) {
+			s.pauseColdridgeLifecycleLocked(ctx, selected.binding)
 			return
 		}
 		s.practiceTarget, s.state.PracticeTargetGuid = target.Guid, target.Guid
@@ -397,7 +445,11 @@ func (s *Service) coldridgeCastObservationsLocked(ctx context.Context, original 
 	if !self.PowerKnown || !self.BaseManaKnown || self.BaseMana == 0 || self.PowerType != 0 || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 || self.UnitFlags&0x2000 != 0 || !s.state.KnownShadowBolt {
 		return reject("own_combat_prerequisites_changed")
 	}
-	active, needed := goal.observe(w, s.selfGUID)
+	source := s.starterSpells.revision
+	active, needed := s.observeColdridgeGoalLocked(ctx, w)
+	if !current() || source != s.starterSpells.revision {
+		return nil, nil, position{}, false
+	}
 	if !active {
 		return reject("bound_goal_absent_or_invalid")
 	}
