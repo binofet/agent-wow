@@ -197,7 +197,131 @@ local function starter_pickup(input)
     if not best then return ready({kind="wait",phase="waiting_for_new_offer_or_prerequisite_state"}) end
     return ready({kind="offer",npcGuid=best.guid})
 end
+-- A finite area sweep has no owner-feed dependency. Keep its giver ranking and
+-- reward/turn-in/accept/query order in this same quest policy.
+local function area_sweep(input)
+    local invalid={status="invalid"}
+    if type(input)~="table" or not text(input.sessionId,128) or not pose(input.selfPosition) or
+       not pose(input.anchorPosition) or input.selfPosition.mapId~=input.anchorPosition.mapId or
+       not array(input.nearby,64) or not array(input.questLog,25) or not array(input.journal,25) or
+       not array(input.queries,64) or not array(input.turnins,1024) or not array(input.autoAccepts,1024) or
+       type(input.reservations)~="table" or type(input.lastReward)~="table" or
+       not decimal(input.questLogRevision) then return invalid end
+    local active=ids(input.ownQuestIds,25)
+    local offer,reward=offer_defaults(input.offer),offer_defaults(input.turnInOffer)
+    if not active or not valid_offer(offer) or not valid_offer(reward) or not array(offer.quests,32) then return invalid end
+    local complete={}
+    for _,q in ipairs(input.questLog) do
+        if type(q)~="table" or not uint(q.questId,4294967295) then return invalid end
+        if q.complete==true and q.failed~=true then complete[tostring(q.questId)]=true end
+    end
+    for _,q in ipairs(input.journal) do
+        if type(q)~="table" or not uint(q.questId,4294967295) or not decimal(q.observedRewardNpcGuid) then return invalid end
+    end
+    for _,q in ipairs(offer.quests) do
+        if type(q)~="table" or not uint(q.questId,4294967295) or not uint(q.flags,4294967295) then return invalid end
+    end
+    local reservations=0
+    for key,bound in pairs(input.reservations) do
+        reservations=reservations+1
+        if reservations>96 or not text(key,64) or not signature(bound) or #bound~=3 then return invalid end
+    end
+    for _,row in ipairs(input.queries) do
+        if type(row)~="table" or not decimal(row.npcGuid) or not ids(row.activeQuestIds,25) or
+           not ids(row.completeQuestIds,25) then return invalid end
+    end
+    for _,row in ipairs(input.turnins) do
+        if type(row)~="table" or not decimal(row.npcGuid) or not uint(row.questId,4294967295) or
+           not decimal(row.questLogRevision) then return invalid end
+    end
+    for _,row in ipairs(input.autoAccepts) do
+        if not array(row,4) or #row~=4 or not text(row[1],128) or not decimal(row[2]) or
+           not decimal(row[3]) or not uint(row[4],4294967295) then return invalid end
+    end
+    local givers={}
+    for _,c in ipairs(input.nearby) do
+        if type(c)~="table" or not decimal(c.guid) or not uint(c.entry,16777215) or
+           not uint(c.npcFlags,4294967295) or not uint(c.unitFlags,4294967295) or
+           not uint(c.movementFlags,4294967295) or not uint(c.travelAttempts,4294967295) then return invalid end
+        local safe_flags=not bit(c.unitFlags,1) and not bit(c.unitFlags,4) and not bit(c.unitFlags,524288)
+            and not bit(c.unitFlags,1048576) and not bit(c.unitFlags,33554432)
+        if c.creatureIdentityMatches==true and c.present==true and c.aliveKnown==true and c.alive==true and
+           pose(c.position) and c.position.mapId==input.selfPosition.mapId and bit(c.npcFlags,2) and safe_flags and
+           c.movementFlags%268435456==0 and c.movementFlags<2147483648 and distance(input.anchorPosition,c.position)<=120 then
+            local d=distance(input.selfPosition,c.position)
+            if c.travelAttempts<3 or d<=8 then
+                local row={guid=c.guid,entry=c.entry,distance=d}
+                local i=#givers+1
+                while i>1 and (row.distance<givers[i-1].distance or row.distance==givers[i-1].distance and
+                        less_guid(row.guid,givers[i-1].guid)) do givers[i]=givers[i-1]; i=i-1 end
+                givers[i]=row
+                if #givers>32 then givers[33]=nil end
+            end
+        end
+    end
+    local result={status="ready",sessionId=input.sessionId,givers=givers}
+    local function finish(choice) result.choice=choice; return result end
+    local function ambiguous(q)
+        local r=input.lastReward
+        return r.questId==q and r.status~="REWARD_NONE" and r.status~=0 and r.status~="REWARD_REJECTED" and r.status~=4
+    end
+    local reward_giver,menu_giver
+    for _,g in ipairs(givers) do
+        if g.guid==reward.npcGuid then reward_giver=g end
+        if g.guid==offer.npcGuid then menu_giver=g end
+    end
+    if reward_giver and member(complete,reward.questId) and reward_offer(reward,reward.questId,reward_giver) and
+       not ambiguous(reward.questId) and not same(input.reservations["claim:"..reward.questId],
+            {input.sessionId,reward_giver.guid,reward.revision}) then
+        return finish({kind="claim_reward",npcGuid=reward_giver.guid,questId=reward.questId,offerRevision=reward.revision})
+    end
+    for _,g in ipairs(givers) do
+        local known={}
+        for _,q in ipairs(input.journal) do if q.observedRewardNpcGuid==g.guid then known[tostring(q.questId)]=true end end
+        if menu_giver==g and offer.expiresInMs~="0" then
+            for _,q in ipairs(offer.quests) do known[tostring(q.questId)]=true end
+        end
+        for _,q in ipairs(sorted_ids(complete)) do
+            if member(known,q) and not ambiguous(q) then
+                local seen=false
+                for _,row in ipairs(input.turnins) do
+                    if row.npcGuid==g.guid and row.questId==q and row.questLogRevision==input.questLogRevision then seen=true end
+                end
+                if not seen then return finish({kind="turn_in",npcGuid=g.guid,questId=q}) end
+            end
+        end
+    end
+    if menu_giver and offer.expiresInMs~="0" and offer.revision~="0" then
+        for _,q in ipairs(offer.quests) do
+            if q.questId~=0 and q.available==true and q.repeatable~=true and q.acceptRequested~=true and
+               not member(active,q.questId) and #input.ownQuestIds<25 then
+                local bound={input.sessionId,menu_giver.guid,offer.revision}
+                if bit(q.flags,524288) then
+                    local key={input.sessionId,menu_giver.guid,offer.revision,q.questId}
+                    local seen=false
+                    for _,row in ipairs(input.autoAccepts) do if same(row,key) then seen=true end end
+                    if not seen then return finish({kind="auto_accept",npcGuid=menu_giver.guid,questId=q.questId,offerRevision=offer.revision}) end
+                elseif not same(input.reservations["accept:"..q.questId],bound) then
+                    return finish({kind="accept",npcGuid=menu_giver.guid,questId=q.questId,offerRevision=offer.revision})
+                end
+            end
+        end
+    end
+    local active_ids,complete_ids=sorted_ids(active),sorted_ids(complete)
+    for _,g in ipairs(givers) do
+        local seen=false
+        for _,q in ipairs(input.queries) do
+            if q.npcGuid==g.guid and same(q.activeQuestIds,active_ids) and same(q.completeQuestIds,complete_ids) then seen=true end
+        end
+        if not seen then
+            if #input.queries>=64 then return finish({kind="done",phase="finished_at_bounded_giver_query_limit"}) end
+            return finish({kind="offer",npcGuid=g.guid})
+        end
+    end
+    return finish({kind="done",phase="finished_visible_area_quest_sweep"})
+end
 function M.decide(input)
+    if type(input)=="table" and input.mode=="area_sweep" then return area_sweep(input) end
     if type(input)=="table" and input.mode=="starter_pickup" then return starter_pickup(input) end
     local invalid={status="invalid"}
     if type(input)~="table" or not text(input.sessionId,128) or not number(input.now) then return invalid end
