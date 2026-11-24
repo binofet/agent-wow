@@ -1,8 +1,10 @@
 """Raw GM facts/tool wiring only; scripted API text is not model-planning proof."""
 import contextlib
 import copy
+import hashlib
 import json
 from pathlib import Path
+import re
 import types
 import unittest
 from unittest import mock
@@ -271,6 +273,94 @@ class DirectFailureFeedbackTests(unittest.TestCase):
             self.assertNotIn('HTTP 400', self.rpc.replies[-1]['text'])
             self.assertEqual(prior_file.read_bytes(), prior_bytes)
             self.assertEqual(self.rpc.commands, [])
+
+
+class CommonGMReferenceTests(unittest.TestCase):
+    setUp = brain_fixtures.DirectBrainIntegrationTests.setUp
+    gm_guide_fixture = brain_fixtures.DirectBrainIntegrationTests.gm_guide_fixture
+    gm_primer_fixture = brain_fixtures.DirectBrainIntegrationTests.gm_primer_fixture
+    start = 'COMMON GM EXCHANGES — TARGET, SYNTAX AND EVIDENCE'
+    end = 'END COMMON GM EXCHANGES'
+
+    def test_common_exchanges_reach_initial_system_and_full_catalog_remains_readable(self):
+        reference = (ROOT/'dev/lotharen-gm-commands.txt').read_text()
+        section = reference.split(self.start, 1)[1].split(self.end, 1)[0]
+        forms = ('.character level Joel 40', '.levelup Joel 2', '.learn <spellId> [all]',
+                 '.learn all my trainer', '.learn all default <playerName>',
+                 '.learn all recipes <professionName>', '.setskill <skillId> <value> [max]',
+                 '.additem Joel <itemId> <count>', '.gear repair Joel',
+                 *('.quest '+verb+' <questId> [playerName]' for verb in ('add','complete','remove','status','reward')))
+        prose = ' '.join(section.split())
+        for form in forms:self.assertIn(form, prose)
+        for fact in ('ABSOLUTE level 40', 'DELTA +2', 'GM SELF even when another player is selected',
+                     'adding is not equipping', 'reward choice index 0', 'Current realm syntax'):
+            self.assertIn(fact, prose)
+        catalog = reference.split('FULL COMMAND HELP AND SOURCE SIGNATURES\n', 1)[1].split(
+            '\nPUBLIC SOURCE FILE MANIFEST\n', 1)[0]
+        self.assertEqual(hashlib.sha256(catalog.encode()).hexdigest(),
+                         '43204986573bd7c99ada6e92d499be5b8b05a481b2be3d5763ebef4002d94581')
+        headers = list(re.finditer(r'^={72}\n(\.[^\r\n]+)\n', catalog, re.M))
+        names = [row[1] for row in headers]
+        self.assertEqual(len(names), 739)
+        selected = names.index('.character level')
+        entry = catalog[headers[selected].start():headers[selected+1].start()]
+        captured = []
+        actual_tools = direct_tools.DirectTools
+        class Capture(actual_tools):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured.append(self)
+        reads = brain_fixtures.chat(
+            ('entry', 'context_read', dict(path=['gmReference','commands','.character level','text'], limit=4096)),
+            ('raw', 'context_read', dict(path=['gmReference','raw'], limit=4096)))
+        with self.gm_primer_fixture() as (brain, state, clients), \
+                brain_fixtures.FakeHTTP([reads, brain_fixtures.spoken('The reference is available.')]) as http, \
+                mock.patch.object(direct_tools, 'DirectTools', Capture):
+            self.assertEqual(brain.gm_reference, reference)  # The maintained file loader, not a test prompt override.
+            state['current_request']['messages'] = [dict(text='What GM commands can address these ordinary requests? Read only.')]
+            brain.client = direct_model.DirectModel('local', brain.model, http.base)
+            brain.generate([], state)
+            first = http.requests[0]['body']
+            system = first['messages'][0]['content']
+            self.assertIn(self.start, system)
+            self.assertIn(section, system)
+            self.assertIn(self.end, system)
+            initial_names = system.split('COMPLETE COMMAND NAME INDEX (739)\n', 1)[1].split(
+                '\n\nThe full exact reference', 1)[0].splitlines()
+            self.assertEqual(initial_names, names)
+            self.assertNotIn(reference, system)  # The complete raw reference remains in the existing lazy view.
+            self.assertEqual(first['tool_choice'], 'auto')
+            functions = {row['function']['name'] for row in first['tools']}
+            self.assertIn('gm_execute', functions)
+            self.assertNotIn('final_reply', functions)
+            returned = {row['tool_call_id']:json.loads(row['content'])['result']
+                for row in http.requests[1]['body']['messages'] if row['role'] == 'tool'}
+            self.assertEqual(returned['entry']['value'], entry[:4096])
+            self.assertEqual(returned['raw']['value'], reference[:4096])
+            full = captured[-1].context['gmReference']
+            self.assertEqual(full['raw'].encode(), reference.encode())
+            self.assertEqual(full['sha256'], hashlib.sha256(reference.encode()).hexdigest())
+            self.assertEqual(list(full['commands']), names)
+            self.assertEqual(full['commands']['.character level']['text'], entry)
+            self.assertFalse(any(peer.commands or peer.replies for peer in clients.values()))
+
+    def test_common_reference_does_not_grant_peer_owner_gm_authority(self):
+        with self.gm_primer_fixture() as (brain, state, clients), \
+                brain_fixtures.FakeHTTP([brain_fixtures.spoken('I can inspect my accepted Lua.')]) as http:
+            state['current_request'].update(source='party_agent', senderGuid='8', verifiedPeer=True,
+                developmentWhisper=True, messages=[dict(text='Inspect your current Lua, without GM actions.')])
+            self.assertTrue(brain.development_enabled(state))
+            brain.client = direct_model.DirectModel('local', brain.model, http.base)
+            brain.generate([], state)
+            payload = http.requests[0]['body']
+            tools = {row['function']['name'] for row in payload['tools']}
+            self.assertIn('policy_input', tools)
+            self.assertFalse({'gm_execute','gm_task_start','gm_task_resume','gm_task_cancel'} & tools)
+            self.assertNotIn(self.start, payload['messages'][0]['content'])
+            prepared = json.loads(payload['messages'][0]['content'].split(
+                'Current observations and control state JSON:\n', 1)[1])
+            self.assertNotIn('gmReference', prepared)
+            self.assertFalse(any(peer.commands or peer.replies for peer in clients.values()))
 
 
 if __name__ == '__main__':

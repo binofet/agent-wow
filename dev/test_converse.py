@@ -1906,15 +1906,25 @@ class BoundaryTests(unittest.TestCase):
             self.assertIn(shortcut, view['eager'])  # Visible without a tool round or full catalog.
             context = dict(gmReference=view['captured'], pending=dict(outcome='unknown', replayAllowed=False))
             original = copy.deepcopy(context)
-            page = context_page(context, ['gmReference', 'guide'], limit=4096)
-            self.assertIn(shortcut, page['value'])
+            offset, chunks = 0, []
+            while True:
+                page = context_page(context, ['gmReference', 'guide'], offset=offset, limit=4096)
+                self.assertLessEqual(len(packed(dict(ok=True, result=page))), READ_PAGE_BYTES)
+                self.assertEqual(page['offset'], offset)
+                chunks.append(page['value'])
+                if not page['truncated']:
+                    break
+                self.assertGreater(page['nextOffset'], offset)
+                offset = page['nextOffset']
+            guide = ''.join(chunks)
+            self.assertEqual(guide, view['captured']['guide'])
+            self.assertIn(shortcut, guide)
             for fact in ('omitting select_guid', 'requires no movement', 'group membership or UI selection',
                          'target security', 'source-supported syntax, not a verified repair on this realm',
                          'SERVER-REPORTED completion', 'Independent durability observation is distinct',
                          'no position or party query is required', 'not a general rule',
                          'keep existing no-replay receipts'):
-                self.assertIn(fact, page['value'])
-            self.assertLessEqual(len(packed(dict(ok=True, result=page))), READ_PAGE_BYTES)
+                self.assertIn(fact, guide)
             self.assertEqual(context, original)
             catalog = reference.split('FULL COMMAND HELP AND SOURCE SIGNATURES\n', 1)[1].split(
                 '\nPUBLIC SOURCE FILE MANIFEST\n', 1)[0]
