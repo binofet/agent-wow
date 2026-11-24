@@ -42,8 +42,7 @@ INN_TRAINERS = {5:377, 8:328, 4:917}
 INN_STAIRS = ((-9477.,22.5,56.339386), (-9477.,14.,60.184803),
               (-9473.5,14.,60.190014), (-9473.5,23.,63.820427))
 
-CLASS_PURCHASE_CAP = 1_000_000
-DEFAULT_RESERVE = 100
+NATIVE_PURCHASE_CAP = town_policy.NATIVE_CLASS_PURCHASE_CAP
 HISTORY_LIMIT = 64
 REJECTION_LIMIT = 256
 REJECT_ATTEMPTS = 3
@@ -121,10 +120,10 @@ def harvest_after_maintenance(actor, worker, prior_query):
 
 class Maintenance:
     def __init__(self, name, guid, rpc, save, stored=None, now=time.time, stopped=lambda:False,
-                 reserve_copper=DEFAULT_RESERVE):
+                 reserve_copper=None):
         if (name, guid) not in {(n, g) for n, g, _ in ROSTER}:
             raise Error('Maintenance supports only the configured companion profiles')
-        if type(reserve_copper) is not int or not 0 <= reserve_copper <= CLASS_PURCHASE_CAP:
+        if reserve_copper is not None and (type(reserve_copper) is not int or not 0 <= reserve_copper <= NATIVE_PURCHASE_CAP):
             raise Error('Class training wallet reserve is invalid')
         self.name, self.guid, self.rpc, self.save, self.now = name, guid, rpc, save, now
         self.reserve_copper = reserve_copper
@@ -146,7 +145,7 @@ class Maintenance:
             if (not isinstance(row, dict) or not isinstance(row.get('session'), str)
                     or not 1 <= len(row['session']) <= 128 or type(row.get('spell')) is not int
                     or not 0 < row['spell'] <= 2**32-1 or type(row.get('cost')) is not int
-                    or not 0 <= row['cost'] <= (10000 if migrating else CLASS_PURCHASE_CAP)
+                    or not 0 <= row['cost'] <= (10000 if migrating else NATIVE_PURCHASE_CAP)
                     or not 0 < integer(row.get('npc',0)) <= 2**64-1
                     or type(row.get('baselineId')) is not int or row['baselineId'] < 0
                     or row.get('status') not in ('reserved','confirmed','rejected','known_at_trainer')
@@ -275,13 +274,15 @@ class Maintenance:
         if cached is None:return False
         current=self.trainer_prerequisites(world,cached['skills'])
         if current is None or state.get('copperKnown') is not True:return False
-        budget=min(CLASS_PURCHASE_CAP,max(0,integer(state.get('copper',0))-self.reserve_copper))
-        if current!=cached['prerequisites'] or cached['nextCost'] is not None and budget>=cached['nextCost']:
+        plan=town_policy.class_training(self.rpc,state,self.guid,[],{},[],self.reserve_copper)
+        budget=plan['budgetCopper']
+        if (cached.get('policyRevision')!=plan['policyRevision'] or cached.get('policyGeneration')!=plan['policyGeneration']
+                or current!=cached['prerequisites'] or cached['nextCost'] is not None and budget>=cached['nextCost']):
             self.exhausted_trainers.pop(integer(npc),None)
             self.status['exhaustedTrainerCount']=len(self.exhausted_trainers);return False
         return True
 
-    def remember_exhausted_trainer(self, body, npc, world, state, spells, attempted, budget):
+    def remember_exhausted_trainer(self, body, npc, world, state, spells, attempted, budget, plan=None):
         # Only a fresh, complete normal class list can suppress a later visit.
         # Errors, unresolved purchases and definite failures never become exhaustion.
         purchase=state.get('lastPurchase')
@@ -289,7 +290,8 @@ class Maintenance:
                 purchase.get('status') not in ('TRAINING_CONFIRMED','KNOWN_AT_TRAINER')
                 or any(r['status'] in ('reserved','rejected') and integer(r['npc'])==integer(npc)
                     for r in self.data['training'])):return
-        skills=set();costs=[]
+        plan=plan or town_policy.class_training(self.rpc,state,self.guid,spells,{},attempted,self.reserve_copper)
+        skills=set()
         for spell in spells:
             sid,usable=integer(spell.get('spellId',0)),integer(spell.get('usable',0))
             points=spell.get('pointCost')
@@ -306,8 +308,6 @@ class Maintenance:
                         and any(integer(v) for v in abilities)):return
                 skill=integer(spell.get('requiredSkill',0))
                 if skill:skills.add(skill)
-                cost=integer(spell.get('costCopper',0))
-                if usable==0 and sid not in attempted and budget<cost<=CLASS_PURCHASE_CAP:costs.append(cost)
         skills=tuple(sorted(skills));prerequisites=self.trainer_prerequisites(world,skills)
         if prerequisites is None:return
         if body!=self.exhausted_body:
@@ -315,7 +315,8 @@ class Maintenance:
         if integer(npc) not in self.exhausted_trainers and len(self.exhausted_trainers)>=128:
             self.exhausted_trainers.pop(next(iter(self.exhausted_trainers)))
         self.exhausted_trainers[integer(npc)]={'skills':skills,'prerequisites':prerequisites,
-            'nextCost':min(costs) if costs else None}
+            'nextCost':plan.get('nextCost'),
+            'policyRevision':plan['policyRevision'],'policyGeneration':plan['policyGeneration']}
         self.status['exhaustedTrainerCount']=len(self.exhausted_trainers)
 
     def activity_phase(self):
@@ -746,24 +747,20 @@ class Maintenance:
             for key in known_ids:self.data['rejections'].pop(key,None)
             self.persist()
         attempted={r['spell'] for r in self.data['training'] if r['status'] in ('confirmed','known_at_trainer')}
-        wallet=integer(state.get('copper',0))
-        budget=min(CLASS_PURCHASE_CAP,max(0,wallet-self.reserve_copper))
-        choices=[]
+        eligibility={}
         for spell in spells:
             evidence=self.eligibility(world,spell)
-            if (evidence is not None and integer(spell.get('usable',0))==0 and integer(spell.get('spellId',0))>0
-                    and not any(integer(v) for v in spell.get('pointCost',[]))
-                    and 0<=integer(spell.get('costCopper',0))<=budget
-                    and integer(spell.get('requiredLevel',0))<=evidence['level']
-                    and integer(spell['spellId']) not in attempted
-                    and self.retry_allowed(integer(spell['spellId']),evidence)):
-                choices.append(spell)
-        if not choices:
-            self.remember_exhausted_trainer(listed_body,npc,world,state,spells,attempted,budget)
+            eligibility[str(integer(spell.get('spellId',0)))]=(dict(evidence,known=True,
+                retryAllowed=self.retry_allowed(integer(spell.get('spellId',0)),evidence))
+                if evidence is not None else dict(known=False))
+        plan=town_policy.class_training(self.rpc,state,self.guid,spells,eligibility,attempted,self.reserve_copper)
+        budget,reserve=plan['budgetCopper'],plan['reserveCopper']
+        if 'spellId' not in plan:
+            self.remember_exhausted_trainer(listed_body,npc,world,state,spells,attempted,budget,plan)
             self.status['phase'] = 'no_affordable_unattempted_class_training'
             self.return_from_exhausted_inn(listed_body,trainers[0].get('creature',{}))
             return
-        spell = min(choices, key=lambda s:(integer(s.get('costCopper',0)), integer(s['spellId'])))
+        spell = next(s for s in spells if s.get('spellId')==plan['spellId'])
         cost, spell_id = integer(spell.get('costCopper',0)), integer(spell['spellId'])
         if travel_guard is not None:
             body,owner,controls=travel_guard
@@ -773,13 +770,29 @@ class Maintenance:
         if self.data['reservedCopper']>AUDIT_MAX-cost:
             raise Error('Training audit counter exceeds its bound')
         self.data['training']=self.data['training'][-(HISTORY_LIMIT-1):]
-        self.data['training'].append({'session':sync.session_id(state), 'spell':spell_id, 'cost':cost,
+        reservation={'session':sync.session_id(state), 'spell':spell_id, 'cost':cost,
             'eligibility':self.eligibility(world,spell),
-            'npc':str(npc), 'baselineId':integer(state.get('lastPurchase',{}).get('id',0)), 'status':'reserved'})
+            'npc':str(npc), 'baselineId':integer(state.get('lastPurchase',{}).get('id',0)), 'status':'reserved'}
+        self.data['training'].append(reservation)
         self.data['reservedCopper'] += cost
         self.persist()  # Persist the unresolved operation before any purchase packet.
+        try:
+            if self.stopped():raise Error('class_training_stopped_before_dispatch')
+            town_policy.class_training_current(self.rpc,state,self.guid,plan)
+        except Exception as error:
+            # This exact new reservation never entered Buy. Retire only it;
+            # previously entered/uncertain purchases remain in their namespace.
+            if not self.data['training'] or self.data['training'][-1] is not reservation:
+                raise Error('class_training_reservation_changed_before_dispatch') from error
+            row=self.data['training'].pop()
+            self.data['reservedCopper']-=cost
+            self.data['lastNotDispatched']=dict(row,status='not_dispatched',reason=str(error)[:128],
+                policyRevision=plan['policyRevision'],policyGeneration=plan['policyGeneration'])
+            self.persist()
+            self.status['phase']='class_training_not_dispatched'
+            return
         self.rpc.call('buddy-training.buy', {'sessionId':sync.session_id(state), 'npcGuid':npc,
-            'offerRevision':offer['revision'], 'spellId':spell_id, 'expectedCostCopper':cost, 'maxSpendCopper':max(1,budget), 'reserveCopper':self.reserve_copper})
+            'offerRevision':offer['revision'], 'spellId':spell_id, 'expectedCostCopper':cost, 'maxSpendCopper':max(1,budget), 'reserveCopper':reserve})
         self.status['phase'] = 'waiting_for_training_confirmation'
 
 
@@ -788,11 +801,11 @@ def main():
     parser.add_argument('command',choices=('run','status','stop'))
     parser.add_argument('--state-dir',type=Path,default=ROOT/'data/party-maintenance')
     parser.add_argument('--max-hours',type=float,default=8)
-    parser.add_argument('--reserve-copper',type=int,default=DEFAULT_RESERVE)
+    parser.add_argument('--reserve-copper',type=int,default=None,help='Explicit reserve override; omitted uses the accepted Lua tuning')
     args=parser.parse_args()
     if not math.isfinite(args.max_hours) or not 0 < args.max_hours <= 8:
         parser.error('Runtime must be greater than0 and at most8hours')
-    if not 0<=args.reserve_copper<=CLASS_PURCHASE_CAP:parser.error('Wallet reserve must be0..1000000copper')
+    if args.reserve_copper is not None and not 0<=args.reserve_copper<=NATIVE_PURCHASE_CAP:parser.error('Wallet reserve must be0..1000000copper')
     folder=c.ensure_state(args.state_dir)
     with os.fdopen(c.private_open(folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
         record=c.read_json(folder/'status.json')
