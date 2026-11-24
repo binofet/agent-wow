@@ -10,11 +10,11 @@ import (
 
 func TestFargodeepReadinessDefaultCLI(t *testing.T) {
 	source := behaviors.StarterSpellSource
-	const threshold = "minimum_health=95"
+	const threshold = "M.fargodeep_pull={minimum_health=95"
 	if strings.Count(source, threshold) != 1 {
 		t.Fatal("actual shared Fargodeep tuning is missing or ambiguous")
 	}
-	edited := strings.Replace(source, threshold, "minimum_health=94", 1)
+	edited := strings.Replace(source, threshold, "M.fargodeep_pull={minimum_health=94", 1)
 	for _, test := range []struct {
 		name, source, want         string
 		health, mana, base, energy uint32

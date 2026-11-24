@@ -88,10 +88,10 @@ func TestPolicyFargodeepReadinessRealBundleUsesCurrentAcceptedObjectives(t *test
 	check(initial, "wait")
 	assertFollowFallbackState(t, host, initialState)
 	metadata(initial, true)
-	if strings.Count(source, "minimum_health=95") != 1 {
+	if strings.Count(source, "M.fargodeep_pull={minimum_health=95") != 1 {
 		t.Fatal("actual bundled objective tuning is not uniquely editable")
 	}
-	edited := strings.Replace(source, "minimum_health=95", "minimum_health=94", 1)
+	edited := strings.Replace(source, "M.fargodeep_pull={minimum_health=95", "M.fargodeep_pull={minimum_health=94", 1)
 	revision, err := host.Reload(ctx, edited, initial)
 	if err != nil || revision == initial || host.vm != session || host.vm.Status().SessionID != sid {
 		t.Fatal("same-host objective tuning CAS failed", revision, err)
