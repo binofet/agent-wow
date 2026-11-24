@@ -1,201 +1,218 @@
-"""Free one carried slot when verified gray junk blocks party looting or water."""
-
-import math
+"""Execute one exact cleanup selected by the actor's accepted Lua policy."""
+import copy
+import hashlib
+import os
+import re
 import time
 
+import item_disposal
+from party_mana_supply import ROOT, runtime, _catalog, _identity, _validate_action
+
 PARTY = {8086: 1, 8087: 4, 8088: 5, 8402: 8}
-LOOT_RANGE = 12
-COOLDOWN = 30
-RECHECK = 5
-RECEIPT_WAIT = 8
-IN_COMBAT = 0x80000
-ITEM_LOOKUP_LIMIT = 6  # Public buddy-trade.lookup_items bound.
-ARMOR_SLOTS = {1: 0, 3: 2, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9, 16: 14, 20: 4}
+VALUE_BYTES = 8 * 1024 * 1024
 
 
-def number(value):
-    return int(value or 0)
+def _source(rpc, port, identity):
+    view = rpc(port, 'session.policy_source', identity)
+    source, revision = view.get('source'), view.get('revision')
+    generation, limit = str(view.get('generation', '')), view.get('sourceLimitBytes', runtime.MAX_SOURCE)
+    if (view.get('sessionId') != identity['sessionId'] or str(view.get('characterGuid')) != identity['characterGuid']
+            or not isinstance(source, str) or not source or not re.fullmatch('[a-f0-9]{64}', str(revision))
+            or hashlib.sha256(source.encode()).hexdigest() != revision
+            or not re.fullmatch('[1-9][0-9]{0,19}', generation) or int(generation) >= 2**64
+            or type(limit) is not int or limit <= 0 or len(source.encode()) > limit):
+        raise runtime.Error('current_accepted_cleanup_source_required')
+    return source, dict(identity, revision=revision, generation=generation), limit
 
 
-def safe_junk_entries(catalog):
-    """Index ordinary non-quest misc and armor; live item facts prove quality."""
-    result = {}
-    for entry, item in catalog['items'].items():
-        if any(item.get(key) for key in ('questIds', 'startsQuest', 'useSpells', 'containerSlots')):
-            continue
-        kind, subclass, inv_type = item.get('itemClass'), item.get('subclass'), item.get('inventoryType', 0)
-        if (kind, subclass, inv_type) == (15, 0, 0):
-            result[int(entry)] = None
-        elif kind == 4 and subclass in (1, 2, 3, 4) and inv_type in ARMOR_SLOTS:
-            result[int(entry)] = ARMOR_SLOTS[inv_type]
-    return result
+def _current(rpc, port, binding):
+    view = rpc(port, 'session.attach', {key: binding[key] for key in ('sessionId', 'characterGuid')})
+    policy = view.get('policy', {})
+    if (view.get('sessionId') != binding['sessionId'] or str(view.get('characterGuid')) != binding['characterGuid']
+            or policy.get('revision') != binding['revision'] or str(policy.get('generation')) != binding['generation']
+            or policy.get('faulted', False) is not False):
+        raise runtime.Error('cleanup_policy_or_body_changed')
 
 
-def carried_slots(inventory):
-    bags = inventory.get('inventoryBags', [])
-    if inventory.get('inventoryKnown') is not True or len(bags) != 5:
-        return None
-    rows, seen = {}, set()
-    for bag in bags:
-        bag_id, count = number(bag.get('bag')), number(bag.get('slotCount'))
-        slots = bag.get('slots', [])
-        if (not 0 <= bag_id <= 4 or bag_id in seen or (bag_id == 0 and count != 16)
-                or not 0 <= count <= 36 or len(slots) != count
-                or bag.get('slotKnown') is not True or bag.get('contentsKnown') is not True):
-            return None
-        seen.add(bag_id)
-        for slot in slots:
-            index = number(slot.get('slot'))
-            key = (bag_id, index)
-            if number(slot.get('bag')) != bag_id or not 0 <= index < count or key in rows:
-                return None
-            rows[key] = slot
-    return rows
+def _facts(rpc, port, view, identity):
+    view = copy.deepcopy(view)
+    raw = rpc(port, 'buddy-inventory.raw_gear_facts', {})
+    if (not isinstance(raw, dict) or raw.get('sessionId') != identity['sessionId']
+            or str(raw.get('selfGuid')) != identity['characterGuid']
+            or raw.get('inventoryRevision') != view['inventory'].get('inventoryRevision')
+            or raw.get('inventoryRevision') != view['world'].get('inventoryRevision')
+            or raw.get('inventoryKnown') is not True):
+        raise runtime.Error('current_raw_cleanup_inventory_required')
+    # Copy raw instance facts, never cached eligibility/ranking flags.
+    view['inventory'].update(raw)
+    sources, entries = [], set()
+    for bag in raw.get('inventoryBags', []):
+        for row in bag.get('slots', []):
+            if str(row.get('itemGuid', '0')) != '0':
+                source = item_disposal._reference(row)
+                item_disposal._layout(raw['inventoryBags'], source)
+                sources.append(source)
+                entries.add(source['entry'])
+    for row in view['world'].get('selfEquipment', []):
+        if row.get('entry'):
+            entries.add(item_disposal._uint(row['entry']))
+    metadata = {}
+    ordered = sorted(entries)  # Transport batches, not a candidate shortlist.
+    for offset in range(0, len(ordered), 6):
+        reply = rpc(port, 'buddy-trade.lookup_items', {'itemIds': ordered[offset:offset + 6]})
+        if reply.get('sessionId') != identity['sessionId']:
+            raise runtime.Error('cleanup_template_body_changed')
+        for row in reply.get('items', []):
+            if isinstance(row, dict) and row.get('itemId') in entries:
+                metadata[str(row['itemId'])] = copy.deepcopy(row)
+    contexts = {}
+    for source in sources:
+        context = item_disposal.project_context(dict(source=source, inventory=raw,
+            world=view['world'], journal=view.get('journal', {})))
+        if context is not None:
+            contexts[source['itemGuid']] = context
+    return view, metadata, contexts
 
 
-def nearby_loot(world, actions):
-    own = actions.get('position', {})
-    if own.get('known') is not True or own.get('mapKnown') is not True:
-        return False
-    origin = tuple(own.get(axis, 0) for axis in 'xyz')
-    for corpse in world.get('lootableCorpses', []):
-        if (corpse.get('present') is True and corpse.get('positionKnown') is True
-                and corpse.get('mapKnown') is True and number(corpse.get('mapId')) == number(own.get('mapId'))
-                and math.dist(origin, tuple(corpse.get(axis, 0) for axis in 'xyz')) <= LOOT_RANGE):
-            return True
-    return False
+def _evaluate(rpc, port, view, record, now, bridge):
+    identity = _identity(view, PARTY[port])
+    source, binding, limit = _source(rpc, port, identity)
+    catalog = _catalog(rpc, port, identity)
+    view, metadata, contexts = _facts(rpc, port, view, identity)
+    wrapped = ('local policy=(function()\n' + source + '\nend)()\nreturn {decide=function(input) '
+        'if type(policy.mana_supply_plan)~="function" then return {available=false} end '
+        'return {available=true,decision=policy.mana_supply_plan(input)} end}\n')
+    evaluator = bridge or runtime.Bridge(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY', ROOT / 'data/bin/luapolicy'),
+        ROOT / 'modules', source_bytes=max(limit, len(wrapped.encode())), value_bytes=VALUE_BYTES, execution_ms=1000)
+    result = evaluator.evaluate(wrapped, dict(query='loot_pressure', observations={str(port): view},
+        metadata=metadata, disposalContexts=contexts, catalogs={str(port): catalog['methods']},
+        catalogMessages={str(port): catalog['messages']}, bindings=dict(magePort=str(port), mageGuid=identity['characterGuid']),
+        memory=copy.deepcopy(record.get('memory', {})), last=copy.deepcopy(record.get('last')), nowMs=now * 1000))
+    _current(rpc, port, binding)
+    decision = result.get('decision', {}) if isinstance(result, dict) and result.get('available') is True else {}
+    if (decision.get('consumer') != 'loot_pressure' or not isinstance(decision.get('memory'), dict)
+            or not isinstance(decision.get('phase'), str) or not re.fullmatch('[A-Za-z0-9_]{1,128}', decision['phase'])):
+        raise runtime.Error('accepted_lua_loot_pressure_consumer_required')
+    return decision, binding, catalog, view
 
 
-def can_dispose(world, actions, inventory, trade, guid):
-    own = world.get('self', {})
-    if (number(own.get('guid')) != guid
-            or any(own.get(key) is not True for key in ('present', 'aliveKnown', 'alive', 'unitFlagsKnown'))
-            or number(own.get('unitFlags')) & IN_COMBAT):
-        return False
-    owner = world.get('owner', {})
-    if owner.get('present') and owner.get('unitFlagsKnown') and number(owner.get('unitFlags')) & IN_COMBAT:
-        return False
-    return (not any(actions.get(key) for key in ('moving', 'traveling', 'motionUnconfirmed', 'castPending',
-                'interactionOwner', 'autoAttacking', 'autoAttackRequested', 'autoAttackUnconfirmed', 'practicing'))
-            and not actions.get('recovery', {}).get('active') and not inventory.get('active') and not inventory.get('closing')
-            and trade.get('phase') in ('IDLE', 'COMPLETE') and not trade.get('waterGiftArmed'))
+def _persist(persist, attempts):
+    if persist is None:
+        raise runtime.Error('durable_cleanup_store_required')
+    if persist(copy.deepcopy(attempts)) is False:
+        raise runtime.Error('cleanup_persistence_unconfirmed')
 
 
-def candidates(world, inventory, slots, safe_entries):
-    worn = {number(item.get('slot')): item for item in world.get('selfEquipment', [])
-            if item.get('slotKnown') and item.get('metadataKnown') and number(item.get('itemGuid'))}
-    choices = []
-    for row in inventory.get('items', []):
-        if row.get('safeJunkSaleEligible') is not True or row.get('metadataKnown') is not True:
-            continue
-        item = row.get('item', {})
-        bag, slot = number(item.get('bag')), number(item.get('slot'))
-        entry, guid, count = (number(item.get(key)) for key in ('entry', 'itemGuid', 'stackCount'))
-        price = number(row.get('unitSellPriceCopper'))
-        current = slots.get((bag, slot), {})
-        if (entry not in safe_entries or guid >> 48 != 0x4000 or price <= 0 or count <= 0
-                or current.get('metadataKnown') is not True or number(current.get('itemGuid')) != guid
-                or number(current.get('entry')) != entry or number(current.get('stackCount')) != count):
-            continue
-        armor_slot = safe_entries[entry]
-        replacement = worn.get(armor_slot, {})
-        if armor_slot is not None and (not world.get('selfEquipmentKnown') or row.get('conservativeUpgrade')
-                or not current.get('enhancementsKnown') or current.get('hasEnhancements')
-                or not number(replacement.get('entry')) or number(replacement.get('itemGuid')) == guid):
-            continue
-        choices.append((count * price, bag, slot, guid, entry, number(replacement.get('entry'))))
-    return sorted(choices)
+def _scene(view):
+    """Compare factual inputs used by Lua, without choosing their meaning."""
+    world, actions = view['world'], view['actions']
+    def pose(row):
+        return {key: row.get(key) for key in ('known', 'positionKnown', 'mapKnown', 'mapId', 'x', 'y', 'z')}
+    def person(row):
+        return {key: row.get(key) for key in ('guid', 'present', 'aliveKnown', 'alive', 'unitFlagsKnown',
+            'unitFlags', 'movementFlagsKnown', 'movementFlags', 'channelSpellId', 'mapKnown', 'mapId',
+            'positionKnown', 'positionRevision', 'x', 'y', 'z')}
+    return dict(self=person(world.get('self', {})), owner=person(world.get('owner', {})),
+        position=pose(actions.get('position', {})), corpses=[dict(pose(row), present=row.get('present'))
+            for row in world.get('lootableCorpses', [])],
+        actions={key: actions.get(key) for key in ('moving', 'motionUnconfirmed', 'traveling', 'castPending',
+            'interactionOwner', 'autoAttacking', 'autoAttackRequested', 'autoAttackUnconfirmed', 'practicing', 'recovery')},
+        inventory={key: view['inventory'].get(key) for key in ('active', 'closing')},
+        trade={key: view['trade'].get(key) for key in ('phase', 'waterGiftArmed', 'lastJunkDisposal', 'junkOperations')},
+        equipment=world.get('selfEquipment'), quests=world.get('selfQuestLog'),
+        loot={key: view.get('loot', {}).get(key) for key in ('sessionId', 'enabled', 'inventoryPaused')})
 
 
-def verified_candidate(rpc, port, session, choices):
-    ids = []
-    for *_, entry, replacement in choices:
-        needed = [item for item in dict.fromkeys((entry, replacement)) if item and item not in ids]
-        if len(ids) + len(needed) <= ITEM_LOOKUP_LIMIT:
-            ids.extend(needed)
-    templates = rpc(port, 'buddy-trade.lookup_items', {'itemIds': ids}) or {}
-    if templates.get('sessionId') != session:
-        return None, 'waiting_for_item_template'
-    facts = {number(row.get('itemId')): row for row in templates.get('items', []) if row.get('available') is True}
-    for choice in choices:
-        *_, entry, replacement = choice
-        item, worn = facts.get(entry), facts.get(replacement)
-        if item and (not replacement or worn and item.get('armorComparisonKnown') and not item.get('stats')
-                     and number(item.get('armor')) <= number(worn.get('armor'))):
-            return choice, None
-    reason = 'waiting_for_item_template' if any(item_id not in facts for item_id in ids) else 'gray_gear_still_useful_or_unverified'
-    return None, reason
+def _prewrite(rpc, port, binding, selected, action):
+    actions = rpc(port, 'buddy-actions.status', {})
+    world = rpc(port, 'buddy-world.snapshot', {})
+    inventory = rpc(port, 'buddy-inventory.raw_gear_facts', {})
+    trade = rpc(port, 'buddy-trade.state', {})
+    inventory_state = rpc(port, 'buddy-inventory.state', {})
+    loot = rpc(port, 'buddy-loot.state', {})
+    source = selected['source']
+    if (actions.get('sessionId') != binding['sessionId'] or str(actions.get('selfGuid')) != binding['characterGuid']
+            or str(world.get('self', {}).get('guid')) != binding['characterGuid']
+            or inventory.get('sessionId') != binding['sessionId'] or str(inventory.get('selfGuid')) != binding['characterGuid']
+            or trade.get('sessionId') != binding['sessionId'] or trade.get('revision') != action['params']['revision']
+            or inventory_state.get('sessionId') != binding['sessionId']
+            or str(inventory_state.get('selfGuid')) != binding['characterGuid']
+            or any(world.get(key) != selected['world'].get(key)
+                   for key in ('inventoryRevision', 'selfEquipmentRevision', 'selfQuestLogRevision'))
+            or inventory.get('inventoryRevision') != selected['inventoryRevision']):
+        raise runtime.Error('cleanup_native_frame_changed_before_dispatch')
+    if _scene(dict(world=world, actions=actions, inventory=inventory_state, trade=trade, loot=loot)) != _scene(selected['view']):
+        raise runtime.Error('cleanup_scene_changed_before_dispatch')
+    item_disposal._layout(inventory.get('inventoryBags'), source)
+    if source['bag'] == 0 and trade.get('backpackRevision') != action['params']['backpackRevision']:
+        raise runtime.Error('cleanup_source_revision_changed_before_dispatch')
+    _current(rpc, port, binding)
 
 
-def step(rpc, views, attempts, safe_entries, port, guid, now):
-    view = views.get(port, {})
-    world, actions, inventory, trade, loot = (view.get(key, {}) for key in ('world', 'actions', 'inventory', 'trade', 'loot'))
-    session = actions.get('sessionId')
-    if (not session or number(actions.get('selfGuid')) != guid or number(inventory.get('selfGuid')) != guid
-            or inventory.get('sessionId') != session or trade.get('sessionId') != session):
+def step(rpc, views, attempts, _safe_entries, port, guid, now, *, persist=None, bridge=None):
+    view = views.get(port)
+    if not isinstance(view, dict) or str(view.get('actions', {}).get('selfGuid')) != str(guid):
         return 'waiting_for_body'
-    record = attempts.get(port)
-    if record and record.get('sessionId') != session:
-        record = None
-        attempts.pop(port)
-    slots = carried_slots(inventory)
-    if slots is None or not number(inventory.get('inventoryRevision')):
-        return 'waiting_for_inventory'
-    receipt = trade.get('lastJunkDisposal') or {}
-    if record and 'itemGuid' in record:
-        if (number(receipt.get('itemGuid')) == record['itemGuid']
-                and receipt.get('status') == 'SERVER_SLOT_REMOVAL_CONFIRMED'
-                and number(inventory.get('inventoryRevision')) > record['inventoryRevision']
-                and all(number(row.get('itemGuid')) != record['itemGuid'] for row in slots.values())):
-            attempts[port] = {'sessionId': session, 'nextCheck': now + COOLDOWN}
-            return 'confirmed_removed'
-        return 'waiting_for_disposal' if now < record['deadline'] else 'disposal_unconfirmed_no_retry'
-    if receipt and receipt.get('status') != 'SERVER_SLOT_REMOVAL_CONFIRMED':
-        return 'another_disposal_unconfirmed'
-    if any(not number(row.get('itemGuid')) for row in slots.values()):
-        return 'room_available'
-    loot_needs_room = (loot.get('sessionId') == session and loot.get('enabled') is True
-                       and loot.get('inventoryPaused') is True and nearby_loot(world, actions))
-    if not loot_needs_room:
-        return 'no_current_bag_pressure'
-    if not can_dispose(world, actions, inventory, trade, guid) or view.get('mana_rest_active') or view.get('mana_supply_pending'):
-        return 'waiting_for_safe_pause'
-    if record and now < record['nextCheck']:
-        return 'cooldown'
-    choices = candidates(world, inventory, slots, safe_entries)
-    if not choices:
-        attempts[port] = {'sessionId': session, 'nextCheck': now + COOLDOWN}
-        return 'no_verified_gray_junk'
-    selected, waiting = verified_candidate(rpc, port, session, choices)
-    if selected is None:
-        attempts[port] = {'sessionId': session, 'nextCheck': now + RECHECK}
-        return waiting
-    _, bag, slot, item_guid, _, _ = selected
-    if bag == 0 and (trade.get('backpackKnown') is not True or not number(trade.get('backpackRevision'))):
-        return 'waiting_for_trade_revision'
-    source = (dict(sourceBag=bag, sourceSlot=slot, inventoryRevision=inventory['inventoryRevision']) if bag else
-              dict(backpackSlot=slot, backpackRevision=trade['backpackRevision']))
-    attempts[port] = dict(sessionId=session, itemGuid=item_guid, inventoryRevision=number(inventory['inventoryRevision']),
-                          deadline=now + RECEIPT_WAIT)
+    key = str(port)
+    record = attempts.get(key, attempts.get(port, {}))
+    # Do not reinterpret a previous host's uncertain reservation as permission
+    # for a new Lua action, or lose it because the process/body changed.
+    if 'itemGuid' in record:
+        return 'legacy_disposal_custody_retained_no_retry'
+    decision, binding, catalog, observed = _evaluate(rpc, port, view, record, now, bridge)
+    proposed = dict(sessionId=binding['sessionId'], characterGuid=binding['characterGuid'],
+        memory=decision['memory'], phase=decision['phase'], last=copy.deepcopy(record.get('last')))
+    action = decision.get('action')
+    if action is not None:
+        if action.get('method') != 'buddy-trade.destroy_junk' or action.get('port') != key:
+            raise runtime.Error('exact_cleanup_mutation_required')
+        _validate_action(action, catalog, binding)
+        pending = proposed['memory'].get('pending', {})
+        if pending.get('actionId') != action['id'] or pending.get('actorSession') != binding['sessionId']:
+            raise runtime.Error('cleanup_action_reservation_required')
+        source, params = pending.get('source', {}), action['params']
+        if (params.get('expectedItemGuid') != source.get('itemGuid')
+                or source.get('bag') == 0 and (params.get('backpackSlot', 0) != source.get('slot')
+                    or params.get('backpackRevision') != pending.get('sourceRevision'))
+                or source.get('bag') != 0 and (params.get('sourceBag') != source.get('bag')
+                    or params.get('sourceSlot', 0) != source.get('slot')
+                    or params.get('inventoryRevision') != pending.get('sourceRevision'))):
+            raise runtime.Error('cleanup_action_source_mismatch')
+        proposed['last'] = dict(id=action['id'], outcome='transport_unconfirmed')
+    attempts[key] = proposed
+    _persist(persist, attempts)  # Every uncertainty is durable before any write.
+    if action is None:
+        return proposed['phase']
+    entered = False
     try:
-        rpc(port, 'buddy-trade.destroy_junk', dict(source, sessionId=session, revision=str(number(trade.get('revision'))),
-                                                expectedItemGuid=str(item_guid)))
-    except Exception as error:
-        if 'FailedPrecondition' in str(error) or 'InvalidArgument' in str(error):
-            attempts[port] = {'sessionId': session, 'nextCheck': now + RECHECK}
-            return 'disposal_refused_before_dispatch'
-        return 'disposal_unconfirmed_no_retry'
-    return 'waiting_for_disposal'
+        pending = proposed['memory']['pending']
+        _prewrite(rpc, port, binding, dict(source=pending['source'], world=observed['world'],
+            inventoryRevision=pending['inventoryRevision'], view=observed), action)
+        _validate_action(action, _catalog(rpc, port, binding), binding)
+        _current(rpc, port, binding)
+        entered = True
+        reply = rpc(port, action['method'], action['params'])
+        if not isinstance(reply, dict) or reply.get('sessionId') != binding['sessionId']:
+            raise runtime.Error('cleanup_reply_body_unconfirmed')
+        proposed['last'] = dict(id=action['id'], outcome='rpc_result', result=copy.deepcopy(reply))
+        _persist(persist, attempts)
+    except Exception:
+        if not entered:
+            proposed['last'] = dict(id=action['id'], outcome='not_dispatched')
+            _persist(persist, attempts)
+            return 'cleanup_not_dispatched'
+        return 'cleanup_outcome_unconfirmed'
+    return proposed['phase']
 
 
-def maintain_bag_pressure(rpc, observations, attempts, safe_entries):
-    """Tick public game-client endpoints with fresh observations; return per-port phases."""
+def maintain_bag_pressure(rpc, observations, attempts, safe_entries=None, *, persist=None, bridge=None):
     now, phases = time.monotonic(), {}
     for port, guid in PARTY.items():
         try:
-            phases[port] = step(rpc, observations, attempts, safe_entries, port, guid, now)
+            phases[port] = step(rpc, observations, attempts, safe_entries, port, guid, now,
+                persist=persist, bridge=bridge)
         except (TypeError, ValueError, KeyError, AttributeError):
-            phases[port] = 'invalid_inventory_observation'
+            phases[port] = 'invalid_cleanup_observation'
         except Exception:
-            phases[port] = 'bag_pressure_rpc_unavailable'
+            phases[port] = 'lua_cleanup_unavailable'
     return phases

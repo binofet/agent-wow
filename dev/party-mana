@@ -8,7 +8,7 @@ from pathlib import Path
 import signal
 import time
 
-from party_bag_pressure import maintain_bag_pressure, safe_junk_entries
+from party_bag_pressure import maintain_bag_pressure
 from party_mana_drink import maintain_drink
 from party_mana_supply import maintain_supply, runtime
 
@@ -68,10 +68,8 @@ def observe(port):
 
 
 def run(state_dir):
-    catalog_path = Path(__file__).resolve().parents[1] / "pkg/gamecatalog/catalog.json"
-    junk_entries = safe_junk_entries(json.loads(catalog_path.read_text()))
     state_dir.mkdir(parents=True, exist_ok=True)
-    with (state_dir / "worker.lock").open("a") as lock:
+    with (state_dir / "worker.lock").open("a") as lock, runtime.Store(state_dir / "bag-pressure") as bag_store:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         stop = False
 
@@ -81,7 +79,15 @@ def run(state_dir):
 
         signal.signal(signal.SIGTERM, stopping)
         signal.signal(signal.SIGINT, stopping)
-        rests, supply, bag_attempts = {}, {}, {}
+        saved_bags = bag_store.load()
+        if saved_bags is None:
+            saved_bags = dict(version=1, attempts={})
+        if (not isinstance(saved_bags, dict) or saved_bags.get('version') != 1
+                or not isinstance(saved_bags.get('attempts'), dict)):
+            raise runtime.Error('retained_bag_pressure_state_invalid')
+        rests, supply, bag_attempts = {}, {}, saved_bags['attempts']
+        def persist_bags(attempts):
+            bag_store.save(dict(version=1, attempts=attempts))
         previous, views = None, {}
         # Lua owns finite rest leases and release; stopping this observer
         # cannot change following or retire a pending consumable use.
@@ -99,7 +105,7 @@ def run(state_dir):
                 held=(supply.get("memory",{}).get("pending") or {}).get("ports",[])
                 for port,view in views.items():
                     view["mana_supply_pending"]=str(port) in held
-                bags = maintain_bag_pressure(rpc, views, bag_attempts, junk_entries)
+                bags = maintain_bag_pressure(rpc, views, bag_attempts, persist=persist_bags)
                 status = {
                     "phases": {"drinking": drink, "water": water, "bag_space": bags},
                     "casters": {
