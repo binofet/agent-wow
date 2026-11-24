@@ -132,9 +132,12 @@ function M.practice_lifecycle(input)
     local best,selected=tuning.max_range*tuning.max_range,nil
     for _,c in ipairs(input.nearby) do
         local p=type(c)=="table" and motion_point(c)
-        if wolf(c) and unclaimed(c) and p and northshire(p) then
+        if p and northshire(p) then
             local d=distance2(input.clientPosition,p)
-            if d<tuning.max_range*tuning.max_range and (not selected or tuning.prefer_nearest and d<best or not tuning.prefer_nearest and d>best) then best,selected=d,c end
+            -- A tied or worse row cannot replace the already valid winner.
+            -- Validate identity/eligibility only for an actual improvement;
+            -- every row and its geometry still participates in the choice.
+            if d<tuning.max_range*tuning.max_range and (not selected or tuning.prefer_nearest and d<best or not tuning.prefer_nearest and d>best) and wolf(c) and unclaimed(c) then best,selected=d,c end
         end
     end
     return out(selected and "select" or "wait",selected and "fighting_observed_young_wolf" or "waiting_for_observed_level_one_young_wolf",selected and selected.guid or "0",quest)

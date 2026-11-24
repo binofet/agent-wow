@@ -198,7 +198,7 @@ func (s *Service) coldridgeObservedPracticeTickLocked(ctx context.Context, w *wo
 		return
 	}
 	if !lifecycle.Valid {
-		s.pauseColdridgeLifecycleLocked(ctx, lifecycle.binding)
+		s.rejectColdridgeLifecycleLocked(ctx, lifecycle)
 		return
 	}
 	w, self = fresh, fresh.Self
@@ -309,7 +309,7 @@ func (s *Service) coldridgeObservedPracticeTickLocked(ctx context.Context, w *wo
 			return
 		}
 		if !selected.Valid {
-			s.pauseColdridgeLifecycleLocked(ctx, selected.binding)
+			s.rejectColdridgeLifecycleLocked(ctx, selected)
 			return
 		}
 		w, self = observed, observed.Self

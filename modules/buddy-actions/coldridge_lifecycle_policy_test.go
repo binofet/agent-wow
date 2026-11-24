@@ -174,7 +174,7 @@ func TestColdridgeLifecycleRetainsCounterHighwaterAndFencesLateStart(t *testing.
 	before := s.coldridgeGoal.counts
 	coldThreatQuest(f).ObjectiveCounts[0] = 2
 	s.Tick(context.Background())
-	if s.coldridgeGoal.counts != before || s.coldridgeGoal.needed || lastCast(f) != 0 {
+	if s.state.Practicing || s.coldridgeGoal.counts != before || s.coldridgeGoal.needed || lastCast(f) != 0 {
 		t.Fatal("regressed progress restored pull authority", s.coldridgeGoal)
 	}
 	s, f, _ = coldridgeRig(t)
@@ -191,6 +191,94 @@ func TestColdridgeLifecycleRetainsCounterHighwaterAndFencesLateStart(t *testing.
 	}
 	if _, err := s.Practice(context.Background(), &actionsv1.ToggleRequest{Enabled: true}); err == nil || s.state.PracticePhase != "replacement" {
 		t.Fatal("late start replaced current body state", err, s.stateLocked())
+	}
+}
+
+func TestColdridgeLifecycleInvalidQuestEvidenceRetiresOnlyTheTask(t *testing.T) {
+	s, f, _ := coldridgeRig(t)
+	s.Tick(context.Background())
+	s.Tick(context.Background())
+	if !s.state.CastPending || s.supportOp == nil || lastCast(f) != shadowBolt || s.state.PracticePulls != 1 {
+		t.Fatal("fixture did not retain an actual pending cast", s.stateLocked())
+	}
+	op, strike := s.supportOp, s.starterSpells.uncertainStrike
+	receipt := proto.Clone(&op.view)
+	spell, target, goal := s.pendingSpell, s.pendingTarget, s.coldridgeGoal
+	casts := countPackets(f, opcode.CMSGCastSpell)
+	f.world.SelfQuestLogKnown = false
+	f.world.Self.UnitFlags |= 0x80000
+	f.world.NearbyCreatures[0].AttackVictimKnown, f.world.NearbyCreatures[0].AttackVictimGuid = true, s.selfGUID
+	s.Tick(context.Background())
+	if s.state.Practicing || s.state.PracticePulls != 1 || s.coldridgeGoal.questID != goal.questID || s.coldridgeGoal.counts != goal.counts || s.coldridgeGoal.needed ||
+		!s.state.CastPending || s.pendingSpell != spell || s.pendingTarget != target || s.supportOp != op || !proto.Equal(&op.view, receipt) ||
+		s.starterSpells.uncertainStrike != strike || countPackets(f, opcode.CMSGCastSpell) != casts {
+		t.Fatal("invalid quest knowledge retained the task or erased/replayed pending custody", s.stateLocked(), s.coldridgeGoal)
+	}
+}
+
+func TestColdridgeLifecycleInvalidFreshQuestDataIsNotAPolicyFault(t *testing.T) {
+	for _, mode := range []string{"nil_slot", "regressed"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _ := coldThreatRig(t, 707, 3, 1)
+			s.Tick(context.Background())
+			original := proto.Clone(f.world).(*worldv1.SnapshotResponse)
+			counts := s.coldridgeGoal.counts
+			reads := 0
+			s.session = &coldLifecycleWorldHook{fakeSession: f, beforeWorld: func() {
+				reads++
+				if reads == 1 {
+					if mode == "nil_slot" {
+						f.world.SelfQuestLog[10] = nil
+					} else {
+						coldThreatQuest(f).ObjectiveCounts[0] = 2
+					}
+					f.world.SelfQuestLogRevision++
+				}
+			}}
+			out, _, owned := s.coldridgeLifecycleLocked(context.Background(), original, "tick")
+			if !owned || out.Valid || !out.questDataInvalid || reads != 1 {
+				t.Fatal("actual fresh invalid quest frame was conflated with a policy fault", out, owned, reads)
+			}
+			s.rejectColdridgeLifecycleLocked(context.Background(), out)
+			if s.state.Practicing || s.coldridgeGoal.counts != counts || s.coldridgeGoal.needed || lastCast(f) != 0 {
+				t.Fatal("fresh invalid quest evidence retained pull authority or changed high-water counts", s.stateLocked(), s.coldridgeGoal)
+			}
+		})
+	}
+}
+
+func TestColdridgeLifecycleInvalidQuestRetirementFencesReplacement(t *testing.T) {
+	for _, mode := range []string{"body", "visit", "controller", "task"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _ := coldridgeRig(t)
+			f.world.SelfQuestLogKnown = false
+			out, _, owned := s.coldridgeLifecycleLocked(context.Background(), f.world, "tick")
+			if !owned || !out.questDataInvalid {
+				t.Fatal("fixture did not classify current invalid own quest evidence", out, owned)
+			}
+			before := len(f.packets)
+			s.session = &coldLifecycleWorldHook{fakeSession: f, beforeWorld: func() {
+				switch mode {
+				case "body":
+					s.selfGUID, f.world.Self.Guid = 9, 9
+				case "visit":
+					f.world.VisitRevision++
+				case "controller":
+					s.state.InteractionOwner, s.interactionToken = "trade", "replacement-token"
+				case "task":
+					s.practiceUntil = s.practiceUntil.Add(time.Second)
+					s.coldridgeGoal = coldridgePracticeGoal{questID: 183, counts: [2]uint32{4, 0}, needed: true, neededEntries: [2]uint32{708}}
+				}
+			}}
+			s.rejectColdridgeLifecycleLocked(context.Background(), out)
+			if !s.state.Practicing || len(f.packets) != before || s.state.PracticePhase == "coldridge_own_quest_data_invalid" {
+				t.Fatal("old invalid frame retired or wrote into a replacement", s.stateLocked(), f.packets)
+			}
+			if mode == "controller" && (s.state.InteractionOwner != "trade" || s.interactionToken != "replacement-token") ||
+				mode == "task" && (s.coldridgeGoal.questID != 183 || s.coldridgeGoal.counts != [2]uint32{4, 0} || !s.coldridgeGoal.needed) {
+				t.Fatal("old retirement changed replacement custody or progress", s.stateLocked(), s.coldridgeGoal)
+			}
+		})
 	}
 }
 
