@@ -22,6 +22,10 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 sync = importlib.util.module_from_spec(spec)
 loader.exec_module(sync)
 c, Error, integer, ROOT = sync.converse, sync.Error, sync.integer, sync.converse.ROOT
+_town_loader=importlib.machinery.SourceFileLoader('profession_town_policy',str(Path(__file__).with_name('town_policy.py')))
+_town_spec=importlib.util.spec_from_loader(_town_loader.name,_town_loader)
+town_policy=importlib.util.module_from_spec(_town_spec)
+_town_loader.exec_module(town_policy)
 PRIMARY = {1: (171, 182), 4: (197, 333), 5: (165, 393)}
 PRIMARY_SKILLS = frozenset((164, 165, 171, 182, 186, 197, 202, 333, 393, 755, 773))
 SECONDARY = (129, 185, 356)
@@ -80,7 +84,7 @@ def identity(guid, binding=None):
 class RPC(sync.SyncRPC):
     EXTRA = sync.SyncRPC.EXTRA | {"buddy-training.state", "buddy-training.discover_professions",
                                   "buddy-training.list", "buddy-training.buy_profession",
-                                  "buddy-actions.travel_trainer"}
+                                  "buddy-actions.travel_trainer", "session.policy_source", "session.attach"}
 
     def call(self, method, params):
         if method != "buddy-actions.travel_trainer":
@@ -204,6 +208,14 @@ class Learner:
         if self.stopped():
             raise c.Stopped("Profession learning stop requested")
         return self.rpc.call(method, params)
+
+    def training_plan(self,state,own,attempted=(),*,budget_only=False):
+        try:
+            return town_policy.profession_training(self,state,self.guid,own,self.primary_skills,SECONDARY,
+                attempted,self.data['reservedCopper'],self.identity['budgetCopper'],budget_only=budget_only)
+        except town_policy.Error as error:
+            self.status.update(phase='waiting_for_accepted_profession_policy',policyError=str(error)[:128])
+            return None
 
     def read(self):
         world = self.call("buddy-world.snapshot", {})
@@ -348,15 +360,21 @@ class Learner:
             return
         if self.anchor is None:
             self.anchor = dict(context["actions"]["position"])
+        if state.get('copperKnown') is not True:
+            self.status['phase']='waiting_for_actual_profession_wallet'
+            return
         if self.now() < self.next_operation:
             return
         self.next_operation = self.now()+10
         trainers = self.candidates(context)
         eligible = [row for row in trainers if row["distance"] <= 4 or self.data["travelAttempts"].get(str(row["guid"]), 0) < 3]
+        policy=self.training_plan(state,context['own'],budget_only=True)
+        if policy is None:return
         signature = ":".join((context["session"], ",".join(str(skill) for skill in sorted(observed)),
                               str(integer(state.get("copper", 0))) if state.get("copperKnown") is True else "unknown",
                               str(integer(context["own"].get("level", 0))),
-                              str(integer(state.get("freePrimarySlots", 0))) if state.get("freePrimarySlotsKnown") is True else "unknown"))
+                              str(integer(state.get("freePrimarySlots", 0))) if state.get("freePrimarySlotsKnown") is True else "unknown",
+                              policy['policyRevision'],policy['policyGeneration']))
         trainer = next((row for row in eligible if [str(row["guid"]), signature] not in self.data["queried"]), None)
         if trainer is None:
             self.status["phase"] = "waiting_for_observed_assigned_profession_trainer"
@@ -375,8 +393,6 @@ class Learner:
         if observed is None:
             self.status["phase"] = "waiting_for_actual_complete_profession_evidence"
             return
-        primary = {skill for skill, row in observed.items() if row["primary"]}
-        conflict = bool(primary - self.assigned)
         spells = offer.get("spells", [])
         if not isinstance(spells, list) or len(spells) > 256:
             raise Error("Profession trainer offer exceeds its bound")
@@ -387,39 +403,18 @@ class Learner:
                     or (previous[-1]["session"], previous[-1]["npc"], previous[-1]["offerRevision"]) ==
                        (context["session"], str(trainer["guid"]), integer(offer["revision"]))):
                 attempted.add(skill)
-        wallet = integer(state.get("copper", 0)) if state.get("copperKnown") is True else 0
-        budget = min(BUDGET-self.data["reservedCopper"], wallet)
-        choices, unaffordable = [], []
-        for spell in spells:
-            if not isinstance(spell, dict):
-                raise Error("Malformed profession trainer spell")
-            skill = integer(spell.get("professionSkillId", 0))
-            is_primary = skill in self.assigned
-            if (skill not in self.wanted or skill in observed or skill in attempted or integer(spell.get("usable", 0)) != 0
-                    or not 0 < integer(spell.get("spellId", 0)) < 2**31 or not 0 < integer(spell.get("learnedSpellId", 0)) < 2**31
-                    or spell.get("primaryProfession", False) is not is_primary
-                    or spell.get("pointCost") != ([0, 1] if is_primary else [0, 0])
-                    or integer(spell.get("requiredLevel", 0)) > integer(context["own"].get("level", 0))
-                    or integer(spell.get("requiredSkill", 0)) or integer(spell.get("requiredSkillRank", 0))
-                    or any(integer(value) for value in spell.get("requiredAbilities", []))):
-                continue
-            if is_primary and (conflict or len(primary) >= 2 or state.get("freePrimarySlotsKnown") is not True
-                               or not 0 < integer(state.get("freePrimarySlots", 0)) <= 2 or integer(context["own"].get("level", 0)) < 5):
-                continue
-            if integer(spell.get("costCopper", 0)) > budget:
-                unaffordable.append(integer(spell.get("costCopper", 0)))
-                continue
-            choices.append(spell)
-        if not choices:
+        plan=self.training_plan(state,context['own'],attempted)
+        if plan is None:return
+        budget,reserve=plan['budgetCopper'],plan['reserveCopper']
+        if 'spellId' not in plan:
             self.data["queried"].append([str(trainer["guid"]), signature])
             self.data["queried"] = self.data["queried"][-48:]
             self.save(self.data)
-            self.status["phase"] = "waiting_for_profession_training_money" if unaffordable else "no_affordable_assigned_initial_training_at_this_trainer"
-            if unaffordable:
-                self.status["requiredCopperForObservedOffer"] = min(unaffordable)
+            self.status["phase"] = "waiting_for_profession_training_money" if 'nextCost' in plan else "no_affordable_assigned_initial_training_at_this_trainer"
+            if 'nextCost' in plan:
+                self.status["requiredCopperForObservedOffer"] = plan['nextCost']
             return
-        spell = min(choices, key=lambda row: (integer(row["professionSkillId"]) in SECONDARY,
-                                              integer(row.get("costCopper", 0)), integer(row["professionSkillId"])))
+        spell=next(row for row in spells if row.get('spellId')==plan['spellId'])
         fresh = self.read()
         fresh_skills = skills(fresh["state"])
         latest = fresh["state"].get("offer", {})
@@ -436,6 +431,13 @@ class Learner:
                 or any(integer(latest.get(key, 0)) != integer(offer.get(key, 0)) for key in ("revision", "npcGuid"))
                 or integer(latest.get("expiresInMs", 0)) <= 0
                 or spell not in latest.get("spells", [])
+                or skill not in self.wanted or skill in attempted or integer(spell.get('usable',0))!=0
+                or not 0<integer(spell.get('spellId',0))<2**31 or not 0<integer(spell.get('learnedSpellId',0))<2**31
+                or spell.get('primaryProfession',False) is not (skill in self.assigned)
+                or spell.get('pointCost')!=([0,1] if skill in self.assigned else [0,0])
+                or integer(spell.get('requiredSkill',0)) or integer(spell.get('requiredSkillRank',0))
+                or any(integer(value) for value in spell.get('requiredAbilities',[]))
+                or not 0<=cost<=budget or integer(fresh['state'].get('copper',0))<cost+reserve and cost>0
                 or not any(row["guid"] == trainer["guid"] and row["distance"] <= 4 for row in self.candidates(fresh))):
             self.status["phase"] = "profession_offer_changed_rechecking"
             return
@@ -447,9 +449,20 @@ class Learner:
         self.data["attempts"].append(attempt)
         self.data["reservedCopper"] += cost
         self.save(self.data)
+        try:
+            town_policy.class_training_current(self,state,self.guid,plan,profession=True)
+            self.check_runtime_binding()
+            if self.stopped():raise c.Stopped('Profession learning stopped before dispatch')
+        except Exception as error:
+            if not self.data['attempts'] or self.data['attempts'][-1] is not attempt:
+                raise Error('Profession reservation changed before dispatch') from error
+            self.data['attempts'].pop();self.data['reservedCopper']-=cost
+            self.data['lastNotDispatched']=dict(attempt,status='not_dispatched',reason=str(error)[:128],
+                policyRevision=plan['policyRevision'],policyGeneration=plan['policyGeneration'])
+            self.save(self.data);self.status['phase']='profession_training_not_dispatched';return
         result = self.call("buddy-training.buy_profession", {"purchase": dict(sessionId=context["session"],
             npcGuid=str(trainer["guid"]), offerRevision=str(integer(offer.get("revision", 0))),
-            spellId=attempt["spell"], expectedCostCopper=cost, maxSpendCopper=budget),
+            spellId=attempt["spell"], expectedCostCopper=cost, maxSpendCopper=max(1,budget), reserveCopper=reserve),
             "skillId": skill, "allowedPrimarySkills": list(self.primary_skills)})
         current = skills(result)
         if current is not None:
