@@ -248,6 +248,11 @@ class Catchup:
             for request in row['requests'].values():
                 if not isinstance(request, dict) or request.get('phase') not in ('reserved', 'sent', 'observed', 'stopped','not_dispatched') or not 0 < number(request.get('questRevision', 0)) < 2**64:
                     raise Error('Cave request reservation is invalid')
+                if request.get('phase')=='not_dispatched' and request.get('entered') is not False:
+                    raise Error('Local cave refusal lacks no-entry proof')
+            if row.get('notDispatched') is True and (row['phase']!='stopped' or not row['requests'] or
+                    any(r.get('phase')!='not_dispatched' or r.get('entered') is not False for r in row['requests'].values())):
+                raise Error('Cave local refusal conflicts with native request custody')
             approaches = row.get('lootApproaches', [])
             if not isinstance(approaches, list) or len(approaches) > 3: raise Error('Corpse approach history exceeds its bound')
             for leg in approaches:
@@ -256,6 +261,7 @@ class Catchup:
                         or set(leg['bodySessions']) != set(self.sessions)
                         or any(not session(v) for v in leg['bodySessions'].values())
                         or type(leg.get('cleanupResolved', False)) is not bool): raise Error('Saved corpse approach is invalid')
+                if leg['phase']=='not_dispatched' and not self.local_no_dispatch(leg): raise Error('Corpse no-entry proof is invalid')
             for key in ('lootWaitAt','lootWaitPauseAt'):
                 if key in row and (type(row[key]) not in (int,float) or not math.isfinite(row[key]) or row[key]<0):
                     raise Error('Corpse loot clock is invalid')
@@ -280,12 +286,18 @@ class Catchup:
                     raise Error('Saved corridor leg is invalid')
                 if leg['phase'] == 'preempted' and not self.known_preemption(leg):
                     raise Error('Saved corridor preemption lacks positive movement receipts')
+                if leg['phase']=='not_dispatched' and not self.local_no_dispatch(leg): raise Error('Corridor no-entry proof is invalid')
         self.status = {'identity': copy.deepcopy(IDENTITY), 'phase': 'starting', 'observationsCurrent': False, 'characters': []}
         controls = self.data.get('controls')
         if controls is not None and (not isinstance(controls, list) or len(controls) != 3 or any(not isinstance(row, list) or len(row) != 4 or any(type(v) is not bool for v in row) for row in controls)):
             raise Error('Saved cave control intent is invalid')
 
     def persist(self): self.save(copy.deepcopy(self.data))
+
+    @staticmethod
+    def local_no_dispatch(leg):
+        return (leg.get('notDispatched') is True and leg.get('entered') is False and leg.get('cleanupResolved') is True
+            and leg.get('cleanup')==[] and leg.get('routeResults')=={})
 
     def policy_facts(self, scenes, mode, row=None, tokens=None):
         creatures, indices, actors = [], {}, {}
@@ -360,6 +372,17 @@ class Catchup:
             self.done = True; raise Error('Cave actor endpoint changed')
         return rpc
 
+    def bound_body_current(self,guid,binding):
+        """Original receipt identity only; cleanup never needs healthy Lua."""
+        bodies=binding.get('bodies',{}) if isinstance(binding,dict) else {}
+        body=bodies.get(str(guid))
+        if not isinstance(body,dict) or body.get('sessionId')!=self.sessions[str(guid)] or not number(body.get('visit',0)):
+            return False
+        party=self.endpoint(guid).call('buddy-party.state',{},timeout=.5)
+        world=self.endpoint(guid).call('buddy-world.snapshot',{},timeout=.5)
+        return (party.get('sessionId')==body['sessionId'] and number(world.get('self',{}).get('guid',0))==guid
+            and str(number(world.get('visitRevision',0)))==body['visit'])
+
     def preflight(self, authorize, target=0, rpcs=None):
         """Reauthorize complete latest facts; never atomic native admission."""
         try:
@@ -389,6 +412,7 @@ class Catchup:
                 self.done = True; raise Error('A cave actor body session changed')
             own, pos = world.get('self', {}), actions.get('position', {})
             if number(own.get('guid', 0)) != guid: self.done = True; raise Error('Cave actor identity changed')
+            if not number(world.get('visitRevision',0)): raise Error('Current cave actor visit is unknown')
             group = final.get('group', {})
             members = group.get('members', [])
             if group.get('known') is not True or group.get('inGroup') is not True or not isinstance(members, list) or not 3 <= len(members) <= 40:
@@ -444,19 +468,20 @@ class Catchup:
             raise Error('Invalid accepted cave search admission')
         return choice['allowed'] and (binding is None or binding==current)
 
-    def release_search(self, guid, token):
+    def release_search(self, guid, token, binding):
         result = {'guid': guid, 'releaseAck': False, 'custodyResolved': False}
         try:
-            if session(self.endpoint(guid).call('buddy-party.state', {}, timeout=.5).get('sessionId')) != self.sessions[str(guid)]: return result
+            if not self.bound_body_current(guid,binding):
+                result['reason']='original_body_visit_unverified_needs_reconciliation';return result
             try:
                 a = self.endpoint(guid).call('buddy-actions.release_interaction', {'owner': 'exploration', 'token': token}, timeout=.5)
                 result['releaseAck'] = True
             except Error:
                 # Danger can already have revoked this harvest token. Fresh
                 # stopped absence is distinct proof, never a fabricated ACK.
-                if session(self.endpoint(guid).call('buddy-party.state', {}, timeout=.5).get('sessionId')) != self.sessions[str(guid)]: return result
+                if not self.bound_body_current(guid,binding): return result
                 a = self.endpoint(guid).call('buddy-actions.status', {}, timeout=.5)
-            if session(self.endpoint(guid).call('buddy-party.state', {}, timeout=.5).get('sessionId')) != self.sessions[str(guid)]: return result
+            if not self.bound_body_current(guid,binding): return result
             result['custodyResolved'] = not a.get('interactionOwner') and not any(a.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed'))
         except Error: pass
         return result
@@ -587,7 +612,7 @@ class Catchup:
             if not entered: leg['entered']=False;leg['notDispatched']=True
         finally:
             # Revoke every exact owned token before waiting for route RPCs.
-            releases = [self.release_search(g, token) for g, token in tokens.items()]
+            releases = [self.release_search(g, token,leg.get('policyBinding')) for g, token in tokens.items()]
             if pool: pool.shutdown(wait=True)
             # Normal completion of the synchronous RPC proves that its movement
             # controller returned. A lost/error response never gains this proof
@@ -828,15 +853,19 @@ class Catchup:
         clean = True
         for guid, rpc in self.rpcs.items():
             if str(guid) not in row['requests']: continue
+            request=row['requests'][str(guid)]
+            if request.get('phase')=='not_dispatched' and request.get('entered') is False: continue
             try:
-                p = rpc.call('buddy-party.state', {})
-                if session(p.get('sessionId')) != self.sessions[str(guid)]: clean = False; continue
+                if not self.bound_body_current(guid,row.get('policyBinding')):
+                    row['cleanupDisposition']='original_body_visit_unverified_needs_reconciliation';clean=False;continue
                 a = rpc.call('buddy-actions.status', {})
                 if a.get('fargodeep', {}).get('active') is True:
                     if not self.scope(a, row): clean = False; continue
+                    if not self.bound_body_current(guid,row.get('policyBinding')): clean=False;continue
                     # Disable is bound to this exact body/target/engager too.
                     a = rpc.call('buddy-actions.fargodeep_encounter', {'enabled': False, 'sessionId': self.sessions[str(guid)],
                         'targetGuid': str(row['target']), 'engagerGuid': str(row['engager'])})
+                if not self.bound_body_current(guid,row.get('policyBinding')): clean=False;continue
                 if a.get('fargodeep', {}).get('active') is True or any(a.get(k) is True for k in ('moving', 'motionUnconfirmed', 'autoAttackUnconfirmed', 'autoAttacking', 'autoAttackRequested', 'castPending')):
                     clean = False
                 else: row['requests'][str(guid)]['phase'] = 'stopped'

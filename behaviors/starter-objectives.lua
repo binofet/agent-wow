@@ -565,6 +565,7 @@ end
 -- Cohort policy shares the explicit encounter's resource validator. The
 -- stronger initial cohort gate deliberately retains the old 60% max-mana
 -- admission rule; per-body continuation still uses 45% of known base mana.
+local function cave_bit(value,mask) return value%(mask*2)>=mask end
 function M.cave_tuning()
     return {minimum_mana=60,mana_pool="maximum",engagers={"4","1","5"},prefer_nearest=true,
         maximum_range=28,isolation_yards=8,minimum_level=5,maximum_level=7,level_above_self=1,
@@ -611,7 +612,7 @@ local function cave_point(row,patrol)
             if t.age>750 or row.positionAge>750 then return end
         end
     else
-        if row.movementFlags%256~=0 or bit(row.movementFlags,0x08000000) then return end
+        if row.movementFlags%256~=0 or cave_bit(row.movementFlags,0x08000000) then return end
     end
     return row
 end
@@ -629,19 +630,19 @@ local function cave_creature(r,id,priority)
         not number(t[6]) or math.abs(t[6])>=40000) then return end
     local f=r[3]
     if priority then
-        return {guid=r[1],present=bit(f,1),aliveKnown=bit(f,8),alive=bit(f,16),attackVictimKnown=bit(f,1024),
+        return {guid=r[1],present=cave_bit(f,1),aliveKnown=cave_bit(f,8),alive=cave_bit(f,16),attackVictimKnown=cave_bit(f,1024),
             victimGuid=r[16] or "0",attackAge=cave_age(r[17] or "0")}
     end
-    local c={guid=r[1],entry=r[2],present=bit(f,1),mapKnown=bit(f,2),positionKnown=bit(f,4),
-        aliveKnown=bit(f,8),alive=bit(f,16),healthKnown=bit(f,32),levelKnown=bit(f,64),unitFlagsKnown=bit(f,128),
-        dynamicFlagsKnown=bit(f,256),targetKnown=bit(f,512),attackVictimKnown=bit(f,1024),identityValid=bit(f,2048),
+    local c={guid=r[1],entry=r[2],present=cave_bit(f,1),mapKnown=cave_bit(f,2),positionKnown=cave_bit(f,4),
+        aliveKnown=cave_bit(f,8),alive=cave_bit(f,16),healthKnown=cave_bit(f,32),levelKnown=cave_bit(f,64),unitFlagsKnown=cave_bit(f,128),
+        dynamicFlagsKnown=cave_bit(f,256),targetKnown=cave_bit(f,512),attackVictimKnown=cave_bit(f,1024),identityValid=cave_bit(f,2048),
         mapId=r[4],x=r[5],y=r[6],z=r[7],health=r[8],maxHealth=r[9],level=r[10],
         unitFlags=r[11] or 0,unitFlags2=r[12] or 0,dynamicFlags=r[13] or 0,npcFlags=r[14] or 0,
         targetGuid=r[15] or "0",victimGuid=r[16] or "0",attackAge=cave_age(r[17] or "0"),
         movementFlags=r[18] or 0,positionAge=cave_age(r[19] or "0")}
     if t then
-        c.trajectory={known=bit(t[1],1),stopped=bit(t[1],2),cyclic=bit(t[1],4),transportRelative=bit(t[1],8),
-            destinationKnown=bit(t[1],16),age=cave_age(t[2]),duration=t[3],x=t[4],y=t[5],z=t[6]}
+        c.trajectory={known=cave_bit(t[1],1),stopped=cave_bit(t[1],2),cyclic=cave_bit(t[1],4),transportRelative=cave_bit(t[1],8),
+            destinationKnown=cave_bit(t[1],16),age=cave_age(t[2]),duration=t[3],x=t[4],y=t[5],z=t[6]}
     end
     return c
 end
@@ -682,26 +683,26 @@ local function cave_scenes(input)
            not uint(v.o[5]) or type(v.o[6])~="boolean" then return end
         for _,n in ipairs(v.i) do if not number(n) or n<0 or n%1~=0 then return end end
         local s=v.s
-        local player={guid=guid,present=bit(s[1],1),aliveKnown=bit(s[1],2),alive=bit(s[1],4),healthKnown=bit(s[1],8),
-            classKnown=bit(s[1],16),powerKnown=bit(s[1],32),unitFlagsKnown=bit(s[1],64),levelKnown=bit(s[1],128),
-            movementFlagsKnown=bit(s[1],256),mapKnown=bit(s[1],512),positionKnown=bit(s[1],1024),baseManaKnown=bit(s[1],2048),
+        local player={guid=guid,present=cave_bit(s[1],1),aliveKnown=cave_bit(s[1],2),alive=cave_bit(s[1],4),healthKnown=cave_bit(s[1],8),
+            classKnown=cave_bit(s[1],16),powerKnown=cave_bit(s[1],32),unitFlagsKnown=cave_bit(s[1],64),levelKnown=cave_bit(s[1],128),
+            movementFlagsKnown=cave_bit(s[1],256),mapKnown=cave_bit(s[1],512),positionKnown=cave_bit(s[1],1024),baseManaKnown=cave_bit(s[1],2048),
             classId=s[2],level=s[3],health=s[4],maxHealth=s[5],powerType=s[6],power=s[7],maxPower=s[8],baseMana=s[9],
             unitFlags=s[10],movementFlags=s[11],extraMovementFlags=s[12],playerFlags=s[13]}
         local log,group,nearby={},{},{}
         for _,q in ipairs(v.q) do
             if not array(q,3) or #q~=3 or not uint(q[1]) or not uint(q[2]) or not uint(q[3]) or q[3]>3 or q[1]~=0 and log[q[1]]~=nil then return end
-            if q[1]~=0 then log[q[1]]=bit(q[3],1) and bit(q[2],1) end
+            if q[1]~=0 then log[q[1]]=cave_bit(q[3],1) and cave_bit(q[2],1) end
         end
         for _,m in ipairs(v.g) do
             if not array(m,2) or #m~=2 or not id(m[1]) or m[1]=="0" or group[m[1]]~=nil or not uint(m[2]) or m[2]>3 or
-               bit(m[2],2)~=(m[1]==guid) then return end
-            group[m[1]]=bit(m[2],1)
+               cave_bit(m[2],2)~=(m[1]==guid) then return end
+            group[m[1]]=cave_bit(m[2],1)
         end
         for _,g in ipairs({"1","4","5"}) do if group[g]~=true then return end end
         for _,ref in ipairs(v.c) do if not uint(ref) or not rows[ref] then return end;nearby[#nearby+1]=rows[ref] end
         if not uint(v.r) or v.r~=0 and not rows[v.r] then return end
         scenes[guid]={raw=v,self=player,log=log,nearby=nearby,target=rows[v.r],group=v.b[5],
-            position={x=v.p[3],y=v.p[4],z=v.p[5]},farg={active=bit(v.a[4],1),target=v.a[5],engager=v.a[6],phase=v.a[7]}}
+            position={x=v.p[3],y=v.p[4],z=v.p[5]},farg={active=cave_bit(v.a[4],1),target=v.a[5],engager=v.a[6],phase=v.a[7]}}
         players[guid]=player
     end
     if scenes["1"].raw.b[1]~=input.sessionId or scenes["1"].group~=scenes["4"].group or scenes["1"].group~=scenes["5"].group then return end
@@ -714,24 +715,24 @@ local function cave_admission(scenes,players,tuning,row,search,clock)
     for guid,s in pairs(scenes) do
         local v,p,a=s.raw,s.self,s.raw.a
         local own_loot=clock and row and v.l[3]==row.target
-        if not p.present or not p.aliveKnown or not p.alive or not p.unitFlagsKnown or bit(p.unitFlags,0x80000) or not clock and v.i[3]==0 or v.b[3]=="0" or not bit(a[1],4) or
-           bit(a[1],1) or bit(a[1],8) or bit(a[1],64) or bit(a[1],128) or bit(a[1],256) or
-           not own_loot and (not search or not v.t) and (bit(a[1],16) or bit(a[1],32) or a[2]~="") or
+        if not p.present or not p.aliveKnown or not p.alive or not p.unitFlagsKnown or cave_bit(p.unitFlags,0x80000) or not clock and v.i[3]==0 or v.b[3]=="0" or not cave_bit(a[1],4) or
+           cave_bit(a[1],1) or cave_bit(a[1],8) or cave_bit(a[1],64) or cave_bit(a[1],128) or cave_bit(a[1],256) or
+           not own_loot and (not search or not v.t) and (cave_bit(a[1],16) or cave_bit(a[1],32) or a[2]~="") or
            own_loot and a[2]~="" and a[2]~="loot" or
            v.l[1]~=1 or not own_loot and (v.l[2]~="idle" or v.l[3]~="0") or v.l[4]~="0" or
            s.farg.active and (not row or s.farg.target~=row.target or s.farg.engager~=row.engager) or
-           v.o[1] or not v.o[2] or v.o[3]~=0 or bit(v.o[5],2) or
-           v.o[4]~="" and (not ({COMPLETED=true,SERVER_REJECTED=true,BLOCKED=true,CANCELLED=true})[v.o[4]] or not bit(v.o[5],1)) then return false end
+           v.o[1] or not v.o[2] or v.o[3]~=0 or cave_bit(v.o[5],2) or
+           v.o[4]~="" and (not ({COMPLETED=true,SERVER_REJECTED=true,BLOCKED=true,CANCELLED=true})[v.o[4]] or not cave_bit(v.o[5],1)) then return false end
         if search then
-            if v.o[6] or not p.movementFlagsKnown or p.extraMovementFlags~=0 or bit(a[1],512) or bit(a[1],1024) or s.farg.active then return false end
-            for _,mask in ipairs({0x1,0x4,0x40000,0x100000,0x400000,0x800000,0x1000000,0x2000000,0x8000000}) do if bit(p.unitFlags,mask) then return false end end
+            if v.o[6] or not p.movementFlagsKnown or p.extraMovementFlags~=0 or cave_bit(a[1],512) or cave_bit(a[1],1024) or s.farg.active then return false end
+            for _,mask in ipairs({0x1,0x4,0x40000,0x100000,0x400000,0x800000,0x1000000,0x2000000,0x8000000}) do if cave_bit(p.unitFlags,mask) then return false end end
             if p.movementFlags>=0x80000000 or p.movementFlags%0x10000000>=512 then return false end
-            if v.t and (a[2]~="exploration" or not bit(a[1],2048) or a[3]=="0") then return false end
+            if v.t and (a[2]~="exploration" or not cave_bit(a[1],2048) or a[3]=="0") then return false end
             for _,c in ipairs(s.nearby) do if c.present and c.alive and c.attackVictimKnown and
                 (c.victimGuid=="1" or c.victimGuid=="3" or c.victimGuid=="4" or c.victimGuid=="5") and c.attackAge<=5000 then return false end end
         end
     end
-    return bit(scenes["1"].raw.a[1],2)
+    return cave_bit(scenes["1"].raw.a[1],2)
 end
 
 local function cave_candidate(scenes,tuning,attempted)
@@ -746,7 +747,7 @@ local function cave_candidate(scenes,tuning,attempted)
             local okay=p and not attempted[c.guid] and c.identityValid and tuning.entries[c.entry]==true and c.present and c.aliveKnown and c.alive and
                 c.healthKnown and c.health>0 and c.health==c.maxHealth and c.levelKnown and c.level>=tuning.minimum_level and c.level<=tuning.maximum_level and c.mapId==0 and
                 c.unitFlagsKnown and c.dynamicFlagsKnown and c.dynamicFlags==0 and c.npcFlags==0 and c.targetKnown and c.targetGuid=="0" and
-                not (c.attackVictimKnown and c.victimGuid~="0") and not bit(c.unitFlags2,1)
+                not (c.attackVictimKnown and c.victimGuid~="0") and not cave_bit(c.unitFlags2,1)
             if okay then
                 local u=c.unitFlags
                 -- Exact rejected bits: 1,7,8,16,19,25,31.
@@ -818,12 +819,12 @@ local function cave_corpse(scenes,row,tuning)
         elseif c.guid~=row.target or c.entry~=row.entry or not tuning.entries[c.entry] or not c.present or
             not c.aliveKnown or c.alive or not c.healthKnown or c.health~=0 or not c.levelKnown or
             c.level<tuning.minimum_level or c.level>tuning.maximum_level or not c.unitFlagsKnown or
-            not c.dynamicFlagsKnown or not bit(c.dynamicFlags,8) or not c.mapKnown or c.mapId~=0 or
+            not c.dynamicFlagsKnown or not cave_bit(c.dynamicFlags,8) or not c.mapKnown or c.mapId~=0 or
             not c.positionKnown or not cave_area(c) then return end
         if c then
             if not goal then goal={x=c.x,y=c.y,z=c.z} end
             near=near and distance2(s.position,c)<=tuning.corpse_yards^2 and math.abs(s.position.z-c.z)<=tuning.corpse_floor
-            lootable=lootable or bit(c.dynamicFlags,1)
+            lootable=lootable or cave_bit(c.dynamicFlags,1)
         end
     end
     return {missing=missing,near=near,lootable=lootable,goal=goal}
@@ -921,8 +922,7 @@ function M.cave_cohort(input)
     local row=task.row
     if row and (type(row)~="table" or not decimal(row.target) or not uint(row.entry) or not scenes[row.engager] or type(row.requests)~="table" or
         type(row.phase)~="string" or type(row.deadObserved)~="boolean") then return invalid() end
-    local safe=cave_admission(scenes,players,tuning,row,false)
-    if input.mode=="safe_pull" then return ready({kind="admission",allowed=safe}) end
+    if input.mode=="safe_pull" then return ready({kind="admission",allowed=cave_admission(scenes,players,tuning,row,false)}) end
     if input.mode=="safe_search" then return ready({kind="admission",allowed=task.controlsMatch and cave_admission(scenes,players,tuning,nil,true)}) end
     if input.mode=="corpse_clock" then
         return ready({kind="admission",allowed=row~=nil and task.controlsMatch and cave_admission(scenes,players,tuning,row,true,true)})
@@ -947,7 +947,7 @@ function M.cave_cohort(input)
     if input.mode=="priority" then
         for _,guid in ipairs({"1","4","5"}) do
             local s=scenes[guid]
-            if s.self.unitFlagsKnown and bit(s.self.unitFlags,0x80000) then return ready({kind="actual_own_combat",observerGuid=guid}) end
+            if s.self.unitFlagsKnown and cave_bit(s.self.unitFlags,0x80000) then return ready({kind="actual_own_combat",observerGuid=guid}) end
             for _,c in ipairs(s.nearby) do
                 if c.present and c.aliveKnown and c.alive and c.attackVictimKnown and scenes[c.victimGuid] and c.attackAge<=5000 then
                     return ready({kind="actual_fresh_party_attacker",observerGuid=guid})
@@ -970,7 +970,7 @@ function M.cave_cohort(input)
         return ready({kind="arrival",direction=direction})
     end
     if input.mode=="arm" then
-        if not row or not safe then return ready({kind="refuse",phase="party_changed_before_arming"}) end
+        if not row or not cave_admission(scenes,players,tuning,row,false) then return ready({kind="refuse",phase="party_changed_before_arming"}) end
         attempted[row.target]=nil
         local target=cave_candidate(scenes,tuning,attempted)
         if not target or target.guid~=row.target or target.entry~=row.entry then return ready({kind="refuse",phase="target_changed_before_arming"}) end
@@ -988,7 +988,7 @@ function M.cave_cohort(input)
     if input.mode~="encounter" then return invalid() end
     if row then
         if row.phase=="active" then
-            for _,s in pairs(scenes) do if bit(s.self.unitFlags,0x80000) then return ready({kind="wait",phase="actual_party_combat_in_progress"}) end end
+            for _,s in pairs(scenes) do if cave_bit(s.self.unitFlags,0x80000) then return ready({kind="wait",phase="actual_party_combat_in_progress"}) end end
             local terminal=scenes[row.engager].farg
             local causes={additional_attacker_observed=true,navigation_unavailable=true,route_replan_limit=true,navigation_step_failed=true,
                 target_unsafe_or_cast_failed=true,initial_target_not_idle_unclaimed=true,target_position_unavailable_or_outside_range=true,
@@ -1011,7 +1011,7 @@ function M.cave_cohort(input)
         return ready({kind="reconcile"})
     end
     if cave_goal_complete(scenes) then return ready({kind="complete",phase="own_collection_quests_complete_for_all_three"}) end
-    if not safe then return ready({kind="wait",phase="waiting_for_safe_healthy_idle_party"}) end
+    if not cave_admission(scenes,players,tuning,nil,false) then return ready({kind="wait",phase="waiting_for_safe_healthy_idle_party"}) end
     local target=cave_candidate(scenes,tuning,attempted)
     if not target then return ready({kind=task.idle+1>=tuning.idle_polls and "search" or "idle",phase="waiting_for_actual_nearby_isolated_kobold"}) end
     local engager,order=cave_order(scenes,tuning)

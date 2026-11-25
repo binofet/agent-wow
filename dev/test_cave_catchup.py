@@ -548,6 +548,25 @@ class CatchupTests(unittest.TestCase):
 
 
 class AcceptedCohortTests(unittest.TestCase):
+    def test_cleanup_uses_original_visit_receipt_without_source_authority(self):
+        for mode in ('source_missing','source_faulted','visit_changed','legacy_unbound'):
+            with self.subTest(mode=mode):
+                p=Party();w=p.worker();w.tick();row=w.data['encounters'][0];p.events=[]
+                if mode=='source_missing':p.source='return {}'
+                if mode=='source_faulted':p.faulted=True
+                if mode=='legacy_unbound':row.pop('policyBinding')
+                if mode=='visit_changed':
+                    original=p.rpcs[4].world
+                    p.rpcs[4].world=lambda params:dict(original(params),visitRevision='2')
+                def forbid_source(actor,method,params):
+                    if method in ('session.policy_source','session.attach'):raise AssertionError('Cleanup requested new Lua authority')
+                p.hook=forbid_source
+                self.assertEqual(w.cleanup(row),mode in ('source_missing','source_faulted'))
+                self.assertEqual([guid for guid,request in p.events if not request['enabled']],
+                    [] if mode=='legacy_unbound' else [1,5] if mode=='visit_changed' else [1,4,5])
+                if mode in ('visit_changed','legacy_unbound'):
+                    self.assertEqual(row['cleanupDisposition'],'original_body_visit_unverified_needs_reconciliation')
+
     def test_final_complete_preflight_cannot_discard_new_same_body_facts(self):
         for mode in ('health','mana','combat','controls','group','visit','source'):
             with self.subTest(mode=mode):
@@ -719,6 +738,24 @@ class SearchParty(Party):
 
 
 class CorridorSearchTests(unittest.TestCase):
+    def test_release_uses_original_visit_and_ignores_policy_fault(self):
+        for replaced in (False,True):
+            with self.subTest(replaced=replaced):
+                p=SearchParty();w=p.worker()
+                def replace(actor,method,params):
+                    if actor.guid==5 and method=='buddy-actions.acquire_interaction':
+                        p.faulted=True
+                        if replaced:
+                            original=p.rpcs[4].world
+                            p.rpcs[4].world=lambda params:dict(original(params),visitRevision='2')
+                p.hook=replace;p.scan(w)
+                releases=[guid for guid,method,_ in p.movement if method=='buddy-actions.release_interaction']
+                self.assertEqual(releases,[1,5] if replaced else [1,4,5])
+                self.assertEqual(p.routes(),[])
+                leg=w.data['search']['legs'][-1]
+                self.assertEqual(leg['cleanupResolved'],not replaced)
+                if replaced:self.assertFalse(leg['cleanup'][1]['custodyResolved'])
+
     def test_local_final_preflight_refusal_has_no_native_entry_and_fresh_policy_can_plan(self):
         for mode in ('health','source'):
             with self.subTest(mode=mode):
