@@ -23,6 +23,58 @@ def scene(combat=False,alive=True):
             positionKnown=True,x=1,y=1,z=1), 'nearbyPlayers':[], 'nearbyCreatures':[]}
 
 class CombatContextTests(unittest.TestCase):
+    def test_incoming_damage_ranks_peers_before_event_clipping_without_crediting_casts(self):
+        c=self.feed(spell_names={700001:'Synthetic public label'});clock=Clock();c.clock=clock
+        party=dict(known=True,inGroup=True,members=[dict(guid='1'),dict(guid='4'),dict(guid='5')])
+        c.observe(scene(True),{},party)
+        events=[event(i,'cast_go',spellId=800000+i) for i in range(1,301)]
+        def add(kind='spell_damage',**kw):
+            row=event(len(events)+1,kind);row.update(kw);events.append(row)
+        for _ in range(7):add(sourceGuid='100',targetGuid='4',spellId=700001,amountKnown=True,amount=125)
+        add(sourceGuid='0',targetGuid='4',spellId=700001,amountKnown=True,amount=20)
+        add(sourceGuid='100',targetGuid='1',spellId=700002,amountKnown=True,amount=10)
+        for _ in range(2):add(sourceGuid='100',targetGuid='5',spellId=700003,amountKnown=False,amount=99999)
+        add('heal',targetGuid='4',spellId=700001,amountKnown=True,amount=5000)
+        add('cast_go',targetGuid='4',spellId=700001,amountKnown=True,amount=5000)
+        add(targetGuid='99',spellId=700001,amountKnown=True,amount=5000)
+        add(targetGuid='4',spellId=700001,amountKnown=True,amount=5000,malformed=True)
+        c.ingest(page(events,gaps=[dict(fromSequence='1',throughSequence='2',reason='durability_unavailable')]))
+        summary=c.context();damage=summary['incomingDamage']
+        self.assertGreater(summary['omittedGroups'],0)
+        self.assertFalse(any(row['kind']=='spell_damage' and row['target']=='4' for row in summary['events']))
+        first=damage['ranked'][0]
+        self.assertEqual((first['targetGuid'],first['spellId'],first['knownAmount'],first['packetCount']),('4',700001,895,8))
+        self.assertEqual(first['spellName'],'Synthetic public label')
+        self.assertEqual((damage['knownSelfAmount'],damage['knownPeerAmount']),(10,895))
+        unknown=next(row for row in damage['ranked'] if row['targetGuid']=='5')
+        self.assertEqual((unknown['knownAmount'],unknown['unknownAmountPackets']),(0,2))
+        self.assertEqual(first['sources'][-1]['sourceGuid'],'0');self.assertFalse(first['sources'][-1]['sourceKnown'])
+        self.assertEqual(damage['observerSelfGuid'],'1');self.assertEqual(damage['gapCount'],1)
+        self.assertEqual(damage['afterSequence'],'0');self.assertEqual(damage['rawEvidence']['params']['afterSequence'],'0')
+
+    def test_damage_window_membership_tail_and_new_body_are_explicit(self):
+        c=self.feed(spell_names={});clock=Clock();c.clock=clock
+        party=dict(known=True,inGroup=True,members=[dict(guid='4')])
+        c.observe(scene(True),{},party)
+        row=event(1,amountKnown=True,amount=7);row['targetGuid']='4';c.ingest(page([row]))
+        clock.t+=2;c.observe(scene(False),{},party)
+        row=event(2,amountKnown=True,amount=3);row['targetGuid']='4'
+        c.ingest(dict(sessionId=c.session,selfGuid=c.guid,latestSequence='2',nextSequence='2',events=[row]))
+        damage=c.context()['incomingDamage']
+        self.assertEqual(damage['knownPeerAmount'],10)
+        self.assertTrue(damage['windowRemainsOpenAfterSampledCombatEnd'])
+        c.observe(scene(True),{},dict(known=False,inGroup=True,members=[dict(guid='4')]))
+        row=event(3,amountKnown=True,amount=99);row['targetGuid']='4'
+        c.ingest(dict(sessionId=c.session,selfGuid=c.guid,latestSequence='3',nextSequence='3',events=[row]))
+        damage=c.context()['incomingDamage']
+        self.assertEqual(damage['knownPeerAmount'],0)
+        self.assertFalse(damage['partyMembershipKnownAtLatestSnapshot'])
+        self.assertEqual(damage['afterSequence'],'2')
+        c.bind('new-body')
+        damage=c.context()['incomingDamage']
+        self.assertEqual(damage['accumulation'],'since_listener_attachment')
+        self.assertFalse(damage['available']);self.assertEqual(damage['ranked'],[])
+
     def feed(self,**kw):
         c=m.CombatContext('1',**kw);c.bind('aw-test');return c
 

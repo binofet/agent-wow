@@ -283,6 +283,18 @@ def ordinary_context(state):
     for key, value in source.items():
         if not isinstance(value, (dict, list)):
             result[key] = copy.deepcopy(value)
+    if source.get('current_request',{}).get('source') == 'combat_review':
+        combat=source.get('combat')
+        if isinstance(combat,dict):
+            view=_fields(combat,('available','reason','sessionId','selfGuid','inCombat','source','window',
+                'eventCount','undecodedEvents','snapshotAgeMs','rawEvidence','incomingDamage','omittedGroups','semantics'))
+            view.update(contextPath=['combat'],eventsContextPath=['combat','events'],eventsDeferred=True,
+                sceneContextPath=['combat','scene'])
+            result['combat']=view
+        if isinstance(source.get('combat_review'),dict):
+            result['combat_review']={key:copy.deepcopy(value) for key,value in source['combat_review'].items()
+                if not isinstance(value,(dict,list))}
+            result['combat_review']['contextPath']=['combat_review']
     world = source.get("observations")
     if isinstance(world, dict):
         view = result.setdefault("observations", {})

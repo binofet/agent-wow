@@ -53,8 +53,10 @@ class FakeHTTP:
                 value = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 outer.requests.append(dict(path=self.path, headers=dict(self.headers), body=value))
                 response = outer.responses.pop(0) if outer.responses else dict(error="unexpected request")
+                if callable(response): response=response(outer.requests[-1])
+                status,response=response if isinstance(response,tuple) else (200,response)
                 raw = json.dumps(response).encode()
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
@@ -116,6 +118,71 @@ class PublicRPC:
 
 
 class DirectBrainIntegrationTests(unittest.TestCase):
+    def test_combat_review_initial_ordinary_wire_keeps_material_peer_damage(self):
+        from combat_context import CombatContext
+        tracker=CombatContext('4',spell_names={700101:'Synthetic public damage label'})
+        with self.rig([spoken('Reviewed only the supplied synthetic evidence.')]) as (loop,brain,state,http):
+            tracker.bind(self.rpc.core)
+            tracker.observe(dict(self=dict(guid='4',present=True,aliveKnown=True,alive=True,
+                unitFlagsKnown=True,unitFlags=0x80000)),{},
+                dict(known=True,inGroup=True,members=[dict(guid='3'),dict(guid='4'),dict(guid='5')]))
+            events=[]
+            def add(kind='cast_go',**values):
+                row=dict(sequence=str(len(events)+1),receivedAtUnixMs=str(100000+len(events)),kind=kind,
+                    sourceGuid='4',targetGuid='99',spellId=800000+len(events));row.update(values);events.append(row)
+            for _ in range(300):add()
+            for _ in range(7):add('spell_damage',sourceGuid='12345',targetGuid='3',spellId=700101,amountKnown=True,amount=180)
+            add('spell_damage',sourceGuid='12345',targetGuid='5',spellId=700102,amountKnown=False)
+            add('heal',targetGuid='3',spellId=700101,amountKnown=True,amount=9999)
+            add('spell_damage',targetGuid='99',spellId=700101,amountKnown=True,amount=9999)
+            tracker.ingest(dict(sessionId=self.rpc.core,selfGuid='4',latestSequence=str(len(events)),
+                nextSequence=str(len(events)),events=events,gaps=[dict(fromSequence='2',throughSequence='3',reason='durability_unavailable')]))
+            state['combat']=tracker.context()
+            self.assertGreater(state['combat']['omittedGroups'],0)
+            state['combat_review']=dict(key='synthetic-review',reason='combat_ended')
+            state['current_request']=converse.AgentBrain._CombatReviewRequest(source='combat_review',
+                reviewKey='synthetic-review',owned_review_check=lambda guid,sid,url,key:
+                    guid==4 and sid==self.rpc.core and url==self.rpc.url and key=='synthetic-review',
+                controls_allowed=False,repair_requests_allowed=False)
+            state['inventory']=dict(available=True,items=[dict(raw='synthetic bulk '*20000)])
+            original=copy.deepcopy(state['combat'])
+            brain.generate([dict(text='Internal synthetic combat review.')],state)
+            wire=http.requests[0]['body']
+            view=json.loads(wire['messages'][0]['content'].split('Current observations and control state JSON:\n',1)[1])
+            damage=view['combat']['incomingDamage'];first=damage['ranked'][0]
+            self.assertEqual((first['targetGuid'],first['spellId'],first['knownAmount'],first['packetCount']),('3',700101,1260,7))
+            self.assertEqual(first['spellName'],'Synthetic public damage label')
+            self.assertEqual(damage['observedSelfDamagePackets'],0)
+            self.assertEqual(damage['gapCount'],1)
+            self.assertEqual(damage['rawEvidence']['method'],'buddy-world.combat_events')
+            self.assertEqual(view['combat']['contextPath'],['combat'])
+            self.assertTrue(view['combat']['eventsDeferred'])
+            self.assertEqual(view['combat_review']['key'],'synthetic-review')
+            self.assertTrue(view['inventory']['deferred'])
+            self.assertEqual(state['combat'],original)
+            self.assertFalse(self.rpc.commands or self.rpc.replies)
+
+    def test_local_archived_read_is_available_through_existing_context_tool(self):
+        from test_direct_model import chat
+        def recover(request):
+            marker=json.loads(next(r['content'] for r in request['body']['messages'] if r.get('tool_call_id')=='old'))
+            self.assertIn('contextPath',marker)
+            return chat(('archive','context_read',dict(path=marker['contextPath'],limit=1000)))
+        responses=[chat(('old','context_read',dict(path=['syntheticArchiveFacts'],offset=0,limit=3000))),
+            chat(('recent1','context_read',dict(path=['syntheticArchiveFacts'],offset=3000,limit=3000))),
+            chat(('recent2','context_read',dict(path=['syntheticArchiveFacts'],offset=6000,limit=3000))),
+            (400,dict(error=dict(message='Context size has been exceeded.'))),recover,
+            dict(choices=[dict(finish_reason='stop',message=dict(role='assistant',content='Inspected the retained historical read.'))])]
+        with self.rig(responses,client_options=dict(local_prompt_budget_bytes=500000,local_max_output_tokens=4096)) as (loop,brain,state,http):
+            state['syntheticArchiveFacts']='synthetic old data '*1000
+            brain.generate([],state)
+            self.assertEqual(len(http.requests),6)
+            result=json.loads(next(r['content'] for r in http.requests[-1]['body']['messages'] if r.get('tool_call_id')=='archive'))
+            self.assertTrue(result['ok'])
+            self.assertIn('synthetic old data',json.dumps(result))
+            self.assertEqual(http.requests[-1]['body']['max_tokens'],4096)
+            self.assertTrue(brain.last_api_receipt['contextOverflowRecovery']['recovered'])
+
     def test_chat_freshness_failure_retains_exact_cancellation_cause_without_http(self):
         def cancelled():return True
         cancelled.interrupt_reason='chat_freshness_unavailable'
@@ -924,13 +991,13 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             blocker.start(); self.addCleanup(blocker.stop)
 
     @contextlib.contextmanager
-    def rig(self, responses, *, developer=True):
+    def rig(self, responses, *, developer=True, client_options=None):
         with FakeHTTP(responses) as http, patch.object(converse, "ROOT", self.workspace), \
              patch.object(converse, "RPC", side_effect=lambda url: self.rpc if url == self.rpc.url else
                           (_ for _ in ()).throw(converse.ConversationError("Foreign RPC"))):
             brain = converse.DirectBrain(self.state, developer_workspace=self.workspace if developer else None,
                 character_name="Mira", character_class="mage", model="fixture-requested-model",
-                provider="local", base_url=http.base)
+                provider="local", base_url=http.base, **(client_options or {}))
             controls = types.SimpleNamespace(actions_available=True, party_available=True,
                 actions=self.rpc.call("buddy-actions.status", {}), party_session=self.rpc.core, events=[])
             loop = converse.Conversation(self.rpc, brain, controls=controls,

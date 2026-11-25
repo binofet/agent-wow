@@ -2774,11 +2774,17 @@ class DirectBrain(AgentBrain):
     """Conversation brain using model HTTP APIs and actor-bound native tools."""
     def __init__(self, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen",
                  character_class="priest", developer_workspace=None, model=None, *,
-                 provider="local", base_url=None, api_key_env=None):
+                 provider="local", base_url=None, api_key_env=None, local_prompt_budget_bytes=None,
+                 local_prompt_token_limit=None, local_token_counter=None, local_max_output_tokens=None,
+                 local_sdk_url=None):
         super().__init__(state_dir, timeout, stopped, character_name, character_class,
                          developer_workspace, model, None)
         from direct_model import DirectModel
-        self.client = DirectModel(provider, self.model, base_url, api_key_env, timeout)
+        limits = {key:value for key,value in dict(local_prompt_budget_bytes=local_prompt_budget_bytes,
+            local_prompt_token_limit=local_prompt_token_limit, local_token_counter=local_token_counter,
+            local_max_output_tokens=local_max_output_tokens, local_sdk_url=local_sdk_url).items() if value is not None}
+        self.client = DirectModel(provider, self.model, base_url, api_key_env, timeout, **limits)
+        self.local_prompt_limits = {key:value for key,value in limits.items() if key != 'local_token_counter'}
         self.transport = dict(provider=provider, baseURL=self.client.base_url)
         self.last_api_receipt = None
         self.persona = (f"You are {character_name}, a {character_class} companion in World of Warcraft. "
@@ -2817,7 +2823,8 @@ class DirectBrain(AgentBrain):
         return dict(provider=self.client.provider, requestedModel=self.model,
             baseURL=self.client.base_url, execution="direct_api", codexInvoked=False,
             configured=True, source="explicit_direct_api", effectiveModelKnown=bool(reported),
-            providerReportedModel=reported, requestedReasoningEffort=None, reasoningOverride=False)
+            providerReportedModel=reported, requestedReasoningEffort=None, reasoningOverride=False,
+            **(dict(localPromptLimits=self.local_prompt_limits) if self.local_prompt_limits else {}))
 
     def _generate(self, history, control_state=None, cancelled=None):
         from direct_model import ModelError, Cancelled
@@ -2880,6 +2887,12 @@ class DirectBrain(AgentBrain):
                     "initialRequestBytes", "lastRequestBytes", "requestIndex", "requestPreparedAtUnixMs", "requestPhase")
             result = {key: raw[key] for key in keys if key in raw}
             if isinstance(raw.get("providerError"), dict): result["providerError"] = raw["providerError"]
+            for key in ('contextOverflowRecovery','promptMeterFailure'):
+                if isinstance(raw.get(key),dict): result[key]=copy.deepcopy(raw[key])
+            if isinstance(raw.get('promptBudget'),dict):
+                budget=raw['promptBudget']
+                result['promptBudget']={key:copy.deepcopy(value) for key,value in budget.items() if key!='archivedReadResults'}
+                result['promptBudget']['archivedReadCount']=len(budget.get('archivedReadResults',[]))
             return result
         def publish():
             self.last_development_events = dict(record["counts"]) if developer else None
@@ -2980,6 +2993,14 @@ class DirectBrain(AgentBrain):
             record["ordinaryContextProjection"] = brief_metrics
         record["promptMetrics"] = dict(contextBytes=len(encode(prompt_state)),
             historyBytes=len(encode(history)), fullCapturedContextBytes=len(encode(full_context)))
+        archive = {}
+        def archive_read(reference, content):
+            # Separate host-history namespace; captured World/current authority
+            # stays unchanged. Only the bound conversation's archived reads enter.
+            archive[str(reference['transcriptMessage'])] = dict(reference=reference, content=content,
+                semantics='Historical read only; not current facts or new authority.')
+            full_context['conversationArchive'] = archive
+            if tools is not None: tools.context['conversationArchive'] = archive
         def dispatch(name, arguments):
             if interrupted():
                 raise OwnerInputPending("Fresh owner input is waiting")
@@ -3069,6 +3090,8 @@ class DirectBrain(AgentBrain):
                 cancelled=interrupted, request_id=self.last_request_id, progress=api_progress,
                 natural=True, transcript_path=transcript_path, conversation_key=conversation_key,
                 assistant_text=getattr(self, "_assistant_text", None),
+                **(dict(archive_read=archive_read) if self.client.provider=='local' and
+                    (self.client.local_prompt_budget_bytes is not None or self.client.local_prompt_token_limit is not None) else {}),
                 read_only_tools={"context_read", "chat_read", "session_catalog", "read_observation", "spell_inspect", "find_usable_items", "check_gear_upgrade",
                     "workspace_read", "lua_evaluate", "gm_task_status", "gm_current_task", "gm_inspect"})
             if interrupted():
@@ -6111,6 +6134,13 @@ def main(argv=None):
     parser.add_argument("--model-base-url", help="Explicit base URL for the selected model API")
     parser.add_argument("--local-provider", choices=("lmstudio", "ollama"))
     parser.add_argument("--model-api-key-env", help="Environment variable name for the selected provider key")
+    parser.add_argument("--local-prompt-budget-bytes", type=int,
+                        help="Opt-in local API prompt byte bound/archival; not a token count or model context limit")
+    parser.add_argument("--local-max-output-tokens", type=int,
+                        help="Explicit local natural-reply output cap; reserve generation space independently of input bytes")
+    parser.add_argument("--local-prompt-token-limit", type=int,
+                        help="Input token budget metered with the explicit already-loaded LM Studio SDK model")
+    parser.add_argument("--local-sdk-url", help="Explicit loopback ws://host:port for read-only template/token metering; no model load")
     parser.add_argument("--included-usage-only", action="store_true",
                         help="For the Codex provider, start replies only while included usage is available")
     parser.add_argument("--model", type=explicit_model, help="Explicit model ID for the selected provider")
@@ -6131,6 +6161,11 @@ def main(argv=None):
     parser.add_argument("--banter-seconds", type=float, default=180,
                         help="Minimum gap for occasional initiated conversation; 0 disables it (default 180)")
     args = parser.parse_args(argv)
+    local_limits = {key:value for key,value in dict(local_prompt_budget_bytes=args.local_prompt_budget_bytes,
+        local_max_output_tokens=args.local_max_output_tokens, local_prompt_token_limit=args.local_prompt_token_limit,
+        local_sdk_url=args.local_sdk_url).items() if value is not None}
+    if local_limits and args.model_provider != 'local':
+        parser.error('Local prompt/output limits require the local provider')
     if args.continue_owner_whisper is not None:
         try:owner_whisper_continuation(args.continue_owner_whisper)
         except ConversationError as error:parser.error(str(error))
@@ -6138,7 +6173,7 @@ def main(argv=None):
             parser.error('Explicit owner continuation requires direct-model run without --resume-whispers')
     if args.model_provider in ("local", "openai", "claude", "gemini"):
         from direct_model import DirectModel
-        DirectModel(args.model_provider, args.model, args.model_base_url, args.model_api_key_env, args.reply_timeout)
+        DirectModel(args.model_provider, args.model, args.model_base_url, args.model_api_key_env, args.reply_timeout, **local_limits)
     else:
         model_transport(args.model_provider, model=args.model, base_url=args.model_base_url,
                         local_provider=args.local_provider, api_key_env=args.model_api_key_env)
@@ -6200,7 +6235,7 @@ def main(argv=None):
         if args.model_provider in ("local", "openai", "claude", "gemini"):
             brain = DirectBrain(state, args.reply_timeout, stopped, args.character_name,
                 args.character_class, workspace, args.model, provider=args.model_provider,
-                base_url=args.model_base_url, api_key_env=args.model_api_key_env)
+                base_url=args.model_base_url, api_key_env=args.model_api_key_env, **local_limits)
         else:
             provider_options = {} if args.model_provider == "codex" else dict(provider=args.model_provider,
                 base_url=args.model_base_url, local_provider=args.local_provider, api_key_env=args.model_api_key_env)

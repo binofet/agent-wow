@@ -4,8 +4,24 @@ The native journal retains packet evidence. This module compresses that evidence
 semantically; it never treats a cast launch or a sampled HP delta as damage/healing.
 """
 import collections
+import functools
 import json
+from pathlib import Path
 import time
+
+
+@functools.lru_cache(maxsize=1)
+def public_spell_names():
+    """Optional packaged labels, never effect/area/castability classification."""
+    try:
+        names = {}
+        with (Path(__file__).resolve().parent.parent/'pkg/spellcatalog/spells.jsonl').open() as source:
+            for line in source:
+                row=json.loads(line)
+                if type(row.get('id')) is int and 0 < row['id'] <= 0xffffffff and isinstance(row.get('name'),str):
+                    names[row['id']]=row['name']
+        return names
+    except (OSError,ValueError,UnicodeError): return {}
 
 
 def decimal(value):
@@ -18,7 +34,7 @@ def decimal(value):
 
 
 class CombatContext:
-    def __init__(self, guid, *, prompt_bytes=10000, review_seconds=60, clock=time.monotonic):
+    def __init__(self, guid, *, prompt_bytes=10000, review_seconds=60, clock=time.monotonic, spell_names=None):
         self.guid = decimal(guid)
         self.prompt_bytes = prompt_bytes
         self.review_seconds = review_seconds
@@ -51,6 +67,9 @@ class CombatContext:
         self.seen_situations = set()
         self.enemy_entries = set()
         self.pending_errors = collections.Counter()
+        self.damage_members = {self.guid}
+        self.party_membership_known = False
+        self.spell_names = dict(spell_names) if spell_names is not None else None
 
     def bind(self, sid):
         if not isinstance(sid, str) or not sid:
@@ -70,6 +89,7 @@ class CombatContext:
         self.enemy_entries, self.pending_errors = set(), collections.Counter()
         self.scene = {}
         self.observed_at = None
+        self.damage_members, self.party_membership_known = {self.guid}, False
 
     def ingest(self, batch):
         if not isinstance(batch, dict) or batch.get('sessionId') != self.session or decimal(batch.get('selfGuid', 0)) != self.guid:
@@ -141,6 +161,13 @@ class CombatContext:
             raise ValueError('combat snapshot body mismatch')
         members = {str(x.get('guid')) for x in (party or {}).get('members', [])}
         members.add(self.guid)
+        self.party_membership_known = (party or {}).get('known') is True and (party or {}).get('inGroup') is True
+        damage_members = {self.guid}
+        if self.party_membership_known:
+            for row in (party or {}).get('members',[]):
+                try: damage_members.add(decimal(row.get('guid',0)))
+                except (ValueError,TypeError): pass
+        damage_members.discard('0')
         players = [own, world.get('owner', {}), *world.get('nearbyPlayers', [])]
         rows = {}
         combat = False
@@ -172,6 +199,9 @@ class CombatContext:
             self.first_sequence, self.event_count, self.unknown_count = None, 0, 0
             self.pending_errors, self.enemy_entries = collections.Counter(), set()
             self.completed = None
+            self.damage_members = damage_members
+        else:
+            self.damage_members.update(damage_members)
         for npc in world.get('nearbyCreatures', []):
             if npc.get('attackVictimKnown') and str(npc.get('attackVictimGuid')) in members:
                 if npc.get('entry'):
@@ -232,6 +262,63 @@ class CombatContext:
         except Exception as error:
             self.available, self.reason = False, 'combat_feed_unavailable: '+str(error)[:240]
 
+    def incoming_damage(self, window, coverage, raw):
+        """Aggregate actual incoming DAMAGE before the general event list clips.
+
+        One observer/cursor domain only. Party identity comes from observed
+        roster membership during this accumulation window, not nearby players.
+        """
+        totals = {}
+        for group in self.groups.values():
+            if group['kind'] not in ('spell_damage','melee_damage') or group['target'] not in self.damage_members:
+                continue
+            key=(group['target'],group['spell'],group['kind'])
+            row=totals.setdefault(key,dict(targetGuid=group['target'],spellId=group['spell'],kind=group['kind'],
+                targetRelation='self' if group['target']==self.guid else 'observed_party_member_in_window',
+                packetCount=0,knownAmount=0,knownAmountPackets=0,unknownAmountPackets=0,
+                firstSequence=group['first'],lastSequence=group['last'],
+                firstReceivedAtUnixMs=group['firstTimeMs'],lastReceivedAtUnixMs=group['lastTimeMs'],sources={}))
+            source=row['sources'].setdefault(group['source'],dict(sourceGuid=group['source'],sourceKnown=group['source']!='0',
+                packetCount=0,knownAmount=0,knownAmountPackets=0,unknownAmountPackets=0))
+            for total in (row,source):
+                total['packetCount']+=group['packets']
+                if group['amountKnown']:
+                    total['knownAmount']+=group['amount'];total['knownAmountPackets']+=group['packets']
+                else: total['unknownAmountPackets']+=group['packets']
+            if int(group['first'])<int(row['firstSequence']):
+                row['firstSequence'],row['firstReceivedAtUnixMs']=group['first'],group['firstTimeMs']
+            if int(group['last'])>int(row['lastSequence']):
+                row['lastSequence'],row['lastReceivedAtUnixMs']=group['last'],group['lastTimeMs']
+        ranked=sorted(totals.values(),key=lambda row:(-row['knownAmount'],-row['packetCount'],row['targetGuid'],row['spellId'],row['kind']))
+        result=dict(observerSelfGuid=self.guid,sessionId=self.session,available=self.available,reason=self.reason,
+            accumulation='since_latest_sampled_party_combat_start' if self.started_at is not None else 'since_listener_attachment',
+            windowRemainsOpenAfterSampledCombatEnd=self.completed is not None and not self.in_combat,
+            window=window,afterSequence=coverage['afterSequence'],throughSequence=coverage['throughSequence'],
+            gaps=coverage['gaps'][-8:],gapCount=len(coverage['gaps']),gapsOmitted=max(0,len(coverage['gaps'])-8),
+            completeGapsContextPath=['combat','coverage','gaps'],rawEvidence=raw,
+            partyMembershipKnownAtLatestSnapshot=self.party_membership_known,
+            partyGuidsObservedInWindow=sorted(self.damage_members-{self.guid}),
+            observedSelfDamagePackets=sum(row['packetCount'] for row in ranked if row['targetGuid']==self.guid),
+            observedPeerDamagePackets=sum(row['packetCount'] for row in ranked if row['targetGuid']!=self.guid),
+            knownSelfAmount=sum(row['knownAmount'] for row in ranked if row['targetGuid']==self.guid),
+            knownPeerAmount=sum(row['knownAmount'] for row in ranked if row['targetGuid']!=self.guid),
+            ranked=[],omittedRows=len(ranked),
+            semantics='Observed incoming damage from ONE client journal, ranked by known amount. '
+                'Unknown amounts are counted, never estimated. Counts are packet records, not casts or inferred ticks/AoE. '
+                'This sampled accumulation window is not a lifetime or guaranteed complete fight total. '
+                'Never add overlapping observers. Static spell names do not establish area, position or causality.')
+        names=(self.spell_names if self.spell_names is not None else public_spell_names()) if ranked else {}
+        for row in ranked[:8]:
+            sources=sorted(row['sources'].values(),key=lambda item:(-item['knownAmount'],-item['packetCount'],item['sourceGuid']))
+            row=dict(row,sources=sources[:4],omittedSources=max(0,len(sources)-4))
+            if row['spellId'] in names:
+                row['spellName']=names[row['spellId']];row['spellNameSource']='static_spell_catalog_label'
+            result['ranked'].append(row)
+            if len(json.dumps(result,separators=(',',':')).encode())>min(6000,max(1600,self.prompt_bytes//2)):
+                result['ranked'].pop();break
+        result['omittedRows']=len(ranked)-len(result['ranked'])
+        return result
+
     def context(self):
         focus = str(self.scene.get('lastCast',{}).get('lastCastTargetGuid','0'))
         groups = sorted(self.groups.values(), key=lambda g: (g['source'] != self.guid and g['target'] != self.guid,
@@ -243,14 +330,16 @@ class CombatContext:
                     'boundary':'sampled_party_combat_transition','lastOutcome':self.completed},
             eventCount=self.event_count, undecodedEvents=self.unknown_count,
             snapshotAgeMs=None if self.observed_at is None else round((self.clock()-self.observed_at)*1000),
-            coverage={'afterSequence':str((self.first_sequence-1) if self.first_sequence else self.coverage_start), 'throughSequence':str(self.cursor), 'gaps':self.gaps},
+            coverage={'afterSequence':str(self.coverage_start), 'throughSequence':str(self.cursor), 'gaps':self.gaps},
             historyBeforeAttachmentAvailable=True,
             rawEvidence={'method':'buddy-world.combat_events','sessionId':self.session,
-                'afterSequence':str((self.first_sequence-1) if self.first_sequence else self.coverage_start), 'retained':True, 'scope':'current_body_session'},
+                'afterSequence':str(self.coverage_start), 'retained':True, 'scope':'current_body_session',
+                'params':{'sessionId':self.session,'afterSequence':str(self.coverage_start),'limit':128}},
             scene=self.scene, events=[], summaryBudgetBytes=self.prompt_bytes,
             omittedGroups=0, semantics='Amounts are observed effects only. Cast start/go is not a confirmed effect. '
                 'Counts are packet records, not unique casts; failure broadcasts may duplicate a rejection. '
                 'HP changes are state observations, not inferred damage. Read raw cursor ranges to investigate.')
+        result['incomingDamage']=self.incoming_damage(result['window'],result['coverage'],result['rawEvidence'])
         for row in groups:
             result['events'].append(row)
             if len(json.dumps(result, separators=(',', ':')).encode()) > self.prompt_bytes:
