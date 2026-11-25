@@ -788,6 +788,7 @@ class DirectTools:
                 "Sequence coverage calls the candidate's real on_event then decide in the same fresh VM; "
                 "provide your full synthetic observation/event values, frames, pending and clocks. "
                 "The empty observation in the example is a shape placeholder, not an adequate behavior fixture. "
+                "Successful execution does not assert that requested behavior is correct: inspect returned decisions before applying. "
                 "Synthetic receipts/pending are caller inputs, not real host action or replay verification.")
 
     def _policy_fixture(self, source, test):
