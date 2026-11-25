@@ -87,6 +87,9 @@ func TestExpiredLearnedPriorKeepsComposedFriendlyActions(t *testing.T) {
 				out := p.decide(observeRanged(t, p, o, false)).Output
 				a, _ := out["action"].(map[string]any)
 				if guard == "expired" {
+					if out["fixtureHoldRetained"] != false {
+						t.Fatal("expired hold was retained", out)
+					}
 					if a["capability"] != action {
 						t.Fatal("expired bookkeeping suppressed current selector", out)
 					}
@@ -95,8 +98,13 @@ func TestExpiredLearnedPriorKeepsComposedFriendlyActions(t *testing.T) {
 					if status["active"] != true || status["origin"] == "learned_prior" {
 						t.Fatal("explicit directive changed", out)
 					}
-				} else if a["capability"] == action {
-					t.Fatal("protected custody unexpectedly retired", out)
+				} else {
+					if out["fixtureHoldRetained"] != true {
+						t.Fatal("protected hold was removed", out)
+					}
+					if a["capability"] == action {
+						t.Fatal("protected custody unexpectedly retired", out)
+					}
 				}
 			})
 		}
