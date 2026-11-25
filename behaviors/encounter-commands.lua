@@ -1119,6 +1119,22 @@ local function cloud_point_step(obs,frame,sequence,out,row,status,points)
     return true
 end
 
+-- Read only the exact existing protective ownership; this does not acquire,
+-- renew, release or settle anything. Foreign/uncertain custody is never lent.
+local function movement_point_owner(obs,frame)
+    local hold,ground=state.rangedHold,state.rangedGround
+    local owner=(obs.navigation or {}).movementOwner
+    local now=frame.clock and frame.clock.unixMs
+    if ground and (ground.operation or ground.uncertain or ground.awaiting or ground.sessionId~=obs.sessionId or
+       ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or hold and hold.owner~="ranged:"..tostring(ground.id)) then return nil,true end
+    if hold and (hold.operation or hold.uncertain) then return nil,true end
+    if not hold or type(owner)~="table" or owner.active~=true or owner.owner~=hold.owner or
+       hold.sessionId~=obs.sessionId or hold.selfGuid~=obs.selfGuid or hold.visitId~=obs.visitId or hold.mapId~=obs.mapId or
+       hold.released or type(hold.token)~="string" or #hold.token==0 or
+       type(now)~="number" or type(hold.untilUnixMs)~="number" or now>=hold.untilUnixMs then return nil end
+    return {owner=hold.owner,token=hold.token}
+end
+
 local function ranged_finish(selected)
     if ranged_ground_proposal and ranged_ground_proposal.action==selected then
         ranged_ground_proposal.ground.operation=ranged_ground_proposal.operation
@@ -1135,4 +1151,4 @@ local function ranged_finish(selected)
 end
 
 return {on_event=on_event, export_state=export_state, import_state=import_state,
-        queue_intent=queue_intent, control_action=control_action, ranged_stance=ranged_stance, ranged_options=ranged_options, ranged_travel_safe=ranged_travel_safe,ranged_filter=ranged_filter, ranged_finish=ranged_finish, cloud_point_step=cloud_point_step}
+        queue_intent=queue_intent, control_action=control_action, ranged_stance=ranged_stance, ranged_options=ranged_options, ranged_travel_safe=ranged_travel_safe,ranged_filter=ranged_filter, ranged_finish=ranged_finish, cloud_point_step=cloud_point_step, movement_point_owner=movement_point_owner}

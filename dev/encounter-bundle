@@ -37,6 +37,7 @@ def main():
         ("encounter_buffs", behaviors / "buffs.lua"),
         ("encounter_death_recovery", behaviors / "death-recovery.lua"),
         ("encounter_movement", behaviors / "encounter-movement.lua"),
+        ("encounter_movement_points", behaviors / "movement-points.lua"),
         ("encounter_priors", behaviors / "encounter-priors.lua"),
         ("encounter_commands", behaviors / "encounter-commands.lua"),
         ("encounter_spell_invocation", behaviors / "spell-invocation.lua"),

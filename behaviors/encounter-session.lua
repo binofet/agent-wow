@@ -892,7 +892,35 @@ local function cloud_sightings(obs,frame,scope)
     return result
 end
 
+-- Optional actor-owned point hook. Advisory calls use this same persistent
+-- closure and event stream, including cloud_points' existing retained history.
+local function movement_points(frame)
+    local current=observation
+    if not encounter_movement_points or not current or current.sessionId~=frame.session_id or
+       frame.input.observationSequence~=state.sequence or not host_can_decide(current) or not current_visit(current) then return nil end
+    local points
+    if type(intent.movement_points)=="function" then points=intent.movement_points(frame,current)
+    elseif type(intent.cloud_points)=="function" then
+        local sightings=encounter_movement_points.ground_sightings(current)
+        if not sightings then return nil end
+        local scope=current.sessionId..":"..current.selfGuid..":"..current.visitId..":"..tostring(current.mapId)
+        points=encounter_movement_points.bind_visible(intent.cloud_points(frame.clock.unixMs,scope,sightings),sightings)
+    end
+    return encounter_movement_points.project(frame,current,points)
+end
+
 local function decide(frame)
+    if frame.input.kind=="movement_points" then
+        local data=movement_points(frame)
+        local phase=data and "observation_only" or observation and observation.groundEffectsSupported==true and "movement_point_input_unavailable" or "ground_effect_input_unavailable"
+        local out={movementPoints=data,movementPointStatus={phase=phase,inputAvailable=data~=nil,gameEffectClaimed=false}}
+        local current=observation
+        if current and owns_current_observation(current,{input={kind="encounter",observationSequence=frame.input.observationSequence}},(current.players or {})[current.selfGuid]) then
+            out.encounterOwnership={visitId=current.visitId,observationSequence=state.sequence,
+                resurrection=support_policy~=nil,interrupts=support_policy~=nil}
+        end
+        return out
+    end
     ranged_config,ranged_status=nil,nil
     prior_intent=nil
     prior_requested_spell=nil
@@ -948,7 +976,7 @@ local function decide(frame)
     if encounter_priors and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence then
         encounter_priors.filter(current,out,ranged_status,prior_intent and prior_intent.explicitPullGuid,prior_requested_spell==out.action and prior_requested_spell or nil)
     end
-    if intent.cloud_points and movement and movement.adjust_cloud_points and current and host_can_decide(current) and
+    if not encounter_movement_points and intent.cloud_points and movement and movement.adjust_cloud_points and current and (current.navigation or {}).movementPointsSupported~=true and host_can_decide(current) and
        current.sessionId==frame.session_id and current_visit(current) and frame.input.observationSequence==state.sequence and
        state.settledAt~=state.sequence then
         local scope=current.sessionId..":"..current.selfGuid..":"..current.visitId..":"..tostring(current.mapId)
@@ -965,6 +993,21 @@ local function decide(frame)
             commands.cloud_point_step(current,frame,state.sequence,out,ranged_config,ranged_status,points)
         end
     end
+    if encounter_movement_points and current and (type(intent.cloud_points)=="function" or type(intent.movement_points)=="function") and current.groundEffectsSupported~=true then
+        out.movementPointStatus={phase="ground_effect_input_unavailable",gameEffectClaimed=false}
+    end
+    if encounter_movement_points and current and (type(intent.cloud_points)=="function" or type(intent.movement_points)=="function") and (current.navigation or {}).movementPointsSupported==true then
+        out.movementPoints=movement_points(frame)
+        if not out.movementPoints and current.groundEffectsSupported==true then
+            out.movementPointStatus={phase="movement_point_input_unavailable",inputAvailable=false,gameEffectClaimed=false}
+        end
+        if state.settledAt~=state.sequence then
+            local ownMovement,protectedMovement
+            if commands and commands.movement_point_owner then ownMovement,protectedMovement=commands.movement_point_owner(current,frame) end
+            encounter_movement_points.prioritize(frame,current,state.sequence,out,out.movementPoints,prior_requested_spell,
+                ownMovement,task_support_action or protectedMovement or task_view and (task_view.hold or task_view.action) or out.consumable and out.consumable.hold)
+        end
+    end
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
     if spell_invocation then spell_invocation.commit(out.action) end
@@ -974,6 +1017,7 @@ local function decide(frame)
 end
 
 return {decide=decide, on_event=on_event, export_state=export_state, import_state=import_state,
+        movement_points=(type(intent.movement_points)=="function" or type(intent.cloud_points)=="function") and movement_points or nil,
         mission_repair=encounter_mission_repair and encounter_mission_repair.decide,
         follow_formation=encounter_formation and encounter_formation.decide,
         service_destination=encounter_formation and encounter_formation.service_destination,

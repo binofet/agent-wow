@@ -77,7 +77,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-»¨
+å¬
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -430,7 +430,21 @@ durability%
 orientation (Rorientation
 	estimated	 (R	estimated
 age_ms
- (RageMs"Ý
+ (RageMs"ã
+SpellGroundEffect
+guid (Rguid
+caster_guid (R
+casterGuid
+spell_id (RspellId!
+radius_yards (RradiusYards
+x (Rx
+y (Ry
+z (Rz8
+first_observed_at_unix_ms (RfirstObservedAtUnixMs2
+server_cast_time_ms	 (H RserverCastTimeMsˆ+
+position_revision
+ (RpositionRevisionB
+_server_cast_time_ms"Ý
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -580,7 +594,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"Ø
+permanent_bonus (RpermanentBonus"œ
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -646,7 +660,10 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 self_xp9 (RselfXp6
 self_next_level_xp_known: (RselfNextLevelXpKnown+
 self_next_level_xp; (RselfNextLevelXp(
-self_xp_revision< (RselfXpRevision"q
+self_xp_revision< (RselfXpRevisionP
+ground_effects= (2).warcraftbuddy.world.v1.SpellGroundEffectRgroundEffects8
+ground_effects_supported> (RgroundEffectsSupported6
+ground_effects_overflow? (RgroundEffectsOverflow"q
 CombatEventsRequest
 
 session_id (	R	sessionId%
@@ -790,7 +807,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-™–
+Ñ¡
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1305,7 +1322,7 @@ targetGuid
 
 session_id (	R	sessionId
 	self_guid (RselfGuidF
-targeted_resurrection_supported (RtargetedResurrectionSupported"ð$
+targeted_resurrection_supported (RtargetedResurrectionSupported"È%
 State
 	following (R	following
 moving (Rmoving*
@@ -1408,7 +1425,8 @@ engage_npcm (2(.warcraftbuddy.actions.v1.EngageNPCStateR	engageNpcV
 body_movementv (2+.warcraftbuddy.actions.v1.BodyMovementStateRbodyMovementS
 movement_ownerw (2,.warcraftbuddy.actions.v1.MovementOwnerStateRmovementOwner`
 last_transport_failurex (2*.warcraftbuddy.actions.v1.TransportFailureRlastTransportFailurel
-last_follow_policy_failurey (2/.warcraftbuddy.actions.v1.PolicyDecisionFailureRlastFollowPolicyFailureJJJFGJIdJqrRhealingRhealing_lease_remaining_ms"…
+last_follow_policy_failurey (2/.warcraftbuddy.actions.v1.PolicyDecisionFailureRlastFollowPolicyFailureV
+movement_pointsz (2-.warcraftbuddy.actions.v1.MovementPointsStateRmovementPointsJJJFGJIdJqrRhealingRhealing_lease_remaining_ms"…
 TransportFailure
 sequence (Rsequence
 opcode (Ropcode
@@ -1597,7 +1615,7 @@ session_id (	R	sessionId
 threat (2(.warcraftbuddy.actions.v1.SelfManaThreatRthreat?
 spells (2'.warcraftbuddy.actions.v1.SelfManaSpellRspells
 
-host_owned (R	hostOwned"Þ
+host_owned (R	hostOwned"¢
 EncounterObservationResponse
 
 session_id (	R	sessionId
@@ -1634,7 +1652,10 @@ navigation (2/.warcraftbuddy.actions.v1.NavigationObservationR
 navigation`
 last_transport_failure (2*.warcraftbuddy.actions.v1.TransportFailureRlastTransportFailureC
 recovery (2'.warcraftbuddy.actions.v1.RecoveryStateRrecoveryR
-interaction (20.warcraftbuddy.actions.v1.InteractionObservationRinteractione
+interaction (20.warcraftbuddy.actions.v1.InteractionObservationRinteractionP
+ground_effects (2).warcraftbuddy.world.v1.SpellGroundEffectRgroundEffects8
+ground_effects_supported (RgroundEffectsSupported6
+ground_effects_overflow (RgroundEffectsOverflowe
 PlayersEntry
 key (	Rkey?
 value (2).warcraftbuddy.actions.v1.EncounterPlayerRvalue:8g
@@ -1692,7 +1713,7 @@ owner_guid (R	ownerGuid6
 ready (Rready
 hold (Rhold'
 follow_revision (RfollowRevision
-phase (	Rphase"„
+phase (	Rphase"˜
 NavigationObservation6
 body_movement_supported (RbodyMovementSupported
 	following (R	following
@@ -1715,7 +1736,9 @@ goal_known (R	goalKnown
 follow_owner (2).warcraftbuddy.actions.v1.EncounterPlayerRfollowOwner'
 follow_revision (RfollowRevision@
 ground_navigation_configured (RgroundNavigationConfiguredI
-portal (21.warcraftbuddy.actions.v1.PortalFollowObservationRportal"7
+portal (21.warcraftbuddy.actions.v1.PortalFollowObservationRportal:
+movement_points_supported (RmovementPointsSupportedV
+movement_points (2-.warcraftbuddy.actions.v1.MovementPointsStateRmovementPoints"7
 PortalPoint
 x (Rx
 y (Ry
@@ -2313,7 +2336,37 @@ trigger_id (R	triggerId<
 observed_visit_id (RobservedVisitId1
 destination_observed (RdestinationObserved
 error (	RerrorE
-source_scope (2".agentwow.module.v1.TransportScopeRsourceScope2½2
+source_scope (2".agentwow.module.v1.TransportScopeRsourceScope"‰
+MovementPoint
+x (Rx
+y (Ry
+z (Rz!
+radius_yards (RradiusYards+
+expires_at_unix_ms (RexpiresAtUnixMs"Æ
+MovementPointsRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+map_id (RmapId
+visit_id (RvisitId?
+points (2'.warcraftbuddy.actions.v1.MovementPointRpoints"‚
+MovementPointsState
+revision (Rrevision
+point_count (R
+pointCount
+active (Ractive
+reason (	Rreason"Ø
+MovementPointsStepRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+map_id (RmapId
+visit_id (RvisitId
+sequence_id (R
+sequenceId%
+movement_owner (	RmovementOwner%
+movement_token (	RmovementToken^
+target_constraints (2/.warcraftbuddy.actions.v1.ApproachTargetRequestRtargetConstraints24
 BuddyActions~
 AreaTriggerReference5.warcraftbuddy.actions.v1.AreaTriggerReferenceRequest/.warcraftbuddy.actions.v1.AreaTriggerReferencesw
 NotifyAreaTrigger2.warcraftbuddy.actions.v1.NotifyAreaTriggerRequest..warcraftbuddy.actions.v1.AreaTriggerOperation`
@@ -2332,7 +2385,9 @@ trigger_id (R	triggerId<
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ
 MoveBody-.warcraftbuddy.actions.v1.BodyMovementRequest.warcraftbuddy.actions.v1.State`
 InterruptCast..warcraftbuddy.actions.v1.InterruptCastRequest.warcraftbuddy.actions.v1.State^
-BreakControl-.warcraftbuddy.actions.v1.BreakControlRequest.warcraftbuddy.actions.v1.State^
+BreakControl-.warcraftbuddy.actions.v1.BreakControlRequest.warcraftbuddy.actions.v1.Statej
+StepMovementPoints3.warcraftbuddy.actions.v1.MovementPointsStepRequest.warcraftbuddy.actions.v1.Statee
+SetMovementPoints/.warcraftbuddy.actions.v1.MovementPointsRequest.warcraftbuddy.actions.v1.State^
 SetFollowFormation0.warcraftbuddy.actions.v1.FollowFormationRequest.google.protobuf.EmptyZ
 SetPortalCatchup..warcraftbuddy.actions.v1.PortalCatchupRequest.google.protobuf.EmptyR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR

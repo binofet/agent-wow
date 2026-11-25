@@ -104,6 +104,9 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	if capability == "movement_owner" {
 		return p.resolveMovementOwner(action)
 	}
+	if capability == "movement_points_step" {
+		return p.resolveMovementPointsStep(action)
+	}
 	if capability == "move_body" {
 		return p.resolveBodyMovement(action)
 	}
@@ -325,8 +328,8 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		op.movement.phase = state.BodyMovement.Phase
 		op.movement.detail = state.BodyMovement.Detail
 	}
-	if op.movement != nil && op.movement.idleBound {
-		op.movement.unknown = op.movement.unknown || state.MotionUnconfirmed
+	if op.movement != nil && (op.movement.idleBound || op.capability == "movement_points_step") {
+		op.movement.unknown = op.movement.unknown || state.MotionUnconfirmed || op.capability == "movement_points_step" && err != nil && (op.attempted || op.written)
 	}
 	if err == nil && op.capability == "release_interaction" && state.InteractionOwner == "" {
 		// The exact lease is released. A STOP write/returned metadata is not a
@@ -340,6 +343,11 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		// Cancellation transport never completes the original cast/channel.
 		// Its own finite action has no separate future effect reservation.
 		return behavior.ActionSettledUnverified, policyDispatchError(op.payload("cancel_transport_unverified", op.written, false, false), err)
+	}
+	if err == nil {
+		if reason, known := op.movementPointsNoDispatch(md, state); known {
+			return behavior.ActionNotDispatched, op.payload(reason, false, false, false)
+		}
 	}
 	switch {
 	case op.written:

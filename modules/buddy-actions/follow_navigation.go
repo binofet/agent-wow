@@ -15,6 +15,9 @@ import (
 // written by this controller, rather than allowing another actuator's movement
 // to join an old route across an unverified chord.
 type followNavigation struct {
+	pointDetour bool
+	pointEscape bool
+
 	slotStartDistance, slotStopDistance float64
 	path                                []position
 	index                               int
@@ -217,6 +220,9 @@ func followPathStep(from position, path []position, index int, budget float64) (
 func (s *Service) followFormationStepLocked(ctx context.Context, target position, stopDistance float64, ownerFallback ...position) bool {
 	now := s.now()
 	f := &s.followNav
+	if f.pointDetour && (len(s.currentMovementPointsLocked()) == 0 || f.pointEscape && pointClearance(s.pos, s.currentMovementPointsLocked()) >= 0) {
+		f.Reset()
+	}
 	fail := func(reason string, err error) bool {
 		f.path = nil
 		f.arrivalKnown = false
@@ -313,6 +319,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			return fail("follow_navigation_unavailable", err)
 		}
 		f.path = append([]position(nil), path...)
+		f.pointDetour, f.pointEscape = false, false
 		f.index, f.target, f.expected, f.selfRevision, f.mapID = 0, target, s.pos, s.positionRevision, s.posMap
 		f.arrival, f.arrivalStop, f.arrivalKnown = arrival, arrivalStop, true
 		f.ownerArrival = ownerArrival
@@ -371,6 +378,39 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		ok := s.stopLocked(ctx)
 		s.state.Reason = "follow_navigation_replan_wait"
 		return ok
+	}
+	if len(s.currentMovementPointsLocked()) != 0 {
+		// Apply current Lua exclusions to this already-admitted ordinary route.
+		// The native movement writer, speed limit and final body guards stay shared.
+		remaining := append([]position{s.pos}, f.path[f.index:]...)
+		adjusted, allowed := s.movementPointRouteLocked(ctx, remaining)
+		if !allowed {
+			s.stopLocked(ctx)
+			s.state.Reason = "movement_points_" + s.movementPoints.reason
+			return false
+		}
+		if pointClearance(s.pos, s.currentMovementPointsLocked()) < 0 {
+			ctx = context.WithValue(ctx, movementPointsEscapePathKey{}, &movementPointsEscapePath{revision: s.movementPoints.revision, path: adjusted})
+		}
+		changedRoute := len(adjusted) != len(remaining)
+		if !changedRoute {
+			for i := range adjusted {
+				if adjusted[i] != remaining[i] {
+					changedRoute = true
+					break
+				}
+			}
+		}
+		if changedRoute {
+			f.path, f.index, f.pointDetour = adjusted, 0, true
+			f.pointEscape = pointClearance(s.pos, s.currentMovementPointsLocked()) < 0
+			for f.index < len(f.path) && distance(s.pos, f.path[f.index]) <= .005 {
+				f.index++
+			}
+			if f.index == len(f.path) {
+				return false
+			}
+		}
 	}
 	if !s.state.Moving {
 		p := s.pos

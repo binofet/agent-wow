@@ -51,6 +51,8 @@ func TestEncounterObservationWaitsForBothSameMapVisitWitnesses(t *testing.T) {
 	binary.LittleEndian.PutUint32(entry, mapID)
 	f.world.Self.MapId, f.world.Owner.MapId = mapID, mapID
 	f.world.NearbyCreatures = []*worldv1.CreatureState{encounterTestCreature(sheepTarget, mapID)}
+	f.world.GroundEffectsSupported, f.world.GroundEffectsOverflow = true, true
+	f.world.GroundEffects = []*worldv1.SpellGroundEffect{{Guid: 0xf100000000000031, SpellId: 21070, RadiusYards: 5, X: 2.5}}
 	key := strconv.FormatUint(sheepTarget, 10)
 	check := func(visit uint64, protected bool) {
 		t.Helper()
@@ -59,10 +61,17 @@ func TestEncounterObservationWaitsForBothSameMapVisitWitnesses(t *testing.T) {
 			t.Fatalf("want visit %d, got %v", visit, out)
 		}
 		if visit == 0 {
+			if out.GroundEffectsSupported || out.GroundEffectsOverflow || len(out.GroundEffects) != 0 {
+				t.Fatal("ground geometry escaped visit binding", out)
+			}
 			if out.GetReason() != "world_visit_unbound" || out.MapId != nil || len(out.Targets) != 0 || len(out.ProtectedAuras) != 0 {
 				t.Fatalf("unbound visit exposed encounter facts: %v", out)
 			}
 			return
+		}
+		if !out.GroundEffectsSupported || !out.GroundEffectsOverflow || len(out.GroundEffects) != 1 ||
+			out.GroundEffects[0].Guid != 0xf100000000000031 || out.GroundEffects[0].X != 2.5 || out.GroundEffects[0].RadiusYards != 5 {
+			t.Fatal("bound visit lost ground geometry or coverage flags", out)
 		}
 		wantAuras := 0
 		if protected {
