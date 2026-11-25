@@ -56,7 +56,7 @@ func TestRangedLegacyGroundAffordableRetreatAndTargetedCast(t *testing.T) {
 	for _, c := range seq {
 		n = n*10 + uint64(c-'0')
 	}
-	o.Navigation.BodyMovement = &actionsv1.BodyMovementState{SequenceId: n, VisitId: 1, Phase: "body_input_written", TransportWritten: true}
+	o.Navigation.BodyMovement = &actionsv1.BodyMovementState{SequenceId: n, VisitId: 1, Phase: "body_input_written", TransportWritten: true, PositionEstimated: true, X: -1.5}
 	d, a = groundAction(t, p, o)
 	if a["capability"] != "move_body" {
 		t.Fatal("correlated client pose could not continue retreat", d.Output)
@@ -238,5 +238,23 @@ func TestRangedLegacyGroundUnengagedTargetCannotCreatePull(t *testing.T) {
 	d, a := groundAction(t, p, o)
 	if a != nil {
 		t.Fatal("stance manufactured a new offensive target", d.Output)
+	}
+}
+
+func TestRangedLegacyGroundRejectsMismatchedCompletedPose(t *testing.T) {
+	p, o := legacyGround(t)
+	d, a := groundAction(t, p, o)
+	groundReceipt(t, p, d, a, behavior.ActionSettledUnverified, "body_input_written", true)
+	self := o.Players[fallbackGUID(fallbackSelf)]
+	self.X = -1.5
+	self.PositionEstimated = true
+	var seq uint64
+	for _, c := range a["sequenceId"].(string) {
+		seq = seq*10 + uint64(c-'0')
+	}
+	o.Navigation.BodyMovement = &actionsv1.BodyMovementState{SequenceId: seq, VisitId: 1, Phase: "body_input_written", TransportWritten: true, PositionEstimated: true, X: 999}
+	next, b := groundAction(t, p, o)
+	if b != nil || next.Output["rangedStance"].(map[string]any)["phase"] != "waiting_for_ground_input_observation" {
+		t.Fatal("borrowed unrelated estimated pose", next.Output)
 	}
 }

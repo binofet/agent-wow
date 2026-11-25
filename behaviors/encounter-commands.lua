@@ -690,8 +690,8 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         key=key..":"..id..":"..tostring(point.x)..":"..tostring(point.y)..":"..tostring(point.z)
     end
     local ground=state.rangedGround
-    if ground and (ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId) and (ground.operation or ground.uncertain) then
-        status.phase="ground_input_other_body_unsettled";return
+    if ground and (ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or ground.id~=row.id) and (ground.operation or ground.uncertain) then
+        status.phase="ground_input_prior_scope_unsettled";return
     end
     if not ground or ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or ground.id~=row.id then
         ground={sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,id=row.id,key=key,blocked={}}
@@ -700,9 +700,16 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
     status.lastInputPhase,status.lastInputDetail=ground.lastPhase,ground.lastDetail
     if ground.uncertain then status.phase="ground_input_unknown";return end
     if ground.operation then status.phase="waiting_for_ground_input_receipt";return end
+    local function matching_body_pose(body,expected)
+        if not body or body.sequenceId~=expected or body.visitId~=obs.visitId or body.transportWritten~=true or
+           (body.phase~="body_input_written" and body.phase~="body_settled_written") then return false end
+        if self.positionEstimated~=true then return true end
+        return body.positionEstimated==true and
+            math.abs(from.x-(body.x or 0))<=0.0001 and math.abs(from.y-(body.y or 0))<=0.0001 and math.abs(from.z-(body.z or 0))<=0.0001
+    end
     if ground.awaiting then
         local op,body=ground.awaiting,nav.bodyMovement
-        if not body or body.sequenceId~=op.sequence or body.visitId~=obs.visitId or body.phase~="body_input_written" or body.transportWritten~=true then
+        if not matching_body_pose(body,op.sequence) then
             status.phase="waiting_for_ground_input_observation";return
         end
         ground.awaiting=nil
@@ -710,7 +717,7 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         status.poseSource=self.positionEstimated==true and "client_written_pose" or "observed_pose"
     elseif self.positionEstimated==true then
         -- Do not borrow an unrelated estimated pose as a starting point.
-        if not ground.observedSequence or not nav.bodyMovement or nav.bodyMovement.sequenceId~=ground.observedSequence then status.phase="uncorrelated_estimated_pose";return end
+        if not ground.observedSequence or not matching_body_pose(nav.bodyMovement,ground.observedSequence) then status.phase="uncorrelated_estimated_pose";return end
     end
     if ground.key~=key then ground.key,ground.blocked=key,{} end
     if ground.refused==key then status.phase="ground_input_refused_at_observed_pose";return end
