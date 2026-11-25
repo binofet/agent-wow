@@ -605,4 +605,174 @@ class ActiveContextTests(unittest.TestCase):
                 self.assertEqual(len(server.requests),1)
 
 
+class LocalPromptBudgetTests(unittest.TestCase):
+    class Transport(DirectModel):
+        """Scripted provider transport only: no socket or real model."""
+        def __init__(self, replies, **kwargs):
+            super().__init__('local', 'fixture', 'http://127.0.0.1:1/v1', **kwargs)
+            self.replies, self.sent = list(replies), []
+        def _http(self, payload, cancelled, deadline, progress=None):
+            self._check(cancelled, deadline)
+            self.sent.append(copy.deepcopy(payload))
+            self.last_receipt['httpRequests'] += 1
+            value = self.replies.pop(0)
+            if isinstance(value, tuple):
+                self.last_receipt.update(httpStatus=value[0], providerError=value[1])
+                raise ModelError('provider_http_error')
+            return value
+
+    def exchange(self, client, dispatch, path=None, **kwargs):
+        return client.generate('Exact current SYSTEM; do not alter.',
+            [dict(role='user', content='Original owner goal, with every constraint.')], None,
+            ActiveContextTests.tools('observe', 'mutate'), dispatch, natural=True,
+            transcript_path=path, conversation_key='body:87:owner', request_id='same-request',
+            read_only_tools={'observe'}, **kwargs)
+
+    def test_late_overflow_compacts_history_without_reentering_completed_mutation(self):
+        replies = [chat(('r0', 'observe', dict(key='old'))),
+            chat(('r1', 'observe', dict(key='custody'))), chat(('r2', 'observe', dict(key='recent'))),
+            chat(('write', 'mutate', dict(key='authorized'))),
+            (400, dict(code=500, message='Context size has been exceeded.')),
+            chat(('r3','observe',dict(key='continuation'))), ActiveContextTests.text()]
+        client = self.Transport(replies, local_prompt_budget_bytes=200000, local_max_output_tokens=4096)
+        writes = []
+        def dispatch(name, args):
+            if name == 'mutate':
+                writes.append(args)
+                return dict(ok=True, operationId='physical-write-1', commandWritten=True,
+                    outcomeUnknown=False, replayAllowed=False, gameEffectClaimed=False)
+            return dict(ok=True, result=dict(raw=args['key']*2000,
+                pendingActionIds=['unresolved-original'] if args['key'] == 'custody' else []))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'canonical.json'
+            self.exchange(client, dispatch, path)
+            self.assertEqual(writes, [dict(key='authorized')])
+            before, after = client.sent[4:6]
+            self.assertEqual(before['messages'][0], after['messages'][0])
+            self.assertEqual(before['tools'], after['tools'])
+            self.assertEqual(after['max_tokens'], 4096)
+            old = {r['tool_call_id']:r for r in before['messages'] if r['role']=='tool'}
+            new = {r['tool_call_id']:r for r in after['messages'] if r['role']=='tool'}
+            marker = json.loads(new['r0']['content'])['hostArchivedRead']
+            self.assertEqual(marker['resultSHA256'], hashlib.sha256(old['r0']['content'].encode()).hexdigest())
+            for identity in ('r1', 'r2', 'write'): self.assertEqual(old[identity], new[identity])
+            for left, right in zip(before['messages'], after['messages']):
+                if left['role'] != 'tool': self.assertEqual(left, right)
+            canonical = json.loads(path.read_text())
+            originals={r['tool_call_id']:r for r in canonical['messages'] if r['role']=='tool'}
+            self.assertEqual({identity:originals[identity] for identity in old},old)
+            self.assertNotIn('hostArchivedRead', json.dumps(canonical['messages']))
+            self.assertEqual(canonical['contextProjections'][-1]['reason'], 'retained_overflow_projection')
+            self.assertTrue(canonical['compactHistoricalReads'])
+            self.assertIn('hostArchivedRead',next(r['content'] for r in client.sent[-1]['messages'] if r.get('tool_call_id')=='r0'))
+            self.assertEqual(client.last_receipt['toolCalls'], 5)
+            self.assertTrue(client.last_receipt['contextOverflowRecovery']['recovered'])
+            self.assertFalse(client.last_receipt['promptBudget']['tokenCountKnown'])
+            # Reopening the same request never starts a second mutation exchange.
+            reopened = self.Transport([], local_prompt_budget_bytes=200000)
+            with self.assertRaises(ModelError) as caught: self.exchange(reopened, dispatch, path)
+            self.assertEqual(caught.exception.reason, 'conversation_request_already_entered')
+            self.assertEqual(writes, [dict(key='authorized')])
+            restarted=self.Transport([ActiveContextTests.text()],local_prompt_budget_bytes=200000)
+            restarted.generate('Exact current SYSTEM; do not alter.',
+                [dict(role='user',content='Later genuine owner clarification.')],None,
+                ActiveContextTests.tools('observe','mutate'),lambda *_:self.fail('History must not redispatch'),
+                natural=True,transcript_path=path,conversation_key='body:87:owner',
+                request_id='clarification',read_only_tools={'observe'})
+            wire=restarted.sent[0]['messages']
+            self.assertEqual([r['content'] for r in wire if r['role']=='user'],
+                ['Original owner goal, with every constraint.','Later genuine owner clarification.'])
+            self.assertEqual(next(r for r in wire if r.get('tool_call_id')=='write'),old['write'])
+            self.assertEqual(json.loads(path.read_text())['messages'][:len(canonical['messages'])],canonical['messages'])
+            self.assertEqual(restarted.last_receipt['promptBudget']['reason'],'retained_overflow_projection')
+
+    def test_configured_budget_uses_only_old_reads_and_preserves_latest_pairs(self):
+        client = self.Transport([], local_prompt_budget_bytes=4500)
+        client.last_receipt = {}
+        rows = [dict(role='user', content='Exact goal')]
+        for identity in ('old', 'recent1', 'recent2'):
+            rows += [chat((identity, 'observe', dict(key=identity)))['choices'][0]['message'],
+                dict(role='tool', tool_call_id=identity, content=json.dumps(dict(facts='x'*1500)))]
+        original = copy.deepcopy(rows)
+        payload, audit = client._local_prompt('System', rows, [], {'observe'}, {}, None, canonical=rows)
+        self.assertLessEqual(audit['afterBytes'], 4500)
+        self.assertEqual(len(audit['archivedReadResults']), 1)
+        self.assertEqual(payload['messages'][-4:], rows[-4:])
+        self.assertEqual(rows, original)
+
+    def test_second_overflow_halts_same_request_without_a_second_recovery(self):
+        error=(400,dict(code='context_length_exceeded',message='Context size has been exceeded.'))
+        client=self.Transport([chat(('r0','observe',dict(key='old'))),
+            chat(('r1','observe',dict(key='middle'))),chat(('write','mutate',dict(key='once'))),error,error],
+            local_prompt_budget_bytes=200000)
+        writes=[]
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(ModelError) as caught:
+            self.exchange(client,lambda name,args: writes.append(args) or dict(commandWritten=True)
+                if name=='mutate' else dict(facts='x'*3000),Path(folder)/'canonical.json')
+        self.assertEqual(caught.exception.reason,'provider_http_error')
+        self.assertEqual(writes,[dict(key='once')])
+        self.assertEqual(len(client.sent),5)
+        self.assertTrue(client.last_receipt['contextOverflowRecovery']['retryStarted'])
+        self.assertFalse(client.last_receipt['contextOverflowRecovery']['recovered'])
+
+    def test_protected_floor_after_write_fails_without_retry_or_lost_receipt(self):
+        client = self.Transport([chat(('write', 'mutate', dict(key='once')))], local_prompt_budget_bytes=4000)
+        writes = []
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'canonical.json'
+            with self.assertRaises(ModelError) as caught:
+                self.exchange(client, lambda *_: writes.append('once') or dict(
+                    outcomeUnknown=False, commandWritten=True, operationId='keep-exact', raw='receipt'*1000), path)
+            self.assertEqual(caught.exception.reason, 'local_prompt_protected_floor_exceeds_budget')
+            self.assertEqual(writes, ['once'])
+            self.assertEqual(len(client.sent), 1)
+            state = json.loads(path.read_text())
+            self.assertIsNone(state['pending'])
+            self.assertIn('keep-exact', state['messages'][-1]['content'])
+            self.assertEqual(state['messages'][-1]['tool_call_id'], 'write')
+            self.assertEqual(state['contextProjections'][-1]['archivedReadResults'], [])
+
+    def test_overflow_without_safe_reduction_never_retries(self):
+        for error in [(400, dict(message='Context size has been exceeded.')),
+                      (400, dict(message='Invalid schema')), (500, dict(message='Context size has been exceeded.'))]:
+            with self.subTest(error=error):
+                client = self.Transport([error], local_prompt_budget_bytes=200000)
+                with tempfile.TemporaryDirectory() as folder, self.assertRaises(ModelError):
+                    self.exchange(client, lambda *_:self.fail('no tools'), Path(folder)/'canonical.json')
+                self.assertEqual(len(client.sent), 1)
+                self.assertFalse(client.last_receipt.get('contextOverflowRecovery', {}).get('retryStarted', False))
+
+    def test_exact_payload_counter_is_optional_and_never_estimated_from_bytes(self):
+        client = self.Transport([], local_prompt_token_limit=100,
+            local_token_counter=lambda p:80 if 'hostArchivedRead' in json.dumps(p) else 200)
+        client.last_receipt = {}
+        rows=[]
+        for identity in ('old', 'recent1', 'recent2'):
+            rows += [chat((identity,'observe',dict(key=identity)))['choices'][0]['message'],
+                dict(role='tool',tool_call_id=identity,content=json.dumps(dict(facts='x'*1500)))]
+        _, audit = client._local_prompt('System', rows, [], {'observe'}, {}, None, canonical=rows)
+        self.assertEqual((audit['beforeTokens'], audit['afterTokens']), (200, 80))
+        self.assertTrue(audit['tokenCountKnown'])
+        for counter in (lambda _:True, lambda _:-1, lambda _:None):
+            client.local_token_counter=counter
+            with self.assertRaises(ModelError): client._local_prompt('System',rows,[],{'observe'},{},None,canonical=rows)
+        for kwargs in (dict(local_prompt_token_limit=100),dict(local_prompt_budget_bytes=True),
+                       dict(local_max_output_tokens=False)):
+            with self.assertRaises(ModelError): self.Transport([],**kwargs)
+        with self.assertRaises(ModelError):
+            DirectModel('openai','fixture','https://example.invalid/v1',api_key_env='FIXTURE',local_prompt_budget_bytes=5000)
+
+    def test_default_local_and_other_provider_payloads_remain_unchanged(self):
+        local = self.Transport([])
+        self.assertNotIn('max_tokens', local._payload('System',[],[],natural=True))
+        remote=DirectModel('openai','fixture','https://example.invalid/v1',api_key_env='FIXTURE')
+        self.assertNotIn('max_tokens',remote._payload('System',[],[],natural=True))
+
+    def test_archival_requires_durable_storage_before_any_http_or_dispatch(self):
+        client=self.Transport([],local_prompt_budget_bytes=10000)
+        with self.assertRaises(ModelError) as caught: self.exchange(client,lambda *_:self.fail('no dispatch'))
+        self.assertEqual(caught.exception.reason,'local_prompt_budget_requires_durable_transcript')
+        self.assertEqual(client.sent,[])
+
+
 if __name__=="__main__":unittest.main()

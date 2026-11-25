@@ -243,7 +243,8 @@ def _schema(value, schema, depth=0):
 class DirectModel:
     def __init__(self, provider, model, base_url, api_key_env=None, timeout=None, *,
                  max_tool_rounds=None, max_request_bytes=8*1024*1024, max_response_bytes=1024*1024,
-                 max_output_tokens=8192):
+                 max_output_tokens=8192, local_prompt_budget_bytes=None,
+                 local_prompt_token_limit=None, local_token_counter=None, local_max_output_tokens=None):
         if provider not in ("local", "openai", "claude", "gemini"):
             raise ModelError("unsupported_provider")
         if not isinstance(model, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", model) is None:
@@ -275,6 +276,18 @@ class DirectModel:
         self.natural_tool_rounds, self._conversations = max_tool_rounds, {}
         self.max_request_bytes, self.max_response_bytes = max_request_bytes, max_response_bytes
         self.max_output_tokens, self.last_receipt = max_output_tokens, None
+        if local_prompt_budget_bytes is not None and (provider != "local" or
+                type(local_prompt_budget_bytes) is not int or local_prompt_budget_bytes <= 0):
+            raise ModelError("local_positive_prompt_byte_budget_required")
+        self.local_prompt_budget_bytes = local_prompt_budget_bytes
+        if ((local_prompt_token_limit is not None and (provider != "local" or
+                type(local_prompt_token_limit) is not int or local_prompt_token_limit <= 0 or not callable(local_token_counter)))
+                or local_token_counter is not None and local_prompt_token_limit is None
+                or local_max_output_tokens is not None and (provider != "local" or
+                    type(local_max_output_tokens) is not int or local_max_output_tokens <= 0)):
+            raise ModelError("local_explicit_prompt_counter_and_limits_required")
+        self.local_prompt_token_limit, self.local_token_counter = local_prompt_token_limit, local_token_counter
+        self.local_max_output_tokens = local_max_output_tokens
 
     def _check(self, cancelled, deadline):
         if cancelled is not None and cancelled():
@@ -366,6 +379,8 @@ class DirectModel:
             result = dict(model=self.model, messages=[dict(role="system",content=system),*conversation],
                 tools=[dict(type="function",function=t) for t in tools], tool_choice="auto" if natural else "required", stream=False)
             if not natural: result["max_tokens"] = self.max_output_tokens
+            elif self.provider == "local" and self.local_max_output_tokens is not None:
+                result["max_tokens"] = self.local_max_output_tokens
             return result
         if self.provider == "claude":
             return dict(model=self.model, system=system, messages=conversation,
@@ -562,6 +577,99 @@ class DirectModel:
             activeConversationBytes=len(_packed(active, self.max_request_bytes*8)))
         return active
 
+    def _local_prompt(self, system, active, tools, read_only_tools, unknown, pending, *, canonical, aggressive=False):
+        """Only outgoing historical pure-read bodies may be replaced, never receipts.
+
+        Byte limits are transport limits, not token estimates. An optional trusted
+        host counter must count this exact model's rendered payload (including
+        schema/template overhead); this module never guesses bytes/token.
+        """
+        projected = copy.deepcopy(active)
+        def payload(): return self._payload(system, projected, tools, natural=True)
+        def measure():
+            value = payload()
+            size = len(_packed(value, self.max_request_bytes*8))
+            tokens = None
+            if self.local_token_counter is not None:
+                try: tokens = self.local_token_counter(copy.deepcopy(value))
+                except Exception as error: raise ModelError("local_prompt_count_unavailable") from error
+                if type(tokens) is not int or tokens < 0:
+                    raise ModelError("local_prompt_count_invalid")
+            return size, tokens
+        def fits(size, tokens):
+            return ((self.local_prompt_budget_bytes is None or size <= self.local_prompt_budget_bytes)
+                    and (self.local_prompt_token_limit is None or tokens <= self.local_prompt_token_limit))
+        before_bytes, before_tokens = measure()
+        size, tokens = before_bytes, before_tokens
+        changed = []
+        # A whole recent assistant/tool batch remains verbatim, including mixed
+        # read/mutation batches. No partial pair or altered call ID is produced.
+        groups, current = [], None
+        for index, message in enumerate(active):
+            if message.get("role") == "assistant":
+                rows = message.get("tool_calls")
+                current = None
+                if isinstance(rows, list) and rows:
+                    calls = {row.get("id"): row for row in rows if isinstance(row, dict)}
+                    if len(calls) == len(rows):
+                        current = dict(calls=calls, results=[])
+                        groups.append(current)
+            elif message.get("role") == "tool" and current is not None:
+                current["results"].append((index, message))
+            else:
+                current = None
+        if not pending and (aggressive or not fits(size, tokens)):
+            for group in groups[:-2]:
+                results = group["results"]
+                if (len(results) != len(group["calls"]) or
+                        {m.get("tool_call_id") for _, m in results} != set(group["calls"])):
+                    continue
+                for index, message in results:
+                    call_id = message.get("tool_call_id")
+                    call = group["calls"][call_id]
+                    function = call.get("function", {})
+                    name, original = function.get("name"), message.get("content")
+                    if name not in read_only_tools or not isinstance(original, str): continue
+                    try:
+                        args = _decode(function["arguments"])
+                        fingerprint = hashlib.sha256(_packed([name, args], self.max_request_bytes)).hexdigest()
+                        full = canonical[index]["content"]
+                        result = _decode(full)
+                        if fingerprint in unknown or _read_custody(result): continue
+                    except (KeyError, TypeError, ValueError, RecursionError, UnicodeError): continue
+                    raw = full.encode()
+                    reference = dict(transcriptMessage=index, toolCallId=call_id,
+                        resultSHA256=hashlib.sha256(raw).hexdigest(), resultBytes=len(raw))
+                    marker = dict(hostArchivedRead=reference, tool=name,
+                        note="Historical pure-read body omitted from this API copy, not a summary or current fact. "
+                            "Exact call and full result remain in the same durable transcript. "
+                            "Refresh the original read for current facts; no action or receipt was omitted.")
+                    replacement = _packed(marker, self.max_request_bytes).decode()
+                    if len(replacement.encode()) >= len(original.encode()): continue
+                    projected[index]["content"] = replacement
+                    changed.append(reference)
+        if changed: size, tokens = measure()
+        audit = dict(reason="context_overflow" if aggressive else "configured_budget",
+            canonicalMessagesUnchanged=True, archivedReadResults=changed,
+            beforeBytes=before_bytes, afterBytes=size, byteLimit=self.local_prompt_budget_bytes,
+            beforeTokens=before_tokens, afterTokens=tokens, tokenLimit=self.local_prompt_token_limit,
+            tokenCountKnown=tokens is not None, exactPayloadSHA256=hashlib.sha256(
+                _packed(payload(), self.max_request_bytes*8)).hexdigest())
+        self.last_receipt["promptBudget"] = copy.deepcopy(audit)
+        if not fits(size, tokens):
+            raise ModelError("local_prompt_protected_floor_exceeds_budget")
+        return payload(), audit
+
+    def _local_context_overflow(self, error):
+        if (self.provider != "local" or error.reason != "provider_http_error" or
+                self.last_receipt.get("httpStatus") not in (400, 413)):
+            return False
+        diagnostic = self.last_receipt.get("providerError", {})
+        code = str(diagnostic.get("code", "")).lower()
+        message = str(diagnostic.get("message", "")).lower()
+        return (code in ("context_length_exceeded", "context_size_exceeded") or
+            re.search(r"\bcontext (?:size |length |window )?(?:has been )?exceeded\b", message) is not None)
+
     def _generate_natural(self, system, messages, reply_schema, tools, dispatch, *, cancelled,
                           request_id, progress, transcript_path, conversation_key, assistant_text, read_only_tools):
         identifier = request_id or uuid.uuid4().hex
@@ -573,6 +681,9 @@ class DirectModel:
             if (not isinstance(system, str) or not isinstance(messages, list) or not isinstance(tools, list)
                     or len(tools)>64 or not callable(dispatch)):
                 raise ModelError("invalid_generation_input")
+            if (self.provider == "local" and (self.local_prompt_budget_bytes is not None or
+                    self.local_prompt_token_limit is not None) and transcript_path is None):
+                raise ModelError("local_prompt_budget_requires_durable_transcript")
             if not isinstance(identifier, str) or re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", identifier) is None:
                 raise ModelError("invalid_request_id")
             if conversation_key is None and transcript_path is None: conversation_key = "in-memory"
@@ -641,8 +752,48 @@ class DirectModel:
                 while self.natural_tool_rounds is None or index < self.natural_tool_rounds:
                     self._check(cancelled, deadline)
                     active = self._active_conversation(conversation, read_only_tools, state["unknown"], state["pending"])
-                    value = self._natural_http(self._payload(system, active, list(functions.values()), natural=True),
-                                               cancelled, deadline, progress)
+                    enabled = self.provider == "local" and (self.local_prompt_budget_bytes is not None or
+                        self.local_prompt_token_limit is not None)
+                    def prepare(aggressive=False):
+                        self.last_receipt.pop("promptBudget", None)
+                        try:
+                            retained = state.get("compactHistoricalReads") is True and not aggressive
+                            prepared, audit = self._local_prompt(system, active, list(functions.values()), read_only_tools,
+                                state["unknown"], state["pending"], canonical=conversation, aggressive=aggressive or retained)
+                            if retained:
+                                audit["reason"] = "retained_overflow_projection"
+                                self.last_receipt["promptBudget"] = audit
+                            return prepared
+                        finally:
+                            audit = copy.deepcopy(self.last_receipt.get("promptBudget"))
+                            if audit is not None:
+                                state.setdefault("contextProjections", []).append(dict(requestId=identifier,
+                                    round=index, **audit))
+                                journal.save()  # References only; never changes original messages/results.
+                    payload = prepare() if enabled else self._payload(system, active, list(functions.values()), natural=True)
+                    try:
+                        value = self._natural_http(payload, cancelled, deadline, progress)
+                    except ModelError as error:
+                        if not enabled or not self._local_context_overflow(error) or "contextOverflowRecovery" in self.last_receipt:
+                            raise
+                        recovery = dict(httpStatus=self.last_receipt.get("httpStatus"),
+                            providerError=copy.deepcopy(self.last_receipt.get("providerError", {})),
+                            retryStarted=False, recovered=False)
+                        self.last_receipt["contextOverflowRecovery"] = recovery
+                        smaller = prepare(aggressive=True)
+                        if len(_packed(smaller, self.max_request_bytes)) >= len(_packed(payload, self.max_request_bytes)):
+                            raise ModelError("local_context_overflow_no_safe_reduction") from error
+                        state["compactHistoricalReads"] = True
+                        journal.save()  # Reuse the safer projection in later rounds/restarts, not the rejected window.
+                        self._check(cancelled, deadline)
+                        recovery["retryStarted"] = True
+                        for key in ("httpStatus", "providerError", "transportErrorType"):
+                            self.last_receipt.pop(key, None)
+                        # The rejected HTTP response yielded no calls. Only a
+                        # genuinely smaller projection is retried, in this same
+                        # request/journal/seen namespace, never dispatch again.
+                        value = self._natural_http(smaller, cancelled, deadline, progress)
+                        recovery["recovered"] = True
                     native, calls = self._parse(value, index)
                     self._check(cancelled, deadline)
                     if not calls:

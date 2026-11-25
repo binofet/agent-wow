@@ -2774,11 +2774,15 @@ class DirectBrain(AgentBrain):
     """Conversation brain using model HTTP APIs and actor-bound native tools."""
     def __init__(self, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen",
                  character_class="priest", developer_workspace=None, model=None, *,
-                 provider="local", base_url=None, api_key_env=None):
+                 provider="local", base_url=None, api_key_env=None, local_prompt_budget_bytes=None,
+                 local_prompt_token_limit=None, local_token_counter=None, local_max_output_tokens=None):
         super().__init__(state_dir, timeout, stopped, character_name, character_class,
                          developer_workspace, model, None)
         from direct_model import DirectModel
-        self.client = DirectModel(provider, self.model, base_url, api_key_env, timeout)
+        limits = {key:value for key,value in dict(local_prompt_budget_bytes=local_prompt_budget_bytes,
+            local_prompt_token_limit=local_prompt_token_limit, local_token_counter=local_token_counter,
+            local_max_output_tokens=local_max_output_tokens).items() if value is not None}
+        self.client = DirectModel(provider, self.model, base_url, api_key_env, timeout, **limits)
         self.transport = dict(provider=provider, baseURL=self.client.base_url)
         self.last_api_receipt = None
         self.persona = (f"You are {character_name}, a {character_class} companion in World of Warcraft. "
@@ -6111,6 +6115,10 @@ def main(argv=None):
     parser.add_argument("--model-base-url", help="Explicit base URL for the selected model API")
     parser.add_argument("--local-provider", choices=("lmstudio", "ollama"))
     parser.add_argument("--model-api-key-env", help="Environment variable name for the selected provider key")
+    parser.add_argument("--local-prompt-budget-bytes", type=int,
+                        help="Opt-in local API prompt byte bound/archival; not a token count or model context limit")
+    parser.add_argument("--local-max-output-tokens", type=int,
+                        help="Explicit local natural-reply output cap; reserve generation space independently of input bytes")
     parser.add_argument("--included-usage-only", action="store_true",
                         help="For the Codex provider, start replies only while included usage is available")
     parser.add_argument("--model", type=explicit_model, help="Explicit model ID for the selected provider")
@@ -6131,6 +6139,10 @@ def main(argv=None):
     parser.add_argument("--banter-seconds", type=float, default=180,
                         help="Minimum gap for occasional initiated conversation; 0 disables it (default 180)")
     args = parser.parse_args(argv)
+    local_limits = {key:value for key,value in dict(local_prompt_budget_bytes=args.local_prompt_budget_bytes,
+        local_max_output_tokens=args.local_max_output_tokens).items() if value is not None}
+    if local_limits and args.model_provider != 'local':
+        parser.error('Local prompt/output limits require the local provider')
     if args.continue_owner_whisper is not None:
         try:owner_whisper_continuation(args.continue_owner_whisper)
         except ConversationError as error:parser.error(str(error))
@@ -6138,7 +6150,7 @@ def main(argv=None):
             parser.error('Explicit owner continuation requires direct-model run without --resume-whispers')
     if args.model_provider in ("local", "openai", "claude", "gemini"):
         from direct_model import DirectModel
-        DirectModel(args.model_provider, args.model, args.model_base_url, args.model_api_key_env, args.reply_timeout)
+        DirectModel(args.model_provider, args.model, args.model_base_url, args.model_api_key_env, args.reply_timeout, **local_limits)
     else:
         model_transport(args.model_provider, model=args.model, base_url=args.model_base_url,
                         local_provider=args.local_provider, api_key_env=args.model_api_key_env)
@@ -6200,7 +6212,7 @@ def main(argv=None):
         if args.model_provider in ("local", "openai", "claude", "gemini"):
             brain = DirectBrain(state, args.reply_timeout, stopped, args.character_name,
                 args.character_class, workspace, args.model, provider=args.model_provider,
-                base_url=args.model_base_url, api_key_env=args.model_api_key_env)
+                base_url=args.model_base_url, api_key_env=args.model_api_key_env, **local_limits)
         else:
             provider_options = {} if args.model_provider == "codex" else dict(provider=args.model_provider,
                 base_url=args.model_base_url, local_provider=args.local_provider, api_key_env=args.model_api_key_env)
