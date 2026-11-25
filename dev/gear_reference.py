@@ -55,6 +55,7 @@ def _known(value):
 def _normalize(row,item,meta):
     out={key:copy.deepcopy(row[key]) for key in (
         'itemId','quality','armor','delayMs','itemLevel','requiredLevel','flags',
+        'maxCount','stackable','startQuest','lockId','pageText','bagFamily','containerSlots',
         'allowableClass','allowableRace','requiredSkill','requiredSkillRank','requiredSpell',
         'requiredHonorRank','requiredCityRank','requiredReputationFaction','requiredReputationRank',
         'area','map','holiday','bonding','block','randomProperty','randomSuffix','itemSet',

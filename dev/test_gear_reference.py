@@ -49,6 +49,19 @@ class GearReferenceTests(unittest.TestCase):
         socketed=next(r for r in rows.values() if any(s[1] for s in r['sockets']))
         self.assertTrue(gear.lookup(socketed['itemId'])['sockets'])
 
+    def test_paired_slot_legality_fields_are_actual_source_not_defaults(self):
+        rows,items,meta=gear._data()
+        for wanted in (0,1):
+            source=next(r for r in rows.values() if r['maxCount']==wanted and items[str(r['itemId'])]['inventoryType']==11)
+            row=gear.lookup(source['itemId'])
+            self.assertEqual(row['maxCount'],wanted)
+            self.assertEqual(row['stackable'],source['stackable'])
+        unknown=copy.deepcopy(rows[1196]);unknown['maxCount']=None
+        row=gear._normalize(unknown,items['1196'],meta)
+        self.assertIsNone(row['maxCount']);self.assertFalse(row['available'])
+        for key in ('startQuest','lockId','pageText','bagFamily','containerSlots'):
+            self.assertEqual(gear.lookup(1196)[key],rows[1196][key])
+
     def test_nongear_class_is_truthful_and_no_recipient_or_live_claim(self):
         row=gear.lookup(1645)
         self.assertEqual(row['itemClass'],0);self.assertTrue(row['hasSpell']);self.assertTrue(row['referenceOnly'])

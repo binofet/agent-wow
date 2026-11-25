@@ -12,6 +12,8 @@ import runpy
 sql_rows = runpy.run_path(str(Path(__file__).with_name('build-game-catalog')))['sql_rows']
 SCALARS = {
     'itemId':'entry', 'requiredLevel':'requiredlevel',
+    'maxCount':'maxcount', 'stackable':'stackable', 'startQuest':'startquest',
+    'lockId':'lockid', 'pageText':'pagetext', 'bagFamily':'bagfamily', 'containerSlots':'containerslots',
     'allowableClass':'allowableclass', 'allowableRace':'allowablerace',
     'requiredSkill':'requiredskill', 'requiredSkillRank':'requiredskillrank',
     'requiredSpell':'requiredspell', 'requiredHonorRank':'requiredhonorrank',
