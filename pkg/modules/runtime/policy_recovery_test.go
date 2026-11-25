@@ -13,8 +13,12 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -357,5 +361,99 @@ func TestPolicyDeathDungeonEntryUsesExistingTypedRouteAndExactPacketFence(t *tes
 	op := &policySpell{capability: "enter_corpse_instance", recovery: &policyRecovery{self: 22, epoch: 1, trigger: 123}, movement: &policyMovement{self: 22}}
 	if !op.matchesActionPacket(opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, 123)) || op.matchesActionPacket(opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, 124)) || op.matchesActionPacket(opcode.CMSGReclaimCorpse, make([]byte, 8)) {
 		t.Fatal("exact dungeon trigger fence lost")
+	}
+}
+
+func corpseEntryPolicyAction() map[string]any {
+	return map[string]any{"capability": "enter_corpse_instance", "sessionId": friendlyEncounterSession, "selfGuid": "22", "deathEpoch": "1", "expectedPositionRevision": "7", "corpseQueryRevision": "1", "rangeYards": .25, "triggerId": float64(123)}
+}
+func TestPolicyDeathDungeonEntryRealManagerScopedStopTriggerAndDistinctReceipt(t *testing.T) {
+	x := newInstanceEntryFixture(t)
+	var token string
+	x.handle = func(ctx context.Context, method string, request, result proto.Message) error {
+		q := &actionsv1.CorpseApproachRequest{}
+		raw, marshalErr := proto.Marshal(request)
+		decodeErr := proto.Unmarshal(raw, q)
+		if marshalErr != nil || decodeErr != nil || request.ProtoReflect().Descriptor().FullName() != q.ProtoReflect().Descriptor().FullName() || method != actionsv1.BuddyActions_ApproachCorpse_FullMethodName || !q.EnterInstance || q.TriggerId != 123 || q.DeathEpoch != 1 || q.CorpseQueryRevision != 1 {
+			t.Fatal("wrong typed native request", method, request)
+		}
+		incoming := instanceEntryIncoming(ctx)
+		token, _ = modcb.IncomingPolicySpell(incoming)
+		writer := x.m.moduleScopedPacketWriter(friendlyEncounterSession, actionsModule)
+		if err := writer(incoming, opcode.MSGMoveStop, policyMovementPacket(22), instanceEntryScope()); err != nil {
+			t.Fatal("real Manager rejected scoped recovery STOP", err)
+		}
+		if err := writer(incoming, opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, 123), instanceEntryScope()); err != nil {
+			t.Fatal("real Manager rejected scoped recovery trigger", err)
+		}
+		if err := writer(incoming, opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, 123), instanceEntryScope()); !modcb.PacketWasNotDispatched(err) {
+			t.Fatal("duplicate scoped trigger admitted", err)
+		}
+		for _, code := range []uint32{opcode.MSGMoveStop, opcode.CMSGAreatrigger} {
+			body := policyMovementPacket(22)
+			if code == opcode.CMSGAreatrigger {
+				body = binary.LittleEndian.AppendUint32(nil, 123)
+			}
+			if err := x.m.modulePacketWriter(friendlyEncounterSession, actionsModule)(incoming, code, body); !modcb.PacketWasNotDispatched(err) {
+				t.Fatal("unscoped recovery callback admitted", err)
+			}
+		}
+		proto.Merge(result, &actionsv1.State{Recovery: &actionsv1.RecoveryState{Phase: "corpse_entry_requested", CorpseEntryAttempted: true, CorpseEntryWritten: true}})
+		return nil
+	}
+	receipt := x.step(t, corpseEntryPolicyAction())
+	if receipt.Outcome != behavior.ActionSettledUnverified || receipt.Payload["capability"] != "enter_corpse_instance" || receipt.Payload["native_phase"] != "corpse_entry_requested" || receipt.Payload["effect_observed"] != false || len(x.callback.writes) != 2 || x.callback.writes[0].Opcode != opcode.MSGMoveStop || x.callback.writes[1].Opcode != opcode.CMSGAreatrigger {
+		t.Fatal("wrong real transport or recovery receipt", receipt, x.callback.writes)
+	}
+	if err := x.m.writePolicyInstanceEntryScoped(context.Background(), token, friendlyEncounterSession, actionsModule, opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, 123), instanceEntryScope()); !modcb.PacketWasNotDispatched(err) {
+		t.Fatal("retired recovery dispatch wrote again", err)
+	}
+}
+func TestPolicyDeathDungeonEntryRealManagerRejectsUnscopedWrongOrUnstopped(t *testing.T) {
+	for _, mode := range []string{"no_stop", "wrong_trigger", "foreign_body", "foreign_connection", "foreign_visit", "foreign_map", "older_motion", "unscoped"} {
+		t.Run(mode, func(t *testing.T) {
+			x := newInstanceEntryFixture(t)
+			wantWrites := 0
+			x.handle = func(ctx context.Context, method string, request, result proto.Message) error {
+				incoming := instanceEntryIncoming(ctx)
+				writer := x.m.moduleScopedPacketWriter(friendlyEncounterSession, actionsModule)
+				scope := instanceEntryScope()
+				body := binary.LittleEndian.AppendUint32(nil, 123)
+				if mode != "no_stop" && mode != "unscoped" {
+					if err := writer(incoming, opcode.MSGMoveStop, policyMovementPacket(22), scope); err != nil {
+						t.Fatal(err)
+					}
+					wantWrites = 1
+				}
+				switch mode {
+				case "wrong_trigger":
+					body = binary.LittleEndian.AppendUint32(nil, 124)
+				case "foreign_body":
+					scope.SelfGuid = 23
+				case "foreign_connection":
+					scope.ConnectionId = "other"
+				case "foreign_visit":
+					scope.VisitRevision++
+				case "foreign_map":
+					scope.MapId++
+				case "older_motion":
+					scope.MotionRevision--
+				}
+				var err error
+				if mode == "unscoped" {
+					err = x.m.modulePacketWriter(friendlyEncounterSession, actionsModule)(incoming, opcode.CMSGAreatrigger, body)
+				} else {
+					err = writer(incoming, opcode.CMSGAreatrigger, body, scope)
+				}
+				if !modcb.PacketWasNotDispatched(err) {
+					t.Fatal("unsafe real Manager callback admitted", mode, err)
+				}
+				return status.Error(codes.FailedPrecondition, "synthetic native refusal after rejected callback")
+			}
+			x.step(t, corpseEntryPolicyAction())
+			if len(x.callback.writes) != wantWrites {
+				t.Fatal("rejected callback reached transport", mode, x.callback.writes)
+			}
+		})
 	}
 }

@@ -97,6 +97,10 @@ func (p *SessionPolicy) resolveDeathAction(action map[string]any, capability str
 						return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact entrance trigger ID required")
 					}
 					values["enter_instance"] = protoreflect.ValueOfBool(true)
+					// Reuse the exact scoped STOP/trigger ledger, while retaining
+					// the death-specific receipt and native death/query admission.
+					op.instanceEntry = &policyInstanceEntry{self: selfID, trigger: op.recovery.trigger}
+					op.movement = nil
 				}
 			}
 		}
