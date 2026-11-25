@@ -661,9 +661,17 @@ func TestStandingPriorYieldsToDistantRallyAndPausesForNearbyHazard(t *testing.T)
 			if a["capability"] != "approach_target" || a["targetGuid"] != "87" {
 				t.Fatal("rally failed at observed 54-yard guide gap", d.Output)
 			}
+			// Real intermediate progress must not mistake the offensive upper
+			// range for danger: the unchanged pack is now 37 yards away.
+			self.X = 43
+			d = p.decide(observeRanged(t, p, o, false))
+			a, _ = d.Output["action"].(map[string]any)
+			if a["capability"] != "approach_target" || a["targetGuid"] != "87" {
+				t.Fatal("harmless intermediate progress stalled the rally", d.Output)
+			}
 			// Still OOC, but the hazard is now genuinely close. Preserve the rally order
 			// and settle its exact token before any default withdrawal can take custody.
-			npc.X = 3
+			npc.X = self.X + 3
 			self.Moving = true
 			o.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: 87, VisitId: 1}
 			d = p.decide(observeRanged(t, p, o, false))
@@ -789,5 +797,45 @@ func TestStandingPriorRallyExceptionRequiresHarmlessFactsAndAutomaticOrigin(t *t
 				t.Fatal("unproven harmlessness or explicit finite order incorrectly yielded", out)
 			}
 		})
+	}
+}
+
+func TestStandingPriorRallyCompletesThroughHarmlessSpacingBand(t *testing.T) {
+	p := newFallbackPolicyTest(t, "")
+	o := sludgePriorObservation()
+	self := o.Players["4"]
+	self.CombatKnown = true
+	self.X, self.Y, self.Z = 0, 0, 0
+	o.Players["3"].X = 100
+	o.Players["87"] = fallbackPlayer(87)
+	guide := o.Players["87"]
+	guide.MapId = proto.Uint32(349)
+	guide.PositionKnown = true
+	guide.MovementKnown = true
+	guide.X, guide.Y, guide.Z = 54, 0, 0
+	npc := o.Targets[fallbackGUID(fallbackNPC)]
+	npc.X, npc.Y, npc.Z = 80, 0, 0
+	waitTaskCommand(t, p, map[string]any{"task": "rally_to", "id": "whole-rally", "guideGuid": "87", "deadlineMonotonicMs": 999999999999})
+	d := p.decide(observeRanged(t, p, o, false))
+	a, _ := d.Output["action"].(map[string]any)
+	if a["mode"] != "acquire" || a["owner"] != "task:whole-rally" {
+		t.Fatal(d.Output)
+	}
+	settleWaitOwnership(t, p, d, behavior.ActionConfirmed, "acquire", "task:whole-rally", "task-token")
+	o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: "task:whole-rally", RemainingMs: 3000}
+	for _, x := range []float32{0, 43, 48} {
+		self.X = x
+		d = p.decide(observeRanged(t, p, o, false))
+		a, _ = d.Output["action"].(map[string]any)
+		if a["capability"] != "approach_target" || a["targetGuid"] != "87" {
+			t.Fatalf("stalled at own x=%v: %#v", x, d.Output)
+		}
+	}
+	self.X = 49
+	d = p.decide(observeRanged(t, p, o, false))
+	a, _ = d.Output["action"].(map[string]any)
+	task, _ := d.Output["task"].(map[string]any)
+	if a["mode"] != "release" || a["owner"] != "task:whole-rally" || task["reason"] != "rendezvous_observed" {
+		t.Fatal("actual stopped witness within response radius did not finish", d.Output)
 	}
 }

@@ -868,7 +868,7 @@ local function ranged_travel_safe(obs,row,in_combat)
     end
     local ids,nearest,distance,complete=ranged_targets(obs,row)
     if not complete then return false end
-    if #ids>0 and (not distance or distance<=row.maxRangeYards+row.clearanceYards) then return false end
+    if #ids>0 and (not distance or distance<=row.minRangeYards+row.clearanceYards) then return false end
     for _,id in ipairs(ids) do
         local npc=(obs.targets or {})[id]
         if npc.positionInferred==true or npc.positionEstimated==true or npc.engaged==true or
