@@ -1221,6 +1221,10 @@ def owner_message_scope(text, names):
     boundary=r'[!?;\n]|(?<!\d)\.|\.(?!\d)|(?:,\s*(?:(?:and|also)\s+)?|\s+(?:and|also)\s+)(?=(?:'+audience+r'))'
     spans=[];previous=0
     for split in re.finditer(boundary,text,re.IGNORECASE):
+        prefix=text[previous:split.start()].strip()
+        named_only=(pattern and re.fullmatch(r'(?:hey\s+)?(?:'+pattern+r')(?:[\s,&]*(?:(?:and|or|also)\s+)?(?:'+pattern+r'))*',prefix,re.IGNORECASE))
+        if split.group()[0] in ', \t' and named_only:
+            continue # This comma/conjunction still belongs to the vocative.
         spans.append((previous,split.start()));previous=split.end()
     spans.append((previous,len(text)))
     clauses=[]
