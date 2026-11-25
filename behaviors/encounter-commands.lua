@@ -66,13 +66,16 @@ local function on_event(event)
     if ground and ground.operation and event.receipt then
         local receipt,p=event.receipt,event.receipt.payload or {}
         local op=ground.operation
-        if p.self_guid==ground.selfGuid and p.visit_id==ground.visitId and
-           (op.kind=="move_body" and p.capability=="move_body" and p.sequence_id==op.sequence or
+        -- The Session harness validates receipt session/action reservation;
+        -- generic spell payloads intentionally have no self/visit fields.
+        if guid(receipt.action_id) and (not op.actionId or op.actionId==receipt.action_id) and
+           (op.kind=="move_body" and p.capability=="move_body" and p.self_guid==ground.selfGuid and p.visit_id==ground.visitId and p.sequence_id==op.sequence or
             op.kind=="cast_spell" and p.capability=="cast_spell" and p.target_guid==op.target and p.spell_id==op.spell) then
+            op.actionId=receipt.action_id
             if receipt.outcome=="unknown" then ground.uncertain=true
             elseif terminal[receipt.outcome] then
                 ground.operation=nil
-                ground.lastPhase,ground.lastDetail=p.phase,p.detail or p.error
+                ground.lastPhase,ground.lastDetail=p.phase,type(p.detail)=="string" and #p.detail>0 and p.detail or p.grpc_message or p.error
                 if op.kind=="cast_spell" then
                     if receipt.outcome=="failed" or receipt.outcome=="not_dispatched" then ground.castRefused=ground.key end
                 elseif p.transport_written==true and p.phase=="body_input_written" then
@@ -81,6 +84,8 @@ local function on_event(event)
                     -- A refused ray is not a reason to resend it every tick.
                     -- Falling/STOP-only outcomes are not horizontal progress.
                     ground.blocked[op.heading]=true
+                    if p.phase=="body_settled_written" and p.transport_written==true then ground.observedSequence=op.sequence
+                    elseif p.phase~="local_physics_refused" then ground.refused=ground.key end
                 end
             end
         end
@@ -501,7 +506,7 @@ local function import_state(saved)
         if type(ground.id)~="string" or ground.uncertain~=nil and type(ground.uncertain)~="boolean" or ground.observedSequence~=nil and not guid(ground.observedSequence) then return false end
         for k,v in pairs(ground.blocked) do if type(k)~="string" or type(v)~="boolean" then return false end end
         for _,op in pairs({operation=ground.operation,awaiting=ground.awaiting}) do
-            if type(op)~="table" or not guid(op.sequence) or (op.kind~="move_body" and op.kind~="cast_spell") then return false end
+            if type(op)~="table" or not guid(op.sequence) or op.actionId~=nil and not guid(op.actionId) or (op.kind~="move_body" and op.kind~="cast_spell") then return false end
             if op.kind=="move_body" then
                 if type(op.heading)~="string" then return false end
                 for _,k in ipairs({"x","y","z"}) do local n=op[k];if type(n)~="number" or n~=n or n<=-math.huge or n>=math.huge then return false end end
@@ -692,6 +697,7 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         ground={sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,id=row.id,key=key,blocked={}}
         state.rangedGround=ground
     end
+    status.lastInputPhase,status.lastInputDetail=ground.lastPhase,ground.lastDetail
     if ground.uncertain then status.phase="ground_input_unknown";return end
     if ground.operation then status.phase="waiting_for_ground_input_receipt";return end
     if ground.awaiting then
@@ -707,7 +713,7 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         if not ground.observedSequence or not nav.bodyMovement or nav.bodyMovement.sequenceId~=ground.observedSequence then status.phase="uncorrelated_estimated_pose";return end
     end
     if ground.key~=key then ground.key,ground.blocked=key,{} end
-    status.lastInputPhase,status.lastInputDetail=ground.lastPhase,ground.lastDetail
+    if ground.refused==key then status.phase="ground_input_refused_at_observed_pose";return end
     local focus=out.focusGuid and obs.targets[out.focusGuid]
     local target=focus and focus.entry==row.creatureEntry and focus.present==true and focus.protected~=true and obs.targetProtectionOverflow~=true and focus.aliveKnown==true and focus.alive==true and focus or nil
     local targetId=target and out.focusGuid

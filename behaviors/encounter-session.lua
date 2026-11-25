@@ -877,7 +877,7 @@ local function decide(frame)
     end
     if commands and commands.ranged_filter and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence then
         commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status,out.rangedOffenseEligible and damage_spell or nil)
-        if transient_tasks and not transient_tasks.allow(task_view,current,out.action) then out.action=nil end
+        if ranged_config and transient_tasks and not task_support_action and not transient_tasks.allow(task_view,current,out.action) then out.action=nil end
     end
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end

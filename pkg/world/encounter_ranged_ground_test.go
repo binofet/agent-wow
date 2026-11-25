@@ -195,3 +195,48 @@ func TestRangedLegacyGroundRefusalUnknownReloadAndVisit(t *testing.T) {
 		})
 	}
 }
+
+func TestRangedLegacyGroundActualGenericCastReceiptShape(t *testing.T) {
+	for _, outcome := range []behavior.ActionOutcome{behavior.ActionConfirmed, behavior.ActionNotDispatched, behavior.ActionUnknown} {
+		t.Run(string(outcome), func(t *testing.T) {
+			p, o := legacyGround(t)
+			o.Targets[fallbackGUID(fallbackNPC)].X = 20
+			d, a := groundAction(t, p, o)
+			if a["capability"] != "cast_spell" {
+				t.Fatal(d.Output)
+			}
+			id, e := p.host.ReserveAction(d)
+			if e != nil {
+				t.Fatal(e)
+			}
+			// Exact maintained generic cast receipt: NO fabricated self_guid/visit_id.
+			_, e = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: outcome, Payload: map[string]any{
+				"capability": "cast_spell", "spell_id": uint32(133), "target_guid": fallbackGUID(fallbackNPC), "phase": "fixture_exact_cast_outcome", "transport_written": outcome != behavior.ActionNotDispatched, "server_cast_go": outcome == behavior.ActionConfirmed, "effect_observed": false,
+			}}})
+			if e != nil {
+				t.Fatal(e)
+			}
+			next, b := groundAction(t, p, o)
+			if outcome == behavior.ActionConfirmed {
+				if b["capability"] != "cast_spell" {
+					t.Fatal("settled cast permanently blocked next ordinary cast", next.Output)
+				}
+			} else if b != nil {
+				t.Fatal("refused/unknown cast repeated", next.Output)
+			}
+		})
+	}
+}
+func TestRangedLegacyGroundUnengagedTargetCannotCreatePull(t *testing.T) {
+	p := newFallbackPolicyTest(t, "")
+	o := rangedObservation()
+	o.Navigation.BodyMovementSupported = true
+	o.Targets[fallbackGUID(fallbackNPC)].X = 20
+	o.Targets[fallbackGUID(fallbackNPC)].Engaged = false
+	o.Engagement = map[string]*actionsv1.EncounterEngagement{}
+	queueRanged(t, p, o, 765432)
+	d, a := groundAction(t, p, o)
+	if a != nil {
+		t.Fatal("stance manufactured a new offensive target", d.Output)
+	}
+}
