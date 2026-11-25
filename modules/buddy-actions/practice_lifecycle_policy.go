@@ -293,7 +293,7 @@ func (s *Service) validatePracticeLifecycleFactsLocked(ctx context.Context, sele
 			}
 		}
 		point, known, _ := creaturePosition(target)
-		if !eligiblePracticeWolf(target) || !known || !northshire(point) {
+		if !practiceCreatureAvailable(target, final.Self.MapId) || !known || !northshire(point) {
 			return nil, false
 		}
 	}

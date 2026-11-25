@@ -35,9 +35,6 @@ func (s *Service) starterAssistObservedTargetLocked(ctx context.Context, w *worl
 	if target.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) != 0 || target.UnitFlags_2&1 != 0 || target.DynamicFlags&0x20 != 0 {
 		return fail("assist_target_not_attackable")
 	}
-	if s.starterRejectOverlevelTargetLocked(w, target) {
-		return fail("assist_target_level_exceeds_self_plus_three")
-	}
 	if s.failedAssistTarget == target.Guid {
 		return fail("starter_target_failed_no_retry")
 	}
@@ -294,12 +291,4 @@ func (s *Service) starterStealthApproachLocked(ctx context.Context, w *worldv1.S
 		return s.castSupportLocked(ctx, r, s.selfGUID, target)
 	}
 	return false
-}
-
-func (s *Service) starterRejectOverlevelTargetLocked(w *worldv1.SnapshotResponse, target *worldv1.CreatureState) bool {
-	self := w.Self
-	if !self.LevelKnown || !target.LevelKnown || uint64(target.Level) <= uint64(self.Level)+3 {
-		return false
-	}
-	return true
 }
