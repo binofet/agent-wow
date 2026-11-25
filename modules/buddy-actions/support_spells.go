@@ -282,8 +282,9 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 	if op == nil || !s.state.CastPending || s.pendingSpell != op.view.SpellId || s.castCount != op.count {
 		return false, nil
 	}
+	starterSelf := op.view.Capability == string(spellcatalog.Stealth) && s.starterSelfCastBodyCurrentLocked(op)
 	if op.view.Phase != "waiting_server" && op.view.Phase != "channeling" && op.view.Phase != "waiting_channel_observation" &&
-		!((op.genericSpell || op.view.Capability == selfCastCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && op.view.Phase == "transport_unconfirmed_no_retry") {
+		!((starterSelf || op.genericSpell || op.view.Capability == selfCastCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && op.view.Phase == "transport_unconfirmed_no_retry") {
 		return false, nil
 	}
 	rejected := false
@@ -325,7 +326,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 				return true, nil
 			}
 		}
-		if op.view.Capability == selfCastCapability {
+		if op.view.Capability == selfCastCapability || starterSelf {
 			source, _, _ := readGUID(p)
 			if source != s.selfGUID {
 				return false, nil

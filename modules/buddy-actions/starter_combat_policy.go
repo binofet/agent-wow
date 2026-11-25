@@ -290,6 +290,12 @@ func (s *Service) starterSelfSpellAvailableLocked(w *worldv1.SnapshotResponse) b
 		!s.state.AutoAttackUnconfirmed && !s.stealthedLocked()
 }
 
+func (s *Service) starterSelfCastBodyCurrentLocked(op *supportAttempt) bool {
+	b := op.starterBinding
+	return b != nil && b.session == s.sessionID && b.self == s.selfGUID && op.view.TargetGuid == b.self &&
+		b.visit == s.lastWorld.GetVisitRevision() && b.encounter == s.encounterVisit
+}
+
 // Execute the exact self-targeted rank selected by the same accepted weapon
 // policy. STOP and subsequent callbacks cannot retain an old task or choice.
 func (s *Service) castStarterSelfLocked(ctx context.Context, w *worldv1.SnapshotResponse, target uint64, chosen starterSpellDecision) bool {

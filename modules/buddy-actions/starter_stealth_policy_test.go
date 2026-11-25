@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	"context"
+	"encoding/binary"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,51 @@ func starterStealthRig(t *testing.T) (*Service, *fakeSession, *worldv1.CreatureS
 		t.Fatal(accepted, err)
 	}
 	return s, f, target, source, advance
+}
+
+func TestStarterStealthLostReplyReconcilesOnlyAnExactCurrentNativeGO(t *testing.T) {
+	for _, mode := range []string{"confirm", "no GO", "wrong count", "wrong spell", "wrong target", "replaced body", "replaced visit"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, _, _ := starterStealthRig(t)
+			s.session = starterWeaponAmbiguousSession{f}
+			s.Tick(context.Background())
+			op := s.starterSpells.uncertainStrike
+			if op == nil || op != s.supportOp || op.view.TransportWritten || op.view.ServerCastGo || countPackets(f, opcode.CMSGCastSpell) != 1 {
+				t.Fatal("fixture did not retain entered lost-reply custody", s.stateLocked())
+			}
+			count, target := s.castCount, s.selfGUID
+			switch mode {
+			case "wrong count":
+				count++
+			case "wrong target":
+				target++
+			case "replaced body":
+				s.sessionID += "-replacement"
+			case "replaced visit":
+				emitPolymorph(s, opcode.SMSGNewWorld, make([]byte, 20))
+			}
+			goFrame := starterWeaponObservedGo(s, target, count)
+			if mode == "wrong spell" {
+				binary.LittleEndian.PutUint32(goFrame[2*len(packedGUID(s.selfGUID))+1:], 1784)
+			}
+			if mode != "no GO" {
+				// A wrong complete target is rejected by the existing packet parser;
+				// its error must not become a positive cast receipt.
+				_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: goFrame})
+			}
+			emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(s.selfGUID, s.selfGUID, 2, 1785, 0))
+			if mode == "confirm" {
+				if s.starterSpells.uncertainStrike != nil || !op.view.ServerCastGo || !op.view.EffectObserved || op.view.Phase != "confirmed_aura" {
+					t.Fatal("late exact native evidence could not settle entered uncertainty", op.view)
+				}
+			} else if s.starterSpells.uncertainStrike != op || op.view.ServerCastGo {
+				t.Fatal("unmatched late packet admitted an old uncertain self cast", op.view)
+			}
+			if countPackets(f, opcode.CMSGCastSpell) != 1 || countPackets(f, opcode.CMSGAttackswing) != 0 {
+				t.Fatal("late native reconciliation replayed a mutation", f.packets)
+			}
+		})
+	}
 }
 
 func TestStarterStealthAcceptedSameSessionChoiceAndRankReachActualSelfPacket(t *testing.T) {
