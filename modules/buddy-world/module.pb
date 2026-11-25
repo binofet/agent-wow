@@ -77,7 +77,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-“ 
+×¥
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -335,7 +335,21 @@ unit_flags (R	unitFlags.
 	self_guid (RselfGuid.
 from_visit_revision (RfromVisitRevision*
 to_visit_revision (RtoVisitRevisionL
-transfer (20.warcraftbuddy.world.v1.WorldTransferObservationRtransfer"Ž
+transfer (20.warcraftbuddy.world.v1.WorldTransferObservationRtransfer"Ý
+ItemEnchantmentSlot
+slot (Rslot
+id_known (RidKnown
+id (Rid%
+duration_known (RdurationKnown!
+duration_raw (RdurationRaw#
+charges_known (RchargesKnown
+charges (Rcharges"£
+ItemEnhancementStateO
+enchantments (2+.warcraftbuddy.world.v1.ItemEnchantmentSlotRenchantments.
+property_seed_known (RpropertySeedKnown#
+property_seed (RpropertySeed7
+random_property_id_known (RrandomPropertyIdKnown,
+random_property_id (RrandomPropertyId"í
 EquipmentSlotState
 slot (Rslot
 
@@ -352,7 +366,8 @@ durability%
 max_durability	 (RmaxDurability-
 enhancements_known
  (RenhancementsKnown)
-has_enhancements (RhasEnhancements"È
+has_enhancements (RhasEnhancements]
+enhancement_details (2,.warcraftbuddy.world.v1.ItemEnhancementStateRenhancementDetails"È
 CorpseState
 guid (Rguid
 
@@ -528,7 +543,7 @@ durationMs
 failed (Rfailed)
 objective_counts (RobjectiveCounts
 expire_time (R
-expireTime"û
+expireTime"Ú
 BackpackSlot
 bag (Rbag
 slot (Rslot
@@ -544,7 +559,8 @@ durability%
 max_durability	 (RmaxDurability-
 enhancements_known
  (RenhancementsKnown)
-has_enhancements (RhasEnhancements"¥
+has_enhancements (RhasEnhancements]
+enhancement_details (2,.warcraftbuddy.world.v1.ItemEnhancementStateRenhancementDetails"¥
 InventoryBag
 bag (Rbag
 

@@ -77,7 +77,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-“ 
+×¥
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -335,7 +335,21 @@ unit_flags (R	unitFlags.
 	self_guid (RselfGuid.
 from_visit_revision (RfromVisitRevision*
 to_visit_revision (RtoVisitRevisionL
-transfer (20.warcraftbuddy.world.v1.WorldTransferObservationRtransfer"Ž
+transfer (20.warcraftbuddy.world.v1.WorldTransferObservationRtransfer"Ý
+ItemEnchantmentSlot
+slot (Rslot
+id_known (RidKnown
+id (Rid%
+duration_known (RdurationKnown!
+duration_raw (RdurationRaw#
+charges_known (RchargesKnown
+charges (Rcharges"£
+ItemEnhancementStateO
+enchantments (2+.warcraftbuddy.world.v1.ItemEnchantmentSlotRenchantments.
+property_seed_known (RpropertySeedKnown#
+property_seed (RpropertySeed7
+random_property_id_known (RrandomPropertyIdKnown,
+random_property_id (RrandomPropertyId"í
 EquipmentSlotState
 slot (Rslot
 
@@ -352,7 +366,8 @@ durability%
 max_durability	 (RmaxDurability-
 enhancements_known
  (RenhancementsKnown)
-has_enhancements (RhasEnhancements"È
+has_enhancements (RhasEnhancements]
+enhancement_details (2,.warcraftbuddy.world.v1.ItemEnhancementStateRenhancementDetails"È
 CorpseState
 guid (Rguid
 
@@ -528,7 +543,7 @@ durationMs
 failed (Rfailed)
 objective_counts (RobjectiveCounts
 expire_time (R
-expireTime"û
+expireTime"Ú
 BackpackSlot
 bag (Rbag
 slot (Rslot
@@ -544,7 +559,8 @@ durability%
 max_durability	 (RmaxDurability-
 enhancements_known
  (RenhancementsKnown)
-has_enhancements (RhasEnhancements"¥
+has_enhancements (RhasEnhancements]
+enhancement_details (2,.warcraftbuddy.world.v1.ItemEnhancementStateRenhancementDetails"¥
 InventoryBag
 bag (Rbag
 
@@ -2343,7 +2359,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 CastBuff).warcraftbuddy.actions.v1.CastBuffRequest.warcraftbuddy.actions.v1.StateP
 Melee&.warcraftbuddy.actions.v1.MeleeRequest.warcraftbuddy.actions.v1.Stated
 SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
-€]
+ß]
 'modules/buddy-inventory/inventory.protowarcraftbuddy.inventory.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto"ƒ
 ItemRef
 bag (Rbag
@@ -2474,7 +2490,7 @@ item_class (R	itemClass
 equipment_slot (RequipmentSlot=
 expected_equipped_item_guid (RexpectedEquippedItemGuid
 eligible (Religible%
-blocked_reason (	RblockedReason"¬
+blocked_reason (	RblockedReason"‹
 GearItemFacts-
 enhancements_known (RenhancementsKnown)
 has_enhancements (RhasEnhancements)
@@ -2483,7 +2499,8 @@ item_class (R	itemClass
 durability (R
 durability%
 max_durability (RmaxDurabilityO
-destinations (2+.warcraftbuddy.inventory.v1.GearDestinationRdestinations"Â
+destinations (2+.warcraftbuddy.inventory.v1.GearDestinationRdestinations]
+enhancement_details (2,.warcraftbuddy.world.v1.ItemEnhancementStateRenhancementDetails"Â
 GearContext
 class_known (R
 classKnown

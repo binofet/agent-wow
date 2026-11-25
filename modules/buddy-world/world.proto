@@ -306,6 +306,21 @@ message SplineTransferAdoption {
   WorldTransferObservation transfer = 5;
 }
 
+// Raw observed build-12340 item fields, not resolved enchant/gem bonuses.
+// Enchantment slots include permanent/temporary/socket/other native slots;
+// an ID is an enchantment reference, not necessarily a gem item entry.
+message ItemEnchantmentSlot {
+  uint32 slot = 1;
+  bool id_known = 2; uint32 id = 3;
+  bool duration_known = 4; uint32 duration_raw = 5;
+  bool charges_known = 6; uint32 charges = 7;
+}
+message ItemEnhancementState {
+  repeated ItemEnchantmentSlot enchantments = 1;
+  bool property_seed_known = 2; uint32 property_seed = 3;
+  bool random_property_id_known = 4; sint32 random_property_id = 5;
+}
+
 // Private own equipment slots0..18; bags and bank slots are excluded.
 message EquipmentSlotState {
   uint32 slot = 1;
@@ -319,6 +334,7 @@ message EquipmentSlotState {
   uint32 max_durability = 9;
   bool enhancements_known = 10;
   bool has_enhancements = 11;
+  ItemEnhancementState enhancement_details = 12;
 }
 
 // Actual observed own non-bones CORPSE object, not a guessed death location.
@@ -529,6 +545,7 @@ message BackpackSlot {
   uint32 max_durability = 9;
   bool enhancements_known = 10;
   bool has_enhancements = 11;
+  ItemEnhancementState enhancement_details = 12;
 }
 
 // Only private own carried inventory: built-in backpack plus four equipped bags.
