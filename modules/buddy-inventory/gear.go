@@ -162,7 +162,7 @@ func gearUsability(w *worldv1.SnapshotResponse, m itemMetadata, proficiency uint
 // gearFactsLocked reports every supported physical destination independently.
 // Lua owns which eligible destination to prefer and whether it is an upgrade.
 func (s *Service) gearFactsLocked(i *worldv1.BackpackSlot) *inventoryv1.GearItemFacts {
-	out := &inventoryv1.GearItemFacts{EnhancementsKnown: i.EnhancementsKnown, HasEnhancements: i.HasEnhancements,
+	out := &inventoryv1.GearItemFacts{EnhancementDetails: cloneEnhancementDetails(i.EnhancementDetails), EnhancementsKnown: i.EnhancementsKnown, HasEnhancements: i.HasEnhancements,
 		DurabilityKnown: i.DurabilityKnown, Durability: i.Durability, MaxDurability: i.MaxDurability}
 	equipment, known := equipmentView(s.view)
 	if !known {
@@ -278,9 +278,11 @@ func expectedGearAfter(before view, r *inventoryv1.Operation) (view, error) {
 	source.ItemGuid, source.Entry, source.StackCount, source.MetadataKnown = destination.ItemGuid, destination.Entry, destination.StackCount, destination.MetadataKnown
 	source.DurabilityKnown, source.Durability, source.MaxDurability = destination.DurabilityKnown, destination.Durability, destination.MaxDurability
 	source.EnhancementsKnown, source.HasEnhancements = destination.EnhancementsKnown, destination.HasEnhancements
+	source.EnhancementDetails = cloneEnhancementDetails(destination.EnhancementDetails)
 	destination.ItemGuid, destination.Entry, destination.StackCount, destination.MetadataKnown = saved.ItemGuid, saved.Entry, saved.StackCount, saved.MetadataKnown
 	destination.DurabilityKnown, destination.Durability, destination.MaxDurability = saved.DurabilityKnown, saved.Durability, saved.MaxDurability
 	destination.EnhancementsKnown, destination.HasEnhancements = saved.EnhancementsKnown, saved.HasEnhancements
+	destination.EnhancementDetails = cloneEnhancementDetails(saved.EnhancementDetails)
 	out, err := validateWorld(w, w.Self.Guid)
 	if err != nil {
 		return out, err
@@ -289,4 +291,11 @@ func expectedGearAfter(before view, r *inventoryv1.Operation) (view, error) {
 		return out, fail("expected_equipment_vector_invalid")
 	}
 	return out, nil
+}
+
+func cloneEnhancementDetails(v *worldv1.ItemEnhancementState) *worldv1.ItemEnhancementState {
+	if v == nil {
+		return nil
+	}
+	return proto.Clone(v).(*worldv1.ItemEnhancementState)
 }
