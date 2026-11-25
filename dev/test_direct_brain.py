@@ -1025,10 +1025,15 @@ end}
 
     def test_synthetic_party_owner_patches_attached_bundle_without_workspace_copy(self):
         original,_=self.tactical_self_edit_fixture()
-        replacement="allowDamage=(f.owner.healthKnown==true and f.owner.health/f.owner.maxHealth>=0.5)"
+        # Fresh model calls use the advertised numbered edits + steps schema.
+        # The older literal/frame form remains supported for already-entered calls.
+        self.rpc.frame=dict(input=self.rpc.frame)
+        replacement="allowDamage=(f.input.owner.healthKnown==true and f.input.owner.health/f.input.owner.maxHealth>=0.5)"
         candidate=original.replace("allowDamage=true",replacement)
         old=hashlib.sha256(original.encode()).hexdigest()
-        args=dict(expected_revision=old, edits=[dict(old='allowDamage=true',new=replacement)],frame=self.rpc.frame)
+        args=dict(expected_revision=old,
+            edits=[dict(first_line=1,last_line=1,new=candidate.rstrip('\n'))],
+            steps=[dict(frame=self.rpc.frame)])
         responses=[chat(('preview','policy_patch',args)),
             chat(('apply','policy_patch',dict(args,apply=True))),
             chat(('verify','read_observation',dict(method='session.policy_state',params={}))),

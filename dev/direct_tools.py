@@ -345,6 +345,41 @@ class _PolicyRPC:
         return self.tools.rpc.call(method, params, **kwargs)
 
 
+def _policy_lines(source, start):
+    lines=source.splitlines(keepends=True)
+    require(type(start) is int and 1<=start<=len(lines),"attached_source_line_out_of_range")
+    rows=[]
+    size=0
+    for number,line in enumerate(lines[start-1:start+47],start):
+        content=line.rstrip("\r\n")
+        if size+len(content)>6000 and rows:
+            break
+        rows.append(dict(line=number,text=content[:6000]))
+        size+=len(content)
+    end=rows[-1]["line"]
+    return dict(rows=rows,nextLine=end+1 if end<len(lines) else None,totalLines=len(lines),
+                lastLineClipped=len(lines[end-1].rstrip("\r\n"))>6000)
+
+
+def _replace_policy_lines(source, edits):
+    lines=source.splitlines(keepends=True)
+    previous=0
+    parts=[]
+    for edit in edits:
+        require(isinstance(edit,dict) and set(edit)=={"first_line","last_line","new"},
+                "expected_line_range_and_replacement")
+        first,last,new=edit["first_line"],edit["last_line"],edit["new"]
+        require(type(first) is int and type(last) is int and previous<first<=last<=len(lines)
+                and isinstance(new,str),"ordered_nonoverlapping_original_lines_required")
+        parts.extend(lines[previous:first-1])
+        if new and lines[last-1].endswith("\n") and not new.endswith("\n"):
+            new+="\r\n" if lines[last-1].endswith("\r\n") else "\n"
+        parts.append(new)
+        previous=last
+    parts.extend(lines[previous:])
+    return "".join(parts)
+
+
 class DirectTools:
     def __init__(self, rpc, session_id, self_guid, workspace, root, *,
                  allowed=lambda: False, cancelled=lambda: False, request_id=None,
@@ -663,6 +698,13 @@ class DirectTools:
         helper = self._helper("self-edit")
         result = helper.edit("show", int(self.self_guid), self.session_id, _PolicyRPC(self))
         self._catalog()
+        if "first_line" in args:
+            require(set(args)=={"first_line"}, "use_first_line_alone_to_read_numbered_Lua")
+            require(result.get("sourceKnown") is True and isinstance(result.get("source"),str),
+                    "attached_source_unavailable")
+            source=result["source"]
+            return dict(sessionId=self.session_id,characterGuid=self.self_guid,revision=sha(source.encode()),
+                        sourceLines=_policy_lines(source,args["first_line"]),gameplayDispatched=False)
         if args.get("find") is not None:
             text = args["find"]
             require(isinstance(text, str) and 0 < len(text) <= 1024, "bounded_attached_literal_find_required")
@@ -697,6 +739,8 @@ class DirectTools:
                             "Generic Lua may use spell IDs or shared functions rather than spell names. Textual declarations below are read-only discovery, not parsed capability proof.",
                         discoveredDeclarations=dict(modules=modules[:40], functions=functions[:16],
                             modulesTruncated=len(modules)>40, functionsTruncated=len(functions)>16),
+                        matchLine=1+source.count("\n",0,match) if match>=0 else None,
+                        readMatchedLines=dict(first_line=1+source.count("\n",0,match)) if match>=0 else None,
                         matchOffset=match if match >= 0 else None,
                         sourcePage=_page(source, offset=max(0, match-min(160,max(0,limit-len(text)))), limit=limit) if match >= 0 else None,
                         gameplayDispatched=False)
@@ -745,51 +789,96 @@ class DirectTools:
         require(current.get("runtime") == "session" and current.get("sourceKnown") is True
                 and isinstance(current.get("source"), str), "attached_session_source_required")
         source = current["source"]
+        original_source = source
         require(sha(source.encode()) == expected and current.get("status", {}).get("revision") == expected,
                 "attached_policy_changed: refresh policy_show and the exact old text; no edits applied")
-        for edit in edits:
-            require(isinstance(edit, dict) and set(edit) == {"old", "new"}
-                    and isinstance(edit["old"], str) and bool(edit["old"])
-                    and isinstance(edit["new"], str), "literal_old_new_edits_required")
-            require(source.count(edit["old"]) == 1,
-                    "unique_attached_literal_required: old text must occur exactly once; read a narrower policy_show source page")
-            source = source.replace(edit["old"], edit["new"], 1)
+        if isinstance(edits[0],dict) and "first_line" in edits[0]:
+            source=_replace_policy_lines(source,edits)
+        else:
+            for edit in edits:
+                require(isinstance(edit, dict) and set(edit) == {"old", "new"}
+                        and isinstance(edit["old"], str) and bool(edit["old"])
+                        and isinstance(edit["new"], str), "literal_old_new_edits_required")
+                require(source.count(edit["old"]) == 1,
+                        "unique_attached_literal_required: old text must occur exactly once; read a narrower policy_show source page")
+                source = source.replace(edit["old"], edit["new"], 1)
         require(0 < len(source.encode()) <= self.max_bytes, "patched_source_size_bound")
+        if "steps" in args:
+            steps=args["steps"]
+            require(isinstance(steps,list) and len(steps)<=32, "expected_up_to_32_test_steps")
+            args=dict(args, test=dict(kind="sequence",steps=steps) if steps else dict(kind="idle"))
         require(("frame" in args) != ("test" in args),
                 "choose_exact_frame_OR_test: example test={kind:idle}; frame={} is not a session frame")
         if "frame" in args:
+            before = self._evaluate_source(original_source.encode(), args["frame"])
             tested = self._evaluate_source(source.encode(), args["frame"])
             coverage = dict(kind="explicit_frame", eventCallbacksDelivered=False,
                             meaning="One direct decide(frame) call with your exact frame, unchanged.")
         else:
+            before, _ = self._policy_fixture(original_source.encode(), args["test"])
             tested, coverage = self._policy_fixture(source.encode(), args["test"])
         result = dict(expectedRevision=expected, targetRevision=sha(source.encode()),
                       edits=len(edits), sourceBytes=len(source.encode()),
                       tested=self._project(tested, {}), testCoverage=coverage,
                       pureTestContract=self._policy_test_contract(),
-                      applied=False, gameEffectClaimed=False)
+                      decisionComparison=self._policy_decision_comparison(before, tested),
+                      lifecycle="preview_only", applied=False, gameEffectClaimed=False)
         if tested.get("valid") is not True or args.get("apply", False) is False:
             return result
         self._authorise()
         result["application"] = self._apply_policy_source(source, expected, "policy_patch")
         result["applied"] = True
+        result["lifecycle"] = "accepted_source_applied_not_game_effect"
         return result
 
+    @staticmethod
+    def _policy_decision_comparison(before, after):
+        def decisions(result):
+            decision = result.get("decision")
+            if not isinstance(decision, dict):
+                return []
+            rows = decision.get("decisions")
+            return rows if isinstance(rows, list) else [decision]
+        def view(result):
+            rows = []
+            for decision in decisions(result):
+                if not isinstance(decision, dict):
+                    continue
+                rows.append({key: decision[key] for key in
+                    ("phase", "action", "followFormation", "portalCatchup") if key in decision})
+            return rows
+        old, new = view(before), view(after)
+        valid = before.get("valid") is True and after.get("valid") is True
+        incomplete = any(row.get("phase") == "waiting_for_encounter_observation" for row in old + new)
+        return dict(baselineValid=before.get("valid") is True, candidateValid=after.get("valid") is True,
+            before=old, after=new, selectedDecisionChanged=(old != new) if valid else None,
+            encounterObservationIncomplete=incomplete,
+            meaning="Synthetic proposals only. Identical decisions demonstrate no selected action change. "
+                "Valid execution does not establish requested behavior, applied source, movement or live effect.")
+
     def _policy_test_contract(self):
+        observation = dict(sessionId=self.session_id, selfGuid=self.self_guid,
+            mapKnown=True, mapId=0, visitId="1", hostOwned=True,
+            hostTargetRangeBandSupported=False, spellbookKnown=True, meleeKnown=True,
+            players={self.self_guid: dict(guid=self.self_guid, present=True, aliveKnown=True,
+                alive=True, mapKnown=True, mapId=0, positionKnown=True, x=0, y=0, z=0)},
+            targets={}, spells={}, navigation={}, party=dict(known=True, inGroup=False, members=[]))
         return dict(identity=dict(sessionId=self.session_id, selfGuid=self.self_guid),
+            runtimeCallbacks=dict(event="returned on_event(event)", decision="returned decide(frame)",
+                persistence="returned export_state/import_state where implemented",
+                notInvokedAutomatically=["onUpdate"],
+                navigation="policy_show(find='function on_event') or find='function decide'; read matchLine with first_line"),
             idleFrame=dict(session_id=self.session_id, cursor="0", pending=[], events=[],
                            input=dict(kind="idle"), clock=dict(monotonicMs=0, unixMs=0)),
-            idleExample=dict(test=dict(kind="idle")),
-            sequenceExample=dict(test=dict(kind="sequence", steps=[dict(
-                events=[dict(kind="encounter_observation", sequence="1", value={})],
-                frame=dict(input=dict(kind="encounter", observationSequence="1")))])),
-            semantics="Pure synthetic test only; no live facts, reservations, native actions or effects. "
-                "Idle coverage checks initialization and one idle decide, not requested behavior. "
-                "Sequence coverage calls the candidate's real on_event then decide in the same fresh VM; "
-                "provide your full synthetic observation/event values, frames, pending and clocks. "
-                "The empty observation in the example is a shape placeholder, not an adequate behavior fixture. "
-                "Successful execution does not assert that requested behavior is correct: inspect returned decisions before applying. "
-                "Synthetic receipts/pending are caller inputs, not real host action or replay verification.")
+            idleExample=dict(steps=[]),
+            sequenceExample=dict(steps=[dict(events=[dict(kind="encounter_observation", sequence="1", value=observation)],
+                frame=dict(input=dict(kind="encounter", observationSequence="1"))) ]),
+            semantics="Pure synthetic test only; the example body/map/visit/group are synthetic, not live facts. "
+                "Idle checks initialization, not requested behavior. Sequence calls real on_event then decide in one fresh VM. "
+                "Extend the bound example with your synthetic targets, navigation, spells and events to exercise behavior. "
+                "Inspect decisionComparison and tested decisions: valid or unchanged output is not proof of movement. "
+                "apply=false previews only; applied=true acknowledges source reload, never a game effect. "
+                "Synthetic receipts/pending do not prove live replay safety.")
 
     def _policy_fixture(self, source, test):
         require(isinstance(test, dict) and test.get("kind") in ("idle", "sequence"),
@@ -1756,7 +1845,7 @@ end}
               "path": paging["path"], "offset": paging["offset"], "page_limit": paging["limit"]}, []),
             ("session_catalog", "Default: bounded method index. method selects its exact contract/dependencies; message selects any exact message type. JSON path/offset/limit expand/page large schemas; row.key appends to path.", {"method": string, "message": string, **paging}, []),
             ("read_observation", "Read only an installed effect=read RPC on this exact actor. Optional JSON path/offset/limit project and page its result, never a new endpoint. Large results return explicit expandable summaries.", {"method": string, "params": obj, **paging}, ["method", "params"]),
-            ("policy_show", "Default: accepted-source metadata, not the full bundle. save_as snapshots into owned workspace; use workspace_read to inspect it. Or path=['source'] with character offset/limit reads exact source pages. Empty expected_sha256 requires a new file. find searches an exact case-sensitive literal starting at offset (default 0); path may be omitted, [] or ['source']. Example: {path:['source'],find:'function',offset:0,limit:4096}. Returns bounded excerpt, whole-source and remaining match counts, nextSearchOffset, exact revision and valid follow-up examples. Misses include discovered textual module/function names; generic spell logic may use IDs rather than spell names. limit bounds excerpt characters. Search is read-only and cannot combine with save_as.", {"save_as": string, "expected_sha256": string, "find":string, **paging}, []),
+            ("policy_show", "Default: accepted-source metadata, not the full bundle. save_as snapshots into owned workspace; use workspace_read to inspect it. Or path=['source'] with character offset/limit reads exact source pages. Empty expected_sha256 requires a new file. find searches an exact case-sensitive literal starting at offset (default 0); path may be omitted, [] or ['source']. Example: {path:['source'],find:'function',offset:0,limit:4096}. Returns bounded excerpt, whole-source and remaining match counts, nextSearchOffset, exact revision and valid follow-up examples. Misses include discovered textual module/function names; generic spell logic may use IDs rather than spell names. limit bounds excerpt characters. Search is read-only and cannot combine with save_as. find returns matchLine. Call policy_show with first_line alone to read numbered lines for editing.", {"save_as": string, "expected_sha256": string, "find":string, "first_line":{"type":"integer","minimum":1}, **paging}, []),
             ("spell_inspect", "Exact spell_id returns complete raw learned mechanics. spell_id=0 lists the book with bounded JSON path/offset/limit paging; classification is not cast availability.", {"spell_id": {"type": "integer", "minimum": 0}, **paging}, []),
             ("workspace_read", "Read owned Lua/JSON text and full SHA256; literal find/start_line locates a section. Large windows page content by character offset/limit; nextOffset continues without losing a long source line.", {"path": string, "start_line": {"type": "integer", "minimum": 1}, "max_lines": {"type": "integer", "minimum": 1, "maximum": 1000}, "find": string, "offset": paging["offset"], "limit": paging["limit"]}, ["path"]),
         ]
@@ -1836,10 +1925,18 @@ end}
                 ("policy_input", "Deliver one structured command to an already-present Lua handler. Delivery is not game success; no arbitrary receipt/event injection.", {"value": obj}, ["value"]),
             ]
             if self.self_guid != "87":
-                specs.append(("policy_patch", "Patch your CURRENT attached complete Lua bundle without filesystem paths or copying it. Read policy_show for expected_revision, unique literal old text and pureTestContract. Supply edits=[{old,new}] and EXACTLY ONE of frame or test. frame is passed unchanged to one pure decide(frame); {} is not a valid session frame for the encounter bundle. Easy initialization/idle check: test={kind:'idle'} uses the binding-correct idleFrame shown by policy_show; this does NOT exercise requested behavior. For real synthetic callback coverage use test={kind:'sequence',steps:[{events:[{kind:'encounter_observation',sequence:'1',value:<your full synthetic observation>}],frame:{input:{kind:'encounter',observationSequence:'1'}}}]}; subsequent steps replay events/decisions in the same fresh VM. Override pending/cursor/clock explicitly when needed. No actual Session reservations, transport or game effects are tested. Default apply=false previews/tests; apply=true tests then uses the SAME body-bound safe CAS reload preserving pending state. Failed tests never apply; UNKNOWN must be reconciled, never replayed.",
-                    {"expected_revision": string, "edits": {"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","properties":{"old":string,"new":string},"required":["old","new"],"additionalProperties":False}}, "frame":obj,
-                     "test":{"type":"object","properties":{"kind":{"type":"string","enum":["idle","sequence"]},"steps":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"events":{"type":"array","maxItems":64,"items":obj},"frame":obj},"additionalProperties":False}}},"required":["kind"],"additionalProperties":False},
-                     "apply":{"type":"boolean"}}, ["expected_revision","edits"]))
+                specs.append(("policy_patch",
+                    "Use policy_show(find=...) then policy_show(first_line=...) to read numbered Lua. Replace inclusive original lines in ascending order. Pass expected_revision from that read. "
+                    "Test with steps=[] for initialization and idle only, or steps=[{events:[...],frame:{...}}] "
+                    "for a sequence of encounters in a fresh Lua VM. apply=true tests the edit and reloads it "
+                    "using the same body and revision. Inspect decisionComparison before/after; valid idle or unchanged decisions do not demonstrate behavior. Preview is not apply; applied source is not a live effect.",
+                    {"expected_revision":string,
+                     "edits":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object",
+                         "properties":{"first_line":{"type":"integer","minimum":1},"last_line":{"type":"integer","minimum":1},
+                                      "new":string},"required":["first_line","last_line","new"],"additionalProperties":False}},
+                     "steps":{"type":"array","maxItems":32,"items":{"type":"object","properties":{
+                        "events":{"type":"array","maxItems":64,"items":obj},"frame":obj},"additionalProperties":False}},
+                     "apply":{"type":"boolean"}}, ["expected_revision","edits","steps"]))
             if self.self_guid == "87" and self.request_id and self.gm_allowed() is True:
                 specs += [("gm_task_start", "Optional ordered Lua recovery/regroup task, not a prerequisite for gm_execute. Goal uses current observed original roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": {"type":"object", "description":"Recovery goal: members=[{guid,name,rpcUrl?}] for the currently observed original party, plus destination={mapId,x,y,z,tolerance?} OR player={guid,name,tolerance?}. Companion rpcUrl must match current bindings. The shared Lua initializer validates admission before any hold or child starts."}}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),
@@ -1864,8 +1961,12 @@ end}
             schemas = {row["function"]["name"]: row["function"]["parameters"] for row in self.tool_schemas()}
             require(name in schemas, "tool_unavailable_for_this_authority")
             schema = schemas[name]
-            require(not set(args) - set(schema["properties"]) and
-                    set(schema["required"]) <= set(args), "tool_argument_fields_invalid")
+            fields, required = set(schema["properties"]), set(schema["required"])
+            if name=="policy_patch" and ("frame" in args or "test" in args):
+                # An already-entered call may use the older explicit-frame or test contract.
+                fields = (fields - {"steps"}) | {"frame","test"}
+                required.discard("steps")
+            require(not set(args) - fields and required <= set(args), "tool_argument_fields_invalid")
             self._catalog()
             if name == "context_read":
                 result = context_page(self.context, args.get("path"), args.get("offset", 0), args.get("limit", _CONTEXT_DEFAULT_LIMIT))
