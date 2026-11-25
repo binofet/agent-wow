@@ -134,7 +134,6 @@ func (s *Service) fargodeepWorkflowFactsLocked(w *worldv1.SnapshotResponse, p *p
 	if input == nil {
 		return nil
 	}
-	players := input["observation"].(map[string]any)["players"].(map[string]any)
 	safe := map[string]any{}
 	for _, guid := range []uint64{1, 4, 5} {
 		safe[strconv.FormatUint(guid, 10)] = safeHealingPlayer(observedHealingPlayer(w, guid), 0)
