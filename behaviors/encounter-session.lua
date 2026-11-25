@@ -563,7 +563,9 @@ local function decide_encounter(frame)
     -- Pending/native uncertainty above remains fenced; final outer arbitration
     -- alone commits the winner, so a close/release/roll cannot lose this task.
     if spell_invocation then
-        local requested,status=spell_invocation.propose(frame,obs,state.sequence)
+        local requested,status=spell_invocation.propose(frame,obs,state.sequence,{movement=movement,ranged=ranged_config and function(current,target,options)
+            return commands and commands.ranged_options and commands.ranged_options(current,ranged_config,target,options)
+        end})
         out.spellInvocation=status
         if requested then out.action=requested;return out end
     end

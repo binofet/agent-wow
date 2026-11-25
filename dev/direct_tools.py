@@ -1390,7 +1390,7 @@ class DirectTools:
                  '{task:"focus",targetGuid:"123"}; {task:"kill_order",order:["skull","123"]}; '
                  '{task:"wait_for_pull",id:"wait-1",ownerGuid:"3",responseYards:10}; {task:"cancel_task",id:"wait-1"}; '
                  '{task:"cast_spell",id:"cast-1",spellId:1449}; {task:"cancel_spell",id:"cancel-1",spellId:10,expectedOperationRevision:"observed",channel:true}. '
-                 'Use learned IDs from spell_inspect; ground casts pass targets:{mask:64,destination:{x,y,z}} with observed coordinates. '
+                 'Optional requirements.position={minRangeYards:15,maxRangeYards:25} requests finite unit LoS/facing preparation on an observed exact unit with a positive stand-off; omitted keeps explicit try-now. Requires the installed attested range-band actuator and existing movement custody; unknown/refused geometry never proves arrival or permits a cast. Use your observed spell range and hazard-safe minimum, not these example distances as a universal safe radius. Use learned IDs from spell_inspect; ground casts pass targets:{mask:64,destination:{x,y,z}} with observed coordinates. '
                  'ranged_only accepts id, creatureEntry, mapId, visitId, minRangeYards, maxRangeYards, clearanceYards, durationMs, enabled:true; '
                  'use observed creature entry/map/visit and suitable ability ranges, not an NPC-name guess. '
                  'Cancel the same id with enabled:false or cancel:true. It is scoped to that entry/map/visit and duration. '

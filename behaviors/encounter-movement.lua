@@ -230,6 +230,7 @@ function M.decide(obs,sequence,target,options)
         local dx,dy,dz=from.x-to.x,from.y-to.y,from.z-to.z
         geometric = dx*dx+dy*dy+dz*dz <= radius*radius and dx*dx+dy*dy+dz*dz >= (options.minRangeYards or 0)^2
         if options.behind then geometric = geometric and dx*math.cos(to.o)+dy*math.sin(to.o) < 0 end
+        if options.requireFacing then geometric = geometric and (-dx)*math.cos(from.o)+(-dy)*math.sin(from.o)>=0 end
     end
     local view = obs.targetMovement or {}
     local validated = (invalid_target ~= target or checked_target == target) and view.targetGuid == target and view.visitId == obs.visitId and view.ready == true and
