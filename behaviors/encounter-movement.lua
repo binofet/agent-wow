@@ -157,6 +157,8 @@ local function pose(unit)
     return {x=x,y=y,z=z,o=number(o) and o or 0}
 end
 
+M.current_pose=pose
+
 local rejected_route = {follow_navigation_unavailable=true,follow_navigation_invalid_step=true,
     follow_navigation_invalid_target=true}
 local function recovery_probe(obs,sequence,key,phase,goal)
