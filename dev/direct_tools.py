@@ -283,7 +283,7 @@ class DirectTools:
                  allowed=lambda: False, cancelled=lambda: False, request_id=None,
                  helpers=None, runner=None, max_bytes=8 * 1024 * 1024, execution_ms=1000, context=None,
                  gm_allowed=lambda: False, chat_session_id=None, chat_cursor=None,
-                 owner_allowed=lambda: False, receipt_root=None, follow_prepare=None):
+                 owner_allowed=lambda: False, receipt_root=None, follow_prepare=None, gm_owner_request=None):
         require(isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", session_id),
                 "explicit_session_required")
         require(str(self_guid).isdigit() and 0 < int(self_guid) < 2**48, "explicit_actor_required")
@@ -293,6 +293,13 @@ class DirectTools:
                 and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", chat_session_id), "invalid_chat_session_binding")
         require(chat_cursor is None or self._valid_chat_cursor(chat_cursor), "invalid_host_chat_cursor")
         self.rpc, self.session_id, self.self_guid = rpc, session_id, str(self_guid)
+        require(gm_owner_request is None or isinstance(gm_owner_request, dict)
+                and isinstance(gm_owner_request.get('request'), dict)
+                and gm_owner_request['request'].get('source') == 'owner'
+                and isinstance(gm_owner_request['request'].get('senderGuid'), str)
+                and re.fullmatch(r'[1-9][0-9]{0,19}', gm_owner_request['request']['senderGuid']),
+                'trusted_current_gm_owner_request_required')
+        self.gm_owner_request = copy.deepcopy(gm_owner_request)
         self.chat_session_id = chat_session_id
         self.chat_cursor = chat_cursor if chat_cursor is not None else "0"
         self.workspace = Path(workspace).absolute() if workspace is not None else None
@@ -894,6 +901,150 @@ class DirectTools:
                     raise
                 return result
 
+    def _gm_lua_frame(self):
+        """Host-captured data, never authority supplied by the decision module."""
+        self._authorise_gm()
+        require(self.gm_owner_request is not None, 'current_owned_gm_request_required')
+        require((self.context or {}).get('current_request') == self.gm_owner_request['request'],
+                'owned_gm_request_context_changed')
+        self._catalog()
+        before = self.rpc.call('buddy-actions.status', {})
+        world = self.rpc.call('buddy-world.snapshot', {})
+        after = self.rpc.call('buddy-actions.status', {})
+        own = world.get('self', {})
+        require(all(row.get('sessionId') == self.session_id and str(row.get('selfGuid')) == self.self_guid
+                    for row in (before, after)) and str(own.get('guid')) == self.self_guid
+                    and own.get('present') is True, 'gm_lua_observed_body_changed')
+        self._catalog()
+        self._authorise_gm()
+        owner_guid = self.gm_owner_request['request']['senderGuid']
+        owner = world.get('owner', {})
+        visit = world.get('visitRevision')
+
+        def reference(subject, target, *, owner=False):
+            result = dict(known=False, source='current_identity_bound_world_snapshot')
+            if (str(subject.get('guid')) != (owner_guid if owner else self.self_guid)
+                    or subject.get('present') is not True or subject.get('targetKnown') is not True):
+                return dict(result, reason='target_subject_unobserved')
+            selected = subject.get('targetGuid', '0')
+            if not isinstance(selected, str) or not re.fullmatch(r'[1-9][0-9]{0,19}', selected) or int(selected) >= 2**64:
+                return dict(result, reason='no_known_target')
+            if (not isinstance(target, dict) or str(target.get('guid')) != selected
+                    or target.get('present') is not True):
+                return dict(result, reason='exact_target_unobserved', selectedGuid=selected)
+            if (own.get('mapKnown') is not True or subject.get('mapKnown') is not True
+                    or target.get('mapKnown') is not True
+                    or any(type(row.get('mapId', 0)) is not int or not 0 <= row.get('mapId', 0) < 2**32 for row in (own, subject, target))
+                    or own.get('mapId', 0) != subject.get('mapId', 0)
+                    or own.get('mapId', 0) != target.get('mapId', 0)
+                    or not isinstance(visit, str) or not re.fullmatch(r'[1-9][0-9]{0,19}', visit) or int(visit) >= 2**64):
+                return dict(result, reason='current_map_visit_unavailable', selectedGuid=selected)
+            if type(target.get('entry')) is not int or not 0 < target['entry'] < 2**32:
+                return dict(result, reason='creature_entry_unavailable', selectedGuid=selected)
+            # This is exact identity and observation knownness, not permission,
+            # hostility, an alive assertion, or a command/effect receipt.
+            return dict(result, known=True, guid=selected, entry=target.get('entry'),
+                        mapId=own.get('mapId', 0), visitRevision=visit,
+                        aliveKnown=target.get('aliveKnown') is True,
+                        alive=target.get('alive', False) if target.get('aliveKnown') is True else None)
+
+        owner_target = reference(owner, world.get('ownerTarget'), owner=True)
+        selected = str(own.get('targetGuid', '0'))
+        candidates = [world.get('ownerTarget', {}), world.get('requestedCreature', {}),
+                      *world.get('nearbyCreatures', []), *world.get('requestedCreatures', [])]
+        matches = [row for row in candidates if isinstance(row, dict) and str(row.get('guid')) == selected]
+        distinct = {packed(row) for row in matches}
+        actor_target = reference(own, matches[0] if len(distinct) == 1 else None)
+        frame = dict(identity=dict(sessionId=self.session_id, selfGuid=self.self_guid, ownerGuid=owner_guid),
+                     ownerRequest=copy.deepcopy(self.gm_owner_request),
+                     observation=dict(capturedAtUnixMs=int(time.time()*1000), world=world,
+                                      actions=after, scope='this_GM_client_only'),
+                     targetRefs=dict(owner_target=owner_target, actor_selection=actor_target))
+        require(len(packed(frame)) <= self.max_bytes, 'gm_lua_frame_size_bound')
+        return frame
+
+    def _gm_lua_step(self, args, operation_id):
+        self._authorise_gm()
+        # Reuse the existing workspace edit lock: the exact source version
+        # cannot be CAS-replaced by another owned tool during this invocation.
+        with self._parent('gm-decision.lua') as (parent, _):
+            lock = os.open('.direct-tools-edit.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+                           0o600, dir_fd=parent)
+            try:
+                info = os.fstat(lock)
+                require(info.st_uid == os.geteuid() and info.st_nlink == 1,
+                        'owned_edit_lock_required')
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise ToolError('owned_gm_lua_edit_in_progress')
+                return self._gm_lua_step_locked(args, operation_id)
+            finally:
+                os.close(lock)
+
+    def _gm_lua_step_locked(self, args, operation_id):
+        self._authorise_gm()
+        expected = args.get('expected_source_sha256')
+        require(isinstance(expected, str) and re.fullmatch(r'[a-f0-9]{64}', expected),
+                'explicit_owned_lua_hash_required')
+        invoke = args.get('invoke', False)
+        require(type(invoke) is bool, 'gm_lua_invoke_boolean_required')
+        require(sha(self._read_file('gm-decision.lua')) == expected, 'owned_gm_lua_source_changed')
+        frame = self._gm_lua_frame()
+        evaluated = self._evaluate(dict(path='gm-decision.lua', frame=frame))
+        require(evaluated.get('valid') is True and evaluated.get('sourceSHA256') == expected,
+                'owned_gm_lua_evaluation_failed_or_source_changed')
+        decision = evaluated.get('decision', {}).get('output')
+        require(isinstance(decision, dict) and set(decision) <= {'kind', 'reason', 'args', 'target_ref'}
+                and decision.get('kind') in ('hold', 'gm_command')
+                and ('reason' not in decision or isinstance(decision['reason'], str)),
+                'typed_owned_gm_decision_required')
+        metadata = dict(sourcePath='gm-decision.lua', sourceSHA256=expected, frameSHA256=sha(packed(frame)),
+                        requestSHA256=sha(packed(self.gm_owner_request)), requestId=self.request_id,
+                        sessionId=self.session_id, selfGuid=self.self_guid,
+                        targetRefs=copy.deepcopy(frame['targetRefs']), capturedAtUnixMs=frame['observation']['capturedAtUnixMs'])
+        if decision['kind'] == 'hold':
+            require(not {'args', 'target_ref'} & set(decision), 'hold_cannot_propose_command')
+            return dict(metadata, invoked=False, decision=decision, gameplayDispatched=False)
+        proposed = copy.deepcopy(decision.get('args'))
+        schema = next(row['function']['parameters'] for row in self.tool_schemas()
+                      if row['function']['name'] == 'gm_execute')
+        require(isinstance(proposed, dict) and not set(proposed) - set(schema['properties'])
+                and set(schema['required']) <= set(proposed), 'owned_gm_command_arguments_required')
+        reference_name = decision.get('target_ref')
+        require(reference_name is None or reference_name in ('owner_target', 'actor_selection'),
+                'owned_gm_target_reference_required')
+        if reference_name is not None:
+            target = frame['targetRefs'][reference_name]
+            require(target.get('known') is True, 'owned_gm_target_reference_unavailable')
+            require('select_guid' not in proposed or proposed['select_guid'] == target['guid'],
+                    'owned_gm_target_reference_conflict')
+            proposed['select_guid'] = target['guid']
+        else:
+            require('select_guid' not in proposed, 'selected_owned_command_requires_target_reference')
+        result = dict(metadata, invoked=False, decision=decision, proposedArguments=proposed,
+                      gameplayDispatched=False)
+        if not invoke:
+            return result
+        fresh = self._gm_lua_frame()
+        require(sha(self._read_file('gm-decision.lua')) == expected, 'owned_gm_lua_source_changed')
+        if reference_name is not None:
+            require(fresh['targetRefs'][reference_name].get('known') is True
+                    and fresh['targetRefs'][reference_name] == frame['targetRefs'][reference_name],
+                    'owned_gm_target_changed_before_invocation')
+        self._authorise_gm()
+        # Preserve the original host tool operation identity, never a new identity
+        # derived from edited source. All raw/Lua invocations share GM custody.
+        try:
+            native = self._gm('gm_execute', proposed, operation_id)
+        except ToolOutcomeUnknown as error:
+            error.receipt['ownedDecision'] = metadata
+            raise
+        written=native.get('transportWritten')
+        dispatched=written if type(written) is bool else (False if native.get('knownNotDispatched') is True or native.get('knownNoCommand') is True else None)
+        return dict(result, invoked=True, gameplayDispatched=dispatched,
+                    execution=copy.deepcopy(native))
+
     def _evaluate(self, args):
         self._authorise()
         source = self._read_file(args["path"])
@@ -1445,6 +1596,8 @@ class DirectTools:
             specs += [("gm_inspect", "Default: readable compact facts for EVERY configured client: own life/pose, exact Actions position provenance, group, fixed owner and visible configured/observed-party player witnesses. Unknown and false remain distinct; witnesses are scoped to their observer, not proof of a cleared area. Bulk NPCs/nested fields have explicit omitted counts/rawPath. Nonempty JSON path reads the FULL original raw tree; rawPath on each witness gives its original index. Raw pages use offset/limit; default compact output is bounded separately. No caller URL, game write or task.", paging, []),
                       ("gm_current_task", "Discover only this GM session's maintained active writer-owned task and actual retained status. No caller path, new task or execution. Page large observations/memory with JSON path/offset/limit.", paging, []),
                       ("gm_task_status", "Read this body's retained direct task or exact gm_current_task ID; no arbitrary task path or execution. JSON path/offset/limit expand and page large observations or memory.", {"task_id": string, **paging}, ["task_id"])]
+        if self.gm_owner_request is not None and self.workspace is not None and self.allowed() is True and self.gm_allowed() is True and self.self_guid=='87':
+            specs.append(('gm_lua_step', 'Evaluate your owned gm-decision.lua pure decide(frame) module on this authenticated current owner request and fresh bound world data. Default invoke=false is a read-only dry-run. Frame fields: identity, ownerRequest (original request and provenance-labelled continuation), observation.world/actions, targetRefs.owner_target/actor_selection with explicit knownness. References identify observed spawns, not authority/hostility/effect. Output is {output:{kind:hold,reason?}} or {output:{kind:gm_command,args:<gm_execute arguments>,target_ref?:owner_target|actor_selection,reason?}}. owner_target is the human owner target, distinct from GM selection and creature entry. invoke=true rechecks source/body/target then uses the SAME guarded gm_execute, operation identity, receipts and UNKNOWN rules. A source edit grants no new authority/retry; returned execution fields describe actual transport/feedback.', {'expected_source_sha256':string,'invoke':{'type':'boolean'}}, ['expected_source_sha256']))
         return [context_tool_schema(), *[{"type": "function", "function": {"name": name, "description": description,
                  "parameters": {"type": "object", "properties": properties,
                                 "required": required, "additionalProperties": False}}}
@@ -1556,6 +1709,8 @@ class DirectTools:
                 result = self._write_file(args["path"], value, args["expected_sha256"])
             elif name == "lua_evaluate":
                 result = self._evaluate(args)
+            elif name == 'gm_lua_step':
+                result = self._gm_lua_step(args, operation_id)
             elif name == "policy_apply":
                 result = self._policy_apply(args)
             elif name == "policy_input":
