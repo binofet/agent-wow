@@ -583,6 +583,7 @@ local function decide_encounter(frame)
     if breaking then breaking.observationSequence=state.sequence;out.action=breaking;task_support_action=true;return out end
     local interrupt = support_policy and support_policy.interrupt(obs)
     if interrupt then
+        task_support_action=true
         interrupt.observationSequence = state.sequence
         out.action = interrupt
         return out
@@ -841,6 +842,56 @@ local function interaction_access(frame, obs, out)
     out.followFormation, out.portalCatchup = nil, nil
 end
 
+-- Current observed source positions are estimates of possible cloud locations,
+-- never cast/emission evidence. Stable IDs/times survive repeated polls/reloads.
+local function cloud_sightings(obs,frame,scope)
+    if state.cloudSightingsScope~=scope or type(state.cloudSightings)~="table" then
+        state.cloudSightingsScope,state.cloudSightings=scope,{}
+    end
+    local now=frame.clock.unixMs
+    local result,kept={},{}
+    if obs.mapId~=349 or type(now)~="number" then return result end
+    local own=(obs.players or {})[obs.selfGuid]
+    local ordered={}
+    for id,n in pairs(obs.targets or {}) do
+        if n.entry==12221 and n.present==true and n.aliveKnown==true and n.alive==true and
+           n.mapKnown==true and n.mapId==obs.mapId and n.positionKnown==true and n.positionInferred~=true and
+           n.positionEstimated~=true and guid(n.positionRevision) then
+            local p=movement and movement.current_pose(n)
+            if p then
+                local d=own and own.positionKnown==true and ((own.x or 0)-p.x)^2+((own.y or 0)-p.y)^2 or math.huge
+                ordered[#ordered+1]={id=id,unit=n,pose=p,distance=d}
+            end
+        end
+    end
+    -- Only current factual inputs are bounded; the actor owns point retention.
+    for i=2,#ordered do local v,j=ordered[i],i-1
+        while j>=1 and (v.distance<ordered[j].distance or v.distance==ordered[j].distance and v.id<ordered[j].id) do ordered[j+1]=ordered[j];j=j-1 end
+        ordered[j+1]=v
+    end
+    for i=1,math.min(#ordered,64) do
+        local row=ordered[i];local p,n=row.pose,row.unit
+        local old=state.cloudSightings[row.id]
+        local changed=not old or type(old.x)~="number" or type(old.y)~="number" or type(old.z)~="number" or
+            (old.x-p.x)^2+(old.y-p.y)^2+(old.z-p.z)^2>.0625
+        if changed and (not old or old.revision~=n.positionRevision or (n.trajectory or {}).known==true) then
+            old={id=row.id..":"..n.positionRevision..":"..state.sequence,sourceGuid=row.id,spellId=21070,
+                observedAtMs=now,x=p.x,y=p.y,z=p.z,revision=n.positionRevision,
+                estimated=true,kind="source_position_estimate",castObserved=false}
+        end
+        if old and type(old.observedAtMs)=="number" and now>=old.observedAtMs then
+            kept[row.id]=old;result[#result+1]=old
+        end
+    end
+    local count=#result
+    for id,old in pairs(state.cloudSightings) do
+        if count<64 and not kept[id] and type(old)=="table" and type(old.observedAtMs)=="number" and
+           now>=old.observedAtMs and now-old.observedAtMs<20000 then kept[id]=old;count=count+1 end
+    end
+    state.cloudSightings=kept
+    return result
+end
+
 local function decide(frame)
     ranged_config,ranged_status=nil,nil
     prior_intent=nil
@@ -896,6 +947,23 @@ local function decide(frame)
     end
     if encounter_priors and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence then
         encounter_priors.filter(current,out,ranged_status,prior_intent and prior_intent.explicitPullGuid,prior_requested_spell==out.action and prior_requested_spell or nil)
+    end
+    if intent.cloud_points and movement and movement.adjust_cloud_points and current and host_can_decide(current) and
+       current.sessionId==frame.session_id and current_visit(current) and frame.input.observationSequence==state.sequence and
+       state.settledAt~=state.sequence then
+        local scope=current.sessionId..":"..current.selfGuid..":"..current.visitId..":"..tostring(current.mapId)
+        local sightings=cloud_sightings(current,frame,scope)
+        local points=intent.cloud_points(frame.clock.unixMs,scope,sightings)
+        out.cloudPointInput={sightings=#sightings,estimated=true,castObserved=false,
+            activeMovementOwner=((current.navigation or {}).movementOwner or {}).active==true and ((current.navigation or {}).movementOwner or {}).owner or nil}
+        local passive=ranged_config and ranged_config.origin=="learned_prior" and ranged_status and ranged_status.active==false and ranged_status.phase=="passive_distant_prior"
+        if not task_support_action and not prior_requested_spell and (not ranged_config or passive) and
+           not (task_view and (task_view.hold or task_view.action)) and not (out.consumable and out.consumable.hold) then
+            movement.adjust_cloud_points(frame,current,state.sequence,out,points,passive and ranged_config or nil)
+        elseif not task_support_action and not prior_requested_spell and commands and commands.cloud_point_step and
+           not (task_view and (task_view.hold or task_view.action)) and not (out.consumable and out.consumable.hold) then
+            commands.cloud_point_step(current,frame,state.sequence,out,ranged_config,ranged_status,points)
+        end
     end
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end

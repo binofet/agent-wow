@@ -8,7 +8,7 @@ import sys
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--intent", type=Path, help="Lua module returning an encounter plan and damage preferences")
+    parser.add_argument("--intent", type=Path, help="Lua module returning plan/damage preferences and optional cloud_points(nowMs, scope, sightings) -> {x,y,z,radiusYards,expiresAtMs} array")
     args = parser.parse_args()
     behaviors = Path(__file__).resolve().parent.parent / "behaviors"
     modules = [

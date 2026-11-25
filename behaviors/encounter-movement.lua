@@ -159,6 +159,109 @@ end
 
 M.current_pose=pose
 
+-- Generic local adjustment only. The agent owns point production/deduplication
+-- in cloud_points; these are current-scope circles, not a native cloud sensor.
+-- No route/lease/controller is created. An ordinary bounded body input uses
+-- the same writer/physics checks and leaves the normal follow intent enabled.
+function M.adjust_cloud_points(frame,obs,sequence,out,points,passivePrior,ownHold)
+    if type(points)~="table" or #frame.pending~=0 then return false end
+    local self=(obs.players or {})[obs.selfGuid]
+    local nav=obs.navigation or {}
+    local owns=type(ownHold)=="table" and type(ownHold.token)=="string" and #ownHold.token>0 and
+        ownHold.sessionId==obs.sessionId and ownHold.selfGuid==obs.selfGuid and ownHold.visitId==obs.visitId and ownHold.mapId==obs.mapId and
+        not ownHold.operation and not ownHold.uncertain and not ownHold.released and type(nav.movementOwner)=="table" and
+        nav.movementOwner.active==true and nav.movementOwner.owner==ownHold.owner
+    if nav.bodyMovementSupported~=true or nav.motionUnconfirmed==true or
+       type(nav.movementOwner)~="table" or nav.movementOwner.active==true and not owns or
+       not self or self.present~=true or self.aliveKnown~=true or self.alive~=true or
+       self.positionKnown~=true or self.positionInferred==true or self.mapKnown~=true or self.mapId~=obs.mapId or
+       self.movementKnown~=true or not number(self.x) or not number(self.y) or not number(self.z) or
+       not number(self.orientation or 0) then return false end
+    local cap=out.action and out.action.capability
+    if cap and cap~="approach_target" and cap~="offense" and cap~="melee_start" then return false end
+    local now=frame.clock and frame.clock.unixMs
+    if not number(now) then return false end
+    local target=out.followFormation or out.action and (obs.targets or {})[out.action.targetGuid]
+    local ux,uy=math.cos(self.orientation or 0),math.sin(self.orientation or 0)
+    if target and number(target.x) and number(target.y) then
+        local dx,dy=target.x-self.x,target.y-self.y
+        local d=math.sqrt(dx*dx+dy*dy)
+        if d>0 then ux,uy=dx/d,dy/d end
+    end
+    local length=2.8 -- entire200ms input at the existing native maximum14yd/s
+    local rx,ry,nearest,nx,ny,contributor=0,0,nil,nil,nil,nil
+    local hit=false
+    -- One linear pass, no all-or-nothing point-count cutoff. Cheap local
+    -- filtering keeps dense20s emitter output useful, even a late underfoot
+    -- point. The ordinary Lua VM's existing execution/memory budgets apply.
+    for _,p in ipairs(points) do
+        -- Scope and emission/deduplication belong to the agent's producer.
+        -- Expiry is absolute Unixms: reading a point never extends it.
+        if type(p)=="table" and type(p.x)=="number" and math.abs(p.x-self.x)<7.8 and
+           type(p.y)=="number" and math.abs(p.y-self.y)<7.8 and type(p.z)=="number" and math.abs(p.z-self.z)<5 and
+           p.radiusYards==5 and number(p.expiresAtMs) and p.expiresAtMs>now and p.expiresAtMs<=now+20000 then
+            local dx,dy=self.x-p.x,self.y-p.y
+            local projection=math.max(0,math.min(length,-dx*ux-dy*uy))
+            local cx,cy=dx+projection*ux,dy+projection*uy
+            local dz=self.z-p.z
+            local d2=dx*dx+dy*dy
+            if d2+dz*dz<25 or cx*cx+cy*cy+dz*dz<25 then
+                hit=true
+                local d=math.sqrt(d2)
+                local vx,vy=dx,dy
+                if d2>=25 then
+                    vx,vy=-uy,ux
+                    if vx*dx+vy*dy<0 then vx,vy=-vx,-vy end
+                    d=1
+                end
+                if d<.000001 then vx,vy=-uy,ux;d=1 end
+                local weight=1/math.max(d,.25)
+                rx,ry=rx+vx/d*weight,ry+vy/d*weight
+                if not nearest or d2+dz*dz<nearest then
+                    nearest,nx,ny=d2+dz*dz,vx/d,vy/d
+                    contributor={x=p.x,y=p.y,z=p.z,radiusYards=5,expiresAtMs=p.expiresAtMs}
+                end
+            end
+        end
+    end
+    if not hit then return false end
+    -- Inside overlapping circles a useful exit may initially approach one
+    -- redundant point. Do not veto every improving escape per historical point.
+    if rx*rx+ry*ry<.000001 then rx,ry=nx,ny end
+    local best,dot
+    for i=0,15 do
+        local angle=i*.392699081698724
+        local value=rx*math.cos(angle)+ry*math.sin(angle)
+        if not dot or value>dot then best,dot=angle,value end
+    end
+    local bearing=best-(self.orientation or 0)
+    while bearing>3.141592653589793 do bearing=bearing-6.283185307179586 end
+    while bearing< -3.141592653589793 do bearing=bearing+6.283185307179586 end
+    -- A passive prior is not a blanket veto, but its existing creature
+    -- clearance remains a constraint on this one local input.
+    if passivePrior then
+        local vx,vy=math.cos(best),math.sin(best)
+        local radius=passivePrior.minRangeYards+passivePrior.clearanceYards
+        for _,n in pairs(obs.targets or {}) do
+            if n.entry==passivePrior.creatureEntry and n.present==true and n.alive~=false then
+                if n.positionKnown~=true or n.positionInferred==true or n.positionEstimated==true or n.mapKnown~=true or n.mapId~=obs.mapId or
+                   not number(n.x) or not number(n.y) or not number(n.z) then return false end
+                local dx,dy=self.x-n.x,self.y-n.y
+                local q=math.max(0,math.min(length,-dx*vx-dy*vy))
+                if (dx+q*vx)^2+(dy+q*vy)^2+(self.z-n.z)^2<radius*radius then
+                    out.cloudAdjustment={phase="existing_prior_clearance",effectVerified=false};return false
+                end
+            end
+        end
+    end
+    out.action={capability="move_body",sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,
+        observationSequence=sequence,sequenceId=sequence,bearingRadians=bearing,durationMs=200,jump=false}
+    out.followFormation=nil;out.portalCatchup=nil
+    out.cloudAdjustment={phase="local_point_repulsion",effectVerified=false,referencePoseEstimated=self.positionEstimated==true,
+        point=contributor,distanceYards=math.sqrt(nearest),clearanceYards=math.sqrt(nearest)-5,existingRoleWriter=owns==true}
+    return true
+end
+
 local rejected_route = {follow_navigation_unavailable=true,follow_navigation_invalid_step=true,
     follow_navigation_invalid_target=true}
 local function recovery_probe(obs,sequence,key,phase,goal)
