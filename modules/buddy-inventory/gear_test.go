@@ -179,9 +179,9 @@ func TestGearUsabilityAndConflictGatesNeverWrite(t *testing.T) {
 			f.w.SelfEquipment[0] = proto.Clone(f.w.SelfEquipment[6]).(*worldv1.EquipmentSlotState)
 			f.w.SelfEquipment[0].Slot = 0
 		},
-		"combat":    func(s *Service, f *fakeInventory, r *inventoryv1.EquipGearRequest) { f.w.Self.UnitFlags |= 0x80000 },
-		"cast":      func(s *Service, f *fakeInventory, r *inventoryv1.EquipGearRequest) { f.a.CastPending = true },
-		"assisting": func(s *Service, f *fakeInventory, r *inventoryv1.EquipGearRequest) { f.a.Assisting = true },
+		"combat":           func(s *Service, f *fakeInventory, r *inventoryv1.EquipGearRequest) { f.w.Self.UnitFlags |= 0x80000 },
+		"cast":             func(s *Service, f *fakeInventory, r *inventoryv1.EquipGearRequest) { f.a.CastPending = true },
+		"attack in flight": func(s *Service, f *fakeInventory, r *inventoryv1.EquipGearRequest) { f.a.AutoAttackUnconfirmed = true },
 		"trade": func(s *Service, f *fakeInventory, r *inventoryv1.EquipGearRequest) {
 			f.trade = &tradev1.State{SessionId: "body", Phase: "OPEN"}
 		},
@@ -427,5 +427,20 @@ func TestGearComparisonPendingIsExplicitAndQueriesEquippedTemplate(t *testing.T)
 		if row.Item.ItemGuid == breechesGUID && (row.GearBlockedReason != "enhancement_context_pending" || row.ConservativeUpgrade || row.GearEquipEligible) {
 			t.Fatal(row)
 		}
+	}
+}
+
+func TestGearPassiveIntentsRemainEnabledAndNativeReceiptConfirms(t *testing.T) {
+	s, f := fixtureGear(t, true)
+	f.a.Following, f.a.Assisting = true, true
+	f.loot = &lootv1.State{SessionId: "body", Enabled: true, Phase: "idle"}
+	r := gearRequest(t, s)
+	gearProof(s, f)
+	if _, err := equipGearPolicyTest(t, s, r); err != nil {
+		t.Fatal(err)
+	}
+	st := waitInventory(t, s)
+	if st.Operation.Status != "CONFIRMED" || !f.a.Following || !f.a.Assisting || !f.loot.Enabled || len(f.packets) != 1 {
+		t.Fatal(st, f.a, f.loot)
 	}
 }
