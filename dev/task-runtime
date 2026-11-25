@@ -30,6 +30,14 @@ ALIAS = re.compile(r'[a-z][a-z0-9-]*\.[a-z][a-z0-9_]*')
 class Error(Exception): pass
 
 
+class RPCRejected(Error):
+    """A validated same-request JSON-RPC error; not a dispatch guarantee."""
+    def __init__(self, method, url, request_id, code, message, data):
+        super().__init__('rpc_rejected('+str(code)+'): '+message)
+        self.method, self.url, self.request_id = method, url, request_id
+        self.code, self.data = code, copy.deepcopy(data)
+
+
 class BridgeFailure(Error):
     def __init__(self, mode, detail, raw, value_bytes=MAX_INPUT):
         super().__init__('typed_bridge_rejected' + (': ' + detail if detail else ''))
@@ -259,7 +267,7 @@ class RPC:
                         and isinstance(failure.get('message'),str) and 'result' not in value,
                         'rpc_result_unconfirmed')
                 message=''.join(c if 32<=ord(c)<127 else ' ' for c in failure['message'])[:192]
-                raise Error('rpc_rejected('+str(failure['code'])+'): '+message)
+                raise RPCRejected(method, self.url, self.sequence, failure['code'], message, failure.get('data'))
             require(isinstance(value.get('result'),dict),'rpc_result_unconfirmed')
             return value['result']
         except (OSError, ValueError): raise Error('rpc_result_unconfirmed') from None
