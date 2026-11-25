@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock
 
 import item_search as search
 from direct_tools import DirectTools
@@ -138,6 +139,44 @@ class ItemSearchTests(unittest.TestCase):
         blocked=DirectTools(rpc,rpc.sid,'87',ROOT,ROOT,allowed=lambda:True,gm_allowed=lambda:False,
             helpers={'gm_tasks':gm,'game_catalog':SimpleNamespace(catalog=lambda:self.catalog)})
         self.assertFalse(blocked.dispatch('find_usable_items',dict(recipient_guid='4',item_ids=[1645]))['ok'])
+
+
+class GearToolTests(unittest.TestCase):
+    def test_ordinary_actor_compares_an_exact_item_copy_on_its_own_session(self):
+        rpc = RPC('4')
+        result = dict(status='upgrade', characterGuid='4', comparisons=[dict(equipmentSlot=10)])
+        inspect = Mock(return_value=result)
+        tools = DirectTools(rpc, rpc.sid, '4', None, ROOT, owner_allowed=lambda: True,
+                            helpers={'gear_check': SimpleNamespace(inspect=inspect)})
+        reply = tools.dispatch('check_gear_upgrade', dict(item_entry=501, item_guid='888'))
+        self.assertEqual(reply, dict(ok=True, result=result))
+        inspect.assert_called_once_with(rpc, session_id=rpc.sid, character_guid='4',
+                                        item_entry=501, item_guid='888')
+        for invalid in (dict(item_entry=True), dict(item_entry=0), dict(item_entry=2**32),
+                        dict(item_entry=501, item_guid=888), dict(item_entry=501, recipient_guid='3')):
+            self.assertFalse(tools.dispatch('check_gear_upgrade', invalid)['ok'])
+        self.assertEqual(inspect.call_count, 1)
+        self.assertEqual(rpc.writes, [])
+
+    def test_gm_compares_registered_recipient_and_detects_binding_change(self):
+        from test_item_recipient import GM, RPC as RecipientRPC
+        rpc = RPC('87')
+        target = RecipientRPC('4', 'aw-mira', url='http://mira/rpc')
+        gm = GM([dict(guid='4', name='Mira', rpc_url=target.url)], {target.url: target})
+        inspect = Mock(return_value=dict(status='not_upgrade', characterGuid='4'))
+        tools = DirectTools(rpc, rpc.sid, '87', ROOT, ROOT, allowed=lambda: True,
+                            gm_allowed=lambda: True,
+                            helpers={'gm_tasks': gm, 'gear_check': SimpleNamespace(inspect=inspect)})
+        args = dict(item_entry=501, recipient_guid='4')
+        self.assertEqual(tools.dispatch('check_gear_upgrade', args)['result']['characterGuid'], '4')
+        inspect.assert_called_once_with(target, session_id='aw-mira', character_guid='4',
+                                        item_entry=501, item_guid=None)
+        absent = tools.dispatch('check_gear_upgrade', dict(item_entry=501, recipient_guid='3'))
+        self.assertEqual(absent['result']['status'], 'unknown')
+        self.assertEqual(inspect.call_count, 1)
+        inspect.side_effect = lambda *a, **kw: gm.rows.clear() or dict(status='upgrade')
+        self.assertFalse(tools.dispatch('check_gear_upgrade', args)['ok'])
+        self.assertEqual(rpc.writes, [])
 
 
 if __name__=='__main__':unittest.main()

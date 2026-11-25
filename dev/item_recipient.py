@@ -123,6 +123,42 @@ def _binding(gm, root, guid, caller_url):
     return url, name
 
 
+def compare_gear(tools, recipient_guid, item_entry, item_guid=None):
+    """Run the shared read-only comparison on the requested character's own observations."""
+    if not isinstance(recipient_guid, str):
+        raise RecipientError('recipient_guid_required')
+    if type(item_entry) is not int or not 0 < item_entry < 2**32:
+        raise RecipientError('positive_item_entry_required')
+    if item_guid is not None:
+        if not isinstance(item_guid, str):
+            raise RecipientError('item_guid_must_be_decimal_string')
+        _guid(item_guid)
+    guid = _guid(recipient_guid)
+    caller = _guid(tools.self_guid)
+    remote = guid != caller
+    _authority(tools, remote)
+    rpc, sid = tools.rpc, tools.session_id
+    if remote:
+        _body(_call(rpc, 'buddy-actions.status'), caller, sid)
+        gm = tools._helper('gm_tasks')
+        binding = _binding(gm, tools.root, guid, tools.rpc.url)
+        if binding is None:
+            _authority(tools, remote)
+            return dict(status='unknown', reason='recipient_equipment_not_observed',
+                        missingFacts=['recipient_equipment_and_comparison_policy'],
+                        characterGuid=guid, itemEntry=item_entry, gameEffectClaimed=False)
+        rpc = gm.task_rpc(binding[0])
+        sid = _body(_call(rpc, 'buddy-actions.status'), guid)
+    inspection = tools._helper('gear_check').inspect(
+        rpc, session_id=sid, character_guid=guid, item_entry=item_entry, item_guid=item_guid)
+    if remote:
+        if _binding(gm, tools.root, guid, tools.rpc.url) != binding:
+            raise RecipientError('recipient_binding_changed')
+        _body(_call(tools.rpc, 'buddy-actions.status'), caller, tools.session_id)
+    _authority(tools, remote)
+    return inspection
+
+
 def resolve(tools, recipient_guid: str) -> dict:
     """Resolve only requested identity; unavailable is an error, not GM fallback."""
     if not isinstance(recipient_guid, str):
