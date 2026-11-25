@@ -484,8 +484,10 @@ func TestTransportFailureDoesNotRetryAndLogoutCloses(t *testing.T) {
 	tickCorpseLua(t, s)
 	advance(time.Second)
 	tickCorpseLua(t, s)
-	if len(f.packets) != 1 || current(t, s).Enabled || f.releases != 1 {
-		t.Fatal("ambiguous open retried")
+	op := s.corpseReceiptLocked()
+	if len(f.packets) != 1 || !current(t, s).Enabled || f.releases != 1 || op == nil ||
+		!op.OpeningTransportAttempted || op.OpeningTransportWritten || !op.Terminal || !s.retired[corpseGUID] {
+		t.Fatal("maintained availability lost exact unknown-source custody", current(t, s), op, f.packets)
 	}
 	s, f, _ = rig(t)
 	openItem(t, s)
