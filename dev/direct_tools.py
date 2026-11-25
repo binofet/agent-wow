@@ -772,6 +772,10 @@ class DirectTools:
                                 result.get('sessionId') == self.session_id and str(result.get('characterGuid')) == self.self_guid
                                 and isinstance(result.get('sequence'), str) and result['sequence'].isdigit(), 'policy_delivery_unconfirmed')
                         result = dict(result=result, policyRevision=binding[1], deliveryOnly=True, gameEffectClaimed=False)
+                        if args['value']['task']=='ranged_only':
+                            result['requestedDirective']=copy.deepcopy(args['value'])
+                            result['application']=dict(known=False,reason='queued_delivery_only',
+                                observePath='latestDecision.output.rangedStance',expectedTaskId=args['value'].get('id'))
                     else:
                         method = 'buddy-actions.follow' if name == 'follow' else 'buddy-actions.buffs'
                         result = self.rpc.call(method, dict(enabled=args['enabled'] if name == 'follow' else True))
@@ -1353,6 +1357,12 @@ class DirectTools:
                  '{task:"wait_for_pull",id:"wait-1",ownerGuid:"3",responseYards:10}; {task:"cancel_task",id:"wait-1"}; '
                  '{task:"cast_spell",id:"cast-1",spellId:1449}; {task:"cancel_spell",id:"cancel-1",spellId:10,expectedOperationRevision:"observed",channel:true}. '
                  'Use learned IDs from spell_inspect; ground casts pass targets:{mask:64,destination:{x,y,z}} with observed coordinates. '
+                 'ranged_only accepts id, creatureEntry, mapId, visitId, minRangeYards, maxRangeYards, clearanceYards, durationMs, enabled:true; '
+                 'use observed creature entry/map/visit and suitable ability ranges, not an NPC-name guess. '
+                 'Cancel the same id with enabled:false or cancel:true. It is scoped to that entry/map/visit and duration. '
+                 'Inspect session.policy_state latestDecision.output.rangedStance (matching id, applied/active/phase). '
+                 'applied means Lua acknowledged the directive, not physical readiness or damage; inspect positionReady/missing facts separately. '
+                 'Do not promise wand use without an actual equipped wand and learned Shoot support; a cast GO does not verify ongoing fire. '
                  'Handler availability depends on the accepted source; inspect it if unknown. Lua owns choices and task lifecycle. '
                  'A queued input is delivery only, not a cast, movement or completion. No source edit or GM permission is granted.',
                  {'value': dict(type='object', properties=dict(
@@ -1361,6 +1371,12 @@ class DirectTools:
                      targetGuid=string, mark=dict(type='string', enum=['star','circle','diamond','triangle','moon','square','x','skull']),
                      technique=dict(type='string', enum=['polymorph','sap']), spellId=dict(type='integer',minimum=1,maximum=4294967295),
                      enabled=dict(type='boolean'), cancel=dict(type='boolean'), maintain=dict(type='boolean'), auto=dict(type='boolean'),
+                     creatureEntry=dict(type='integer',minimum=1,maximum=4294967295),
+                     mapId=dict(type='integer',minimum=0,maximum=4294967295),
+                     visitId=dict(type='string',pattern=r'^[0-9]+$'),
+                     minRangeYards=dict(type='number',exclusiveMinimum=0),
+                     maxRangeYards=dict(type='number',exclusiveMinimum=0,description='Greater than minRangeYards.'),
+                     clearanceYards=dict(type='number',minimum=0),durationMs=dict(type='number',exclusiveMinimum=0),
                      ownerGuid=string, responseYards=dict(type='number'), order=dict(type='array',items=string),
                      targets=obj, trajectory=obj, requirements=obj, expectedOperationRevision=string, channel=dict(type='boolean')),
                      required=['task'])}, ['value']),

@@ -1663,6 +1663,23 @@ class OwnerControlToolTests(unittest.TestCase):
         self.assertFalse(self.tools.dispatch('follow',dict(enabled='yes'))['ok'])
         self.assertEqual(self.rpc.writes,before)
 
+    def test_ranged_directive_is_queued_scope_not_applied_or_ability_proof(self):
+        value=dict(task='ranged_only',id='owner-tactic-1',creatureEntry=123,mapId=0,visitId='7',
+            minRangeYards=12,maxRangeYards=25,clearanceYards=10,durationMs=60000,enabled=True)
+        result=self.tools.dispatch('gameplay_command',dict(value=value),operation_id='tactic-1')
+        self.assertTrue(result['ok'],result)
+        row=result['result']
+        self.assertTrue(row['deliveryOnly']);self.assertFalse(row['gameEffectClaimed'])
+        self.assertEqual(row['requestedDirective'],value)
+        self.assertEqual(row['application'],dict(known=False,reason='queued_delivery_only',
+            observePath='latestDecision.output.rangedStance',expectedTaskId='owner-tactic-1'))
+        self.assertEqual(self.rpc.writes,[('session.send_event',dict(sessionId='aw-123',characterGuid='4',kind='command',value=value))])
+        schema=next(r['function'] for r in self.tools.tool_schemas() if r['function']['name']=='gameplay_command')
+        props=schema['parameters']['properties']['value']['properties']
+        self.assertTrue(set(value)<=set(props))
+        for phrase in ('ranged_only','latestDecision.output.rangedStance','queued input is delivery only','equipped wand'):
+            self.assertIn(phrase,schema['description'])
+
     def test_late_owner_body_source_and_contract_changes_are_zero_native_writes(self):
         for kind in ('owner','cancel','body','source','route'):
             with self.subTest(change=kind):

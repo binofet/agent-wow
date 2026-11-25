@@ -1209,25 +1209,51 @@ def owner_acknowledgement(folder, identity, session, sequence, outcome=None, *, 
         raise ConversationError('Owner acknowledgement storage unavailable: '+str(error)) from error
 
 
+def owner_message_scope(text, names):
+    """Grammatical audience hints only; never gameplay intent or authority."""
+    names=sorted({name.casefold() for name in names},key=lambda name:(-len(name),name))
+    pattern='|'.join(re.escape(name) for name in names)
+    roles=r'casters?|healers?|tanks?|melee|ranged|mages?|priests?|warlocks?|rogues?|warriors?|paladins?|hunters?|druids?|shamans?|death knights?'
+    # Sentence delimiters exclude decimal points. A new explicit vocative,
+    # party address or role after a conjunction/comma starts its own scope.
+    audience=r'(?:everyone|everybody|team|party|all|both|'+roles+r')(?!\w)'
+    if pattern:audience+=r'|(?:'+pattern+r')(?=\s*[,:])'
+    boundary=r'[!?;\n]|(?<!\d)\.|\.(?!\d)|(?:,\s*(?:(?:and|also)\s+)?|\s+(?:and|also)\s+)(?=(?:'+audience+r'))'
+    spans=[];previous=0
+    for split in re.finditer(boundary,text,re.IGNORECASE):
+        prefix=text[previous:split.start()].strip()
+        named_only=(pattern and re.fullmatch(r'(?:hey\s+)?(?:'+pattern+r')(?:[\s,&]*(?:(?:and|or|also)\s+)?(?:'+pattern+r'))*',prefix,re.IGNORECASE))
+        if split.group()[0] in ', \t' and named_only:
+            continue # This comma/conjunction still belongs to the vocative.
+        spans.append((previous,split.start()));previous=split.end()
+    spans.append((previous,len(text)))
+    clauses=[]
+    for left,right in spans:
+        raw=text[left:right];clause=raw.strip()
+        if not clause:continue
+        start=left+len(raw)-len(raw.lstrip())
+        row=dict(start=start,end=start+len(clause),audience='party')
+        prefix=re.match(r'\s*(?:hey\s+)?',clause,re.IGNORECASE).end()
+        named=re.match(r'(?:'+pattern+r')(?=[\s,:]|$)',clause[prefix:],re.IGNORECASE) if pattern else None
+        if named:
+            addressed=[named.group().casefold()];end=prefix+named.end()
+            while True:
+                join=re.match(r'\s*(?:,\s*(?:(?:and|or|also)\s+)?|(?:and|or|also)\s+|&\s*)('+pattern+r')(?!\w)',clause[end:],re.IGNORECASE)
+                if not join:break
+                addressed.append(join.group(1).casefold());end+=join.end()
+            row.update(audience='named',names=addressed)
+        else:
+            role=re.match(r'(?:hey\s+)?('+roles+r')(?=[\s,:]|$)',clause,re.IGNORECASE)
+            if role:row.update(audience='role',role=role.group(1).casefold())
+        clauses.append(row)
+    return dict(clauses=clauses,broadcast=any(row['audience']!='named' for row in clauses),
+                namedAddresses=sorted({name for row in clauses for name in row.get('names',[])}))
+
+
 def addressed_names(text, names):
-    # "Arlen, follow Mira" addresses Arlen. A conjunction can address several
-    # characters; a later sentence can begin a separate named instruction.
-    if re.match(r"\s*(?:hey\s+)?(?:everyone|everybody|team|party|all\b|both\b)", text, re.IGNORECASE):
-        return set()
-    addressed = set()
-    for clause in re.split(r"[.!?;]+\s*", text):
-        matches = sorted((match.start(), match.end(), name.casefold())
-                         for name in names for match in re.finditer(r"(?<!\w)" + re.escape(name) + r"(?!\w)", clause, re.IGNORECASE))
-        if not matches:
-            continue
-        _, end, name = matches[0]
-        addressed.add(name)
-        for start, following_end, name in matches[1:]:
-            if not re.fullmatch(r"[\s,&]*(?:(?:and|or|also)[\s,&]*)?", clause[end:start], re.IGNORECASE):
-                break
-            addressed.add(name)
-            end = following_end
-    return addressed
+    scope=owner_message_scope(text,names)
+    # A trailing named clause cannot consume an earlier party/role directive.
+    return set() if scope['broadcast'] else set(scope['namedAddresses'])
 
 
 def parse_roster(values, self_guid, self_name, owner_guid):
@@ -2687,7 +2713,19 @@ class DirectBrain(AgentBrain):
             "Owner input takes priority; peer development does not authorize unrelated gameplay. "
             "Gameplay decisions and tuning belong in your accepted editable Lua; native tools execute "
             "and validate mechanics. Tools enforce current body, permission and action-specific limits. "
-            "Reply with ordinary assistant text; use the advertised tools for requested actions.")
+            "Reply with ordinary assistant text; use the advertised tools for requested actions. "
+            "Owner messageScopes are grammatical clause offsets into the unchanged owner text, not gameplay parsing: "
+            "party clauses apply to all, role clauses only to their applicable roles, named clauses only to those names. "
+            "A named clause never cancels another clause's party scope. A private whisper remains addressed to its recipient. "
+            "A tactical promise does not change Lua: invoke the supported gameplay_command, then distinguish queued delivery "
+            "from matching policy_state.latestDecision.output acknowledgement. If a requested behavior has no handler but your advertised "
+            "owned-workspace tools and existing mechanics support it, inspect your accepted Lua, edit and test it, "
+            "apply with its same-body revision, then verify the result. A missing handler is not itself a missing mechanic. "
+            "If required primitives or editing authority are absent, report that exact limitation. If you only acknowledge, "
+            "say no behavior change was applied; if verification is incomplete, say what remains unverified. Banter and questions need no edits. "
+            "For wand requests, verify your actual equipped ranged item (World.selfEquipment slot 17, zero-based) "
+            "and learned spell facts: Shoot 5019 is wand-specific with 30-yard range, not universal class support. "
+            "A cast GO is not proof of continuing wand fire; do not repeat uncertain casts/toggles.")
         if character_name.casefold() == "lotharen":
             self.persona += (" You are Joel's authenticated rank 2 GM character, GUID 87; the realm validates command permissions. "
                 "For an authorized GM request, choose and invoke native GM commands yourself from the actual goal, "
@@ -4609,6 +4647,11 @@ class Conversation:
         except ConversationError:
             self.status(sharedQuestPhase="reconciling_shared_quest_request")
 
+    def owner_message_applies(self, message, text):
+        if message.get('channel')=='WHISPER':return self.owner_whisper_recipient(message)
+        addressed=addressed_names(text,[self.character_name,*self.party_agents.values()])
+        return not addressed or self.character_name.casefold() in addressed
+
     def owner_whisper_recipient(self, message):
         # Inbound AzerothCore whispers can repeat the sender in this field.
         # The server's body-specific chat feed already supplies the routing.
@@ -4642,8 +4685,7 @@ class Conversation:
                     retained = message
                 elif sequence > continuation['sequence'] and owner and channel in ('SAY','PARTY','PARTY_LEADER','WHISPER'):
                     if channel == 'WHISPER' and not self.owner_whisper_recipient(message):continue
-                    addressed = addressed_names(plain_text(message.get('text')), [self.character_name, *self.party_agents.values()])
-                    if not addressed or self.character_name.casefold() in addressed:
+                    if self.owner_message_applies(message,plain_text(message.get('text'))):
                         raise ConversationError("Newer owner input supersedes the explicit continuation")
             if retained is None or previous != latest:
                 raise ConversationError("Exact owner whisper is missing from the current retained chat window")
@@ -4749,8 +4791,7 @@ class Conversation:
                 text = plain_text(message.get("text"))
             except ConversationError:
                 continue
-            addressed = addressed_names(text, [self.character_name, *self.party_agents.values()])
-            if not addressed or self.character_name.casefold() in addressed:
+            if self.owner_message_applies(message,text):
                 return True
         return False
 
@@ -4985,9 +5026,7 @@ class Conversation:
                 # the whole party. Other characters consume the cursor quietly.
                 if channel in ("PARTY", "PARTY_LEADER"):
                     self.peer_remaining, self.peer_until = 2, time.monotonic() + 120
-                addressed = addressed_names(text, [self.character_name, *self.party_agents.values()])
-                if addressed and self.character_name.casefold() not in addressed:
-                    continue
+                if not self.owner_message_applies(message,text):continue
                 selected.append({"speaker": self.player_name, "channel": channel, "text": text, "sender_guid": str(sender),
                     "sequence":sequence,"receiverGuid":message.get('receiverGuid','0')})
             elif (channel == "WHISPER" and sender in DEVELOPMENT_PEERS
@@ -5115,6 +5154,9 @@ class Conversation:
         development = self.development_context("party_agent" if peer else "owner",peer_verified)
         state = dict(state, character={"name":self.character_name,"class":self.character_class,"guid":str(self.character_guid)}, party_agents=[{"name":name,"guid":str(guid)} for guid,name in self.party_agents.items()],
             development=development,current_request={"source":"party_agent" if peer else "owner","senderGuid":str(sender),"verifiedPeer":peer_verified,"developmentWhisper":development_whisper,"controls_allowed":not peer,"repair_requests_allowed":not isinstance(self.brain,DirectBrain)})
+        if not peer:
+            state['current_request']['messageScopes']=[dict(sequence=entry['sequence'],channel=entry['channel'],
+                scope=owner_message_scope(entry['text'],[self.character_name,*self.party_agents.values()])) for entry in selected]
         if isinstance(self.brain, DirectBrain):
             state["current_request"].update(channel=channel, conversationScope=history_key,
                 messages=[dict(entry) for entry in selected])
