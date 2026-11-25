@@ -475,10 +475,10 @@ class DirectTools:
     def _path(self, value):
         require(self.workspace is not None, "owned_workspace_required")
         require(isinstance(value, str) and 0 < len(value) <= 512 and "\\" not in value,
-                "relative_workspace_path_required")
+                "relative_workspace_path_required: use a relative owned path such as policy.lua, never an absolute repository path; policy_patch edits the attached Lua without a file path")
         path = PurePosixPath(value)
         require(not path.is_absolute() and str(path) == value and ".." not in path.parts,
-                "relative_workspace_path_required")
+                "relative_workspace_path_required: use a relative owned path such as policy.lua, never an absolute repository path; policy_patch edits the attached Lua without a file path")
         require(path.suffix.lower() in (".lua", ".json"), "lua_or_json_file_required")
         forbidden = {".git", ".ssh", ".aws", ".codex", ".agents", "config", "data"}
         require(not any(part.lower() in forbidden or part.startswith(".") for part in path.parts),
@@ -497,7 +497,7 @@ class DirectTools:
                 "workspace_symlink_refused")
         info = self.workspace.stat()
         require(info.st_uid == os.geteuid() and not info.st_mode & 0o022,
-                "owned_workspace_required")
+                "owned_workspace_required: configured root must be owned and not group/world-writable; do not chmod it through tools; use policy_patch for attached Lua or report the root custody error")
         fd = os.open(self.workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             for part in path.parts[:-1]:
@@ -596,6 +596,20 @@ class DirectTools:
         helper = self._helper("self-edit")
         result = helper.edit("show", int(self.self_guid), self.session_id, _PolicyRPC(self))
         self._catalog()
+        if args.get("find") is not None:
+            text = args["find"]
+            require(isinstance(text, str) and bool(text), "nonempty_attached_literal_find_required")
+            require(not {"save_as", "expected_sha256", "path", "offset"} & set(args),
+                    "literal_find_uses_its_own_source_offset")
+            require(result.get("sourceKnown") is True and isinstance(result.get("source"), str),
+                    "attached_source_unavailable")
+            source = result["source"]
+            match = source.find(text)
+            return dict(sessionId=self.session_id, characterGuid=self.self_guid,
+                        revision=sha(source.encode()), matches=source.count(text),
+                        matchOffset=match if match >= 0 else None,
+                        sourcePage=_page(source, offset=max(0, match-160), limit=args.get("limit",4096)) if match >= 0 else None,
+                        gameplayDispatched=False)
         if args.get("save_as") is not None:
             require(result.get("sourceKnown") is True and isinstance(result.get("source"), str),
                     "attached_source_unavailable")
@@ -608,17 +622,57 @@ class DirectTools:
     def _policy_apply(self, args):
         self._authorise()
         source = self._read_file(args["path"]).decode()
+        return self._apply_policy_source(source, args["expected_revision"], "policy_apply")
+
+    def _apply_policy_source(self, source, expected, operation):
         tracked = _PolicyRPC(self)
-        details = dict(expectedRevision=args["expected_revision"], targetRevision=sha(source.encode()))
+        details = dict(expectedRevision=expected, targetRevision=sha(source.encode()))
         try:
             result = self._helper("self-edit").edit("apply", int(self.self_guid), self.session_id,
-                                                    tracked, source, args["expected_revision"])
+                                                    tracked, source, expected)
             self._catalog()
         except Exception as error:
             if tracked.entered:
-                self._unknown("policy_apply", details, error)
+                self._unknown(operation, details, error)
             raise
         return dict(result=result, gameEffectClaimed=False, **details)
+
+    def _policy_patch(self, args):
+        """Patch the exact accepted bundle internally; no workspace copy or replacement file."""
+        self._authorise()
+        require(self.self_guid != "87", "ordinary_attached_policy_patch_only")
+        expected = args.get("expected_revision")
+        require(isinstance(expected, str) and re.fullmatch(r"[a-f0-9]{64}", expected),
+                "current_attached_revision_required: read policy_show metadata first")
+        require(type(args.get("apply", False)) is bool, "policy_patch_apply_boolean_required")
+        edits = args.get("edits")
+        require(isinstance(edits, list) and 0 < len(edits) <= 64, "bounded_literal_edits_required")
+        helper = self._helper("self-edit")
+        current = helper.edit("show", int(self.self_guid), self.session_id, _PolicyRPC(self))
+        self._catalog()
+        require(current.get("runtime") == "session" and current.get("sourceKnown") is True
+                and isinstance(current.get("source"), str), "attached_session_source_required")
+        source = current["source"]
+        require(sha(source.encode()) == expected and current.get("status", {}).get("revision") == expected,
+                "attached_policy_changed: refresh policy_show and the exact old text; no edits applied")
+        for edit in edits:
+            require(isinstance(edit, dict) and set(edit) == {"old", "new"}
+                    and isinstance(edit["old"], str) and bool(edit["old"])
+                    and isinstance(edit["new"], str), "literal_old_new_edits_required")
+            require(source.count(edit["old"]) == 1,
+                    "unique_attached_literal_required: old text must occur exactly once; read a narrower policy_show source page")
+            source = source.replace(edit["old"], edit["new"], 1)
+        require(0 < len(source.encode()) <= self.max_bytes, "patched_source_size_bound")
+        tested = self._evaluate_source(source.encode(), args.get("frame"))
+        result = dict(expectedRevision=expected, targetRevision=sha(source.encode()),
+                      edits=len(edits), sourceBytes=len(source.encode()),
+                      tested=self._project(tested, {}), applied=False, gameEffectClaimed=False)
+        if tested.get("valid") is not True or args.get("apply", False) is False:
+            return result
+        self._authorise()
+        result["application"] = self._apply_policy_source(source, expected, "policy_patch")
+        result["applied"] = True
+        return result
 
     def _policy_input(self, args):
         self._authorise()
@@ -1053,7 +1107,11 @@ class DirectTools:
         source = self._read_file(args["path"])
         require(self._path(args["path"]).suffix == ".lua" and isinstance(args["frame"], dict),
                 "lua_source_and_object_frame_required")
-        frame = packed(args["frame"])
+        return self._evaluate_source(source, args["frame"])
+
+    def _evaluate_source(self, source, frame):
+        require(isinstance(frame, dict), "object_test_frame_required")
+        frame = packed(frame)
         require(len(frame) <= self.max_bytes, "evaluation_frame_size_bound")
         self._catalog()
         self._authorise()
@@ -1511,7 +1569,7 @@ class DirectTools:
               "path": paging["path"], "offset": paging["offset"], "page_limit": paging["limit"]}, []),
             ("session_catalog", "Default: bounded method index. method selects its exact contract/dependencies; message selects any exact message type. JSON path/offset/limit expand/page large schemas; row.key appends to path.", {"method": string, "message": string, **paging}, []),
             ("read_observation", "Read only an installed effect=read RPC on this exact actor. Optional JSON path/offset/limit project and page its result, never a new endpoint. Large results return explicit expandable summaries.", {"method": string, "params": obj, **paging}, ["method", "params"]),
-            ("policy_show", "Default: accepted-source metadata, not the full bundle. save_as snapshots into owned workspace; use workspace_read to inspect it. Or path=['source'] with character offset/limit reads exact source pages. Empty expected_sha256 requires a new file.", {"save_as": string, "expected_sha256": string, **paging}, []),
+            ("policy_show", "Default: accepted-source metadata, not the full bundle. save_as snapshots into owned workspace; use workspace_read to inspect it. Or path=['source'] with character offset/limit reads exact source pages. Empty expected_sha256 requires a new file. find searches a literal in attached source and returns its first bounded excerpt, match count and exact revision without a workspace file; limit bounds excerpt characters.", {"save_as": string, "expected_sha256": string, "find":string, **paging}, []),
             ("spell_inspect", "Exact spell_id returns complete raw learned mechanics. spell_id=0 lists the book with bounded JSON path/offset/limit paging; classification is not cast availability.", {"spell_id": {"type": "integer", "minimum": 0}, **paging}, []),
             ("workspace_read", "Read owned Lua/JSON text and full SHA256; literal find/start_line locates a section. Large windows page content by character offset/limit; nextOffset continues without losing a long source line.", {"path": string, "start_line": {"type": "integer", "minimum": 1}, "max_lines": {"type": "integer", "minimum": 1, "maximum": 1000}, "find": string, "offset": paging["offset"], "limit": paging["limit"]}, ["path"]),
         ]
@@ -1590,6 +1648,9 @@ class DirectTools:
                 ("policy_apply", "CAS-apply owned Lua through maintained self-edit on this exact body, preserving pending state. Unknown reply halts, never retries.", {"path": string, "expected_revision": string}, ["path", "expected_revision"]),
                 ("policy_input", "Deliver one structured command to an already-present Lua handler. Delivery is not game success; no arbitrary receipt/event injection.", {"value": obj}, ["value"]),
             ]
+            if self.self_guid != "87":
+                specs.append(("policy_patch", "Patch your CURRENT attached complete Lua bundle without filesystem paths or copying it. Read policy_show metadata for expected_revision and source pages to obtain unique literal old text. Supply edits=[{old,new}] and an explicit pure evaluator frame. Default apply=false previews/tests; apply=true tests then uses the SAME body-bound safe CAS reload preserving pending state. No standalone replacement source, native action or automatic retry. Failed tests do not apply; UNKNOWN must be reconciled, never replayed.",
+                    {"expected_revision": string, "edits": {"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","properties":{"old":string,"new":string},"required":["old","new"],"additionalProperties":False}}, "frame":obj,"apply":{"type":"boolean"}}, ["expected_revision","edits","frame"]))
             if self.self_guid == "87" and self.request_id and self.gm_allowed() is True:
                 specs += [("gm_task_start", "Optional ordered Lua recovery/regroup task, not a prerequisite for gm_execute. Goal uses current observed original roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": {"type":"object", "description":"Recovery goal: members=[{guid,name,rpcUrl?}] for the currently observed original party, plus destination={mapId,x,y,z,tolerance?} OR player={guid,name,tolerance?}. Companion rpcUrl must match current bindings. The shared Lua initializer validates admission before any hold or child starts."}}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),
@@ -1716,6 +1777,8 @@ class DirectTools:
                 result = self._gm_lua_step(args, operation_id)
             elif name == "policy_apply":
                 result = self._policy_apply(args)
+            elif name == "policy_patch":
+                result = self._policy_patch(args)
             elif name == "policy_input":
                 result = self._policy_input(args)
             elif name == 'party_invite':
