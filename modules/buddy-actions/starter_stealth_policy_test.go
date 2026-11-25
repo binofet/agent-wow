@@ -90,6 +90,7 @@ func TestStarterStealthLostReplyReconcilesOnlyAnExactCurrentNativeGO(t *testing.
 				s.Tick(context.Background())
 				heal, _ := s.spellData.Lookup(lesserHeal)
 				s.castCount++
+				s.castUntil = s.now().Add(5 * time.Second)
 				s.pendingSpell, s.pendingTarget, s.state.CastPending = heal.ID, s.selfGUID, true
 				newer = s.reserveHealReceiptLocked("", heal, s.selfGUID)
 				newerView = proto.Clone(&newer.view).(*actionsv1.SpellOperation)
