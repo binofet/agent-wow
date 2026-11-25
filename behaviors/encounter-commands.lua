@@ -857,7 +857,7 @@ end
 
 -- Only the automatic default yields to explicit travel. Unknown geometry or an
 -- engaged matching hazard cannot establish the harmless, distant exception.
-local function ranged_travel_safe(obs,row,in_combat)
+local function ranged_travel_safe(obs,row,in_combat,attack_age_limit)
     if not row or row.origin~="learned_prior" or in_combat then return false end
     local self=(obs.players or {})[obs.selfGuid]
     if not self or self.combatKnown~=true or self.inCombat==true or self.mapKnown~=true or
@@ -878,7 +878,16 @@ local function ranged_travel_safe(obs,row,in_combat)
             if type(value)~="number" or value~=value or value==math.huge or value==-math.huge then return false end
         end
         local attack=npc.attackObservation
-        if attack and attack.victimKnown==true and guid(attack.victimGuid) then return false end
+        if attack and attack.victimKnown==true and guid(attack.victimGuid) then
+            local age=tonumber(attack.ageMs or "0")
+            local victim=(obs.players or {})[attack.victimGuid]
+            local fighting=victim and victim.present==true and victim.mapKnown==true and victim.mapId==obs.mapId and
+                victim.combatKnown==true and victim.inCombat==true
+            -- Only native-follow handoff supplies an age limit. Rally keeps
+            -- its existing conservative witness behavior.
+            if fighting or type(attack_age_limit)~="number" or attack_age_limit<0 or
+               not age or age-age~=0 or not (age>attack_age_limit) then return false end
+        end
     end
     return true
 end
@@ -904,8 +913,12 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
     local ids,nearest,distance,complete=ranged_targets(obs,row)
     status.matchedTargets=#ids
     if #ids==0 and complete then if #frame.pending==0 then ranged_hold(obs,frame,out,row,status,false) end;return end
-    out.followFormation,out.portalCatchup=nil,nil
     local self=(obs.players or {})[obs.selfGuid]
+    local prior=row.origin=="learned_prior" and (obs.navigation or {}).following==true and
+        encounter_priors and encounter_priors.rule(obs)
+    local follow_safe=prior and self and self.positionEstimated~=true and
+        ranged_travel_safe(obs,row,false,prior.attackWitnessMaxAgeMs)
+    if not follow_safe then out.followFormation,out.portalCatchup=nil,nil end
     if not self or self.aliveKnown~=true or self.alive~=true then return end
     local action=out.action
     local cleanup=action and (action.capability=="fear_break" or action.capability=="cancel_spell" or action.capability=="loot_close" or action.capability=="release_interaction" or action.capability=="melee_stop")
@@ -916,6 +929,11 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
     if swinging and (active and active.entry==row.creatureEntry or distance and distance<row.minRangeYards+row.clearanceYards) then
         out.action={capability="melee_stop",sessionId=obs.sessionId,selfGuid=obs.selfGuid,targetGuid=swinging,visitId=obs.visitId,observationSequence=sequence}
         status.phase="stopping_melee";return
+    end
+    if follow_safe then
+        status.phase="yielding_to_native_follow"
+        ranged_hold(obs,frame,out,row,status,false)
+        return
     end
     if ranged_hold(obs,frame,out,row,status,true,nearest) then return end
     if obs.hostTargetRangeBandSupported~=true then

@@ -297,10 +297,13 @@ end}`
 
 func TestTradeConsentEditableTuningUsesCurrentSource(t *testing.T) {
 	source := tradeConsentSource(t)
-	r := tradeConsentFixtureRuntime(t, source)
+	// This test proves source-edit/CAS semantics, not a scheduling guarantee.
+	// Keep the ordinary CLI's default 5ms turn separate: an exact empty
+	// resource refusal is NO decision, never the semantic fixture's accept.
+	r := disposalArmorSemanticRuntime(t, source)
 	revision := r.Status().Revision
 	frame := tradeConsentFrame()
-	tradeConsentResult(t, r, source, frame, "accept")
+	tradeConsentSemanticAndProductionPhases(t, r, source, frame, "accept", true, true)
 	const tuning = "local accept_owner_trades = true"
 	if strings.Count(source, tuning) != 1 {
 		t.Fatal("editable consent tuning is not unique")
@@ -310,7 +313,7 @@ func TestTradeConsentEditableTuningUsesCurrentSource(t *testing.T) {
 	if err != nil || next == revision {
 		t.Fatal("consent edit was not accepted", next, err)
 	}
-	tradeConsentResult(t, r, disabled, frame, "wait")
+	tradeConsentSemanticAndProductionPhases(t, r, disabled, frame, "wait", true, true)
 	const owner = `local owner_guid = "3"`
 	if strings.Count(source, owner) != 1 {
 		t.Fatal("editable owner tuning is not unique")
@@ -320,7 +323,7 @@ func TestTradeConsentEditableTuningUsesCurrentSource(t *testing.T) {
 	if _, err := r.Reload(largeOwner, next); err != nil {
 		t.Fatal(err)
 	}
-	tradeConsentResult(t, r, largeOwner, frame, "wait")
+	tradeConsentSemanticAndProductionPhases(t, r, largeOwner, frame, "wait", true, true)
 	frame["trade"].(map[string]any)["partnerGuid"] = large
-	tradeConsentResult(t, r, largeOwner, frame, "accept")
+	tradeConsentSemanticAndProductionPhases(t, r, largeOwner, frame, "accept", true, true)
 }
