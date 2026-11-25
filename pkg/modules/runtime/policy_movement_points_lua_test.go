@@ -463,3 +463,42 @@ func TestMovementPointsObservedSphereUsesOwnReachAndPreservesUnknownAction(t *te
 		})
 	}
 }
+
+func TestMovementPointsExplicitActorProviderRetainsObservedSphereTag(t *testing.T) {
+	bundle := strings.TrimPrefix(acceptedMovementPointsSource(t), retainedPointProvider)
+	for _, tagged := range []bool{false, true} {
+		t.Run(strconv.FormatBool(tagged), func(t *testing.T) {
+			tag := ""
+			if tagged {
+				tag = ",groundEffectGuid=e.guid"
+			}
+			source := `local encounter_intent={movement_points=function(frame,obs)
+   local e=obs.groundEffects[1]
+   return {{x=e.x,y=e.y,z=e.z,radiusYards=e.radiusYards,expiresAtUnixMs=tonumber(e.firstObservedAtUnixMs)+20000` + tag + `}}
+  end}
+` + bundle
+			vm, err := behavior.NewSession(context.Background(), "point-actor-4", source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer vm.Close()
+			obs := pointActorObservation("4")
+			obs["players"].(map[string]any)["4"].(map[string]any)["x"] = 5.72
+			created := time.Now().UnixMilli() - 1000
+			obs["groundEffects"] = []any{pointObject(created)}
+			advisory := pointObserve(t, vm, obs, "movement_points")
+			row := advisory.Output["movementPoints"].(map[string]any)["points"].([]any)[0].(map[string]any)
+			if row["radiusYards"] != float64(5) || row["expiresAtUnixMs"] != float64(created+20000) || tagged && row["groundEffectGuid"] != "999" || !tagged && row["groundEffectGuid"] != nil {
+				t.Fatal("actor provider data changed", row)
+			}
+			if advisory.Output["action"] != nil {
+				t.Fatal("advisory dispatched gameplay", advisory.Output)
+			}
+			decision := pointObserve(t, vm, obs, "encounter")
+			action := decision.Output["action"].(map[string]any)
+			if (action["capability"] == "movement_points_step") != tagged {
+				t.Fatal("explicit provider did not select its requested geometry", decision.Output)
+			}
+		})
+	}
+}
