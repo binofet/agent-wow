@@ -69,6 +69,8 @@ type observed struct {
 	ammo                        uint32
 	copperKnown                 bool
 	copper                      uint32
+	xpKnown, nextLevelXPKnown   bool
+	xp, nextLevelXP             uint32
 	skillsKnown                 bool
 	skills                      [128][3]uint32
 	freePrimaryKnown            bool
@@ -227,6 +229,9 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		newAmmoKnown, newAmmo := next.ammoView()
 		if oldAmmoKnown != newAmmoKnown || oldAmmo != newAmmo {
 			next.ammoRevision++
+		}
+		if old.xpKnown != current.xpKnown || old.nextLevelXPKnown != current.nextLevelXPKnown || old.xp != current.xp || old.nextLevelXP != current.nextLevelXP {
+			next.xpRevision++
 		}
 		if old.copperKnown != current.copperKnown || old.copper != current.copper {
 			next.copperRevision++

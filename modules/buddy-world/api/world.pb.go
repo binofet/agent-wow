@@ -4529,8 +4529,18 @@ type SnapshotResponse struct {
 	SelfAmmoKnown    bool   `protobuf:"varint,53,opt,name=self_ammo_known,json=selfAmmoKnown,proto3" json:"self_ammo_known,omitempty"`
 	SelfAmmoEntry    uint32 `protobuf:"varint,54,opt,name=self_ammo_entry,json=selfAmmoEntry,proto3" json:"self_ammo_entry,omitempty"`
 	SelfAmmoRevision uint64 `protobuf:"varint,55,opt,name=self_ammo_revision,json=selfAmmoRevision,proto3" json:"self_ammo_revision,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// PRIVATE PLAYER_XP / PLAYER_NEXT_LEVEL_XP for this authenticated body only.
+	// Current-level counter and next-level threshold, not cumulative/remaining XP.
+	// CREATE establishes omitted zero values; login/visit loss is unknown until
+	// a new own CREATE or explicit field update. No XP table or gain is inferred.
+	SelfXpKnown          bool   `protobuf:"varint,56,opt,name=self_xp_known,json=selfXpKnown,proto3" json:"self_xp_known,omitempty"`
+	SelfXp               uint32 `protobuf:"varint,57,opt,name=self_xp,json=selfXp,proto3" json:"self_xp,omitempty"`
+	SelfNextLevelXpKnown bool   `protobuf:"varint,58,opt,name=self_next_level_xp_known,json=selfNextLevelXpKnown,proto3" json:"self_next_level_xp_known,omitempty"`
+	SelfNextLevelXp      uint32 `protobuf:"varint,59,opt,name=self_next_level_xp,json=selfNextLevelXp,proto3" json:"self_next_level_xp,omitempty"`
+	// Advances only when own XP values or their knownness change.
+	SelfXpRevision uint64 `protobuf:"varint,60,opt,name=self_xp_revision,json=selfXpRevision,proto3" json:"self_xp_revision,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -4944,6 +4954,41 @@ func (x *SnapshotResponse) GetSelfAmmoEntry() uint32 {
 func (x *SnapshotResponse) GetSelfAmmoRevision() uint64 {
 	if x != nil {
 		return x.SelfAmmoRevision
+	}
+	return 0
+}
+
+func (x *SnapshotResponse) GetSelfXpKnown() bool {
+	if x != nil {
+		return x.SelfXpKnown
+	}
+	return false
+}
+
+func (x *SnapshotResponse) GetSelfXp() uint32 {
+	if x != nil {
+		return x.SelfXp
+	}
+	return 0
+}
+
+func (x *SnapshotResponse) GetSelfNextLevelXpKnown() bool {
+	if x != nil {
+		return x.SelfNextLevelXpKnown
+	}
+	return false
+}
+
+func (x *SnapshotResponse) GetSelfNextLevelXp() uint32 {
+	if x != nil {
+		return x.SelfNextLevelXp
+	}
+	return 0
+}
+
+func (x *SnapshotResponse) GetSelfXpRevision() uint64 {
+	if x != nil {
+		return x.SelfXpRevision
 	}
 	return 0
 }
@@ -5829,7 +5874,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\x8c\x1c\n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xd8\x1d\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -5890,7 +5935,12 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x0eworld_transfer\x184 \x01(\v20.warcraftbuddy.world.v1.WorldTransferObservationR\rworldTransfer\x12&\n" +
 	"\x0fself_ammo_known\x185 \x01(\bR\rselfAmmoKnown\x12&\n" +
 	"\x0fself_ammo_entry\x186 \x01(\rR\rselfAmmoEntry\x12,\n" +
-	"\x12self_ammo_revision\x187 \x01(\x04R\x10selfAmmoRevision\"q\n" +
+	"\x12self_ammo_revision\x187 \x01(\x04R\x10selfAmmoRevision\x12\"\n" +
+	"\rself_xp_known\x188 \x01(\bR\vselfXpKnown\x12\x17\n" +
+	"\aself_xp\x189 \x01(\rR\x06selfXp\x126\n" +
+	"\x18self_next_level_xp_known\x18: \x01(\bR\x14selfNextLevelXpKnown\x12+\n" +
+	"\x12self_next_level_xp\x18; \x01(\rR\x0fselfNextLevelXp\x12(\n" +
+	"\x10self_xp_revision\x18< \x01(\x04R\x0eselfXpRevision\"q\n" +
 	"\x13CombatEventsRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +
