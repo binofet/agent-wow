@@ -134,6 +134,7 @@ func (s *Service) fargodeepReadinessDecisionLocked(ctx context.Context, w *world
 		return fargodeepReadinessDecision{}, false
 	}
 	authored := s.behavior
+	pulled := s.fargodeep.pulled
 	output := s.starterSpells.decide(ctx, input, authored)
 	revision := s.starterSpells.revision
 	var selected struct {
@@ -149,7 +150,7 @@ func (s *Service) fargodeepReadinessDecisionLocked(ctx context.Context, w *world
 	if err != nil || output == nil || len(output) != 4 || decoder.Decode(&selected) != nil ||
 		(selected.Kind != "ready" && selected.Kind != "wait") || selected.SpellID != 0 || selected.Selection != fargodeepReadinessSelection ||
 		math.IsNaN(selected.StandYards) || math.IsInf(selected.StandYards, 0) || selected.StandYards <= 0 || selected.StandYards > 240 ||
-		revisionErr != nil || len(digest) != 32 || hex.EncodeToString(digest) != revision || s.behavior != authored {
+		revisionErr != nil || len(digest) != 32 || hex.EncodeToString(digest) != revision || s.behavior != authored || s.fargodeep.pulled != pulled {
 		return fargodeepReadinessDecision{}, false
 	}
 	scope, _ := ctx.Value(fargodeepReadinessKey{}).(*fargodeepReadinessScope)
@@ -158,6 +159,7 @@ func (s *Service) fargodeepReadinessDecisionLocked(ctx context.Context, w *world
 	}
 	if scope.revision == "" {
 		scope.revision, scope.visit = revision, w.VisitRevision
+		scope.pulled = pulled
 	}
 	if revision != scope.revision || w.VisitRevision != scope.visit || !s.fargodeepReadinessCurrentLocked(ctx) {
 		return fargodeepReadinessDecision{}, false

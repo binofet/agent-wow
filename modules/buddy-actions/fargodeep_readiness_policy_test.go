@@ -703,3 +703,25 @@ func TestFargodeepStanceFactsCannotChangeAcrossAnEngagedMovementWrite(t *testing
 		t.Fatal("a changed stance input reused the earlier movement choice or erased custody", s.stateLocked(), f.packets)
 	}
 }
+
+func TestFargodeepStanceCannotRebindAPullChangeInsideItsPolicyRead(t *testing.T) {
+	s, f, target, request, _ := fargodeepReadinessRig(t, 5)
+	armFargodeep(t, s, request)
+	f.world.Self.UnitFlags |= 0x80000
+	target.AttackVictimKnown, target.AttackVictimGuid, target.AttackAgeMs = true, s.selfGUID, 100
+	runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+	changed := false
+	s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+		out, err := runtime.EvaluateContext(ctx, input)
+		if input["selection"] == fargodeepReadinessTestSelection {
+			changed = true
+			s.fargodeep.pulled = false
+		}
+		return true, runtime.Status().Revision, out, err
+	}
+	s.Tick(context.Background())
+	if !changed || !s.fargodeepSeen[target.Guid] {
+		t.Fatal("fixture missed the actual policy read or erased mission custody", s.stateLocked())
+	}
+	requireNoFargodeepReadinessDispatch(t, s, f)
+}
