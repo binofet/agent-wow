@@ -25,7 +25,8 @@ class SpellInvocationPolicyTests(unittest.TestCase):
             spellbookKnown=True,spells={},targets={},players={'4':dict(guid='4',present=True,
             aliveKnown=True,alive=True,mapKnown=True,mapId=0,positionKnown=True,x=1,y=2,z=3)})
 
-    def run_policy(self,events=None,checkpoint=None,obs=None,pending=None,select=True,composed=False,sequence="2",clock_ms=1000):
+    def run_policy(self,events=None,checkpoint=None,obs=None,pending=None,select=True,composed=False,
+            sequence="2",clock_ms=1000,input_fields=None):
         if composed:
             if checkpoint:
                 checkpoint=copy.deepcopy(checkpoint)
@@ -44,7 +45,8 @@ class SpellInvocationPolicyTests(unittest.TestCase):
             body+='return {output={action=a,spellInvocation=s},checkpoint=p.export_state()}'
         value=dict(events=events or [],checkpoint=checkpoint,obs=obs or self.obs(),select=select,
             frame=dict(session_id='spell-body',cursor=sequence,pending=pending or [],
-                input=dict(kind='encounter',observationSequence=sequence),clock=dict(monotonicMs=clock_ms,unixMs=clock_ms)))
+                input=dict(dict(kind='encounter',observationSequence=sequence),**(input_fields or {})),
+                clock=dict(monotonicMs=clock_ms,unixMs=clock_ms)))
         return self.bridge.evaluate(setup+'return {decide=function(input) '+body+' end}',value)
 
     def events(self,spell=2120,**fields):
@@ -534,6 +536,64 @@ class SpellInvocationPolicyTests(unittest.TestCase):
         self.assertEqual(result['output']['action']['capability'],'cancel_spell')
         self.assertIn('encounterOwnership',result['output'])
         self.assertNotIn('current',result['checkpoint']['data']['spellInvocation']['data'])
+
+    def roll_events(self,sequence="2",obs=None):
+        offer=dict(rollGuid='4611686018427426929',revision='1',visitId='1',mapId=0,lootSlot=2,
+            itemEntry=5000,itemCount=1,offeredMask=1,remainingMs='1',available=True,phase='pending')
+        # Unknown metadata near the actual deadline selects Pass without a
+        # fabricated scorer or any policy/module stub in the full bundle.
+        view=dict(sessionId='spell-body',selfGuid='4',visitId='1',offers=[offer],metadata=[])
+        return [dict(kind='encounter_observation',sequence=sequence,value=obs or self.obs()),
+            dict(kind='loot_roll_observation',sequence=sequence,value=view)]
+
+    def test_final_scheduler_preemption_does_not_reserve_an_unsent_roll(self):
+        for winner in ('cancel_spell','loot_close','release_interaction'):
+            with self.subTest(winner=winner):
+                obs=self.obs()
+                if winner=='release_interaction':
+                    obs['interaction']=dict(owner='trade',token='actual-held-token')
+                    obs['targets']={'10':dict(present=True,aliveKnown=True,alive=True,mapKnown=True,mapId=0,
+                        attackable=True,attackObservation=dict(victimKnown=True,victimGuid='4',
+                            targetKnown=True,targetGuid='4',ageMs='0'))}
+                events=self.roll_events(obs=obs)
+                if winner=='cancel_spell':
+                    events.append(dict(kind='command',sequence='3',value=dict(task='cancel_spell',
+                        id='cancel-before-roll',spellId=10,expectedOperationRevision='77',channel=True)))
+                elif winner=='loot_close':
+                    events.append(dict(kind='corpse_loot_observation',sequence='2',value=dict(
+                        sessionId='spell-body',selfGuid='4',state=dict(pendingCorpseGuid='123'),
+                        actions=dict(interactionOwner='loot'),window=dict(observed=True,
+                            corpseGuid='123',openRequestId='actual-open',revision='1',slots=[]))))
+                first=self.run_policy(events,composed=True,input_fields=dict(
+                    observationSequences=dict(loot_roll='2',corpse_loot='2')))
+                self.assertEqual(first['output']['action']['capability'],winner)
+                self.assertFalse(first['checkpoint']['data']['lootRoll']['data']['reservations'])
+                fresh=self.run_policy(self.roll_events('4'),checkpoint=first['checkpoint'],composed=True,
+                    sequence='4',input_fields=dict(observationSequences=dict(loot_roll='4')))
+                self.assertEqual(fresh['output']['action']['capability'],'loot_roll')
+                self.assertEqual(fresh['output']['action']['choice'],'pass')
+                reservations=fresh['checkpoint']['data']['lootRoll']['data']['reservations']
+                self.assertEqual(list(reservations.values()),['pass'])
+                unknown=dict(kind='action_result',sequence='5',receipt=dict(action_id='81',outcome='unknown',
+                    payload=dict(capability='loot_roll',phase='transport_unconfirmed_no_retry')))
+                retained=self.run_policy([unknown]+self.roll_events('6'),checkpoint=fresh['checkpoint'],
+                    pending=[dict(action_id='81',outcome='unknown')],composed=True,sequence='6',
+                    input_fields=dict(observationSequences=dict(loot_roll='6')))
+                self.assertNotIn('action',retained['output'])
+                self.assertEqual(retained['checkpoint']['data']['lootRoll']['data']['reservations'],reservations)
+                duplicate=self.run_policy(self.roll_events('8'),checkpoint=retained['checkpoint'],composed=True,
+                    sequence='8',input_fields=dict(observationSequences=dict(loot_roll='8')))
+                self.assertNotIn('action',duplicate['output'])
+                self.assertEqual(duplicate['checkpoint']['data']['lootRoll']['data']['reservations'],reservations)
+
+    def test_pending_action_prevents_an_ordinary_roll_proposal(self):
+        waiting=self.run_policy(self.roll_events(),pending=[dict(action_id='71',outcome='unknown')],
+            composed=True,input_fields=dict(observationSequences=dict(loot_roll='2')))
+        self.assertNotIn('action',waiting['output'])
+        self.assertFalse(waiting['checkpoint']['data']['lootRoll']['data']['reservations'])
+        fresh=self.run_policy(self.roll_events('4'),checkpoint=waiting['checkpoint'],composed=True,
+            sequence='4',input_fields=dict(observationSequences=dict(loot_roll='4')))
+        self.assertEqual(fresh['output']['action']['capability'],'loot_roll')
 
 
 if __name__=='__main__':unittest.main()

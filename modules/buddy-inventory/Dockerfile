@@ -7,7 +7,7 @@ COPY pkg ./pkg
 COPY modules/buddy-world/api ./modules/buddy-world/api
 COPY modules/buddy-actions/api ./modules/buddy-actions/api
 COPY modules/buddy-party/api ./modules/buddy-party/api
-COPY modules/buddy-trade/api ./modules/buddy-trade/api
+COPY modules/buddy-trade ./modules/buddy-trade
 COPY modules/buddy-loot/api ./modules/buddy-loot/api
 COPY modules/buddy-professions/api ./modules/buddy-professions/api
 COPY modules/buddy-inventory ./modules/buddy-inventory

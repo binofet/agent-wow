@@ -73,6 +73,14 @@ func (m *Manager) StartObservedPolicyWithOptions(ctx context.Context, source, bi
 			feeds = append([]policyFeed{{phase: "corpse_loot", method: "buddy-loot.observe_corpses"}}, feeds...)
 		}
 	}
+	if feeds[len(feeds)-1].method == encounterObservationMethod && !phases["loot_roll"] {
+		if facts, err := catalog.Catalog.ForMethod("buddy-inventory.rolls"); err == nil && facts.Methods[0].Effect == moddisc.EffectRead {
+			if _, err = m.readPolicyObservation(ctx, catalog.SessionID, "buddy-inventory.rolls"); err != nil {
+				return err
+			}
+			feeds = append([]policyFeed{{phase: "loot_roll", method: "buddy-inventory.rolls"}}, feeds...)
+		}
+	}
 	host, err := m.StartPolicyWithOptions(ctx, source, options)
 	if err != nil {
 		return err
@@ -172,6 +180,11 @@ func (m *Manager) readPolicyObservation(ctx context.Context, sid, method string)
 	body, err := m.invokeJSON(ctx, method, nil, true)
 	if err != nil {
 		return nil, err
+	}
+	if method == inventoryModule+".rolls" {
+		if err := m.reconcileRollReceipts(sid, body); err != nil {
+			return nil, err
+		}
 	}
 	var observed map[string]any
 	if err := json.Unmarshal(body, &observed); err != nil {

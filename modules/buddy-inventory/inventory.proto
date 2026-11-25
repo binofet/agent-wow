@@ -5,6 +5,7 @@ import "api/module/v1/session.proto";
 import "google/protobuf/empty.proto";
 import "modules/buddy-world/world.proto";
 import "modules/buddy-actions/actions.proto";
+import "modules/buddy-trade/trade.proto";
 
 message ItemRef { uint32 bag = 1; uint32 slot = 2; uint64 item_guid = 3; uint32 entry = 4; uint32 stack_count = 5; }
 message ItemEligibility {
@@ -198,7 +199,63 @@ message EatBuffFoodReceipt {
   uint32 spell_id = 4; uint32 food_aura_spell_id = 5; bool transport_written = 6;
   uint32 time_until_buff_ms = 7; string request_id = 8; ConsumableUse operation = 9; string reason = 10;
 }
+message RollOffer {
+  uint64 roll_guid = 1;
+  uint64 revision = 2;
+  uint64 visit_id = 3;
+  uint32 map_id = 4;
+  uint32 loot_slot = 5;
+  uint32 item_entry = 6;
+  uint32 random_suffix = 7;
+  uint32 random_property = 8;
+  uint32 item_count = 9;
+  uint32 offered_mask = 10;
+  uint64 remaining_ms = 11;
+  bool available = 12;
+  string phase = 13;
+}
+message RollReceipt {
+  string request_id = 1;
+  uint64 roll_guid = 2;
+  uint64 offer_revision = 3;
+  uint64 visit_id = 4;
+  string choice = 5;
+  bool transport_attempted = 6;
+  bool transport_written = 7;
+  bool server_vote_observed = 8;
+  string phase = 9;
+  uint32 loot_slot = 10;
+}
+message RollState {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 revision = 3;
+  uint64 visit_id = 4;
+  repeated RollOffer offers = 5;
+  repeated RollReceipt receipts = 6;
+  warcraftbuddy.world.v1.PlayerState player = 7;
+  bool equipment_known = 8;
+  uint64 equipment_revision = 9;
+  repeated warcraftbuddy.world.v1.EquipmentSlotState equipment = 10;
+  bool skills_known = 11;
+  uint64 skills_revision = 12;
+  bool skills_complete = 13;
+  repeated warcraftbuddy.world.v1.SkillState skills = 14;
+  repeated warcraftbuddy.trade.v1.ItemDetails metadata = 15;
+  string reason = 16;
+}
+message RollRequest {
+  string session_id = 1;
+  string request_id = 2;
+  uint64 roll_guid = 3;
+  uint64 expected_offer_revision = 4;
+  string choice = 5;
+  uint64 visit_id = 6;
+  uint32 expected_loot_slot = 7;
+}
 service BuddyInventory {
+  rpc Rolls(google.protobuf.Empty) returns (RollState);
+  rpc Roll(RollRequest) returns (RollState);
   rpc GetState(google.protobuf.Empty) returns (State);
   rpc RawGearFacts(google.protobuf.Empty) returns (State);
   rpc Discover(DiscoverRequest) returns (Discovery);
