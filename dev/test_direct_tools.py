@@ -1957,6 +1957,71 @@ class AttachedPolicyPatchTests(unittest.TestCase):
         self.assertEqual(absent['matches'],0)
         self.assertIsNone(absent['sourcePage'])
 
+    def test_source_find_accepts_normal_source_path_and_advances_exact_character_offsets(self):
+        self.rpc.source='-- unicode λ\nlocal chosen = (function()\nlocal function cast_generic (x) return x end\nend)()\n-- needle then needle\n'
+        revision=checksum(self.rpc.source)
+        for path in (None,[],['source']):
+            args=dict(find='needle',offset=0,limit=32)
+            if path is not None:args['path']=path
+            first=self.tools.dispatch('policy_show',args)
+            self.assertTrue(first['ok'],first)
+            view=first['result'];self.assertEqual(view['revision'],revision)
+            self.assertEqual(view['matches'],2);self.assertEqual(view['matchesAfterOffset'],2)
+            self.assertIn('needle',view['sourcePage']['value'])
+            second=self.tools.dispatch('policy_show',view['examples']['findNext'])['result']
+            self.assertGreater(second['matchOffset'],view['matchOffset'])
+            self.assertEqual(second['matches'],2);self.assertEqual(second['matchesAfterOffset'],1)
+            end=self.tools.dispatch('policy_show',second['examples']['findNext'])['result']
+            self.assertIsNone(end['matchOffset']);self.assertEqual(end['matchesAfterOffset'],0)
+            exact=self.tools.dispatch('policy_show',view['examples']['readMatch'])['result']
+            self.assertTrue(exact['value'].startswith('needle'))
+        for args in (dict(find='needle',path=['status']),dict(find='needle',offset=True),
+                     dict(find='needle',offset=-1),dict(find='needle',offset=len(self.rpc.source)+1),
+                     dict(find='needle',limit=0),dict(find='needle',save_as='copy.lua')):
+            self.assertFalse(self.tools.dispatch('policy_show',args)['ok'])
+        self.assertFalse(self.rpc.writes);self.assertFalse(list(self.rig.workspace.iterdir()))
+
+    def test_real_generic_bundle_name_miss_discovers_actual_modules_without_copy_or_write(self):
+        self.rpc.source=subprocess.check_output([sys.executable,str(ROOT/'dev/encounter-bundle')],text=True)
+        before=self.rpc.source
+        result=self.tools.dispatch('policy_show',dict(find='Fireball',path=['source'],offset=0,limit=4096))
+        self.assertTrue(result['ok'],result);view=result['result']
+        self.assertEqual(view['matches'],0);self.assertIsNone(view['sourcePage'])
+        self.assertEqual(view['revision'],checksum(before))
+        self.assertIn('encounter_spells',view['discoveredDeclarations']['modules'])
+        self.assertIn('encounter_movement',view['discoveredDeclarations']['modules'])
+        discovered=self.tools.dispatch('policy_show',view['examples']['findDiscoveredModule'])
+        self.assertTrue(discovered['ok'],discovered)
+        self.assertIsNotNone(discovered['result']['matchOffset'])
+        generic=self.tools.dispatch('policy_show',dict(find='local encounter_spells =',path=['source'],offset=0,limit=512))
+        self.assertTrue(generic['ok'],generic);self.assertEqual(generic['result']['matches'],1)
+        self.assertEqual(self.rpc.source,before);self.assertFalse(self.rpc.writes)
+        self.assertFalse(list(self.rig.workspace.iterdir()))
+
+    def test_literal_find_declaration_scan_is_line_local_on_large_blank_prefix(self):
+        # A bounded child keeps the former quadratic pattern from hanging CI.
+        # Exercise the real bound tool, not a replacement regex microbenchmark.
+        code = """
+from test_direct_tools import AttachedPolicyPatchTests
+case=AttachedPolicyPatchTests('runTest')
+case.setUp()
+try:
+    case.rpc.source='\\n'*200000+'return {decide=function(f) return {output={}} end}\\n'
+    result=case.tools.dispatch('policy_show',dict(find='Fireball',path=['source'],offset=0,limit=512))
+    assert result['ok'],result
+    view=result['result']
+    assert view['matches']==0
+    assert view['discoveredDeclarations']['functions']==[]
+    assert case.rpc.source.count('\\n')==200001
+    assert view['sourceCharacters']==len(case.rpc.source)
+    assert not case.rpc.writes
+finally:
+    case.doCleanups()
+"""
+        completed=subprocess.run([sys.executable,'-B','-c',code],cwd=ROOT,
+            env=dict(os.environ,PYTHONPATH=str(ROOT/'dev')),capture_output=True,text=True,timeout=5)
+        self.assertEqual(completed.returncode,0,completed.stdout+completed.stderr)
+
     def test_existing_self_edit_lock_collision_cannot_apply(self):
         self.tools.dispatch('policy_show',{})
         lock_path=self.rig.edit.DATA/self.rpc.guid/'edit.lock'
