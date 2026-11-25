@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"time"
@@ -182,7 +183,7 @@ func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, targe
 	for id, rank := range s.learnedContractsLocked() {
 		kind := rank.Capability().Kind
 		if (selection != starterWeaponSelection && kind != spellcatalog.Damage && kind != spellcatalog.Heal ||
-			selection == starterWeaponSelection && !instantWeaponStrike(rank)) || !casterRequirementsObserved(rank, self) {
+			selection == starterWeaponSelection && !instantWeaponStrike(rank) && kind != spellcatalog.Stealth) || !casterRequirementsObserved(rank, self) {
 			continue
 		}
 		view := encounterSpellMechanics(rank, self)
@@ -197,7 +198,10 @@ func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, targe
 		if kind == spellcatalog.Damage && s.starterSpells.uncertainStrike != nil {
 			view.Ready = false
 		}
-		if selection == starterWeaponSelection {
+		if selection == starterWeaponSelection && kind == spellcatalog.Stealth {
+			view.Capability = string(kind)
+			view.Ready = view.Ready && view.SelfCastSupported && self.UnitFlagsKnown && self.UnitFlags&0x80000 == 0 && s.starterSpells.uncertainStrike == nil
+		} else if selection == starterWeaponSelection {
 			s.reflectWeaponStrike(view, rank, self)
 			view.Ready = s.starterSpells.uncertainStrike == nil && s.offenseRankReadyLocked(self, rank)
 			view.Available = view.Ready
@@ -230,6 +234,12 @@ func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, targe
 		}
 		observed["mainhand"] = weapon
 		observed["stealthed"] = s.stealthedLocked()
+		selfJSON["inCombat"] = self.UnitFlagsKnown && self.UnitFlags&0x80000 != 0
+		if self.CombatReachKnown && target.CombatReachKnown {
+			observed["meleeInRange"] = distance(s.pos, targetPosition) <= math.Max(5, float64(self.CombatReach+target.CombatReach)+4.0/3.0)-0.5
+		}
+		observed["activeMeleeTargetGuid"] = strconv.FormatUint(s.autoTarget, 10)
+		observed["castPending"], observed["autoAttackUnconfirmed"] = s.state.CastPending, s.state.AutoAttackUnconfirmed
 	}
 	if op := s.starterSpells.uncertainStrike; op != nil {
 		receipt, valid := starterJSON(&op.view)
@@ -272,8 +282,9 @@ func (s *Service) starterSelectionDecisionLocked(ctx context.Context, w *worldv1
 	decoder.DisallowUnknownFields()
 	if err != nil || output == nil || len(output) != 2 || decoder.Decode(&selected) != nil ||
 		(selected.Kind != "cast" && selected.Kind != "melee" && selected.Kind != "wait" &&
+			!(selection == starterWeaponSelection && selected.Kind == "cast_self") &&
 			!(selection == coldridgeCasterSelection && selected.Kind == "pull_wait")) ||
-		(selected.Kind == "cast") != (selected.SpellID != 0) {
+		(selected.Kind == "cast" || selected.Kind == "cast_self") != (selected.SpellID != 0) {
 		if s.starterSpells.lastError == "" {
 			s.starterSpells.lastError = "invalid starter spell decision"
 		}
@@ -286,6 +297,12 @@ func (s *Service) starterSelectionDecisionLocked(ctx context.Context, w *worldv1
 		return starterSpellDecision{kind: selected.Kind, valid: true, facts: input, selection: selection}
 	}
 	rank := ranks[selected.SpellID]
+	if selected.Kind == "cast_self" && (rank.ID == 0 || rank.Capability().Kind != spellcatalog.Stealth ||
+		!supportsSelfCast(rank) || !s.starterSelfSpellAvailableLocked(w) || !s.encounterRankResourcesAvailable(rank, w.Self) ||
+		input["observation"].(map[string]any)["meleeInRange"] != false) {
+		s.starterSpells.lastError = "starter self spell is not mechanically available"
+		return starterSpellDecision{}
+	}
 	if selected.Kind == "cast" && selection == starterWeaponSelection &&
 		(!s.offenseRankReadyLocked(w.Self, rank) || !s.strikeTargetReady(target.Guid, rank) ||
 			!offenseLineInRange(s.pos, targetPosition, rank) || rank.Behind && !behindEnemy(s.pos, targetPosition)) {

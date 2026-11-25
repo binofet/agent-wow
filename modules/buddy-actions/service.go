@@ -1187,6 +1187,10 @@ func (s *Service) Tick(ctx context.Context) {
 			s.pendingTarget = 0
 		}
 	}
+	if op := s.supportOp; op != nil && op.owner != 0 && op.view.Capability == string(spellcatalog.Stealth) &&
+		!s.now().Before(op.until) && op.view.Phase != "server_rejected_no_replay" && (!op.view.ServerCastGo || !op.view.EffectObserved) {
+		s.starterSpells.uncertainStrike = op
+	}
 	if !s.closed && s.recoveryTickLocked(ctx) {
 		if s.fargodeep.active {
 			s.fargodeep.active, s.fargodeep.phase, s.fargodeep.route = false, "death_recovery_has_priority", nil
