@@ -82,11 +82,13 @@ function M.prioritize(frame,obs,sequence,out,input,explicitSpell,ownMovement,tas
        not number(own.x) or not number(own.y) or not number(own.z) then return end
     local inside=false
     for _,p in ipairs(input.points) do
-        if p.groundEffectGuid then
-            if own.combatReachKnown~=true or not number(own.combatReach) or own.combatReach<0 then
+        if p.groundEffectGuid~=nil and p.groundEffectGuid~=0 and p.groundEffectGuid~="0" then
+            local reach=own.combatReach
+            if reach==nil and own.combatReachKnown==true then reach=0 end -- proto3 known zero
+            if own.combatReachKnown~=true or not number(reach) or reach<0 then
                 out.movementPointStatus={phase="observed_effect_clearance_unknown",insideKnown=false};return
             end
-            local radius=p.radiusYards+own.combatReach
+            local radius=p.radiusYards+reach
             if (own.x-p.x)^2+(own.y-p.y)^2+(own.z-p.z)^2<radius*radius then inside=true end
         elseif math.abs(own.z-p.z)<=2 and (own.x-p.x)^2+(own.y-p.y)^2<p.radiusYards*p.radiusYards then inside=true end
     end

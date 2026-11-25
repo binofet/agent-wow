@@ -177,6 +177,22 @@ end)();return {
 			}
 		})
 	}
+	for i, guid := range []any{nil, "0", 0} {
+		t.Run("ordinary_zero_"+strconv.Itoa(i), func(t *testing.T) {
+			vm, err := behavior.NewSession(context.Background(), "point-actor-4", source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer vm.Close()
+			obs := pointActorObservation("4")
+			obs["players"].(map[string]any)["4"].(map[string]any)["z"] = 3
+			d, err := vm.Decide(context.Background(), map[string]any{"obs": obs, "action": map[string]any{"capability": "offense"}, "points": []any{map[string]any{"x": 0, "y": 0, "z": 0, "radiusYards": 5, "groundEffectGuid": guid, "expiresAtUnixMs": time.Now().UnixMilli() + 10000}}})
+			if err != nil || d.Output["action"].(map[string]any)["capability"] != "offense" || d.Output["movementPointStatus"].(map[string]any)["phase"] != "outside_authored_points" {
+				t.Fatal("zero ordinary point became unit sphere", d.Output, err)
+			}
+		})
+	}
+
 }
 
 func BenchmarkMovementPointsFourPersistentAcceptedActors(b *testing.B) {
@@ -414,7 +430,7 @@ func TestMovementPointsObservedSphereUsesOwnReachAndPreservesUnknownAction(t *te
 	}{
 		{"center572_still_inside", 5.72, 0, true, 1.5, true}, {"radius650_clear", 6.5, 0, true, 1.5, false},
 		{"vertical572_inside", 0, 5.72, true, 1.5, true}, {"diagonal3D_clear", 5.72, 5, true, 1.5, false},
-		{"small_actual_reach", 5.72, 0, true, .5, false}, {"unknown_not_offense_veto", 5.72, 0, false, 1.5, false},
+		{"small_actual_reach", 5.72, 0, true, .5, false}, {"known_zero_omitted", 5.72, 0, true, 0, false}, {"unknown_not_offense_veto", 5.72, 0, false, 1.5, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			vm, err := behavior.NewSession(context.Background(), "point-actor-4", acceptedMovementPointsSource(t))
@@ -425,6 +441,9 @@ func TestMovementPointsObservedSphereUsesOwnReachAndPreservesUnknownAction(t *te
 			obs := pointActorObservation("4")
 			own := obs["players"].(map[string]any)["4"].(map[string]any)
 			own["x"], own["z"], own["combatReachKnown"], own["combatReach"] = tc.x, tc.z, tc.known, tc.reach
+			if tc.name == "known_zero_omitted" {
+				delete(own, "combatReach")
+			}
 			obs["groundEffects"] = []any{pointObject(time.Now().UnixMilli() - 1000)}
 			d := pointObserve(t, vm, obs, "encounter")
 			action, ok := d.Output["action"].(map[string]any)
