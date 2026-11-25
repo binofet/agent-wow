@@ -192,6 +192,130 @@ func TestEncounterTemporaryWaitCanceledQueuedIntentCannotStartLater(t *testing.T
 func boolPointer(value bool) *bool          { return &value }
 func float64Pointer(value float64) *float64 { return &value }
 
+func TestEncounterRallyWalksToVisibleGuideUntilDestinationIsObserved(t *testing.T) {
+	p, obs := newFallbackPolicyTest(t, ""), waitTaskObservation()
+	obs.Players["87"] = fallbackPlayer(87)
+	guide := obs.Players["87"]
+	guide.PositionKnown, guide.MovementKnown = true, true
+	guide.X, guide.Y, guide.Z = 35, 10, 10
+	task := map[string]any{"task": "rally_to", "id": "walk-back", "guideGuid": "87", "destinationGuid": "3", "deadlineMonotonicMs": 999999999999}
+	waitTaskCommand(t, p, task)
+	d := p.decide(observeSparseEncounter(t, p, obs))
+	proposed, _ := d.Output["action"].(map[string]any)
+	if proposed["mode"] != "acquire" || proposed["owner"] != "task:walk-back" {
+		t.Fatal("rally should acquire its own lease", d.Output)
+	}
+	settleWaitOwnership(t, p, d, behavior.ActionConfirmed, "acquire", "task:walk-back", "lease")
+	obs.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: "task:walk-back", RemainingMs: 3000, Revision: 1}
+	if _, err := p.host.Reload(context.Background(), readEncounterBundle(t)+"\n-- retain rally", p.host.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	out := p.decide(observeSparseEncounter(t, p, obs)).Output
+	a, _ := out["action"].(map[string]any)
+	if a["capability"] != "approach_target" || a["targetGuid"] != "87" || a["rangeYards"] != float64(5) {
+		t.Fatal("rally must walk toward the observed guide", out)
+	}
+	guide.X = 12
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil || out["task"].(map[string]any)["phase"] != "waiting_with_guide" {
+		t.Fatal("guide proximity alone completed an escort", out)
+	}
+	obs.Players["3"].X = 13
+	self := obs.Players[fallbackGUID(fallbackSelf)]
+	self.PositionEstimated = true
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil || out["task"].(map[string]any)["phase"] != "waiting_for_position_witness" {
+		t.Fatal("estimated own position claimed arrival", out)
+	}
+	self.PositionEstimated = false
+	obs.Players["3"].PositionInferred = true
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil || out["task"].(map[string]any)["phase"] != "waiting_with_guide" {
+		t.Fatal("inferred destination claimed arrival", out)
+	}
+	obs.Players["3"].PositionInferred = false
+	d = p.decide(observeSparseEncounter(t, p, obs))
+	if d.Output["action"].(map[string]any)["mode"] != "release" || d.Output["task"].(map[string]any)["reason"] != "rendezvous_observed" {
+		t.Fatal("current destination observation should finish the task", d.Output)
+	}
+	settleWaitOwnership(t, p, d, behavior.ActionConfirmed, "release", "task:walk-back", "")
+	obs.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Revision: 2}
+	p.decide(observeSparseEncounter(t, p, obs))
+	waitTaskCommand(t, p, task)
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil || out["task"].(map[string]any)["phase"] != "complete" || !obs.Navigation.Following {
+		t.Fatal("finished rally replayed or toggled follow", out)
+	}
+}
+
+func TestEncounterRallyRequiresVisiblePlayerAndFiniteDeadline(t *testing.T) {
+	p, obs := newFallbackPolicyTest(t, ""), waitTaskObservation()
+	task := map[string]any{"task": "rally_to", "id": "guide", "guideGuid": "87"}
+	waitTaskCommand(t, p, task)
+	out := p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil || out["task"].(map[string]any)["phase"] != "invalid_rally_to_intent" {
+		t.Fatal("accepted an unbounded rally", out)
+	}
+	task["deadlineMonotonicMs"] = 999999999999
+	waitTaskCommand(t, p, task)
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil || out["task"].(map[string]any)["phase"] != "waiting_for_visible_guide" {
+		t.Fatal("moved to an unobserved guide", out)
+	}
+	guide := fallbackPlayer(87)
+	guide.PositionKnown, guide.PositionEstimated = true, true
+	obs.Players["87"] = guide
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil || out["task"].(map[string]any)["phase"] != "waiting_for_visible_guide" {
+		t.Fatal("followed an estimated guide", out)
+	}
+	waitTaskCommand(t, p, map[string]any{"task": "cancel_task", "id": "guide"})
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil || out["task"].(map[string]any)["reason"] != "canceled" {
+		t.Fatal("canceling an unstarted rally moved the actor", out)
+	}
+}
+
+func TestEncounterRallySettlesOwnMovementBeforeReleasingOnCancel(t *testing.T) {
+	p, obs := newFallbackPolicyTest(t, ""), waitTaskObservation()
+	waitTaskCommand(t, p, map[string]any{"task": "rally_to", "id": "walk", "guideGuid": "3", "deadlineMonotonicMs": 999999999999})
+	d := p.decide(observeSparseEncounter(t, p, obs))
+	settleWaitOwnership(t, p, d, behavior.ActionConfirmed, "acquire", "task:walk", "lease")
+	obs.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: "task:walk", RemainingMs: 3000, Revision: 1}
+	d = p.decide(observeSparseEncounter(t, p, obs))
+	if d.Output["action"].(map[string]any)["capability"] != "approach_target" {
+		t.Fatal("expected the initial walk", d.Output)
+	}
+	waitTaskCommand(t, p, map[string]any{"task": "cancel_task", "id": "walk"})
+	obs.Players[fallbackGUID(fallbackSelf)].Moving = true
+	obs.Navigation.MotionUnconfirmed = true
+	obs.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: 3, VisitId: 1}
+	out := p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil || out["task"].(map[string]any)["phase"] != "waiting_for_motion_confirmation" {
+		t.Fatal("cancellation released or replayed unconfirmed movement", out)
+	}
+	obs.Navigation.MotionUnconfirmed = false
+	obs.TargetMovement.TargetGuid = 8
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil {
+		t.Fatal("stopped movement to another target", out)
+	}
+	obs.TargetMovement.TargetGuid = 3
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"].(map[string]any)["capability"] != "stop_movement" {
+		t.Fatal("did not stop its own walk", out)
+	}
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil {
+		t.Fatal("repeated STOP before its effect was known", out)
+	}
+	obs.Players[fallbackGUID(fallbackSelf)].Moving = false
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"].(map[string]any)["mode"] != "release" {
+		t.Fatal("did not release after observing a stopped body", out)
+	}
+}
+
 func TestTemporaryTaskRequiresClockAndLeaseAndReconcilesUnknownGrant(t *testing.T) {
 	body := `local i=frame.input
  if i.command then module.on_event({kind="command",value=i.command}) end

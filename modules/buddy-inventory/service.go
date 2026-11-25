@@ -205,6 +205,7 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 		s.state.ConsumableContext.Dungeon = maps.IsDungeon(w.Self.MapId)
 	}
 	s.eligibilityLocked()
+	normalizeElapsedAuraCountdown(before, s.state)
 	if !proto.Equal(before, s.state) {
 		s.state.Revision++
 	}
