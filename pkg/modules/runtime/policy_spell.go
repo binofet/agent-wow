@@ -217,6 +217,17 @@ func (p *SessionPolicy) preparePolicyDispatch(method string, values map[protoref
 	req := dynamicpb.NewMessage(md.Descriptor().Input())
 	for name, value := range values {
 		field := req.Descriptor().Fields().ByName(name)
+		if method == "approach_target" && name == "clearance_target_guids" && field != nil && field.IsList() && !field.IsMap() && field.Kind() == protoreflect.Uint64Kind {
+			list, ok := value.Interface().(protoreflect.List)
+			if !ok {
+				return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "incompatible clearance list")
+			}
+			target := req.Mutable(field).List()
+			for i := 0; i < list.Len(); i++ {
+				target.Append(protoreflect.ValueOfUint64(list.Get(i).Uint()))
+			}
+			continue
+		}
 		if field == nil || field.IsList() || field.IsMap() || !fieldMatchesValue(field.Kind(), value) {
 			return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "incompatible policy action request descriptor")
 		}

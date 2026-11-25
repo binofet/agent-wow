@@ -9666,17 +9666,20 @@ func (x *EncounterPeriodicDamage) GetPeriodMs() uint32 {
 
 // One caller-selected movement step, never a target or rotation controller.
 type ApproachTargetRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	SelfGuid      uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
-	TargetGuid    uint64                 `protobuf:"varint,3,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
-	VisitId       uint64                 `protobuf:"varint,4,opt,name=visit_id,json=visitId,proto3" json:"visit_id,omitempty"`
-	RangeYards    float32                `protobuf:"fixed32,5,opt,name=range_yards,json=rangeYards,proto3" json:"range_yards,omitempty"`
-	Stop          bool                   `protobuf:"varint,6,opt,name=stop,proto3" json:"stop,omitempty"`
-	RequireLos    bool                   `protobuf:"varint,7,opt,name=require_los,json=requireLos,proto3" json:"require_los,omitempty"`
-	Behind        bool                   `protobuf:"varint,8,opt,name=behind,proto3" json:"behind,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	SessionId            string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid             uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	TargetGuid           uint64                 `protobuf:"varint,3,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	VisitId              uint64                 `protobuf:"varint,4,opt,name=visit_id,json=visitId,proto3" json:"visit_id,omitempty"`
+	RangeYards           float32                `protobuf:"fixed32,5,opt,name=range_yards,json=rangeYards,proto3" json:"range_yards,omitempty"`
+	Stop                 bool                   `protobuf:"varint,6,opt,name=stop,proto3" json:"stop,omitempty"`
+	RequireLos           bool                   `protobuf:"varint,7,opt,name=require_los,json=requireLos,proto3" json:"require_los,omitempty"`
+	Behind               bool                   `protobuf:"varint,8,opt,name=behind,proto3" json:"behind,omitempty"`
+	MinRangeYards        float32                `protobuf:"fixed32,9,opt,name=min_range_yards,json=minRangeYards,proto3" json:"min_range_yards,omitempty"`
+	ClearanceTargetGuids []uint64               `protobuf:"varint,10,rep,packed,name=clearance_target_guids,json=clearanceTargetGuids,proto3" json:"clearance_target_guids,omitempty"`
+	ClearanceYards       float32                `protobuf:"fixed32,11,opt,name=clearance_yards,json=clearanceYards,proto3" json:"clearance_yards,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ApproachTargetRequest) Reset() {
@@ -9765,17 +9768,41 @@ func (x *ApproachTargetRequest) GetBehind() bool {
 	return false
 }
 
+func (x *ApproachTargetRequest) GetMinRangeYards() float32 {
+	if x != nil {
+		return x.MinRangeYards
+	}
+	return 0
+}
+
+func (x *ApproachTargetRequest) GetClearanceTargetGuids() []uint64 {
+	if x != nil {
+		return x.ClearanceTargetGuids
+	}
+	return nil
+}
+
+func (x *ApproachTargetRequest) GetClearanceYards() float32 {
+	if x != nil {
+		return x.ClearanceYards
+	}
+	return 0
+}
+
 type TargetMovementState struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TargetGuid    uint64                 `protobuf:"varint,1,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
-	VisitId       uint64                 `protobuf:"varint,2,opt,name=visit_id,json=visitId,proto3" json:"visit_id,omitempty"`
-	RangeYards    float32                `protobuf:"fixed32,3,opt,name=range_yards,json=rangeYards,proto3" json:"range_yards,omitempty"`
-	RequireLos    bool                   `protobuf:"varint,4,opt,name=require_los,json=requireLos,proto3" json:"require_los,omitempty"`
-	Behind        bool                   `protobuf:"varint,5,opt,name=behind,proto3" json:"behind,omitempty"`
-	Phase         string                 `protobuf:"bytes,6,opt,name=phase,proto3" json:"phase,omitempty"`
-	Ready         bool                   `protobuf:"varint,7,opt,name=ready,proto3" json:"ready,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	TargetGuid           uint64                 `protobuf:"varint,1,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	VisitId              uint64                 `protobuf:"varint,2,opt,name=visit_id,json=visitId,proto3" json:"visit_id,omitempty"`
+	RangeYards           float32                `protobuf:"fixed32,3,opt,name=range_yards,json=rangeYards,proto3" json:"range_yards,omitempty"`
+	RequireLos           bool                   `protobuf:"varint,4,opt,name=require_los,json=requireLos,proto3" json:"require_los,omitempty"`
+	Behind               bool                   `protobuf:"varint,5,opt,name=behind,proto3" json:"behind,omitempty"`
+	Phase                string                 `protobuf:"bytes,6,opt,name=phase,proto3" json:"phase,omitempty"`
+	Ready                bool                   `protobuf:"varint,7,opt,name=ready,proto3" json:"ready,omitempty"`
+	MinRangeYards        float32                `protobuf:"fixed32,8,opt,name=min_range_yards,json=minRangeYards,proto3" json:"min_range_yards,omitempty"`
+	ClearanceTargetGuids []uint64               `protobuf:"varint,9,rep,packed,name=clearance_target_guids,json=clearanceTargetGuids,proto3" json:"clearance_target_guids,omitempty"`
+	ClearanceYards       float32                `protobuf:"fixed32,10,opt,name=clearance_yards,json=clearanceYards,proto3" json:"clearance_yards,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *TargetMovementState) Reset() {
@@ -9855,6 +9882,27 @@ func (x *TargetMovementState) GetReady() bool {
 		return x.Ready
 	}
 	return false
+}
+
+func (x *TargetMovementState) GetMinRangeYards() float32 {
+	if x != nil {
+		return x.MinRangeYards
+	}
+	return 0
+}
+
+func (x *TargetMovementState) GetClearanceTargetGuids() []uint64 {
+	if x != nil {
+		return x.ClearanceTargetGuids
+	}
+	return nil
+}
+
+func (x *TargetMovementState) GetClearanceYards() float32 {
+	if x != nil {
+		return x.ClearanceYards
+	}
+	return 0
 }
 
 type EncounterSupport struct {
@@ -14360,7 +14408,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x04misc\x18\x05 \x01(\x05R\x04misc\"^\n" +
 	"\x17EncounterPeriodicDamage\x12&\n" +
 	"\x0fdamage_per_tick\x18\x01 \x01(\x01R\rdamagePerTick\x12\x1b\n" +
-	"\tperiod_ms\x18\x02 \x01(\rR\bperiodMs\"\xfd\x01\n" +
+	"\tperiod_ms\x18\x02 \x01(\rR\bperiodMs\"\x84\x03\n" +
 	"\x15ApproachTargetRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -14373,7 +14421,11 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x04stop\x18\x06 \x01(\bR\x04stop\x12\x1f\n" +
 	"\vrequire_los\x18\a \x01(\bR\n" +
 	"requireLos\x12\x16\n" +
-	"\x06behind\x18\b \x01(\bR\x06behind\"\xd7\x01\n" +
+	"\x06behind\x18\b \x01(\bR\x06behind\x12&\n" +
+	"\x0fmin_range_yards\x18\t \x01(\x02R\rminRangeYards\x124\n" +
+	"\x16clearance_target_guids\x18\n" +
+	" \x03(\x04R\x14clearanceTargetGuids\x12'\n" +
+	"\x0fclearance_yards\x18\v \x01(\x02R\x0eclearanceYards\"\xde\x02\n" +
 	"\x13TargetMovementState\x12\x1f\n" +
 	"\vtarget_guid\x18\x01 \x01(\x04R\n" +
 	"targetGuid\x12\x19\n" +
@@ -14384,7 +14436,11 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"requireLos\x12\x16\n" +
 	"\x06behind\x18\x05 \x01(\bR\x06behind\x12\x14\n" +
 	"\x05phase\x18\x06 \x01(\tR\x05phase\x12\x14\n" +
-	"\x05ready\x18\a \x01(\bR\x05ready\"\xcc\x04\n" +
+	"\x05ready\x18\a \x01(\bR\x05ready\x12&\n" +
+	"\x0fmin_range_yards\x18\b \x01(\x02R\rminRangeYards\x124\n" +
+	"\x16clearance_target_guids\x18\t \x03(\x04R\x14clearanceTargetGuids\x12'\n" +
+	"\x0fclearance_yards\x18\n" +
+	" \x01(\x02R\x0eclearanceYards\"\xcc\x04\n" +
 	"\x10EncounterSupport\x12(\n" +
 	"\x10caster_in_combat\x18\x01 \x01(\bR\x0ecasterInCombat\x12R\n" +
 	"\rresurrections\x18\x02 \x03(\v2,.warcraftbuddy.actions.v1.ResurrectionOptionR\rresurrections\x12I\n" +

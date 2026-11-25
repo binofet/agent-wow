@@ -184,6 +184,7 @@ func (m *Manager) readPolicyObservation(ctx context.Context, sid, method string)
 		if observed["hostRequested"] != true {
 			return nil, fmt.Errorf("policy observation %q requires the session encounter lease", method)
 		}
+		observed["hostTargetRangeBandSupported"] = m.targetRangeBandSupported()
 	} else if owned, present := observed["hostOwned"]; present && owned != true {
 		return nil, fmt.Errorf("policy observation %q reports the native writer still owns the action", method)
 	}

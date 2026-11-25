@@ -1026,6 +1026,9 @@ message ApproachTargetRequest {
   bool stop = 6;
   bool require_los = 7;
   bool behind = 8;
+  float min_range_yards = 9;
+  repeated uint64 clearance_target_guids = 10;
+  float clearance_yards = 11;
 }
 message TargetMovementState {
   uint64 target_guid = 1;
@@ -1035,6 +1038,9 @@ message TargetMovementState {
   bool behind = 5;
   string phase = 6;
   bool ready = 7;
+  float min_range_yards = 8;
+  repeated uint64 clearance_target_guids = 9;
+  float clearance_yards = 10;
 }
 message EncounterSupport {
   bool caster_in_combat = 1;
