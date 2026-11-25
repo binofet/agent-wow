@@ -35,6 +35,26 @@ func starterStealthRig(t *testing.T) (*Service, *fakeSession, *worldv1.CreatureS
 	return s, f, target, source, advance
 }
 
+func TestStarterStealthFactsAdvertiseOnlyItsNativeTaskScope(t *testing.T) {
+	s, f, target, _ := starterWeaponNativeRig(t, "fargodeep")
+	f.world.Self.UnitFlags &^= 0x80000
+	target.X = f.world.Self.X + 8
+	learnSpells(s, autoAttack, sinisterStrike, 1785)
+	point, _, _ := creaturePosition(target)
+	input, _, valid := s.starterSelectionFactsLocked(f.world, target, point, starterWeaponSelection)
+	if !valid {
+		t.Fatal("missing current shared selector facts")
+	}
+	row := input["observation"].(map[string]any)["spells"].(map[string]any)["1785"].(map[string]any)
+	if row["known"] != true || row["capability"] != "stealth" || row["ready"] != false {
+		t.Fatal("shared caller advertised an unavailable native self-cast", row)
+	}
+	assertStarterLuaChoice(t, starterLuaRuntime(t, behaviors.StarterSpellSource), input, "melee", 0)
+	if countPackets(f, opcode.CMSGCastSpell) != 0 {
+		t.Fatal("scope reflection dispatched a spell", f.packets)
+	}
+}
+
 func TestStarterStealthLostReplyReconcilesOnlyAnExactCurrentNativeGO(t *testing.T) {
 	for _, mode := range []string{"confirm", "no GO", "wrong count", "wrong spell", "wrong target", "replaced body", "replaced visit"} {
 		t.Run(mode, func(t *testing.T) {
