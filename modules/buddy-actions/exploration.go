@@ -70,8 +70,8 @@ func (s *Service) explorationContextLocked(ctx context.Context, token string, ma
 	if !s.refreshPositionLocked(w) {
 		return "exploration_authoritative_position_changed"
 	}
-	if !w.Self.SpeedsKnown || math.IsNaN(float64(w.Self.RunSpeed)) || math.Abs(float64(w.Self.RunSpeed)-7) > .01 {
-		return "exploration_normal_run_speed_required"
+	if observedRunSpeed(w.Self) == 0 {
+		return "exploration_observed_run_speed_required"
 	}
 	if !s.explorationIdleBindingCurrentLocked(token, w) {
 		return "exploration_idle_body_or_visit_changed"
@@ -158,6 +158,9 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		call = context.WithValue(call, idleMotionScopeKey{}, scope)
 	}
 	from, revision, root := s.pos, s.positionRevision, s.navDataDir
+	// Navmesh geometry is speed-independent. Retain the observed speed across
+	// its unlocked planning interval; every following checkpoint refreshes it.
+	intervalSpeed := observedRunSpeed(s.lastWorld.GetSelf())
 	if distance(from, to) > 200 {
 		s.state.Reason = "exploration_destination_exceeds_200_yards"
 		s.mu.Unlock()
@@ -235,10 +238,18 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 			}
 			return nil, nil
 		}
-		if !s.mapNavigationStepLocked(call, path, &index) {
+		speed := observedRunSpeed(s.lastWorld.GetSelf())
+		// A speed-change packet does not timestamp its exact position within
+		// the elapsed interval. Never apply a newly faster speed retroactively.
+		intervalSpeed = math.Min(intervalSpeed, speed)
+		before := s.posAt
+		if !s.navigationStepAtSpeedLocked(call, path, &index, finite, intervalSpeed) {
 			s.state.Reason = "exploration_step_or_transport_failed"
 			s.mu.Unlock()
 			return nil, nil
+		}
+		if !s.posAt.Equal(before) {
+			intervalSpeed = speed
 		}
 		expected = s.pos
 		if distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
@@ -249,7 +260,7 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		s.state.Reason = "exploration_following_client_navmesh_estimate"
 		moving, phase = s.state.Moving, s.state.Reason
 		s.mu.Unlock()
-		if err := s.approachDelay(call, 200*time.Millisecond); err != nil {
+		if err := s.approachDelay(call, explorationCheckpointDelay(speed)); err != nil {
 			s.mu.Lock()
 			if s.ownsExploration(token) {
 				s.state.Reason = "exploration_canceled_or_time_limit"
@@ -264,4 +275,18 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 	}
 	s.mu.Unlock()
 	return nil, nil
+}
+
+// Preserve the ordinary ~1.4-yard checkpoint spacing while respecting the
+// shared movement actuator's150ms minimum and the existing200ms read cadence.
+// This schedules observed speed; it never writes a speed or grants movement.
+func explorationCheckpointDelay(speed float64) time.Duration {
+	delay := time.Duration(1.4 / speed * float64(time.Second))
+	if delay < 150*time.Millisecond {
+		return 150 * time.Millisecond
+	}
+	if delay > 200*time.Millisecond {
+		return 200 * time.Millisecond
+	}
+	return delay
 }
