@@ -317,7 +317,7 @@ func TestColdridgeLifecycleAll32CandidatesAndCompleteQuestLogFitUnchangedLimits(
 	// The semantic evaluator above checks the full current native projection.
 	// The SAME full frame/output then runs through the normal exact-head CLI's
 	// Reload+Evaluate with unchanged 5ms/32KiB defaults and no candidate clipping.
-	practiceDefaultRuntimeCLIParity(t, behaviors.StarterSpellSource)(raw, out)
+	starterDefaultRuntimeCLIParity(t, behaviors.StarterSpellSource, 11)(raw, out)
 	t.Logf("complete Coldridge frame: %d bytes, 32 candidates, selected final GUID %s", len(raw), selected.TargetGUID)
 }
 

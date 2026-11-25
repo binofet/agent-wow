@@ -70,6 +70,11 @@ func validatePracticeRuntimeArtifact(info *debug.BuildInfo, identity practiceRun
 // one-shot mode, and never supplies an execution/value budget override.
 func practiceDefaultRuntimeCLIParity(t *testing.T, source string) func([]byte, map[string]any) {
 	t.Helper()
+	return starterDefaultRuntimeCLIParity(t, source, 6)
+}
+
+func starterDefaultRuntimeCLIParity(t *testing.T, source string, outputFields int) func([]byte, map[string]any) {
+	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +147,7 @@ func practiceDefaultRuntimeCLIParity(t *testing.T, source string) func([]byte, m
 	}
 	return func(input []byte, expected map[string]any) {
 		t.Helper()
-		if len(input) > behavior.MaxJSONBytes || len(expected) != 6 {
+		if len(input) > behavior.MaxJSONBytes || outputFields <= 0 || len(expected) != outputFields {
 			t.Fatal("complete native frame/output contract changed", len(input), expected)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
