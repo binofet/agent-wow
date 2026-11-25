@@ -302,7 +302,7 @@ func TestLootInventoryFullRequiresNewerFreeInventoryRevision(t *testing.T) {
 	}
 }
 
-func TestLootFinalCapacityReadRetainsOwnWolfQuestAuthority(t *testing.T) {
+func TestLootFinalCapacityReadKeepsLuaCorpseIndependentOfNamedQuest(t *testing.T) {
 	s, f, _ := wolfRig(t)
 	f.onSnapshot = func(n int, w *worldv1.SnapshotResponse) {
 		if n == 4 {
@@ -310,12 +310,12 @@ func TestLootFinalCapacityReadRetainsOwnWolfQuestAuthority(t *testing.T) {
 		}
 	}
 	enable(t, s)
-	// This is the explicitly named native wolf workflow, whose own-quest
-	// authority must still hold at its final world read. Generic Lua corpse
-	// opening intentionally does not borrow that named controller's authority.
-	s.Tick(context.Background())
-	if f.snapshotReads != 4 || len(f.packets) != 0 || s.token != "" || f.releases != 1 {
-		t.Fatal("final quest loss reached corpse loot write", current(t, s), f.snapshotReads, f.packets)
+	// Ordinary corpse opening is selected by the accepted Lua, independently
+	// of the retired named wolf quest controller. Exact native source, pose,
+	// inventory and owned-token guards still apply to this final world read.
+	tickCorpseLua(t, s)
+	if f.snapshotReads != 4 || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot || s.token == "" {
+		t.Fatal("unrelated quest edit changed the exact Lua-selected corpse", current(t, s), f.snapshotReads, f.packets)
 	}
 }
 

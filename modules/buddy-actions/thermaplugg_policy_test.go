@@ -73,6 +73,66 @@ func TestThermapluggPolicySameBodyCASOwnsDutyAndPairChoice(t *testing.T) {
 	}
 }
 
+func TestThermapluggRawObservedRoomUsesDefaultRuntime(t *testing.T) {
+	s, f, _ := thermapluggRig(t)
+	f.objects[142211].State = 0
+	for i := uint32(0); i < 32; i++ {
+		creature := proto.Clone(f.world.OwnerTarget).(*worldv1.CreatureState)
+		creature.Entry = 50000 + i // Synthetic unrelated observed creatures.
+		creature.Guid = uint64(0xf130)<<48 | uint64(creature.Entry)<<24 | 1
+		f.world.NearbyCreatures = append(f.world.NearbyCreatures, creature)
+	}
+	s.starterSpells.runtime = nil
+	if !s.thermapluggButtonsTickLocked(context.Background(), f.world) || len(f.packets) != 1 || s.starterSpells.lastError != "" {
+		t.Fatal("ordinary bounded room exceeded the actual default selector contract", s.starterSpells.lastError, f.packets)
+	}
+}
+
+func TestThermapluggLuaOwnsBossIdentityWithoutGoPrefilter(t *testing.T) {
+	s, f, _ := thermapluggRig(t)
+	f.objects[142211].State = 0
+	const observedEntry = 90001 // Synthetic observed identity; not a realm boss claim.
+	f.world.OwnerTarget.Entry = observedEntry
+	f.world.OwnerTarget.Guid = uint64(0xf130)<<48 | uint64(observedEntry)<<24 | 1
+	ctx := context.Background()
+	if s.thermapluggButtonsTickLocked(ctx, f.world) || f.objectReads != 0 || len(f.packets) != 0 {
+		t.Fatal("default Lua activated for the other observed creature", f.objectReads, f.packets)
+	}
+	sid, self := s.sessionID, s.selfGUID
+	source := strings.Replace(behaviors.StarterSpellSource, "boss_entry=7800", "boss_entry=90001", 1)
+	if source == behaviors.StarterSpellSource {
+		t.Fatal("actual Lua encounter identity tuning missing")
+	}
+	accepted, err := reloadStarterSemanticBehavior(t, s, ctx, &actionsv1.BehaviorReloadRequest{SessionId: sid, SelfGuid: self, Source: source})
+	if err != nil || accepted.Revision == "" {
+		t.Fatal(accepted, err)
+	}
+	if !s.thermapluggButtonsTickLocked(ctx, f.world) || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGGameobjUse ||
+		s.sessionID != sid || s.selfGUID != self || s.starterSpells.revision != accepted.Revision {
+		t.Fatal("current Lua identity remained hidden behind a Go boss selector", s.starterSpells.lastError, f.packets)
+	}
+}
+
+func TestThermapluggRawCreatureFactsAndLuaOwnerTargetPrecedence(t *testing.T) {
+	s, f, _ := thermapluggRig(t)
+	f.objects[142211].State = 0
+	nearby := proto.Clone(f.world.OwnerTarget).(*worldv1.CreatureState)
+	f.world.OwnerTarget.UnitFlags = 0
+	f.world.NearbyCreatures = []*worldv1.CreatureState{nearby}
+	input := s.thermapluggInput(f.world, false, []any{})
+	rows, ok := input["bosses"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatal("native projection dropped observed rows", input["bosses"])
+	}
+	if s.thermapluggButtonsTickLocked(context.Background(), f.world) || f.objectReads != 0 || len(f.packets) != 0 {
+		t.Fatal("Lua lost the original owner-target precedence for a repeated GUID", f.packets)
+	}
+	f.world.OwnerTarget = nil
+	if !s.thermapluggButtonsTickLocked(context.Background(), f.world) || len(f.packets) != 1 {
+		t.Fatal("Lua did not use the remaining actual nearby observation", s.starterSpells.lastError, f.packets)
+	}
+}
+
 func TestThermapluggUseAttemptReservedBeforeTransportAndNeverReplayedByPolicy(t *testing.T) {
 	for _, unknown := range []bool{false, true} {
 		t.Run(strconv.FormatBool(unknown), func(t *testing.T) {

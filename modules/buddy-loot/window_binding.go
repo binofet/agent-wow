@@ -6,8 +6,8 @@ import (
 	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
 )
 
-// A window binding describes a server-observed UI transaction, independent of
-// whether Lua or the retained source workflow originally requested the opening.
+// A window binding describes the server-observed UI transaction for a retained
+// caller-selected corpse or quest-container opening.
 func (s *Service) policyWindowBinding() (string, uint64, string) {
 	if s.exactCorpse && s.corpseRequest != nil {
 		return s.corpseRequest.request.RequestId, s.corpseRequest.request.CorpseGuid, "corpse"

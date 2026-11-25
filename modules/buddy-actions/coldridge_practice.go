@@ -56,10 +56,6 @@ func planColdridgeRegion(ctx context.Context, root string, region buddynav.Regio
 	return path, nil
 }
 
-func (s *Service) coldridgeNavigationPath(ctx context.Context, from, to position) ([]position, error) {
-	return s.coldridgeGoalNavigationPath(ctx, coldridgePracticeGoal{questID: 179}, from, to)
-}
-
 func (s *Service) coldridgeGoalNavigationPath(ctx context.Context, goal coldridgePracticeGoal, from, to position) ([]position, error) {
 	plan := s.planColdridgePath
 	if goal.questID == 182 {
