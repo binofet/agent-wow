@@ -171,7 +171,7 @@ class CaveCohortAcceptedQueryFrameTests(unittest.TestCase):
     def test_query_runaway_still_refuses_before_any_native_action(self):
         party,_,_,frame=full_frame()
         party.source='return {starter_spell=function(input) while true do end end}'
-        with self.assertRaisesRegex(ValueError,r'1000ms configured'):
+        with self.assertRaisesRegex(ValueError,r'1s configured'):
             fixture.cave.policy.evaluate_accepted(party.rpcs[1],
                 {'sessionId':'body-1','characterGuid':'1'},frame)
         self.assertEqual(party.events,[])
