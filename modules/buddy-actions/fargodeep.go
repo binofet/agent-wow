@@ -297,7 +297,10 @@ func (s *Service) fargodeepTickLocked(ctx context.Context, w *worldv1.SnapshotRe
 		if s.fargodeepAttemptCurrentLocked(ctx) {
 			s.stopAutoAttackLocked(ctx)
 		}
-	case "approach":
+	case "plan", "approach":
+		if decision.kind == "plan" {
+			f.route = nil
+		}
 		s.fargodeepRouteStepLocked(ctx, current)
 	case "attack":
 		if !s.stopLocked(ctx) {
@@ -331,7 +334,7 @@ func (s *Service) fargodeepRouteStepLocked(ctx context.Context, w *worldv1.Snaps
 	if f.route != nil && (f.routeRevision != s.positionRevision || distance(f.routeExpected, s.pos) > .05) {
 		f.route = nil
 	}
-	if f.route == nil || distance(f.routeTarget, p) > .25 {
+	if f.route == nil || distance(f.routeTarget, p) > 1.5 {
 		if !s.stopLocked(ctx) {
 			s.stopFargodeepLocked(ctx, "movement_stop_unconfirmed")
 			return
@@ -362,7 +365,7 @@ func (s *Service) fargodeepRouteStepLocked(ctx context.Context, w *worldv1.Snaps
 			return
 		}
 		decision, _, valid := s.fargodeepPolicySnapshotLocked(ctx, fresh, s.readFargodeepPartyLocked(ctx), "tick")
-		if !valid || decision.kind != "approach" {
+		if !valid || decision.kind != "plan" && decision.kind != "approach" {
 			return
 		}
 		f.route, f.routeIndex, f.routeTarget = path, 0, p

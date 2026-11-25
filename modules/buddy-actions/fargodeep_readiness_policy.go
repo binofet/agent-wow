@@ -183,7 +183,7 @@ func (s *Service) fargodeepWorkflowFactsLocked(w *worldv1.SnapshotResponse, p *p
 	}
 	f := s.fargodeep
 	routeKnown := f.route != nil && f.routeIndex >= 0 && f.routeIndex <= len(f.route) && f.routeRevision == s.positionRevision &&
-		distance(f.routeExpected, s.pos) <= .05 && distance(f.routeTarget, targetPos) <= .25
+		distance(f.routeExpected, s.pos) <= .05 && distance(f.routeTarget, targetPos) <= 1.5
 	remaining, direct := 0.0, false
 	if routeKnown {
 		remaining, direct = routeRemaining(s.pos, f.route, f.routeIndex), directRemainingRoute(s.pos, targetPos, f.route, f.routeIndex)
@@ -197,7 +197,7 @@ func (s *Service) fargodeepWorkflowFactsLocked(w *worldv1.SnapshotResponse, p *p
 		"targetPositionKnown": known, "targetPatrol": fargodeepPatrol(target), "targetGuidType": f.target >> 48, "targetGuidEntry": uint32(f.target >> 24 & 0xffffff),
 		"failedTarget": s.failedAssistTarget == f.target, "authorized": s.now().Before(f.until) && s.state.Assisting && s.now().Before(s.assistUntil),
 		"learnedHealing": s.hasLearnedHealingLocked(), "castPending": s.state.CastPending, "autoAttackUnconfirmed": s.state.AutoAttackUnconfirmed,
-		"routeKnown": routeKnown, "routeRemaining": remaining, "routeDirect": direct}
+		"routeKnown": routeKnown, "routeRemaining": remaining, "routeDirect": direct, "routeTargetDrift": distance(f.routeTarget, targetPos)}
 	return input
 }
 
@@ -224,7 +224,7 @@ func (s *Service) fargodeepReadinessDecisionLocked(ctx context.Context, w *world
 	decoder.DisallowUnknownFields()
 	digest, revisionErr := hex.DecodeString(revision)
 	if err != nil || output == nil || len(output) != 6 || decoder.Decode(&selected) != nil ||
-		(selected.Kind != "arm" && selected.Kind != "hold" && selected.Kind != "stop" && selected.Kind != "approach" && selected.Kind != "attack") ||
+		(selected.Kind != "arm" && selected.Kind != "hold" && selected.Kind != "stop" && selected.Kind != "plan" && selected.Kind != "approach" && selected.Kind != "attack") ||
 		len(selected.Phase) == 0 || len(selected.Phase) > 128 || selected.Selection != fargodeepReadinessSelection ||
 		!(selected.StandYards >= 0 && selected.StandYards <= 240) || selected.Kind != "stop" && selected.StandYards == 0 ||
 		selected.ValidForMs > 30000 ||
@@ -251,7 +251,7 @@ func (s *Service) fargodeepReadinessMatchesLocked(ctx context.Context, selected 
 	scope, _ := ctx.Value(fargodeepReadinessKey{}).(*fargodeepReadinessScope)
 	workflow, _ := selected.facts["workflow"].(map[string]any)
 	stage, _ := workflow["stage"].(string)
-	if scope == nil || (selected.kind == "arm" || selected.kind == "approach" || selected.kind == "attack") &&
+	if scope == nil || (selected.kind == "arm" || selected.kind == "plan" || selected.kind == "approach" || selected.kind == "attack") &&
 		!s.now().Before(scope.started.Add(time.Duration(selected.validForMs)*time.Millisecond)) {
 		return false
 	}

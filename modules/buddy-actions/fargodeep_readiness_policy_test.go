@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -14,11 +15,15 @@ import (
 
 	"github.com/agent-wow/agent-wow/behaviors"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 const fargodeepReadinessTestSelection = "fargodeep_pull_readiness"
@@ -820,6 +825,8 @@ func TestFargodeepWorkflowReceivesAllThirtyTwoCreaturesAndCurrentQuestFacts(t *t
 	}
 	runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
 	reads := 0
+	var capturedFrame []byte
+	var capturedOutput map[string]any
 	s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
 		if input["selection"] == fargodeepReadinessTestSelection {
 			reads++
@@ -829,8 +836,18 @@ func TestFargodeepWorkflowReceivesAllThirtyTwoCreaturesAndCurrentQuestFacts(t *t
 				len(input["observation"].(map[string]any)["players"].(map[string]any)) != 3 || scene["requestedCreature"].(map[string]any)["guid"] != fmt.Sprint(target.Guid) {
 				t.Fatal("workflow truncated native facts or lost full GUID precision", input)
 			}
+			frame, err := json.Marshal(input)
+			wire, wireErr := structpb.NewStruct(map[string]any{"sessionId": s.sessionID, "selfGuid": fmt.Sprint(s.selfGUID), "input": input})
+			if err != nil || len(frame) > behavior.MaxJSONBytes || wireErr != nil || proto.Size(wire) > modcb.StarterSpellPolicyMaxBytes {
+				t.Fatal("complete native workflow frame exceeds actual CLI/callback limits", len(frame), err, wireErr, proto.Size(wire))
+			}
+			capturedFrame = append([]byte(nil), frame...)
 		}
 		out, err := runtime.EvaluateContext(ctx, input)
+		encoded, encodeErr := json.Marshal(out)
+		if encodeErr != nil || json.Unmarshal(encoded, &capturedOutput) != nil {
+			t.Fatal("workflow output cannot be detached", encodeErr)
+		}
 		return true, runtime.Status().Revision, out, err
 	}
 	s.Tick(context.Background())
@@ -838,6 +855,7 @@ func TestFargodeepWorkflowReceivesAllThirtyTwoCreaturesAndCurrentQuestFacts(t *t
 		t.Fatal("last observed neighbor did not block a pull through the actual Lua workflow", reads, s.stateLocked())
 	}
 	requireNoFargodeepReadinessDispatch(t, s, f)
+	practiceDefaultRuntimeCLIParity(t, behaviors.StarterSpellSource)(capturedFrame, capturedOutput)
 }
 
 func TestFargodeepWorkflowAdmissionRejectsAQuestRevisionChangeDuringLua(t *testing.T) {
@@ -940,6 +958,50 @@ func TestFargodeepWorkflowFinalOffenseCannotUseTheExpiredLuaDeadline(t *testing.
 				countPackets(f, opcode.MSGMoveStartForward) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 ||
 				s.state.AssistAttempts != 0 || !s.fargodeepSeen[target.Guid] {
 				t.Fatal("the final physical consumer crossed Lua's returned deadline or erased custody", s.stateLocked(), f.packets)
+			}
+		})
+	}
+}
+
+func TestFargodeepWorkflowExtraGroupMemberDoesNotAcquireAMissionRole(t *testing.T) {
+	s, f, target, request, _ := fargodeepReadinessRig(t, 5)
+	armFargodeep(t, s, request)
+	f.party.Group.Members = append(f.party.Group.Members, &partyv1.Member{Guid: 87, Online: true})
+	target.AttackVictimKnown, target.AttackVictimGuid, target.AttackAgeMs = true, 87, 100
+	s.Tick(context.Background())
+	if s.fargodeep.active || s.fargodeep.phase != "target_claimed_or_attacking_foreign_player" || !s.fargodeepSeen[target.Guid] {
+		t.Fatal("an unrelated group member acquired the explicit three-body mission", s.stateLocked())
+	}
+	requireNoFargodeepReadinessDispatch(t, s, f)
+}
+
+func TestFargodeepWorkflowLuaDistinguishesInitialAndEngagedRouteDrift(t *testing.T) {
+	for _, engaged := range []bool{false, true} {
+		t.Run(fmt.Sprint(engaged), func(t *testing.T) {
+			s, f, target, _, advance := fargodeepReadinessMovingRig(t)
+			before := s.fargodeep.replans
+			target.X += .5
+			target.PositionRevision++
+			if engaged {
+				f.world.Self.UnitFlags |= 0x80000
+				target.AttackVictimKnown, target.AttackVictimGuid, target.AttackAgeMs = true, s.selfGUID, 100
+			}
+			plans := 0
+			s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
+				plans++
+				return []position{from, to}, nil
+			}
+			advance(200 * time.Millisecond)
+			s.Tick(context.Background())
+			want := 1
+			phase := "verified_route_waiting_fresh_frame"
+			if engaged {
+				want = 0
+				phase = "approaching_designated_kobold_on_verified_route"
+			}
+			if plans != want || s.fargodeep.replans != before+want || !s.fargodeep.active || s.fargodeep.phase != phase ||
+				countPackets(f, opcode.CMSGCastSpell) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 || !s.fargodeepSeen[target.Guid] {
+				t.Fatal("Lua reused the stricter initial corridor or replanned the valid engaged route", engaged, plans, s.stateLocked(), f.packets)
 			}
 		})
 	}

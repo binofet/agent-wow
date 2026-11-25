@@ -369,6 +369,8 @@ function M.fargodeep_lifecycle(input)
         local pos=guid==input.selfGuid and w.clientPosition or v
         if distance2(w.clientPosition,pos)>35*35 then return stop("companions_outside_support_range") end
     end
+    -- Extra actual group members do not acquire a role in this explicit task.
+    members={["1"]=true,["4"]=true,["5"]=true}
     if w.stage=="arm" then return out("arm","armed_waiting_for_designated_engager",false) end
     if w.authorized~=true then return stop("authorization_expired") end
     local victim=target.attackVictimKnown==true and target.attackVictimGuid or "0"
@@ -419,9 +421,11 @@ function M.fargodeep_lifecycle(input)
     if self.classId==5 and w.learnedHealing~=true then return stop("priest_healing_intent_required") end
     if w.stage=="tick" and w.castPending==true then return out("hold","waiting_for_actual_cast_result",pulled) end
     if w.stage=="tick" and w.autoAttackUnconfirmed==true then return out("hold","waiting_for_server_attack_stop",pulled) end
-    if m.engagerGuid==input.selfGuid and (self.classId==4 and not pulled or distance2(w.clientPosition,p)>stand*stand) and
-       (w.routeKnown~=true or distance2(w.clientPosition,p)>stand*stand or w.routeRemaining>stand or w.routeDirect~=true) then
-        return out("approach","approaching_designated_kobold_on_verified_route",pulled)
+    if m.engagerGuid==input.selfGuid and (self.classId==4 and not pulled or distance2(w.clientPosition,p)>stand*stand) then
+        if w.routeKnown~=true or not pulled and w.routeTargetDrift>.25 then return out("plan","waiting_for_verified_route",pulled) end
+        if distance2(w.clientPosition,p)>stand*stand or w.routeRemaining>stand or w.routeDirect~=true then
+            return out("approach","approaching_designated_kobold_on_verified_route",pulled)
+        end
     end
     if not engaged and pulled then return out("hold","waiting_for_actual_party_attack_start",pulled) end
     return out("attack",engaged and "fighting_actual_bound_kobold" or "waiting_for_class_gate",pulled)
