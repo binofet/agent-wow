@@ -2167,6 +2167,35 @@ def valid_gm_command(command):
             and command == command.rstrip() and "|" not in command)
 
 
+def literal_gm_feedback(command, result):
+    """Present an existing guarded receipt, never infer a realm/game effect."""
+    def clean(value):
+        return ''.join(c for c in str(value) if not unicodedata.category(c).startswith('C') and c!='|')[:512]
+    if not isinstance(result,dict):result={}
+    if result.get('ok') is not True:
+        error=result.get('error')
+        text=('Command not dispatched: '+clean(error.get('error','guard refused'))
+            if isinstance(error,dict) and error.get('outcome')=='not_dispatched'
+            else 'Command dispatch is unconfirmed; I will not repeat it.')
+    else:
+        row=result.get('result')
+        if not isinstance(row,dict):row={}
+        if row.get('historicalReceipt') is True:text='Existing receipt only; I did not resend this command.'
+        elif row.get('commandTransportWritten') is True:text='Command sent unchanged. Its game effect is not confirmed.'
+        elif row.get('commandTransportWritten') is False:
+            admission=next((row[k] for k in ('destinationAdmission','partyAdmission','repeatAdmission') if isinstance(row.get(k),dict)),{})
+            text='Command not dispatched: '+clean(admission.get('reason') or row.get('completion') or row.get('reason') or 'guard refused')
+        else:text='Command dispatch is unconfirmed; I will not repeat it.'
+        feedback=row.get('feedback')
+        messages=feedback.get('systemMessages') if isinstance(feedback,dict) else None
+        if isinstance(messages,list):
+            observed=[m['text'] for m in messages if isinstance(m,dict) and isinstance(m.get('text'),str)]
+            if observed:text+=' Realm feedback (not effect proof): '+clean(' '.join(observed))
+    if re.match(r'\.arrive(?:\s|$)',command,re.IGNORECASE):
+        text+=' If you meant moving me to a player, use gm .appear <name>; I did not substitute it.'
+    return dict(text=text,emote='NONE',action='NONE')
+
+
 def send_lotharen_gm(rpc, command):
     if not valid_gm_command(command):
         raise ConversationError("Give me one native WoW dot command.")
@@ -2776,6 +2805,10 @@ class DirectBrain(AgentBrain):
         def interrupted():
             return self.stopped() or bool(cancelled and cancelled())
         private_context = getattr(self, '_generation_context', None) or {}
+        literal_command=private_context.get('literalGMCommand')
+        if literal_command is not None:
+            if not valid_gm_command(literal_command):raise ConversationError('One exact native GM command required')
+            record.update(execution='literal_owner_command',childPhase='literal.preparing')
         owner_check = private_context.get('ownerAllowed')
         def owner_authorised():
             return callable(owner_check) and owner_check() is True and not interrupted()
@@ -2786,6 +2819,7 @@ class DirectBrain(AgentBrain):
                 and state.get("gm_controls_available") is True
                 and self.development_enabled(state) and not interrupted())
         def api_metadata():
+            if literal_command is not None:return dict(execution='literal_owner_command',httpRequests=0)
             raw = self.client.last_receipt or {}
             keys = ("requestId", "execution", "provider", "requestedModel", "providerReportedModel",
                     "outcome", "reason", "httpRequests", "httpStatus", "toolCalls", "transportErrorType",
@@ -2861,7 +2895,7 @@ class DirectBrain(AgentBrain):
                 chat_cursor=str(self._generation["cursor"]) if self._generation.get("cursor") is not None else None,
                 owner_allowed=owner_authorised, receipt_root=self.state_dir,
                 follow_prepare=private_context.get('followPrepare'))
-        if tools is not None and gm_authorised():
+        if tools is not None and gm_authorised() and literal_command is None:
             read_started = int(time.time()*1000)
             observed = tools.dispatch("gm_inspect", {})
             read_completed = int(time.time()*1000)
@@ -2892,7 +2926,7 @@ class DirectBrain(AgentBrain):
             if name in ("workspace_write", "workspace_patch", "policy_apply", "policy_input", "party_invite", "follow", "gameplay_command", "request_buffs", "gm_task_start", "gm_task_cancel", "gm_task_resume", "gm_execute"):
                 mutation_entered[0] = True
                 record["mutationToolEntered"] = True
-            identity = self.last_request_id + ":" + str(serial[0])
+            identity = (self._generation['toolCustodyRequestId'] if literal_command is not None else self.last_request_id) + ":" + str(serial[0])
             row = dict(itemId=identity, type="direct_function", name=name, status="unknown")
             record["pendingTools"].append(identity)
             record["tools"].append(row)
@@ -2931,6 +2965,14 @@ class DirectBrain(AgentBrain):
             return result
         self._generation["stage"] = "api_request"
         try:
+            if literal_command is not None:
+                if not gm_authorised() or tools is None:
+                    raise ConversationError('Current authenticated GM tool authority unavailable')
+                result=dispatch('gm_execute',dict(command=literal_command))
+                record.update(outcome='completed',streamComplete=True,turnCompleted=True,
+                    childPhase='literal.completed',actionOutcome='not_inferred_from_tool_receipt',api=api_metadata())
+                publish()
+                return literal_gm_feedback(literal_command,result)
             system = (self.developer_persona if developer else self.persona)
             if reference is not None:
                 system += "\nLocal realm command reference:\n" + reference['eager']
@@ -2982,14 +3024,14 @@ class DirectBrain(AgentBrain):
                 if isinstance(error, (Cancelled, OwnerInputPending)) else
                 error.reason if isinstance(error, ModelError) else type(error).__name__)
             record.update(outcome="failed", reason=reason, errorType=type(error).__name__,
-                          childPhase="api.failed", api=api_metadata())
+                          childPhase="literal.failed" if literal_command is not None else "api.failed", api=api_metadata())
             self.retain_failure(record)
             publish()
             if self.stopped(): raise Stopped("Conversation stop requested") from error
             if isinstance(error, (Cancelled, OwnerInputPending)):
                 raise OwnerInputPending("Fresh owner input is waiting") from error
             if isinstance(error, (KeyboardInterrupt, SystemExit)): raise
-            raise ConversationError("The selected model request did not finish: " + str(reason)) from error
+            raise ConversationError(("Literal GM command is unconfirmed or blocked: " if literal_command is not None else "The selected model request did not finish: ") + str(reason)) from error
 
 
 
@@ -4812,7 +4854,7 @@ class Conversation:
     def publish_brain_failure(self, context, previous_request):
         self.publish_brain_evidence(context,previous_request,getattr(self.brain,'last_failure_receipt',None),'brainFailure')
 
-    def generate_reply(self, history, state, still_current=None, *, tool_request_id=None):
+    def generate_reply(self, history, state, still_current=None, *, tool_request_id=None, literal_gm=None):
         # One synchronous model process remains; a cheap read interrupts it
         # without advancing the chat cursor or undoing already-written code.
         next_poll = [0.0]
@@ -4865,6 +4907,16 @@ class Conversation:
             except ConversationError:
                 pass  # Conversation remains available; no ordinary mutation tool is granted.
         if tool_request_id is not None:context['toolCustodyRequestId'] = tool_request_id
+        if literal_gm is not None:
+            if (not isinstance(self.brain,DirectBrain) or not valid_gm_command(literal_gm)
+                    or request.get('source')!='owner' or request.get('senderGuid')!='3'
+                    or request.get('channel')!='WHISPER' or self.character_guid!=87 or self.player_guid!=3
+                    or self.character_name.casefold()!='lotharen' or tool_request_id is not None):
+                raise ConversationError('Literal GM requires the fresh authenticated owner whisper')
+            context['literalGMCommand']=literal_gm
+            context['toolCustodyRequestId']='literal-'+hashlib.sha256(json.dumps([
+                context.get('sessionId'),context.get('chatSessionId'),context.get('selfGuid'),self.player_guid,
+                context.get('cursor')],separators=(',',':')).encode()).hexdigest()
         previous_request=getattr(self.brain,'last_request_id',None)
         previous_context=getattr(self.brain,'_generation_context',None)
         previous_progress=getattr(self.brain,'_generation_progress',None)
@@ -5115,6 +5167,18 @@ class Conversation:
             if literal_gm_request:
                 self.run_gm_command(literal_gm_request[1], channel, sender, history_key)
                 return
+        direct_literal=None
+        if isinstance(self.brain,DirectBrain) and channel=='WHISPER' and not peer:
+            literal=re.fullmatch(r'gm\s+(\..+)',request,re.IGNORECASE)
+            if literal:
+                if (not allow_gm or resumed or continuation is not None or result.get('cursorLost',False)
+                        or not self.owner_whisper_recipient(selected[-1])):
+                    self.send_reply(dict(text='Literal GM commands require a fresh owner whisper to Lotharen in a complete current chat window; I did not execute this input.',emote='NONE'),channel,target_guid=sender,history_key=history_key)
+                    return
+                if not valid_gm_command(literal[1]):
+                    self.send_reply(dict(text='Give me one exact native GM dot command.',emote='NONE'),channel,target_guid=sender,history_key=history_key)
+                    return
+                direct_literal=literal[1]
         control_request = None if isinstance(self.brain, DirectBrain) else parse_lua_control_request(request)
         if not peer and isinstance(self.controls, BuddyControls) and control_request:
             expected_class = "rogue" if control_request["technique"] == "sap" else "mage"
@@ -5162,7 +5226,8 @@ class Conversation:
         previous_brain_request = getattr(self.brain, 'last_request_id', None)
         try:
             reply = validate_reply(self.generate_reply(self.history[history_key], state,
-                tool_request_id=continuation['requestId'] if continuation is not None else None),self.reply_emotes,
+                tool_request_id=continuation['requestId'] if continuation is not None else None,
+                **({'literal_gm':direct_literal} if direct_literal is not None else {})),self.reply_emotes,
                 allow_silent=development_whisper and development.get("enabled") is True, allow_gm=bool(allow_gm),
                 natural=isinstance(self.brain, DirectBrain))
         except OwnerInputPending:
