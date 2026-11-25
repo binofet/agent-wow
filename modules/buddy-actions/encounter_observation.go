@@ -203,6 +203,7 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 			Guid: guid, Present: p.Present, MapKnown: p.MapKnown, MapId: proto.Uint32(p.MapId),
 			AliveKnown: p.AliveKnown, HealthKnown: p.HealthKnown, Health: p.Health, MaxHealth: p.MaxHealth,
 			FactionTemplate: p.FactionTemplate, PlayerFlags: p.PlayerFlags,
+			CombatReachKnown: p.CombatReachKnown, CombatReach: p.CombatReach,
 			PositionKnown: p.PositionKnown && finite(playerPosition(p)),
 			PositionAgeMs: p.PositionAgeMs, PositionAgeKnown: p.PositionKnown, PositionInferred: p.PositionInferred,
 			ClassKnown: p.ClassKnown, ClassId: p.ClassId, RaceKnown: p.RaceKnown, RaceId: p.RaceId,

@@ -34,7 +34,7 @@ func acceptedMovementPointsSource(t testing.TB) string {
 }
 func pointActorObservation(body string) map[string]any {
 	return map[string]any{"sessionId": "point-actor-" + body, "selfGuid": body, "mapId": 349, "visitId": "1", "hostOwned": true, "hostRequested": true, "worldObservationRevision": "1", "spellbookKnown": true, "meleeKnown": true,
-		"players":    map[string]any{body: map[string]any{"guid": body, "present": true, "aliveKnown": true, "alive": true, "mapKnown": true, "mapId": 349, "positionKnown": true, "positionRevision": "1", "x": 0, "y": 0, "z": 0, "orientation": 0, "movementKnown": true, "moving": false, "healthKnown": true, "health": 100, "maxHealth": 100, "combatKnown": true, "inCombat": false}},
+		"players":    map[string]any{body: map[string]any{"guid": body, "combatReachKnown": true, "combatReach": 1.5, "present": true, "aliveKnown": true, "alive": true, "mapKnown": true, "mapId": 349, "positionKnown": true, "positionRevision": "1", "x": 0, "y": 0, "z": 0, "orientation": 0, "movementKnown": true, "moving": false, "healthKnown": true, "health": 100, "maxHealth": 100, "combatKnown": true, "inCombat": false}},
 		"targets":    map[string]any{"100": map[string]any{"guid": "100", "entry": 1, "present": true, "aliveKnown": true, "alive": true, "mapKnown": true, "mapId": 349, "positionKnown": true, "positionRevision": "1", "x": 10, "y": 0, "z": 0, "attackable": true, "engaged": true, "healthKnown": true, "health": 100, "maxHealth": 100}},
 		"engagement": map[string]any{"100": map[string]any{"victimGuid": body}}, "spells": map[string]any{"133": map[string]any{"known": true, "ready": true, "available": true, "capability": "offense"}},
 		"party":      map[string]any{"group": map[string]any{"known": true, "inGroup": true, "groupGuid": "7", "leaderGuid": "3", "members": []any{map[string]any{"guid": body, "online": true}, map[string]any{"guid": "3", "online": true}}}},
@@ -399,6 +399,47 @@ func TestMovementPointsUrgentHealApproachKeepsItsExistingSupportPriority(t *test
 				}
 			} else if action["capability"] != "movement_points_step" {
 				t.Fatal("ordinary DPS did not yield to the occupied point", result.Output)
+			}
+		})
+	}
+}
+
+func TestMovementPointsObservedSphereUsesOwnReachAndPreservesUnknownAction(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		x, z     float64
+		known    bool
+		reach    float64
+		wantStep bool
+	}{
+		{"center572_still_inside", 5.72, 0, true, 1.5, true}, {"radius650_clear", 6.5, 0, true, 1.5, false},
+		{"vertical572_inside", 0, 5.72, true, 1.5, true}, {"diagonal3D_clear", 5.72, 5, true, 1.5, false},
+		{"small_actual_reach", 5.72, 0, true, .5, false}, {"unknown_not_offense_veto", 5.72, 0, false, 1.5, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vm, err := behavior.NewSession(context.Background(), "point-actor-4", acceptedMovementPointsSource(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer vm.Close()
+			obs := pointActorObservation("4")
+			own := obs["players"].(map[string]any)["4"].(map[string]any)
+			own["x"], own["z"], own["combatReachKnown"], own["combatReach"] = tc.x, tc.z, tc.known, tc.reach
+			obs["groundEffects"] = []any{pointObject(time.Now().UnixMilli() - 1000)}
+			d := pointObserve(t, vm, obs, "encounter")
+			action, ok := d.Output["action"].(map[string]any)
+			if !ok {
+				t.Fatal("unrelated ordinary decision lost", d.Output)
+			}
+			if (action["capability"] == "movement_points_step") != tc.wantStep {
+				t.Fatal(d.Output)
+			}
+			point := d.Output["movementPoints"].(map[string]any)["points"].([]any)[0].(map[string]any)
+			if point["radiusYards"] != float64(5) || point["groundEffectGuid"] != "999" {
+				t.Fatal("source radius/identity changed", point)
+			}
+			if !tc.known && d.Output["movementPointStatus"].(map[string]any)["phase"] != "observed_effect_clearance_unknown" {
+				t.Fatal(d.Output)
 			}
 		})
 	}

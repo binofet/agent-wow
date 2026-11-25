@@ -8573,6 +8573,8 @@ type EncounterPlayer struct {
 	PositionInferred  bool                   `protobuf:"varint,36,opt,name=position_inferred,json=positionInferred,proto3" json:"position_inferred,omitempty"`
 	PositionEstimated bool                   `protobuf:"varint,37,opt,name=position_estimated,json=positionEstimated,proto3" json:"position_estimated,omitempty"`
 	PositionAgeKnown  bool                   `protobuf:"varint,38,opt,name=position_age_known,json=positionAgeKnown,proto3" json:"position_age_known,omitempty"`
+	CombatReachKnown  bool                   `protobuf:"varint,39,opt,name=combat_reach_known,json=combatReachKnown,proto3" json:"combat_reach_known,omitempty"`
+	CombatReach       float32                `protobuf:"fixed32,40,opt,name=combat_reach,json=combatReach,proto3" json:"combat_reach,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -8871,6 +8873,20 @@ func (x *EncounterPlayer) GetPositionAgeKnown() bool {
 		return x.PositionAgeKnown
 	}
 	return false
+}
+
+func (x *EncounterPlayer) GetCombatReachKnown() bool {
+	if x != nil {
+		return x.CombatReachKnown
+	}
+	return false
+}
+
+func (x *EncounterPlayer) GetCombatReach() float32 {
+	if x != nil {
+		return x.CombatReach
+	}
+	return 0
 }
 
 type EncounterCreature struct {
@@ -13340,8 +13356,12 @@ type MovementPoint struct {
 	Z               float32                `protobuf:"fixed32,3,opt,name=z,proto3" json:"z,omitempty"`
 	RadiusYards     float32                `protobuf:"fixed32,4,opt,name=radius_yards,json=radiusYards,proto3" json:"radius_yards,omitempty"`
 	ExpiresAtUnixMs uint64                 `protobuf:"varint,5,opt,name=expires_at_unix_ms,json=expiresAtUnixMs,proto3" json:"expires_at_unix_ms,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Optional current observed object: radius stays the source radius; native
+	// clearance is a 3D sphere plus this body's observed combat reach. Zero keeps
+	// ordinary authored point semantics unchanged.
+	GroundEffectGuid uint64 `protobuf:"varint,6,opt,name=ground_effect_guid,json=groundEffectGuid,proto3" json:"ground_effect_guid,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *MovementPoint) Reset() {
@@ -13405,6 +13425,13 @@ func (x *MovementPoint) GetRadiusYards() float32 {
 func (x *MovementPoint) GetExpiresAtUnixMs() uint64 {
 	if x != nil {
 		return x.ExpiresAtUnixMs
+	}
+	return 0
+}
+
+func (x *MovementPoint) GetGroundEffectGuid() uint64 {
+	if x != nil {
+		return x.GroundEffectGuid
 	}
 	return 0
 }
@@ -14631,7 +14658,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0eEncounterParty\x123\n" +
 	"\x05group\x18\x01 \x01(\v2\x1d.warcraftbuddy.party.v1.GroupR\x05group\x12J\n" +
 	"\fraid_targets\x18\x02 \x01(\v2'.warcraftbuddy.party.v1.RaidTargetStateR\vraidTargets\x12\x1a\n" +
-	"\brevision\x18\x03 \x01(\x04R\brevision\"\xd0\t\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\"\xa1\n" +
+	"\n" +
 	"\x0fEncounterPlayer\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
 	"\apresent\x18\x02 \x01(\bR\apresent\x12\x1b\n" +
@@ -14679,7 +14707,9 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0fposition_age_ms\x18# \x01(\x04R\rpositionAgeMs\x12+\n" +
 	"\x11position_inferred\x18$ \x01(\bR\x10positionInferred\x12-\n" +
 	"\x12position_estimated\x18% \x01(\bR\x11positionEstimated\x12,\n" +
-	"\x12position_age_known\x18& \x01(\bR\x10positionAgeKnownB\t\n" +
+	"\x12position_age_known\x18& \x01(\bR\x10positionAgeKnown\x12,\n" +
+	"\x12combat_reach_known\x18' \x01(\bR\x10combatReachKnown\x12!\n" +
+	"\fcombat_reach\x18( \x01(\x02R\vcombatReachB\t\n" +
 	"\a_map_idB\b\n" +
 	"\x06_alive\"\xad\a\n" +
 	"\x11EncounterCreature\x12\x12\n" +
@@ -15187,13 +15217,14 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x11observed_visit_id\x18\x0e \x01(\x04R\x0fobservedVisitId\x121\n" +
 	"\x14destination_observed\x18\x0f \x01(\bR\x13destinationObserved\x12\x14\n" +
 	"\x05error\x18\x10 \x01(\tR\x05error\x12E\n" +
-	"\fsource_scope\x18\x11 \x01(\v2\".agentwow.module.v1.TransportScopeR\vsourceScope\"\x89\x01\n" +
+	"\fsource_scope\x18\x11 \x01(\v2\".agentwow.module.v1.TransportScopeR\vsourceScope\"\xb7\x01\n" +
 	"\rMovementPoint\x12\f\n" +
 	"\x01x\x18\x01 \x01(\x02R\x01x\x12\f\n" +
 	"\x01y\x18\x02 \x01(\x02R\x01y\x12\f\n" +
 	"\x01z\x18\x03 \x01(\x02R\x01z\x12!\n" +
 	"\fradius_yards\x18\x04 \x01(\x02R\vradiusYards\x12+\n" +
-	"\x12expires_at_unix_ms\x18\x05 \x01(\x04R\x0fexpiresAtUnixMs\"\xc6\x01\n" +
+	"\x12expires_at_unix_ms\x18\x05 \x01(\x04R\x0fexpiresAtUnixMs\x12,\n" +
+	"\x12ground_effect_guid\x18\x06 \x01(\x04R\x10groundEffectGuid\"\xc6\x01\n" +
 	"\x15MovementPointsRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +

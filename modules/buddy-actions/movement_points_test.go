@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
@@ -548,5 +549,115 @@ func TestMovementPointOutsideOriginCannotUseSnappedInsideException(t *testing.T)
 	}
 	if path, ok := s.movementPointRouteLocked(ctx, []position{s.pos, {x: -8}}); ok {
 		t.Fatal("outside body joined an inside-only exception", path)
+	}
+}
+
+func TestMovementPointObservedSpheresUseActualBodyReach(t *testing.T) {
+	s, f, _, ctx, _ := targetMovementFixture(t)
+	f.world.Self.CombatReachKnown = true
+	f.world.Self.CombatReach = 1.5
+	f.world.GroundEffectsSupported = true
+	f.world.GroundEffects = []*worldv1.SpellGroundEffect{{Guid: 999, RadiusYards: 5}}
+	r := &actionsv1.MovementPointsRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, MapId: s.posMap, VisitId: 1, Points: []*actionsv1.MovementPoint{{GroundEffectGuid: 999, RadiusYards: 5, ExpiresAtUnixMs: uint64(s.now().Add(20 * time.Second).UnixMilli())}}}
+	before := len(f.packets)
+	if _, err := s.SetMovementPoints(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	points := s.currentMovementPointsLocked()
+	if len(points) != 1 || points[0].RadiusYards != 6.5 || s.movementPoints.points[0].RadiusYards != 5 {
+		t.Fatal(points, s.movementPoints.points)
+	}
+	if pointClearance(position{x: 5.72}, points) >= 0 || pointClearance(position{x: 6.5}, points) != 0 || pointClearance(position{z: 5.72}, points) >= 0 {
+		t.Fatal("wrong spherical boundary")
+	}
+	revision := s.movementPoints.revision
+	if _, err := s.SetMovementPoints(ctx, r); err != nil || s.movementPoints.revision != revision {
+		t.Fatal("same source refreshed geometry", err)
+	}
+	observed, err := s.EncounterObservation(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !observed.Players[encounterGUID(s.selfGUID)].CombatReachKnown || observed.Players[encounterGUID(s.selfGUID)].CombatReach != 1.5 {
+		t.Fatal("Lua lost actual reach", observed)
+	}
+	f.world.Self.CombatReach = .5
+	if _, err := s.SetMovementPoints(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if s.currentMovementPointsLocked()[0].RadiusYards != 5.5 {
+		t.Fatal("hardcoded actor size")
+	}
+	f.world.Self.CombatReachKnown = false
+	if _, err := s.SetMovementPoints(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.currentMovementPointsLocked()) != 0 || !s.movementPointObservedUnknownLocked() {
+		t.Fatal("invented reach")
+	}
+	out, err := s.StepMovementPoints(ctx, &actionsv1.MovementPointsStepRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, MapId: s.posMap, VisitId: 1, SequenceId: 85})
+	if err != nil || out.MovementPoints.Reason != "observed_effect_clearance_unknown" || len(f.packets) != before {
+		t.Fatal(out, err, len(f.packets), before)
+	}
+	f.world.Self.CombatReachKnown = true
+	f.world.GroundEffects = nil
+	if _, err := s.SetMovementPoints(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.currentMovementPointsLocked()) != 0 || !s.movementPointObservedUnknownLocked() {
+		t.Fatal("borrowed missing source")
+	}
+	// Missing object/reach does not create a permanent follow/other-action veto.
+	path := []position{{x: 10}, {x: 11}}
+	if got, ok := s.movementPointRouteLocked(ctx, path); !ok || len(got) != 2 {
+		t.Fatal("unknown escape dimension vetoed unrelated route")
+	}
+}
+func TestMovementPointSphereTransitAndOverlapGeometry(t *testing.T) {
+	sphere := []*actionsv1.MovementPoint{{GroundEffectGuid: 1, RadiusYards: 6.5}}
+	for _, path := range [][]position{{{x: -8, z: 3}, {x: 8, z: 3}}, {{z: -8}, {z: 8}}} {
+		if pointPathClear(path, sphere) {
+			t.Fatal("3D transit through sphere accepted", path)
+		}
+	}
+	if !pointPathClear([]position{{x: -8, z: 7}, {x: 8, z: 7}}, sphere) {
+		t.Fatal("above sphere route blocked")
+	}
+	overlap := append(sphere, &actionsv1.MovementPoint{GroundEffectGuid: 2, X: 2, RadiusYards: 6.5})
+	if !pointPathClear([]position{{x: 1}, {x: -7}}, overlap) || pointPathClear([]position{{x: -7}, {x: 9}}, overlap) {
+		t.Fatal("sphere union escape/crossing incorrect")
+	}
+	// Unmarked ordinary points retain their old center disk and +/-2 Z gate.
+	ordinary := []*actionsv1.MovementPoint{{RadiusYards: 5}}
+	if pointClearance(position{x: 5.72}, ordinary) <= 0 || !math.IsInf(pointClearance(position{z: 3}, ordinary), 1) {
+		t.Fatal("ordinary point semantics changed")
+	}
+}
+
+func TestMovementPointObservedSphereStepDoesNotStopAt572(t *testing.T) {
+	s, f, _, ctx, advance := targetMovementFixture(t)
+	s.bodyMotionPlan = func(_ context.Context, _ string, _ uint32, from buddynav.Point, bearing, speed float64, d time.Duration, _ bool) ([]buddynav.BodyMotionSample, error) {
+		to := from
+		to.X += float32(math.Cos(bearing) * speed * d.Seconds())
+		to.Y += float32(math.Sin(bearing) * speed * d.Seconds())
+		return []buddynav.BodyMotionSample{{Point: from}, {At: d, Point: to}}, nil
+	}
+	s.bodyMotionWait = func(_ context.Context, d time.Duration) error { advance(d); return nil }
+	f.world.Self.CombatReachKnown = true
+	f.world.Self.CombatReach = 1.5
+	f.world.Self.X = 5.72
+	s.pos.x = 5.72
+	f.world.GroundEffectsSupported = true
+	f.world.GroundEffects = []*worldv1.SpellGroundEffect{{Guid: 999, RadiusYards: 5}}
+	_, err := s.SetMovementPoints(ctx, &actionsv1.MovementPointsRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, MapId: s.posMap, VisitId: 1, Points: []*actionsv1.MovementPoint{{GroundEffectGuid: 999, RadiusYards: 5, ExpiresAtUnixMs: uint64(s.now().Add(20 * time.Second).UnixMilli())}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.StepMovementPoints(ctx, &actionsv1.MovementPointsStepRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, MapId: s.posMap, VisitId: 1, SequenceId: 86})
+	if err != nil || len(f.packets) == 0 || out.GetBodyMovement().GetTransportWritten() != true {
+		t.Fatal("572 falsely treated as clear", out, err)
+	}
+	if pointClearance(s.pos, s.currentMovementPointsLocked()) < 0 {
+		t.Fatal("bounded input stopped before size clearance", s.pos)
 	}
 }

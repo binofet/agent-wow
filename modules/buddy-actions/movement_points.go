@@ -55,6 +55,8 @@ func (s *Service) SetMovementPoints(ctx context.Context, r *actionsv1.MovementPo
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
+	// Retain the exact freshly validated public observation used for this data update.
+	s.lastWorld = w
 	// Input order and repeated polling do not create new geometry. Keep a
 	// stable revision for an admitted prefix while the same absolute points
 	// are republished; expired rows cannot rearm or disturb that input.
@@ -80,9 +82,12 @@ func (s *Service) SetMovementPoints(ctx context.Context, r *actionsv1.MovementPo
 		if a.RadiusYards != b.RadiusYards {
 			return a.RadiusYards < b.RadiusYards
 		}
+		if a.GroundEffectGuid != b.GroundEffectGuid {
+			return a.GroundEffectGuid < b.GroundEffectGuid
+		}
 		return a.ExpiresAtUnixMs < b.ExpiresAtUnixMs
 	})
-	previous := s.currentMovementPointsLocked()
+	previous := s.rawMovementPointsLocked()
 	changed := s.movementPoints.revision == 0 || len(previous) != len(points)
 	if !changed {
 		for i := range points {
@@ -100,7 +105,7 @@ func (s *Service) SetMovementPoints(ctx context.Context, r *actionsv1.MovementPo
 	return s.stateLocked(), nil
 }
 
-func (s *Service) currentMovementPointsLocked() []*actionsv1.MovementPoint {
+func (s *Service) rawMovementPointsLocked() []*actionsv1.MovementPoint {
 	p := &s.movementPoints
 	if p.session != s.sessionID || p.self != s.selfGUID || p.visit != s.encounterVisit.revision || !s.encounterVisit.bound || p.mapID != s.encounterVisit.mapID {
 		return nil
@@ -111,6 +116,53 @@ func (s *Service) currentMovementPointsLocked() []*actionsv1.MovementPoint {
 		if int64(v.ExpiresAtUnixMs) > now {
 			out = append(out, v)
 		}
+	}
+	return out
+}
+
+// Match only this body's current public World observation. Ordinary authored
+// points never acquire unit-size or sphere semantics implicitly.
+func (s *Service) observedPointRadiusLocked(p *actionsv1.MovementPoint) (float32, bool) {
+	w := s.lastWorld
+	if !s.matchesCurrentEncounterVisitLocked(w) || !w.GroundEffectsSupported || w.GroundEffectsOverflow {
+		return 0, false
+	}
+	own := w.GetSelf()
+	if own.GetGuid() != s.selfGUID || !own.GetPresent() || !own.GetMapKnown() || own.GetMapId() != s.encounterVisit.mapID || !own.GetCombatReachKnown() || math.IsNaN(float64(own.CombatReach)) || math.IsInf(float64(own.CombatReach), 0) || own.CombatReach < 0 {
+		return 0, false
+	}
+	for _, effect := range w.GroundEffects {
+		if effect != nil && effect.Guid == p.GroundEffectGuid && effect.X == p.X && effect.Y == p.Y && effect.Z == p.Z && effect.RadiusYards == p.RadiusYards {
+			radius := p.RadiusYards + own.CombatReach
+			return radius, !math.IsInf(float64(radius), 0) && radius > 0
+		}
+	}
+	return 0, false
+}
+func (s *Service) movementPointObservedUnknownLocked() bool {
+	for _, p := range s.rawMovementPointsLocked() {
+		if p.GroundEffectGuid != 0 {
+			if _, ok := s.observedPointRadiusLocked(p); !ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+func (s *Service) currentMovementPointsLocked() []*actionsv1.MovementPoint {
+	out := make([]*actionsv1.MovementPoint, 0)
+	for _, p := range s.rawMovementPointsLocked() {
+		if p.GroundEffectGuid != 0 {
+			radius, ok := s.observedPointRadiusLocked(p)
+			// Unknown object/reach is not an exclusion with invented dimensions, nor
+			// a veto of unrelated follow or care. Explicit escape refuses below.
+			if !ok {
+				continue
+			}
+			p = proto.Clone(p).(*actionsv1.MovementPoint)
+			p.RadiusYards = radius
+		}
+		out = append(out, p)
 	}
 	return out
 }
@@ -126,7 +178,9 @@ func (s *Service) movementPointsStateLocked() *actionsv1.MovementPointsState {
 			reason = "inside"
 		}
 	}
-	if len(p) == 0 {
+	if s.movementPointObservedUnknownLocked() {
+		reason = "observed_effect_clearance_unknown"
+	} else if len(p) == 0 {
 		reason = "no_current_unexpired_points"
 	} else if s.state.CastPending {
 		reason = "protected_cast_pending"
@@ -139,7 +193,9 @@ func (s *Service) movementPointsStateLocked() *actionsv1.MovementPointsState {
 func pointClearance(p position, points []*actionsv1.MovementPoint) float64 {
 	best := math.Inf(1)
 	for _, v := range points {
-		if math.Abs(float64(p.z-v.Z)) <= 2 {
+		if v.GroundEffectGuid != 0 {
+			best = math.Min(best, math.Sqrt(math.Pow(float64(p.x-v.X), 2)+math.Pow(float64(p.y-v.Y), 2)+math.Pow(float64(p.z-v.Z), 2))-float64(v.RadiusYards))
+		} else if math.Abs(float64(p.z-v.Z)) <= 2 {
 			best = math.Min(best, math.Hypot(float64(p.x-v.X), float64(p.y-v.Y))-float64(v.RadiusYards))
 		}
 	}
@@ -162,6 +218,19 @@ func pointPathClear(path []position, points []*actionsv1.MovementPoint) bool {
 	for i := 1; i < len(path); i++ {
 		a, b := path[i-1], path[i]
 		for _, v := range points {
+			if v.GroundEffectGuid != 0 {
+				dx, dy, dz := float64(b.x-a.x), float64(b.y-a.y), float64(b.z-a.z)
+				den := dx*dx + dy*dy + dz*dz
+				t := 0.0
+				if den > 0 {
+					t = math.Max(0, math.Min(1, (float64(v.X-a.x)*dx+float64(v.Y-a.y)*dy+float64(v.Z-a.z)*dz)/den))
+				}
+				clearance := math.Sqrt(math.Pow(float64(a.x-v.X)+t*dx, 2)+math.Pow(float64(a.y-v.Y)+t*dy, 2)+math.Pow(float64(a.z-v.Z)+t*dz, 2)) - float64(v.RadiusYards)
+				if clearance < 0 {
+					return false
+				}
+				continue
+			}
 			if math.Min(float64(a.z), float64(b.z)) > float64(v.Z)+2 || math.Max(float64(a.z), float64(b.z)) < float64(v.Z)-2 {
 				continue
 			}
@@ -376,6 +445,12 @@ func (s *Service) StepMovementPoints(ctx context.Context, r *actionsv1.MovementP
 		s.mu.Unlock()
 		return out, nil
 	}
+	if s.movementPointObservedUnknownLocked() {
+		s.movementPoints.reason = "observed_effect_clearance_unknown"
+		out := s.stateLocked()
+		s.mu.Unlock()
+		return out, nil
+	}
 	points := s.currentMovementPointsLocked()
 	start := s.pos
 	if len(points) == 0 || pointClearance(start, points) >= 0 {
@@ -425,7 +500,7 @@ func (s *Service) StepMovementPoints(ctx context.Context, r *actionsv1.MovementP
 		if !moving {
 			return r.VisitId == s.encounterVisit.revision && r.MapId == s.posMap
 		}
-		if !ownerCurrent() || r.VisitId != s.encounterVisit.revision || r.MapId != s.posMap || observedRunSpeed(s.lastWorld.GetSelf()) != speed {
+		if !ownerCurrent() || r.VisitId != s.encounterVisit.revision || r.MapId != s.posMap || observedRunSpeed(s.lastWorld.GetSelf()) != speed || s.movementPointObservedUnknownLocked() {
 			return false
 		}
 		if distance(start, p) < .001 {
