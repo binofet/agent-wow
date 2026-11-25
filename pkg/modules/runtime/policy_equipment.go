@@ -59,7 +59,9 @@ func (p *SessionPolicy) resolveGearEquip(action map[string]any) (PolicyDispatch,
 			// operation receipt is retained without inferring completion.
 			resultView := map[string]any{}
 			for _, key := range []string{"sessionId", "selfGuid", "revision", "active", "operation"} {
-				if value, ok := view[key]; ok { resultView[key] = value }
+				if value, ok := view[key]; ok {
+					resultView[key] = value
+				}
 			}
 			payload["result"] = resultView
 		}
