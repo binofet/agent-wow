@@ -1,0 +1,15 @@
+{
+  "archive": "public-artifact-tools-696109068b64-publicscope-pathfix.tar.gz",
+  "bytes": 40201,
+  "sha256": "84c5653a985b735b7c99d95d733ed310d00dc753c1796cf9084c60d30770c4f8",
+  "sourceCommit": "696109068b64f751bab970dfe134268cc4e6225b",
+  "sourceTree": "654c4bd446b163c4c21b84f8586596d41196fdde",
+  "packageManifest": {
+    "bytes": 2823,
+    "sha256": "6196b2158627ada05221ade96253559b599ff213d56af118822682a84515eb3e"
+  },
+  "regularFiles": 18,
+  "privatePayloadIncluded": false,
+  "fullRuntimeReady": false,
+  "executed": false
+}
