@@ -738,7 +738,7 @@ local function cave_candidate(scenes,tuning,attempted)
     local seen,candidates={},{}
     for _,guid in ipairs({"1","4","5"}) do
         for _,c in ipairs(scenes[guid].nearby) do
-            if not c.currentComputed then
+            if c.npcFlags==0 and c.present and c.aliveKnown and c.alive and not c.currentComputed then
                 c.patrol=cave_patrol(c);c.current=cave_point(c,c.patrol);c.currentComputed=true
             end
             seen[c.guid]=c
@@ -747,7 +747,12 @@ local function cave_candidate(scenes,tuning,attempted)
                 c.healthKnown and c.health>0 and c.health==c.maxHealth and c.levelKnown and c.level>=tuning.minimum_level and c.level<=tuning.maximum_level and c.mapId==0 and
                 c.unitFlagsKnown and c.dynamicFlagsKnown and c.dynamicFlags==0 and c.npcFlags==0 and c.targetKnown and c.targetGuid=="0" and
                 not (c.attackVictimKnown and c.victimGuid~="0") and not bit(c.unitFlags2,1)
-            for _,mask in ipairs({0x80000,0x2,0x80,0x100,0x10000,0x2000000,0x80000000}) do if bit(c.unitFlags,mask) then okay=false end end
+            if okay then
+                local u=c.unitFlags
+                -- Exact rejected bits: 1,7,8,16,19,25,31.
+                okay=u<0x80000000 and u%4<2 and u%512<128 and u%0x20000<0x10000 and
+                    u%0x100000<0x80000 and u%0x4000000<0x2000000
+            end
             if okay then
                 for _,s in pairs(scenes) do if not s.self.levelKnown or c.level>s.self.level+tuning.level_above_self or distance2(p,s.position)>tuning.maximum_range^2 then okay=false end end
             end

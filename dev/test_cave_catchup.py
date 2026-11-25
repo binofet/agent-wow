@@ -1045,6 +1045,9 @@ class KnownSearchStopTests(unittest.TestCase):
     def test_witnessed_backward_midcorridor_reconnect_preserves_lua_direction(self):
         p,saved=self.legacy_yielded_arrival();leg=saved['search']['legs'][-1]
         saved['search'].update(cursor=5,direction=1);leg.update(station=4,goal=station(4))
+        for guid,actor in p.rpcs.items():
+            leg['before'][str(guid)].update(station(5));leg['after'][str(guid)].update(station(4))
+            actor.actions['position'].update(leg['after'][str(guid)])
         calls=len(p.routes());w=p.worker(stored=saved);w.tick()
         self.assertFalse(w.done);self.assertEqual(len(p.routes()),calls)
         self.assertEqual(saved['search']['cursor'],4);self.assertEqual(saved['search']['direction'],-1)
