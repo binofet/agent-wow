@@ -52,7 +52,6 @@ func (s *Service) explorationCompleteLocked(id uint32) bool {
 	}
 	return false
 }
-func (s *Service) scoutCompleteLocked() bool { return s.explorationCompleteLocked(62) }
 func (s *Service) applyExplorationLocked() {
 	for _, record := range s.explorations {
 		r := record.receipt
@@ -84,9 +83,6 @@ func (s *Service) reserveExplorationLocked(r *questsv1.ExploreRequest, receipt *
 	s.state.LastExploration = receipt
 }
 
-func scoutScene(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64) error {
-	return explorationScene(w, a, self, 62)
-}
 func explorationScene(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64, id uint32) error {
 	spec, ok := fixedExploration(id)
 	if !ok {

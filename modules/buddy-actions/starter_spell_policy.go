@@ -173,6 +173,7 @@ func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, targe
 	if !a || !b {
 		return nil, nil, false
 	}
+	targetJSON["levelKnown"], targetJSON["level"] = target.LevelKnown, target.Level
 	if selection == coldridgeCasterSelection {
 		selfJSON["baseManaKnown"], selfJSON["baseMana"] = self.BaseManaKnown, self.BaseMana
 	}

@@ -7,6 +7,7 @@ local starter_objectives = encounter_starter_objectives
 local encounter_button_policy = encounter_buttons
 local M = {}
 M.coldridge_pull = {health_percent=95, base_mana_percent=60}
+M.starter_combat = {max_level_above_self=3}
 
 local function decimal(value)
     if type(value) ~= "string" or #value == 0 or #value > 20 or #value>1 and byte_at(value, 1) == 48 or
@@ -166,6 +167,12 @@ function M.decide(input, override, movement, objectives)
     if input.selection=="coldridge_pull_readiness" then return pull_readiness(self) end
     if type(obs.spells)~="table" or type(target)~="table" or not guid(target.guid) or
        not pose(self) or not pose(target) then return wait end
+    if input.selection==nil then
+        local tuning=M.starter_combat
+        if type(tuning)~="table" or not uint(tuning.max_level_above_self) then return wait end
+        if self.levelKnown==true and target.levelKnown==true and
+           (not uint(self.level) or not uint(target.level) or target.level>self.level+tuning.max_level_above_self) then return wait end
+    end
     if input.selection~=nil then
         if input.selection=="weapon_strike" then return weapon_choice(obs,target,self,override) end
         if input.selection~="coldridge_cast" or self.classId~=9 or type(input.pullRequired)~="boolean" then return wait end

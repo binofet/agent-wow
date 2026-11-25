@@ -57,6 +57,8 @@ func (f *thermapluggTestSession) SendPacket(ctx context.Context, r *modv1.SendPa
 	return f.fakeSession.SendPacket(ctx, r, opts...)
 }
 
+const thermapluggEntry = 7800 // Observed boss identity in these native fixtures.
+
 func thermapluggRig(t *testing.T) (*Service, *thermapluggTestSession, func(time.Duration)) {
 	t.Helper()
 	s, f, advance := rig(t)

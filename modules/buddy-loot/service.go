@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
-	"slices"
 	"sync"
 	"time"
 
@@ -18,7 +17,6 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
-	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -41,7 +39,6 @@ type Service struct {
 	now                                        func() time.Time
 	state                                      lootv1.State
 	closed                                     bool
-	automatic                                  bool
 	until, nextTry, deadline, transactionUntil time.Time
 	token                                      string
 	window                                     lootWindow
@@ -59,10 +56,6 @@ type Service struct {
 	seen                                       map[uint64]bool
 	gatherSeen                                 map[uint64]bool
 	opened                                     bool
-	questWolf                                  bool
-	questColdridge                             bool
-	questFargodeep                             bool
-	coldridgeGoal                              coldridgeLootGoal
 	questGather                                bool
 	gatherCastCount                            byte
 	gatherObjectRevision                       uint64
@@ -84,19 +77,11 @@ type Service struct {
 	capacityEpoch                              string
 }
 
-func NewService(session sessionAPI, self uint64, sessionID ...string) *Service {
-	s := &Service{session: session, catalog: gamecatalog.Default(), selfGUID: self, now: time.Now, state: lootv1.State{Phase: "disabled", Reason: "disabled"}, seen: map[uint64]bool{}, capacityEpoch: rand.Text()}
-	if len(sessionID) > 0 {
-		s.state.SessionId = sessionID[0]
-	}
-	return s
-}
-
-// NewAutomaticService is the production policy: loot is available from login
-// until logout, with temporary suspensions for exclusive maintenance work.
+// NewAutomaticService exposes Lua-selected loot operations from login until
+// logout, with temporary suspensions for exclusive maintenance work.
 func NewAutomaticService(session sessionAPI, self uint64, sessionID string) *Service {
-	s := NewService(session, self, sessionID)
-	s.automatic = true
+	s := &Service{session: session, catalog: gamecatalog.Default(), selfGUID: self, now: time.Now,
+		state: lootv1.State{SessionId: sessionID}, seen: map[uint64]bool{}, capacityEpoch: rand.Text()}
 	s.resumeAutomatic()
 	return s
 }
@@ -112,23 +97,8 @@ func (s *Service) resumeAutomatic() {
 	}
 }
 
-func (s *Service) lootPolicyExpired(now time.Time) bool {
-	return !s.automatic && !now.Before(s.until)
-}
-
 func (s *Service) fault(reason string) {
-	// The failed transaction still follows its normal cleanup path. Only the
-	// legacy opt-in policy disables all future work after a transaction fails.
-	if !s.automatic {
-		s.state.Enabled = false
-	}
 	s.state.Reason = reason
-}
-
-func (s *Service) automaticCorpseContext(w *worldv1.SnapshotResponse, a *actionsv1.State) bool {
-	return (s.automatic || s.exactCorpse) && w != nil && w.Self != nil && w.Self.Guid == s.selfGUID &&
-		w.Self.MapKnown && a != nil && a.Position != nil && a.Position.Known &&
-		a.Position.MapKnown && w.Self.MapId == a.Position.MapId && !a.MotionUnconfirmed
 }
 
 func (s *Service) snapshotLocked() *lootv1.State {
@@ -153,13 +123,11 @@ func (s *Service) Enable(ctx context.Context, r *lootv1.EnableRequest) (*lootv1.
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session closing")
 	}
-	if s.automatic {
-		if r.Enabled {
-			s.resumeAutomatic()
-			return s.snapshotLocked(), nil
-		}
-		s.until = s.now().Add(maintenanceLootPause)
+	if r.Enabled {
+		s.resumeAutomatic()
+		return s.snapshotLocked(), nil
 	}
+	s.until = s.now().Add(maintenanceLootPause)
 	s.state.Enabled = r.Enabled
 	if s.policyWindow() {
 		// Compatibility scheduling metadata applies to the remaining named
@@ -167,22 +135,10 @@ func (s *Service) Enable(ctx context.Context, r *lootv1.EnableRequest) (*lootv1.
 		return s.snapshotLocked(), nil
 	}
 	if s.cleanup.source != 0 {
-		if r.Enabled {
-			s.until = s.now().Add(4 * time.Hour)
-		} else {
-			s.state.Reason = "disabled_by_request"
-		}
+		s.state.Reason = "disabled_by_request"
 		return s.snapshotLocked(), nil
 	}
-	if r.Enabled {
-		s.until = s.now().Add(4 * time.Hour)
-		s.seen = map[uint64]bool{}
-		s.gatherSeen = map[uint64]bool{}
-		if s.token == "" {
-			s.state.Phase = "idle"
-		}
-		s.state.Reason = "automatic_nearby_ordinary_loot_enabled"
-	} else if s.token != "" {
+	if s.token != "" {
 		switch s.state.Phase {
 		case "release_observed":
 			s.finishReleased(ctx)
@@ -282,14 +238,10 @@ func (s *Service) releaseLease(ctx context.Context) {
 	if s.token != "" {
 		_ = s.invoke(ctx, "buddy-actions", "release_interaction", &actionsv1.InteractionRelease{Owner: "loot", Token: s.token}, &actionsv1.State{})
 		s.token = ""
-		s.questWolf = false
-		s.questColdridge = false
-		s.questFargodeep = false
-		s.coldridgeGoal = coldridgeLootGoal{}
 	}
 }
 func (s *Service) retryUnopenedCorpse() {
-	if s.automatic && !s.opened && !s.questGather {
+	if !s.opened && !s.questGather {
 		delete(s.seen, s.state.PendingCorpseGuid)
 	}
 }
@@ -333,10 +285,6 @@ func (s *Service) finish(ctx context.Context) {
 	s.index = 0
 	s.itemRequested = false
 	s.opened = false
-	s.questWolf = false
-	s.questColdridge = false
-	s.questFargodeep = false
-	s.coldridgeGoal = coldridgeLootGoal{}
 	s.exactCorpse = false
 	if s.state.Enabled {
 		s.state.Phase = "idle"
@@ -367,13 +315,6 @@ func (s *Service) beginRelease(ctx context.Context) {
 	if !s.opened {
 		s.finish(ctx)
 		return
-	}
-	if s.questColdridge {
-		if _, owned := s.renewColdridgeLease(ctx); !owned {
-			s.fault("coldridge_interaction_token_lost_no_further_loot_writes")
-			s.finish(ctx)
-			return
-		}
 	}
 	s.state.Phase = "waiting_release"
 	s.deadline = s.now().Add(2 * time.Second)
@@ -422,64 +363,6 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-func ownerReady(p *worldv1.PlayerState) bool {
-	return p != nil && p.Guid == 3 && p.Present && p.AliveKnown && p.Alive && p.PlayerFlags&2 == 0 && p.UnitFlagsKnown
-}
-
-// This exception belongs to the acting character's observed quest log. Party
-// members' quest IDs, backpack guesses, and an enable request cannot grant it.
-func ownWolfQuest(world *worldv1.SnapshotResponse, selfGUID uint64) bool {
-	if world == nil || world.Self == nil || world.Self.Guid != selfGUID || !world.SelfQuestLogKnown || len(world.SelfQuestLog) != 25 {
-		return false
-	}
-	var slots [25]bool
-	found := false
-	for _, entry := range world.SelfQuestLog {
-		if entry == nil || entry.Slot >= 25 || slots[entry.Slot] {
-			return false
-		}
-		slots[entry.Slot] = true
-		if entry.QuestId == 33 && !entry.Failed && entry.State&2 == 0 {
-			found = true
-		}
-	}
-	return found
-}
-
-func wolfQuestContext(world *worldv1.SnapshotResponse, p *actionsv1.ClientPosition, selfGUID uint64) bool {
-	if !ownWolfQuest(world, selfGUID) || p == nil {
-		return false
-	}
-	return safeOwnQuestLootContext(world, p)
-}
-
-func safeOwnQuestLootContext(world *worldv1.SnapshotResponse, p *actionsv1.ClientPosition) bool {
-	if world == nil || world.Self == nil || p == nil {
-		return false
-	}
-	self := world.Self
-	if !self.Present || !self.AliveKnown || !self.Alive || !self.HealthKnown || self.Health == 0 || !self.MapKnown || self.MapId != 0 || !self.PositionKnown || !self.UnitFlagsKnown || self.UnitFlags&(0x1|0x4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 || !self.MovementFlagsKnown || !movementflags.GroundCompatible(self.MovementFlags, self.ExtraMovementFlags) || !self.SpeedsKnown || math.IsNaN(float64(self.RunSpeed)) || math.IsInf(float64(self.RunSpeed), 0) || math.Abs(float64(self.RunSpeed)-7) > 0.01 {
-		return false
-	}
-	if !p.Known || !p.MapKnown || p.MapId != 0 {
-		return false
-	}
-	for _, v := range []float32{p.X, p.Y, p.Z} {
-		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) || math.Abs(float64(v)) > 40000 {
-			return false
-		}
-	}
-	return true
-}
-
-func activeOwnerReady(world *worldv1.SnapshotResponse) bool {
-	return world != nil && ownerReady(world.Owner) && world.Owner.UnitFlags&0x80000 == 0
-}
-
-func eligible(self *worldv1.PlayerState, p *actionsv1.ClientPosition, c *worldv1.CreatureState) bool {
-	return eligibleWithin(self, p, c, 4.5, 2)
-}
-
 // Completed ordinary spline endpoints are explicitly estimated; active paths
 // and transport-relative coordinates cannot establish a corpse world position.
 func corpsePosition(c *worldv1.CreatureState) (float32, float32, float32, bool) {
@@ -508,10 +391,6 @@ func corpsePosition(c *worldv1.CreatureState) (float32, float32, float32, bool) 
 	return x, y, z, known
 }
 
-func eligibleWithin(self *worldv1.PlayerState, p *actionsv1.ClientPosition, c *worldv1.CreatureState, maxRange, maxHeight float64) bool {
-	return corpseWithin(self, p, c, maxRange, maxHeight, false)
-}
-
 func corpseWithin(self *worldv1.PlayerState, p *actionsv1.ClientPosition, c *worldv1.CreatureState, maxRange, maxHeight float64, allowCombat bool) bool {
 	blocked := uint32(0x1 | 0x4 | 0x40000 | 0x80000 | 0x100000 | 0x400000 | 0x800000 | 0x1000000 | 0x8000000)
 	if allowCombat {
@@ -537,15 +416,6 @@ func corpseWithin(self *worldv1.PlayerState, p *actionsv1.ClientPosition, c *wor
 	}
 	dx, dy, dz := float64(p.X-x), float64(p.Y-y), float64(p.Z-z)
 	return dx*dx+dy*dy+dz*dz <= maxRange*maxRange && math.Abs(dz) <= maxHeight
-}
-
-// Renew the retained token; an owner label cannot identify this operation.
-func (s *Service) renewColdridgeLease(ctx context.Context) (*actionsv1.State, bool) {
-	lease := &actionsv1.InteractionLease{}
-	if s.token == "" || s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", Token: s.token, LeaseMs: 15000}, lease) != nil || lease.Token != s.token || lease.State == nil || lease.State.InteractionOwner != "loot" || lease.State.InteractionLeaseRemainingMs < 1000 {
-		return nil, false
-	}
-	return lease.State, true
 }
 
 func (s *Service) openLocked(ctx context.Context) {
@@ -580,7 +450,7 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	now := s.now()
-	if s.automatic && !s.state.Enabled && !s.until.IsZero() && !now.Before(s.until) {
+	if !s.state.Enabled && !s.until.IsZero() && !now.Before(s.until) {
 		s.resumeAutomatic()
 	}
 	if s.cleanup.source != 0 {
@@ -608,9 +478,6 @@ func (s *Service) Tick(ctx context.Context) {
 				s.beginOrdinaryTimeout(ctx, "loot_transaction_timeout")
 				return
 			}
-			if !s.automatic && !s.gatherOpeningTimeoutRecoverable() {
-				s.state.Enabled = false
-			}
 			s.state.Reason = "loot_transaction_timeout_no_retry"
 			s.beginRelease(ctx)
 			return
@@ -621,7 +488,7 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 		if s.state.Phase != "waiting_release" {
 			world := &worldv1.SnapshotResponse{}
-			if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), world) != nil || world.Self == nil || !world.Self.AliveKnown || !world.Self.Alive || !s.exactCorpse && world.Self.UnitFlags&0x80000 != 0 {
+			if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, world) != nil || world.Self == nil || !world.Self.AliveKnown || !world.Self.Alive || !s.exactCorpse && world.Self.UnitFlags&0x80000 != 0 {
 				s.retryUnopenedCorpse()
 				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
 				s.beginRelease(ctx)
@@ -636,31 +503,6 @@ func (s *Service) Tick(ctx context.Context) {
 				return
 			}
 			currentActions = active
-			if s.questFargodeep && (!s.fargodeepPartyCurrent(ctx) || !fargodeepLootContext(world, active, s.selfGUID, s.state.PendingCorpseGuid)) {
-				s.state.Reason = "fargodeep_loot_scope_became_unsafe"
-				s.beginRelease(ctx)
-				return
-			}
-			if s.questColdridge {
-				if active.MotionUnconfirmed || !s.coldridgeGoal.context(world, active.Position, s.selfGUID, s.state.PendingCorpseGuid) {
-					s.state.Reason = "coldridge_loot_scope_became_unsafe"
-					s.beginRelease(ctx)
-					return
-				}
-				renewed, owned := s.renewColdridgeLease(ctx)
-				if !owned {
-					s.fault("coldridge_interaction_token_lost_no_further_loot_writes")
-					s.finish(ctx)
-					return
-				}
-				latest := &worldv1.SnapshotResponse{}
-				if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, latest) != nil || renewed.MotionUnconfirmed || renewed.Moving && s.state.Phase != "approaching" || !s.coldridgeGoal.context(latest, renewed.Position, s.selfGUID, s.state.PendingCorpseGuid) {
-					s.state.Reason = "coldridge_loot_scope_became_unsafe"
-					s.beginRelease(ctx)
-					return
-				}
-				world, observed, active, currentActions = latest, latest, renewed, renewed
-			}
 			if s.questGather {
 				s.observeGatherQuest(world)
 				if active.Moving && s.state.Phase != "gather_approaching" || !s.boundHarvestRecipe().context(world, active, s.selfGUID, false) {
@@ -669,19 +511,11 @@ func (s *Service) Tick(ctx context.Context) {
 					return
 				}
 			}
-			if !s.automaticCorpseContext(world, active) && !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questFargodeep && fargodeepLootContext(world, active, s.selfGUID, s.state.PendingCorpseGuid)) && !(s.questColdridge && !active.MotionUnconfirmed && s.coldridgeGoal.context(world, active.Position, s.selfGUID, s.state.PendingCorpseGuid)) && !(s.questGather && (!active.Moving || s.state.Phase == "gather_approaching") && s.boundHarvestRecipe().context(world, active, s.selfGUID, false)) {
-				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
-				s.beginRelease(ctx)
-				return
-			}
 		}
 		if (s.state.Phase == "waiting_open" || s.state.Phase == "waiting_item" || s.state.Phase == "waiting_money" || s.state.Phase == "waiting_release") && !now.Before(s.deadline) {
 			if !s.questGather && (s.exactCorpse || s.state.Enabled || s.hasUnsettledLootMutation()) {
 				s.beginOrdinaryTimeout(ctx, "loot_response_timeout")
 				return
-			}
-			if !s.automatic && !s.gatherOpeningTimeoutRecoverable() {
-				s.state.Enabled = false
 			}
 			s.state.Reason = "loot_response_timeout_no_retry"
 			if s.state.Phase == "waiting_release" {
@@ -694,111 +528,10 @@ func (s *Service) Tick(ctx context.Context) {
 		switch s.state.Phase {
 		case "gather_approaching":
 			s.gatherApproachLocked(ctx, observed, currentActions)
-		case "approaching":
-			approach := &actionsv1.State{}
-			if s.invoke(ctx, "buddy-actions", "approach_loot", &actionsv1.ApproachLootRequest{Token: s.token, CorpseGuid: s.state.PendingCorpseGuid}, approach) != nil {
-				s.state.Reason = "loot_approach_unavailable_no_retry"
-				s.finish(ctx)
-				return
-			}
-			if approach.Moving {
-				s.state.Reason = "approaching_nearby_corpse"
-				return
-			}
-			var corpse *worldv1.CreatureState
-			for _, c := range observed.LootableCorpses {
-				if c != nil && c.Guid == s.state.PendingCorpseGuid {
-					corpse = c
-					break
-				}
-			}
-			if approach.Reason != "loot_approach_within_distance" || !eligible(observed.Self, approach.Position, corpse) {
-				s.state.Reason = "loot_approach_stopped_unsafe_or_out_of_range"
-				s.finish(ctx)
-				return
-			}
-			s.openLocked(ctx)
-
-		case "ready_money":
-			s.moneySent = true
-			s.moneyCleared = false
-			s.state.Phase = "waiting_money"
-			s.deadline = now.Add(2 * time.Second)
-			if !s.write(ctx, opcode.CMSGLootMoney, nil) {
-				s.state.Phase = "abort"
-			}
-		case "waiting_money":
-			if s.moneyCleared {
-				s.state.Phase = "ready_item"
-			}
-		case "ready_item":
-			if s.questGather && s.index < len(s.items) && !s.boundHarvestRecipe().objectCurrent(observed, currentActions, s.pendingGUID()) {
-				s.state.Reason = "harvest_object_no_longer_in_range"
-				s.beginRelease(ctx)
-				return
-			}
-			if s.questGather && !s.boundHarvestRecipe().quest(observed, s.selfGUID, true) {
-				s.state.Reason = "harvest_quest_no_longer_incomplete"
-				s.beginRelease(ctx)
-				return
-			}
-			// Shared loot may be removed by another party member before our turn.
-			// Skip only slots actually removed from this bound open window.
-			for s.index < len(s.items) && s.removedSlots[s.items[s.index].slot] {
-				s.index++
-			}
-			if s.index >= len(s.items) {
-				s.state.Reason = "ordinary_loot_cycle_released"
-				s.beginRelease(ctx)
-				return
-			}
-			free := ownKnownFreeSlots(observed, s.selfGUID)
-			if free == 0 {
-				s.pauseForCapacity()
-				s.beginRelease(ctx)
-				return
-			}
-			if s.automatic && !s.questGather && !s.questLootFits(observed, free) {
-				s.state.Reason = "last_bag_slot_reserved_for_quest_loot"
-				s.beginRelease(ctx)
-				return
-			}
-			item := s.items[s.index]
-			s.itemCountBefore, s.itemCountKnown = 0, false
-			if s.unconfirmedItems[item.id] {
-				counts, known := completeOwnItemCounts(observed, s.selfGUID)
-				if !known {
-					s.state.Reason = "complete_owned_inventory_required_for_unconfirmed_item"
-					s.beginRelease(ctx)
-					return
-				}
-				s.itemCountBefore, s.itemCountKnown = counts[item.id], true
-			}
-			s.removed = false
-			s.pushed = false
-			s.itemRequested = true
-			s.state.Phase = "waiting_item"
-			s.deadline = now.Add(2 * time.Second)
-			s.inventoryWriteRevision = observed.InventoryRevision
-			if !s.write(ctx, opcode.CMSGAutostoreLootItem, []byte{item.slot}) {
-				s.state.Phase = "abort"
-			}
-		case "waiting_item":
-			if s.removed && s.pushed || s.unconfirmedItemDelta(observed) {
-				s.itemRequested = false
-				s.index++
-				s.state.Phase = "ready_item"
-			}
 		}
 		return
 	}
 	if !s.state.Enabled {
-		return
-	}
-	if s.lootPolicyExpired(now) {
-		s.state.Enabled = false
-		s.state.Phase = "disabled"
-		s.state.Reason = "automatic_loot_enable_expired"
 		return
 	}
 	if now.Before(s.nextTry) {
@@ -850,149 +583,7 @@ func (s *Service) Tick(ctx context.Context) {
 			delete(s.seen, guid)
 		}
 	}
-	// Ordinary corpse discovery, ranking and movement belong to the attached
-	// Lua policy. This remaining native path is only the explicitly named
-	// starter-quest controller. New quest-container sources/recipes are Lua too.
-	if s.automatic || !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) {
-		s.state.Reason = "ordinary_corpse_selection_owned_by_lua"
-		return
-	}
-	if len(s.retired) >= maxRetiredLootSources {
-		s.state.Reason = "loot_retired_source_bound_waiting_for_actual_new_life"
-		return
-	}
-	if !s.automatic && !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) {
-		s.state.Reason = "loot_deferred_owner_absent_afk_or_unsafe"
-		return
-	}
-	if !s.automatic && world.Owner != nil && world.Owner.UnitFlags&0x80000 != 0 && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) {
-		s.state.Reason = "loot_deferred_owner_combat"
-		return
-	}
-	current := currentObjects
-	for _, c := range world.LootableCorpses {
-		if c != nil {
-			current[c.Guid] = true
-		}
-	}
-	for guid := range s.seen {
-		if !current[guid] {
-			delete(s.seen, guid)
-		}
-	}
-	if len(world.LootableCorpses) == 0 {
-		return
-	}
-	if len(world.LootableCorpses) > 64 {
-		s.state.Reason = "invalid_corpse_observation_count"
-		return
-	}
-	actions := &actionsv1.State{}
-	if err := s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, actions); err != nil {
-		s.state.Reason = "client_position_unavailable"
-		return
-	}
-	wolfScope := !s.automatic && !actions.MotionUnconfirmed && wolfQuestContext(world, actions.Position, s.selfGUID)
-	coldridgeScope := !s.automatic && !actions.MotionUnconfirmed && coldridgeQuestContext(world, actions.Position, s.selfGUID)
-	fargodeepScope := !s.automatic && ownFargodeepQuest(world, s.selfGUID) && s.fargodeepPartyCurrent(ctx)
-	if !wolfScope && !coldridgeScope && !fargodeepScope {
-		s.state.Reason = "loot_deferred_owner_not_nearby"
-		return
-	}
-	var selected *worldv1.CreatureState
-	var selectedColdridgeGoal coldridgeLootGoal
-	selectedFargodeep := false
-	best := math.Inf(1)
-	for _, c := range world.LootableCorpses {
-		if c == nil {
-			continue
-		}
-		goal, matchesColdridge := selectColdridgeLootGoal(world, s.selfGUID, c)
-		matchesFargodeep := fargodeepScope && fargodeepLootSelection(world, actions, s.selfGUID, c.Guid)
-		if !(wolfScope && c.Entry == 299) && !(coldridgeScope && matchesColdridge) && !matchesFargodeep {
-			continue
-		}
-		if s.seen[c.Guid] || s.retired[c.Guid] || !eligibleWithin(world.Self, actions.Position, c, 12, 1.5) {
-			continue
-		}
-		x, y, z, _ := corpsePosition(c)
-		d := math.Pow(float64(actions.Position.X-x), 2) + math.Pow(float64(actions.Position.Y-y), 2) + math.Pow(float64(actions.Position.Z-z), 2)
-		if d < best {
-			best = d
-			selected = c
-			selectedFargodeep = matchesFargodeep
-			selectedColdridgeGoal = coldridgeLootGoal{}
-			if coldridgeScope && matchesColdridge {
-				selectedColdridgeGoal = goal
-			}
-		}
-	}
-	if selected == nil {
-		return
-	}
-	lease := &actionsv1.InteractionLease{}
-	if err := s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", LeaseMs: 15000}, lease); err != nil {
-		s.state.Reason = "interaction_busy_or_unavailable"
-		return
-	}
-	if lease.Token == "" || lease.State == nil || lease.State.InteractionOwner != "loot" {
-		s.state.Reason = "invalid_interaction_lease"
-		return
-	}
-	s.token = lease.Token
-	s.questWolf = selected.Entry == 299 && wolfScope
-	s.coldridgeGoal = selectedColdridgeGoal
-	s.questColdridge = selectedColdridgeGoal.questID != 0
-	s.questFargodeep = selectedFargodeep
-	if s.questWolf || s.questColdridge || s.questFargodeep {
-		selectedGUID := selected.Guid
-		fresh := &worldv1.SnapshotResponse{}
-		freshErr := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{CreatureGuid: selectedGUID}, fresh)
-		// Independent Coldridge looting cannot rely on the position returned
-		// before the subsequent world observation completed.
-		if freshErr == nil && (s.questColdridge || s.questFargodeep) {
-			freshActions := &actionsv1.State{}
-			freshErr = s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, freshActions)
-			if freshErr == nil && (freshActions.InteractionOwner != "loot" || freshActions.InteractionLeaseRemainingMs < 1000) {
-				freshErr = errors.New("owned loot lease changed")
-			}
-			lease.State = freshActions
-		}
-		if freshErr != nil || lease.State.MotionUnconfirmed || s.questWolf && !wolfQuestContext(fresh, lease.State.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(fresh, lease.State.Position, s.selfGUID, selectedGUID) || s.questFargodeep && (!s.fargodeepPartyCurrent(ctx) || !fargodeepLootSelection(fresh, lease.State, s.selfGUID, selectedGUID)) {
-			s.releaseLease(ctx)
-			s.questWolf = false
-			s.questColdridge = false
-			s.state.Reason = "quest_wolf_scope_changed_after_stop"
-			return
-		}
-		world = fresh
-		selected = nil
-		if len(fresh.LootableCorpses) <= 64 {
-			for _, c := range fresh.LootableCorpses {
-				if c != nil && c.Guid == selectedGUID && (s.questWolf && c.Entry == 299 || s.questColdridge && s.coldridgeGoal.matchesCorpse(c) || s.questFargodeep && fargodeepLootSelection(fresh, lease.State, s.selfGUID, selectedGUID)) {
-					selected = c
-					break
-				}
-			}
-		}
-	}
-	if !eligibleWithin(world.Self, lease.State.Position, selected, 12, 1.5) {
-		s.releaseLease(ctx)
-		s.state.Reason = "corpse_out_of_range_after_stop"
-		return
-	}
-	s.seen[selected.Guid] = true
-	s.state.PendingCorpseGuid = selected.Guid
-	s.transactionUntil = now.Add(12 * time.Second)
-	s.moneySent = false
-	s.moneyCleared = false
-	s.itemRequested = false
-	if eligible(world.Self, lease.State.Position, selected) {
-		s.openLocked(ctx)
-	} else {
-		s.state.Phase = "approaching"
-		s.state.Reason = "nearby_corpse_approach_pending"
-	}
+	s.state.Reason = "ordinary_corpse_selection_owned_by_lua"
 }
 
 func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Empty, error) {
@@ -1052,22 +643,12 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		if s.questGather {
 			s.state.LastGather.LootWindowObserved = true
 		}
-		for _, item := range window.items {
-			if s.policyWindow() || item.slotType == 0 || item.slotType == 4 {
-				s.items = append(s.items, item)
-			}
-		}
-		if !s.exactCorpse && s.automatic && !s.questGather {
-			slices.SortStableFunc(s.items, func(a, b lootItem) int {
-				return int(b.slotType) - int(a.slotType)
-			})
-		}
+		s.items = append(s.items, window.items...)
 		if s.policyWindow() {
 			s.state.Phase = "window_ready"
-		} else if window.gold > 0 && !s.questGather {
-			s.state.Phase = "ready_money"
 		} else {
-			s.state.Phase = "ready_item"
+			s.state.Reason = "unbound_loot_window"
+			s.state.Phase = "abort"
 		}
 	case opcode.SMSGLootRemoved:
 		if len(p) != 1 {
@@ -1225,11 +806,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 				s.pausedSource, s.pausedGather = s.pendingGUID(), s.questGather
 				s.state.Reason = "inventory_full_paused_until_known_free_slot"
 			} else {
-				if s.automatic {
-					s.state.Reason = "server_rejected_loot_item"
-				} else {
-					s.fault("inventory_error_automatic_loot_disabled")
-				}
+				s.state.Reason = "server_rejected_loot_item"
 			}
 			if s.questGather {
 				s.state.LastGather.Status = lootv1.GatherStatus_GATHER_SERVER_REJECTED
