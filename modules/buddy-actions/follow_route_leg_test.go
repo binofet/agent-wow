@@ -212,3 +212,66 @@ func TestFollowLegFinalBoundaryPreservesBodyVisitOwnerIntentAndUnknowns(t *testi
 		})
 	}
 }
+
+func startFollowTestLeg(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
+	t.Helper()
+	s, f, advance := followLegRig(t)
+	f.world.Self.RunSpeed = 7.5600004
+	s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+		return nil, errors.New("navigation route exceeds 240 yards")
+	}
+	s.planLegPath = func(_ context.Context, _ string, _ uint32, from, _ position) ([]position, error) {
+		to := from
+		to.y += 100
+		return denseRouteLeg(from, to), nil
+	}
+	for range 5 {
+		s.Tick(context.Background())
+		if s.state.Moving && s.followNav.legVisit != 0 {
+			return s, f, advance
+		}
+		advance(200 * time.Millisecond)
+	}
+	t.Fatal("leg never started")
+	return nil, nil, nil
+}
+
+func TestFollowCachedLegOwnerDriftStopsInsideReplanWindow(t *testing.T) {
+	s, f, advance := startFollowTestLeg(t)
+	target := s.followNav.target
+	target.y += 20
+	f.world.Owner.Y += 20
+	if _, err := s.snapshot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before, beats := s.pos, countPackets(f, opcode.MSGMoveHeartbeat)
+	advance(200 * time.Millisecond)
+	if !s.now().Before(s.followNav.nextPlanAt) {
+		t.Fatal("fixture missed replan window")
+	}
+	s.followFormationStepLocked(context.Background(), target, s.followNav.slotStopDistance, playerPosition(f.world.Owner))
+	if countPackets(f, opcode.MSGMoveHeartbeat) != beats || s.pos != before || s.state.Moving || len(s.followNav.path) != 0 {
+		t.Fatal("cached leg followed obsolete owner before replan", s.pos, s.stateLocked())
+	}
+}
+
+func TestFollowLegLateObservedSlowdownCannotWriteFasterHeartbeat(t *testing.T) {
+	s, f, advance := startFollowTestLeg(t)
+	before, beats := s.pos, countPackets(f, opcode.MSGMoveHeartbeat)
+	advance(200 * time.Millisecond)
+	f.onClock = func() { f.world.Self.RunSpeed = 3.5 }
+	s.Tick(context.Background())
+	if countPackets(f, opcode.MSGMoveHeartbeat) != beats || s.pos != before || s.state.Moving {
+		t.Fatal("late slowdown used old faster elapsed budget", s.pos, s.stateLocked())
+	}
+	f.onClock = nil
+	// A genuinely fresh later decision may plan/advance at the new speed.
+	for range 6 {
+		advance(200 * time.Millisecond)
+		p := s.pos
+		s.Tick(context.Background())
+		if distance(p, s.pos) > 3.5*.2+.015 {
+			t.Fatal("new decision exceeded observed reduced speed", p, s.pos)
+		}
+	}
+}

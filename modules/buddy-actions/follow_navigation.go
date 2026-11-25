@@ -25,6 +25,7 @@ type followNavigation struct {
 	ownerArrival                        bool
 	intermediateLeg                     bool
 	legVisit                            uint64
+	legOwner                            position
 	expected                            position
 	selfRevision                        uint64
 	mapID                               uint32
@@ -251,6 +252,11 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	if s.state.MotionUnconfirmed {
 		return fail("motion_unconfirmed_explicit_stop_required", errors.New("movement stop is unconfirmed"))
 	}
+	if f.legVisit != 0 && (distance(f.target, target) > 1.5 || len(ownerFallback) != 1 || distance(f.legOwner, ownerFallback[0]) > 1.5) {
+		// A leg belongs to its planned owner/slot, not whichever owner pose
+		// happens to be visible on a later tick inside the replan throttle.
+		f.path, f.arrivalKnown = nil, false
+	}
 	ownerArrivalValid := (!f.ownerArrival || len(ownerFallback) == 1 && distance(f.arrival, ownerFallback[0]) <= .25) &&
 		(f.legVisit == 0 || f.legVisit == s.lastWorld.GetVisitRevision())
 	arrival := f.arrival
@@ -312,6 +318,9 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		f.ownerArrival = ownerArrival
 		f.intermediateLeg = intermediate
 		f.legVisit = legVisit
+		if legVisit != 0 {
+			f.legOwner = playerPosition(s.lastWorld.GetOwner())
+		}
 		validCached = true
 		s.state.NavAvailable = true
 		s.state.NavReason = "client_ground_navmesh"
@@ -335,7 +344,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		// Bind that final boundary too: planning is not follow authority and an
 		// owner's changed pose must not continue an old winding-route leg.
 		visit, revision, sid, guid := f.legVisit, s.followRevision, s.sessionID, s.selfGUID
-		owner := playerPosition(s.lastWorld.GetOwner())
+		owner, speed := f.legOwner, observedRunSpeed(s.lastWorld.GetSelf())
 		previous, _ := ctx.Value(movementPrewriteGuardKey{}).(movementPrewriteGuard)
 		ctx = context.WithValue(ctx, movementPrewriteGuardKey{}, movementPrewriteGuard(func(call context.Context, w *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool) {
 			if previous != nil {
@@ -347,7 +356,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			}
 			allowed := !s.closed && !s.independent && s.sessionID == sid && s.selfGUID == guid && s.followRevision == revision &&
 				(s.state.Following || s.followGoalExecuting != nil && s.currentFollowFormationGoalLocked(*s.followGoalExecuting, w)) &&
-				w.GetVisitRevision() == visit && safeFollowPlayers(w, guid, true) == "" && observedRunSpeed(w.GetSelf()) != 0 && !s.state.MotionUnconfirmed &&
+				w.GetVisitRevision() == visit && safeFollowPlayers(w, guid, true) == "" && speed != 0 && observedRunSpeed(w.GetSelf()) == speed && !s.state.MotionUnconfirmed &&
 				distance(playerPosition(w.GetOwner()), owner) <= 1.5 && !s.state.CastPending && s.state.InteractionOwner == "" && !s.recovery.state.Active
 			if !allowed {
 				s.state.Reason = "follow_route_leg_context_changed"
