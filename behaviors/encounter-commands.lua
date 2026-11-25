@@ -1000,6 +1000,26 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
             out.action,out.followFormation,out.portalCatchup=nil,nil,nil
             status.phase="waiting_for_passive_prior_custody";return
         end
+        -- A tokenless rejected prior proposal owns no native movement. Do
+        -- not let that bookkeeping starve the consumables policy's exact own
+        -- lease or safe reacquisition after expiry. This retires no acquired,
+        -- entered or unknown custody and performs no release; only the admitted stationary drink
+        -- can pass. Near hazards/fresh attacks never enter this passive branch.
+        local resting=out.consumable
+        local owner=nav.movementOwner
+        local drink=type(resting)=="table" and resting.hold==true and resting.action==action and action and
+           action.sessionId==obs.sessionId and action.selfGuid==obs.selfGuid and type(owner)=="table" and
+           (resting.phase=="using_selected_item" and action.capability=="consume" and action.kind=="drink" and
+            type(action.requestId)=="string" and owner.active==true and (not hold or owner.owner~=hold.owner) and
+            owner.owner=="consumable:"..action.requestId or
+            resting.phase=="acquiring_rest_position" and resting.selectedKind=="drink" and
+            type(resting.requestId)=="string" and action.capability=="movement_owner" and action.mode=="acquire" and
+            owner.active~=true and action.owner=="consumable:"..resting.requestId)
+        if hold and not hold.token and not hold.operation and not hold.uncertain and
+           self.combatKnown==true and self.inCombat~=true and
+           self.movementKnown==true and self.moving~=true and nav.motionUnconfirmed~=true and drink then
+            state.rangedHold=nil;hold=nil
+        end
         -- Never turn an initial estimated pose into proof for releasing a
         -- previously held lease. A recorded interrupted native goal is distinct.
         if hold and not hold.released and self.positionEstimated==true and not resumed_follow then
