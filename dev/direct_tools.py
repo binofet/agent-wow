@@ -1115,9 +1115,23 @@ class DirectTools:
             self._catalog();self._authorise_gm()
         return None
 
+    def _gm_owner_target_scope(self):
+        # Restriction only: immutable host-captured current owner input, never
+        # a tool argument, agent note, nearby template/name or GM selection.
+        request=(self.context or {}).get('current_request',{})
+        if (not isinstance(request,dict) or request.get('source')!='owner'
+                or request.get('senderGuid')!='3'):return None
+        messages=request.get('messages')
+        require(isinstance(messages,list) and bool(messages),'gm_target_current_owner_request_text_required')
+        latest=messages[-1]
+        require(isinstance(latest,dict) and isinstance(latest.get('text'),str),'gm_target_current_owner_request_text_required')
+        return '3' if re.search(r'\bmy\s+(?:current\s+)?target\b',latest['text'],re.IGNORECASE) else None
+
     def _gm_execute(self, gm, args, operation_id=None):
         self._authorise_gm()
         command = args.get("command")
+        if isinstance(command,str) and any(name.startswith(command.split(' ',1)[0][1:].casefold()) for name in ('die','damage')):
+            require(callable(getattr(gm,'selected_target_admission',None)),'guarded_selected_target_sender_required')
         require(isinstance(command, str) and re.fullmatch(r"\.[A-Za-z][ -~]{0,253}", command)
                 and command == command.rstrip(), "one_native_gm_command_required")
         selected = args.get("select_guid")
@@ -1169,7 +1183,8 @@ class DirectTools:
             try:
                 result = gm.execute_command(self.rpc, config, command, self.root,
                     select_guid=selected, expected_session=self.session_id, before_send=before_send,
-                    feedback_reader=self._chat_read, final_authorise=self._authorise_gm,command_guard=command_guard)
+                    feedback_reader=self._chat_read, final_authorise=self._authorise_gm,command_guard=command_guard,
+                    **({'target_owner_guid':self._gm_owner_target_scope()} if any(name.startswith(command.split(' ',1)[0][1:].casefold()) for name in ('die','damage')) else {}))
                 if result.get("transportWritten") is False:
                     entered=False  # A final guard can refuse after the durable reservation, before any packet.
                 if not result.get("commandTransportWritten"):

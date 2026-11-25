@@ -63,7 +63,7 @@ class TestDirectGMCommands(unittest.TestCase):
   rpc=types.SimpleNamespace(target=0)
   def read(method,params):
    if method=='buddy-world.snapshot':return dict(self=dict(guid='87',present=True,mapKnown=True,mapId=349,
-    targetKnown=True,targetGuid=str(rpc.target)),nearbyCreatures=[dict(guid='17379391034147995791',present=True,mapKnown=True,mapId=349)])
+    targetKnown=True,targetGuid=str(rpc.target)),visitRevision='1',nearbyCreatures=[dict(guid='17379391034147995791',entry=42,present=True,mapKnown=True,mapId=349,aliveKnown=True,alive=True)])
    return {'sessionId':'aw-123','selfGuid':'87'}
   rpc.call=read
   return rpc
@@ -77,7 +77,9 @@ class TestDirectGMCommands(unittest.TestCase):
      rpc.target=int(guid)  # A subsequent World read now observes the exact selection.
      with self_test.assertRaises(gm.runtime.Error):
       gm.execute_command(rpc,cfg,'.appear Joel',expected_session=sid)
-    def gm(self,command,sid):events.append(('command',command,sid))
+    def gm(self,command,sid,**kwargs):
+     self_test.assertEqual(kwargs['expected_target']['guid'],'17379391034147995791')
+     events.append(('command',command,sid));return {}
    self_test=self
    with patch.object(gm,'SessionTransport',Transport):
     result=gm.execute_command(rpc,cfg,'.damage 4000',select_guid='17379391034147995791',expected_session='aw-123')
@@ -92,7 +94,7 @@ class TestDirectGMCommands(unittest.TestCase):
   replaced=False
   def read(method,params):
    if method=='buddy-world.snapshot':return dict(self=dict(guid='87',present=True,mapKnown=True,mapId=349,targetKnown=True),
-    nearbyCreatures=[dict(guid='99',present=True,mapKnown=True,mapId=349)])
+    visitRevision='1',nearbyCreatures=[dict(guid='99',entry=42,present=True,mapKnown=True,mapId=349,aliveKnown=True,alive=True)])
    return {'sessionId':'aw-new' if replaced else 'aw-123','selfGuid':'87'}
   def sent(*args,**kwargs):
    nonlocal replaced

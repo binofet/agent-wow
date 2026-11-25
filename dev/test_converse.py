@@ -4921,6 +4921,7 @@ class LiteralOwnerGMTests(unittest.TestCase):
             self.forwarded.append(dict(request_id=kwargs['request_id'],rpcUrl=args[0].url))
             tools=self.rig.tools
             tools.request_id=kwargs['request_id']
+            tools.context=copy.deepcopy(kwargs['context'])
             tools.gm_allowed=kwargs['gm_allowed'];tools.allowed=kwargs['allowed']
             tools.cancelled=kwargs['cancelled'];tools.owner_allowed=kwargs['owner_allowed']
             return tools
@@ -5053,6 +5054,42 @@ class LiteralOwnerGMTests(unittest.TestCase):
         result['result']['feedback']=dict(status='cursor_lost',systemMessages=[dict(text='Native feedback'),dict(text=None)])
         text=converse.literal_gm_feedback('.gps',result)['text']
         self.assertIn('Native feedback',text);self.assertIn('not effect proof',text)
+
+    def test_literal_fast_path_requires_the_guarded_sender_bundle(self):
+        with patch.object(converse.gm_tasks,'selected_target_admission',None):
+            with self.assertRaises(converse.ConversationError):self.request('gm .gps')
+        self.assertFalse(self.rig.rpc.packets)
+        self.assertFalse(self.model_calls)
+
+    def test_literal_die_never_falls_back_to_self_or_joels_target(self):
+        for command in ('.die','.damage 6000'):
+            self.request('gm '+command)
+            self.assertFalse(self.rig.rpc.packets)
+            self.assertFalse(self.model_calls)
+            self.assertIn('gm_target_self_target_forbidden',self.sent[-1]['text'])
+
+    def test_model_my_target_uses_fresh_owner_guid_not_same_entry_stale_spawn(self):
+        old='17379391167073878318';current='17379391167073878321'
+        self.rig.rpc.selected=old
+        def world(method,value):
+            if method!='buddy-world.snapshot':return
+            value['visitRevision']='1'
+            creature=lambda guid:dict(guid=guid,entry=12222,present=True,mapKnown=True,mapId=349,aliveKnown=True,alive=True)
+            value['owner'].update(targetKnown=True,targetGuid=current)
+            value['ownerTarget']=creature(current);value['nearbyCreatures']=[creature(old),creature(current)]
+        self.rig.rpc.on_read=world
+        results=[]
+        for command,text in [('.die','Kill MY current target with .die command'),
+                ('.damage 6000','Can you use the .damage command to kill my target? 6000 damage should kill it')]:
+            def model(system,messages,schema,tools,dispatch,**kwargs):
+                self.model_calls.append(messages)
+                results.append(dispatch('gm_execute',dict(command=command,select_guid=old)))
+                return dict(text='No kill was dispatched; the current owner target is a different GUID.',action='NONE',emote='NONE')
+            self.base.brain.client.generate=model
+            self.request(text)
+            self.assertFalse(self.rig.rpc.packets)
+            self.assertEqual(results[-1]['result']['targetAdmission']['ownerTargetGuid'],current)
+            self.assertEqual(results[-1]['result']['targetAdmission']['ownerTargetEntry'],12222)
 
     def test_arrive_is_not_rewritten_and_appear_hint_is_actionable(self):
         self.request('gm .arrive Joel')
