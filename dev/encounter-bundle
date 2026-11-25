@@ -15,6 +15,7 @@ def main():
         ("encounter_mission_repair", behaviors / "mission-repair.lua"),
         ("encounter_tactics", behaviors / "encounter-tactics.lua"),
         ("encounter_gear", behaviors / "gear.lua"),
+        ("encounter_auto_equipment", behaviors / "auto-equipment.lua"),
         ("encounter_disposal", behaviors / "item-disposal.lua"),
         ("encounter_trade_consent", behaviors / "trade-consent.lua"),
         ("encounter_stipend_selection", behaviors / "stipend-selection.lua"),
