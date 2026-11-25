@@ -106,6 +106,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	out := &actionsv1.EncounterObservationResponse{
 		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(s.hostEncounterActiveLocked()), HostRequested: identity.HostRequested,
 		VisitId: w.VisitRevision, MapId: proto.Uint32(w.Self.MapId), WorldObservationRevision: w.ObservedPackets,
+		GroundEffects: w.GroundEffects, GroundEffectsSupported: w.GroundEffectsSupported, GroundEffectsOverflow: w.GroundEffectsOverflow,
 		Recovery:       s.recoveryStateLocked(),
 		Interaction:    s.interactionObservationLocked(),
 		SpellbookKnown: s.spellbookKnown, SpellbookRevision: s.spellbookRevision,
@@ -126,7 +127,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	s.supportSnapshotLocked(w)
 	s.encounterPlayers(w, online, out)
 	out.TargetMovement = s.targetMovementSnapshotLocked()
-	out.Navigation = &actionsv1.NavigationObservation{FollowRevision: s.followRevision, GroundNavigationConfigured: s.navDataDir != "", FollowFormationSupported: true, OwnerArrival: s.followNav.ownerArrival, FollowOwner: encounterFollowOwner(w.GetOwner()), BodyMovementSupported: true, Following: s.state.Following,
+	out.Navigation = &actionsv1.NavigationObservation{MovementPointsSupported: true, MovementPoints: s.movementPointsStateLocked(), FollowRevision: s.followRevision, GroundNavigationConfigured: s.navDataDir != "", FollowFormationSupported: true, OwnerArrival: s.followNav.ownerArrival, FollowOwner: encounterFollowOwner(w.GetOwner()), BodyMovementSupported: true, Following: s.state.Following,
 		MovementOwner: s.movementOwnerStateLocked(), OwnerGuid: w.GetOwner().GetGuid(), Phase: s.state.Reason, Detail: s.state.NavReason, RouteAvailable: s.state.NavAvailable,
 		MotionUnconfirmed: s.state.MotionUnconfirmed, GoalKnown: s.navigationGoalKnown,
 		GoalX: s.navigationGoal.x, GoalY: s.navigationGoal.y, GoalZ: s.navigationGoal.z}

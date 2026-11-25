@@ -612,6 +612,7 @@ message State {
   MovementOwnerState movement_owner = 119;
   TransportFailure last_transport_failure = 120;
   PolicyDecisionFailure last_follow_policy_failure = 121;
+  MovementPointsState movement_points = 122;
 }
 // A failed attempted packet write is uncertainty, not a behavior cancellation.
 // Sequence identifies the attempted write; it does not confirm server receipt.
@@ -770,6 +771,9 @@ message EncounterObservationResponse {
   TransportFailure last_transport_failure = 26;
   RecoveryState recovery = 27;
   InteractionObservation interaction = 28;
+  repeated warcraftbuddy.world.v1.SpellGroundEffect ground_effects = 29;
+  bool ground_effects_supported = 30;
+  bool ground_effects_overflow = 31;
 }
 message BodyMovementRequest {
   string session_id = 1;
@@ -836,6 +840,8 @@ message NavigationObservation {
   uint64 follow_revision = 17;
   bool ground_navigation_configured = 18;
   PortalFollowObservation portal = 19;
+  bool movement_points_supported = 20;
+  MovementPointsState movement_points = 21;
 }
 message PortalPoint {
   float x = 1;
@@ -1436,6 +1442,8 @@ service BuddyActions {
   rpc MoveBody(BodyMovementRequest) returns (State);
   rpc InterruptCast(InterruptCastRequest) returns (State);
   rpc BreakControl(BreakControlRequest) returns (State);
+  rpc StepMovementPoints(MovementPointsStepRequest) returns (State);
+  rpc SetMovementPoints(MovementPointsRequest) returns (State);
   rpc SetFollowFormation(FollowFormationRequest) returns (google.protobuf.Empty);
   rpc SetPortalCatchup(PortalCatchupRequest) returns (google.protobuf.Empty);
   rpc Follow(ToggleRequest) returns (State);
@@ -1486,4 +1494,25 @@ service BuddyActions {
   rpc CastBuff(CastBuffRequest) returns (State);
   rpc Melee(MeleeRequest) returns (State);
   rpc SelfManaObservation(google.protobuf.Empty) returns (SelfManaObservationResponse);
+}
+
+// Actor-authored temporary circular exclusions; data only, never movement authority.
+message MovementPoint {
+  float x = 1; float y = 2; float z = 3;
+  float radius_yards = 4; uint64 expires_at_unix_ms = 5;
+}
+message MovementPointsRequest {
+  string session_id = 1; uint64 self_guid = 2; uint32 map_id = 3;
+  uint64 visit_id = 4; repeated MovementPoint points = 5;
+}
+message MovementPointsState {
+  uint64 revision = 1; uint32 point_count = 2; bool active = 3; string reason = 4;
+}
+
+message MovementPointsStepRequest {
+ string session_id = 1; uint64 self_guid = 2; uint32 map_id = 3; uint64 visit_id = 4;
+ uint64 sequence_id = 5; string movement_owner = 6; string movement_token = 7;
+ // Optional explicit HARD geometry, never a preferred attack range.
+ // Behind/LOS/stop are not supported on this single-input seam.
+ ApproachTargetRequest target_constraints = 8;
 }

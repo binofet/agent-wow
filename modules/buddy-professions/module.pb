@@ -77,7 +77,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-»¨
+å¬
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -430,7 +430,21 @@ durability%
 orientation (Rorientation
 	estimated	 (R	estimated
 age_ms
- (RageMs"Ý
+ (RageMs"ã
+SpellGroundEffect
+guid (Rguid
+caster_guid (R
+casterGuid
+spell_id (RspellId!
+radius_yards (RradiusYards
+x (Rx
+y (Ry
+z (Rz8
+first_observed_at_unix_ms (RfirstObservedAtUnixMs2
+server_cast_time_ms	 (H RserverCastTimeMsˆ+
+position_revision
+ (RpositionRevisionB
+_server_cast_time_ms"Ý
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -580,7 +594,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"Ø
+permanent_bonus (RpermanentBonus"œ
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -646,7 +660,10 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 self_xp9 (RselfXp6
 self_next_level_xp_known: (RselfNextLevelXpKnown+
 self_next_level_xp; (RselfNextLevelXp(
-self_xp_revision< (RselfXpRevision"q
+self_xp_revision< (RselfXpRevisionP
+ground_effects= (2).warcraftbuddy.world.v1.SpellGroundEffectRgroundEffects8
+ground_effects_supported> (RgroundEffectsSupported6
+ground_effects_overflow? (RgroundEffectsOverflow"q
 CombatEventsRequest
 
 session_id (	R	sessionId%

@@ -18,21 +18,22 @@ import (
 // all calls to Decide and Reload. Observations and receipts may arrive during
 // reload and while an admitted action is executing.
 type SessionPolicy struct {
-	vm                 *behavior.Session
-	manager            *Manager
-	body               string
-	source             string // guarded by advance
-	builtin            string
-	lifetime           context.Context
-	advance            sync.Mutex
-	dispatchDone       chan struct{}
-	encounterLeaseHeld bool // guarded by advance
-	followFallback     atomic.Pointer[policyFollowFallback]
-	gearEvaluation     atomic.Pointer[policyFollowFallback]
-	disposalEvaluation atomic.Pointer[policyFollowFallback]
-	starterSpell       atomic.Pointer[policyFollowFallback]
-	tradeConsent       atomic.Pointer[policyFollowFallback]
-	lastDispatch       atomic.Pointer[policyDispatchRecord]
+	vm                  *behavior.Session
+	manager             *Manager
+	body                string
+	source              string // guarded by advance
+	builtin             string
+	lifetime            context.Context
+	advance             sync.Mutex
+	dispatchDone        chan struct{}
+	movementPointsScope map[string]any // guarded by advance; declarative clear on reload
+	encounterLeaseHeld  bool           // guarded by advance
+	followFallback      atomic.Pointer[policyFollowFallback]
+	gearEvaluation      atomic.Pointer[policyFollowFallback]
+	disposalEvaluation  atomic.Pointer[policyFollowFallback]
+	starterSpell        atomic.Pointer[policyFollowFallback]
+	tradeConsent        atomic.Pointer[policyFollowFallback]
+	lastDispatch        atomic.Pointer[policyDispatchRecord]
 }
 
 // StartPolicy binds a runtime owned by the local host. The reflected attach
@@ -138,6 +139,9 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	action, ok := decision.Output["action"].(map[string]any)
 	if !ok {
 		err = p.renewEncounterWriter(ctx, decision.Output, nil, PolicyDispatch{})
+		if err == nil {
+			err = p.deliverDecisionMovementPoints(ctx, decision.Output, nil)
+		}
 		p.advance.Unlock()
 		return decision.Output, nil, err
 	}
@@ -150,6 +154,10 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 		return decision.Output, nil, errors.Join(err, errors.New("policy action cannot be dispatched"))
 	}
 	if err := p.renewEncounterWriter(ctx, decision.Output, action, dispatch); err != nil {
+		p.advance.Unlock()
+		return decision.Output, nil, err
+	}
+	if err := p.deliverDecisionMovementPoints(ctx, decision.Output, action); err != nil {
 		p.advance.Unlock()
 		return decision.Output, nil, err
 	}
@@ -219,6 +227,11 @@ func (p *SessionPolicy) Reload(ctx context.Context, source, expectedRevision str
 	}
 	revision, err := p.vm.Reload(ctx, source, expectedRevision)
 	if err == nil {
+		// The old source's geometry is not the new source's standing intent.
+		// Failed clearing remains bounded by native absolute expiry.
+		if clearErr := p.clearMovementPoints(ctx); clearErr != nil {
+			p.manager.logger.Warn("Lua movement points clear failed", "error", clearErr)
+		}
 		p.source = source
 		p.publishFollowFallback(source, revision)
 		p.publishGearEvaluation(source, revision)

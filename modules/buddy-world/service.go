@@ -28,6 +28,7 @@ type observed struct {
 	positionRevision                                             uint64
 	positionInferred                                             bool
 	positionAt, vitalsAt, observedAt                             time.Time
+	groundEffectFirstSeen                                        time.Time
 	// Only fields up to PLAYER_FLAGS are needed, regardless of nearby population.
 	fields                      [playerFlags + 1]uint32
 	known                       [playerFlags + 1]bool

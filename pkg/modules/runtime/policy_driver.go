@@ -96,10 +96,40 @@ func (p *SessionPolicy) runObservation(parent context.Context, sid string, feeds
 	// decisions, and delayed RPCs never overlap ticks or advance twice.
 	ticker := time.NewTicker(policyObservationInterval)
 	defer ticker.Stop()
+	var inFlight chan error
+	defer func() {
+		cancel()
+		if inFlight != nil {
+			<-inFlight
+		}
+	}()
 	var lastProblem string
 	phase := feeds[len(feeds)-1].phase
 	for ctx.Err() == nil {
-		err := p.stepObservation(ctx, sid, feeds)
+		var err error
+		if inFlight != nil {
+			select {
+			case err = <-inFlight:
+				inFlight = nil
+			default:
+				if feeds[len(feeds)-1].method == encounterObservationMethod && p.movementPointsAvailable() {
+					bounded, done := context.WithTimeout(ctx, policyObservationInterval)
+					err = p.stepMovementPointsObservation(bounded, sid)
+					done()
+				}
+			}
+		}
+		if inFlight == nil {
+			if feeds[len(feeds)-1].method == encounterObservationMethod && p.movementPointsAvailable() {
+				// One ordinary dispatch remains entered. Advisory observations
+				// can progress while that same call waits, never another action.
+				inFlight = make(chan error, 1)
+				result := inFlight
+				go func() { result <- p.stepObservation(ctx, sid, feeds) }()
+			} else {
+				err = p.stepObservation(ctx, sid, feeds)
+			}
+		}
 		if err != nil && ctx.Err() == nil {
 			if message := err.Error(); message != lastProblem {
 				p.manager.logger.Warn("Lua observation step failed", "phase", phase, "error", message)

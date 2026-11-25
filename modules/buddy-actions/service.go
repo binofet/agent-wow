@@ -45,6 +45,8 @@ type sessionAPI interface {
 }
 
 type Service struct {
+	movementPoints movementPointInput
+
 	clientControlLost, clientControlRestoring bool
 
 	actionsv1.UnimplementedBuddyActionsServer
@@ -222,6 +224,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out.CrowdControlApproachSupported = true
 	out.TargetMovement = s.targetMovementSnapshotLocked()
 	out.MovementOwner = s.movementOwnerStateLocked()
+	out.MovementPoints = s.movementPointsStateLocked()
 	s.targetProtection.snapshot(out, s.now())
 	out.Buffing = s.state.Buffing
 	out.BuffLeaseRemainingMs = s.buffLeaseRemainingLocked()
@@ -995,6 +998,21 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	if moving && swim == nil && !s.recoveryOwnsLocked() && (s.swimming || !w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags)) {
 		s.state.Reason = "movement_current_ground_mode_unsupported"
 		return false
+	}
+	if moving && swim == nil && !s.recoveryOwnsLocked() && w.GetSelf().GetAliveKnown() && w.GetSelf().GetAlive() {
+		if points := s.currentMovementPointsLocked(); len(points) != 0 {
+			leg := p
+			if distance(s.pos, leg) < .001 {
+				leg.x += float32(math.Cos(float64(p.o)) * .25)
+				leg.y += float32(math.Sin(float64(p.o)) * .25)
+			}
+			proof, _ := ctx.Value(movementPointsEscapePathKey{}).(*movementPointsEscapePath)
+			if !pointPathClear([]position{s.pos, leg}, points) && !s.movementPointEscapePrefix(proof, leg) {
+				s.movementPoints.reason = "next_leg_blocked"
+				s.state.Reason = "movement_points_next_leg_blocked"
+				return false
+			}
+		}
 	}
 	var passive uint32
 	if snapshotErr == nil && w.Self.AliveKnown && w.Self.Alive && w.Self.MovementFlagsKnown {

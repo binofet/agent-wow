@@ -26,6 +26,8 @@ rpc:
   move_body: /warcraftbuddy.actions.v1.BuddyActions/MoveBody
   interrupt_cast: /warcraftbuddy.actions.v1.BuddyActions/InterruptCast
   break_control: /warcraftbuddy.actions.v1.BuddyActions/BreakControl
+  step_movement_points: /warcraftbuddy.actions.v1.BuddyActions/StepMovementPoints
+  set_movement_points: /warcraftbuddy.actions.v1.BuddyActions/SetMovementPoints
   set_follow_formation: /warcraftbuddy.actions.v1.BuddyActions/SetFollowFormation
   set_portal_catchup: /warcraftbuddy.actions.v1.BuddyActions/SetPortalCatchup
   follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
@@ -140,6 +142,8 @@ script_api:
   status: {effect: read}
   behavior: {effect: read}
   spell_toolkit: {effect: read}
+  step_movement_points: {effect: mutation, description: One guarded bounded ground input away from current actor-authored temporary points}
+  set_movement_points: {effect: mutation, description: Replace current body-visit temporary exclusion data without sending movement}
   set_follow_formation: {effect: mutation, description: Refresh a finite exact Lua follow destination without moving or changing standing intent}
   set_portal_catchup: {effect: mutation, description: Refresh finite ordered Lua portal catchup candidates bound to a witnessed entrance and current pose without moving}
   follow: {effect: mutation}
