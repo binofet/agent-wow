@@ -1,4 +1,6 @@
 import copy
+import fcntl
+import sys
 import hashlib
 import json
 import os
@@ -1757,6 +1759,135 @@ class OwnerControlToolTests(unittest.TestCase):
             self.rpc.catalog_edit=edit
             self.assertFalse(tools.dispatch(name,dict(enabled=True) if name=='follow' else {})['ok'])
             self.assertEqual(self.rpc.writes,[])
+
+
+class AttachedPolicyPatchTests(unittest.TestCase):
+    def setUp(self):
+        DirectToolTests.setUpClass()
+        self.rig = DirectToolTests('runTest')
+        self.rig.setUp()
+        self.addCleanup(self.rig.doCleanups)
+        self.tools, self.rpc = self.rig.tools, self.rig.rpc
+        binary = Path(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY', ROOT/'data/bin/luapolicy'))
+        if not binary.is_file():
+            self.skipTest('maintained evaluator required')
+        self.tools.helpers['policy_binary'] = binary
+        self.original = self.rpc.source
+        self.revision = checksum(self.original)
+
+    def patch(self, **kwargs):
+        args = dict(expected_revision=self.revision,
+            edits=[dict(old='value=f.value', new='value=f.value+1')], frame={'value': 4})
+        args.update(kwargs)
+        return self.tools.dispatch('policy_patch', args)
+
+    def test_preview_then_apply_current_bundle_without_workspace_or_source_copy(self):
+        self.rig.workspace.chmod(0o775)
+        preview = self.patch()
+        self.assertTrue(preview['ok'], preview)
+        self.assertFalse(preview['result']['applied'])
+        self.assertTrue(preview['result']['tested']['valid'])
+        self.assertEqual(preview['result']['tested']['decision']['output']['value'], 5)
+        self.assertEqual(self.rpc.source, self.original)
+        self.assertFalse(self.rpc.writes)
+        result = self.patch(apply=True)
+        self.assertTrue(result['ok'], result)
+        self.assertTrue(result['result']['applied'])
+        self.assertEqual(self.rpc.source, self.original.replace('value=f.value','value=f.value+1'))
+        self.assertEqual(self.rpc.pending, ['issued-before-edit'])
+        self.assertEqual(len(self.rpc.writes), 1)
+        self.assertFalse(list(self.rig.workspace.iterdir()))
+        self.assertEqual(self.rig.workspace.stat().st_mode & 0o777, 0o775)
+
+    def test_stale_and_ambiguous_literal_or_invalid_candidate_never_apply(self):
+        for edits in ([dict(old='absent',new='x')], [dict(old=' ',new='')],
+                      [dict(old='value=f.value',new='value=)')]):
+            result = self.patch(edits=edits, apply=True)
+            self.assertTrue(not result['ok'] or not result['result']['applied'], result)
+            self.assertFalse(self.rpc.writes)
+        self.rpc.source += '-- independent source edit\n'
+        self.assertFalse(self.patch(apply=True)['ok'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_source_changes_during_test_rejected_by_real_apply_cas(self):
+        run = self.tools.runner
+        def runner(*a, **k):
+            reply = run(*a, **k)
+            self.rpc.source += '-- changed while preview ran\n'
+            return reply
+        self.tools.runner = runner
+        self.assertFalse(self.patch(apply=True)['ok'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_lost_apply_reply_retains_unknown_barrier(self):
+        self.rpc.fail_mutation = True
+        with self.assertRaises(ToolOutcomeUnknown):
+            self.patch(apply=True)
+        before = copy.deepcopy(self.rpc.writes)
+        receipt = copy.deepcopy(self.tools.unknown_receipt)
+        self.assertFalse(self.patch(apply=True)['ok'])
+        self.assertEqual(self.tools.unknown_receipt, receipt)
+        self.assertEqual(self.rpc.writes, before)
+
+    def test_authority_body_and_gm_exclusion(self):
+        self.rig.allowed = False
+        self.assertFalse(self.patch(apply=True)['ok'])
+        self.rig.allowed = True
+        self.rpc.sid = 'changed-body'
+        self.assertFalse(self.patch(apply=True)['ok'])
+        self.rpc.sid = self.tools.session_id
+        self.tools.self_guid = '87'
+        self.assertNotIn('policy_patch', {r['function']['name'] for r in self.tools.tool_schemas()})
+        self.assertFalse(self.patch(apply=True)['ok'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_full_accepted_player_bundle_keeps_unedited_modules_and_pending(self):
+        self.rpc.source = subprocess.check_output([sys.executable, str(ROOT/'dev/encounter-bundle')], text=True)
+        self.revision = checksum(self.rpc.source)
+        original = self.rpc.source
+        old = 'shield_block_health_fraction=0.60'
+        self.assertEqual(original.count(old), 1)
+        result = self.patch(edits=[dict(old=old,new='shield_block_health_fraction=0.55')],
+            frame=dict(session_id=self.rpc.sid,input={},pending=[],clock=dict(monotonicMs=1,unixMs=1)),apply=True)
+        self.assertTrue(result['ok'], result)
+        self.assertTrue(result['result']['applied'], result)
+        self.assertEqual(self.rpc.source, original.replace(old,'shield_block_health_fraction=0.55'))
+        self.assertGreater(len(self.rpc.source),100000)
+        self.assertEqual(self.rpc.pending,['issued-before-edit'])
+
+    def test_attached_literal_find_returns_small_exact_revision_excerpt_without_files(self):
+        self.rpc.source = '-- prefix\n'*2000+self.original+'-- suffix\n'*2000
+        result=self.tools.dispatch('policy_show',dict(find='value=f.value',limit=512))
+        self.assertTrue(result['ok'],result)
+        view=result['result']
+        self.assertEqual(view['revision'],checksum(self.rpc.source))
+        self.assertEqual(view['matches'],1)
+        self.assertIn('value=f.value',view['sourcePage']['value'])
+        self.assertLessEqual(len(view['sourcePage']['value']),512)
+        self.assertFalse(self.rpc.writes)
+        self.assertFalse(list(self.rig.workspace.iterdir()))
+        absent=self.tools.dispatch('policy_show',dict(find='not-present'))['result']
+        self.assertEqual(absent['matches'],0)
+        self.assertIsNone(absent['sourcePage'])
+
+    def test_existing_self_edit_lock_collision_cannot_apply(self):
+        self.tools.dispatch('policy_show',{})
+        lock_path=self.rig.edit.DATA/self.rpc.guid/'edit.lock'
+        with lock_path.open('r+') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            result=self.patch(apply=True)
+        self.assertFalse(result['ok'],result)
+        self.assertFalse(self.rpc.writes)
+
+    def test_relative_path_feedback_keeps_absolute_and_unowned_paths_rejected(self):
+        result = self.tools.dispatch('workspace_read',dict(path='/repo/behaviors/encounter.lua'))
+        self.assertFalse(result['ok'])
+        self.assertIn('policy_patch', str(result))
+        self.rig.workspace.chmod(0o775)
+        result = self.tools.dispatch('workspace_read',dict(path='policy.lua'))
+        self.assertFalse(result['ok'])
+        self.assertIn('custody',str(result))
+        self.assertFalse(self.rpc.writes)
 
 
 if __name__ == '__main__':
