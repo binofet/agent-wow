@@ -98,10 +98,14 @@ func (s *Service) areaTriggerProposalLocked(w *worldv1.SnapshotResponse) areaTri
 }
 
 func (s *Service) areaTriggerPoseCurrentLocked(ctx context.Context, p areaTriggerProposal, w *worldv1.SnapshotResponse, revision uint64, now time.Time) bool {
+	return s.areaTriggerPhysicalPoseCurrentLocked(ctx, p, w, revision, now, safeQuestCharacter(w, p.self) == "")
+}
+
+func (s *Service) areaTriggerPhysicalPoseCurrentLocked(ctx context.Context, p areaTriggerProposal, w *worldv1.SnapshotResponse, revision uint64, now time.Time, bodyAllowed bool) bool {
 	self := w.GetSelf()
 	return ctx.Err() == nil && !s.closed && p.sessionID == s.sessionID && p.self == s.selfGUID && p.visit != 0 &&
 		w.GetVisitRevision() == p.visit && s.matchesCurrentEncounterVisitLocked(w) && areaTriggerWorldCurrent(p, w) &&
-		safeQuestCharacter(w, p.self) == "" && !s.bodyMoving && !s.clientControlLost && !s.clientControlRestoring && !s.state.MotionUnconfirmed &&
+		bodyAllowed && !s.bodyMoving && !s.clientControlLost && !s.clientControlRestoring && !s.state.MotionUnconfirmed &&
 		!s.state.AutoAttackUnconfirmed && !s.state.AutoAttackRequested && !s.state.AutoAttacking && !s.state.CastPending &&
 		!now.Before(s.castUntil) && !s.state.Traveling && !s.state.Practicing &&
 		s.movementOwner.owner == "" && !(s.targetMovement.view.TargetGuid != 0 && now.Before(s.targetMovement.until)) &&
