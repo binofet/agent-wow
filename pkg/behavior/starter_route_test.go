@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -84,5 +85,72 @@ func TestStarterQuestRouteActualSourceCASChangesAllowedIDsInSameRuntime(t *testi
 	after, err := json.Marshal(frame)
 	if err != nil || string(after) != string(before) {
 		t.Fatal("reload/evaluation changed the original observed frame", err)
+	}
+}
+
+func TestStarterQuestRouteProjectionKeepsCompleteFramesAndExistingValidation(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "behaviors", "starter-objectives.lua"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := New()
+	if _, err := r.Reload(string(source), ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"last_giver_823", "last_giver_196", "any_available_offer", "last_giver_invalid", "last_offer_invalid", "routine_invalid", "actions_invalid"} {
+		t.Run(mode, func(t *testing.T) {
+			givers, offers := []any{}, []any{}
+			for i := 0; i < 128; i++ {
+				givers = append(givers, map[string]any{"guid": strconv.Itoa(200 + i), "entry": 999})
+			}
+			for i := 0; i < 32; i++ {
+				offers = append(offers, map[string]any{"questId": 1000 + i, "available": false})
+			}
+			givers[126] = map[string]any{"guid": "123", "entry": 196}
+			givers[127] = map[string]any{"guid": "123", "entry": 823}
+			frame := map[string]any{"stage": "quest_route", "selfGuid": "4", "autonomous": false,
+				"activeQuestIds": []any{7}, "desiredQuestIds": []any{7, 18, 3903}, "confirmedQuestIds": []any{},
+				"wolfComplete": false, "levelKnown": true, "level": 2,
+				"questRoute": map[string]any{"sessionId": "complete-route", "introProbeCurrent": false,
+					"eaganProbeCurrent": false, "wolfProbeCurrent": false, "givers": givers,
+					"offer": map[string]any{"objectKnown": true, "questsKnown": true, "introQuestsKnown": true,
+						"npcGuid": "123", "expiresInMs": "1", "quests": offers}}}
+			needed, allowed, probes := float64(196), []any{float64(33)}, map[string]any{"eagan": true, "wolf": false}
+			switch mode {
+			case "last_giver_196":
+				givers[126], givers[127] = givers[127], givers[126]
+				needed, allowed, probes = 823, []any{float64(18), float64(3903), float64(5261)}, map[string]any{"wolf": true}
+			case "any_available_offer":
+				offers[0] = map[string]any{"questId": 5261, "available": true}
+				offers[31] = map[string]any{"questId": 5261, "available": false}
+				needed, allowed, probes = 823, []any{float64(18), float64(3903), float64(5261)}, map[string]any{}
+			case "last_giver_invalid":
+				// An unrelated final row still needs complete validation.
+				givers[127] = map[string]any{"guid": "999", "entry": false}
+			case "last_offer_invalid":
+				offers[31] = map[string]any{"questId": 0.5, "available": false}
+			case "routine_invalid":
+				frame["routine"] = false
+			case "actions_invalid":
+				frame["actions"] = false
+			}
+			before, err := json.Marshal(frame)
+			if err != nil || len(givers) != 128 || len(offers) != 32 {
+				t.Fatal("full route fixture changed", err)
+			}
+			want := map[string]any{"status": "ready", "choice": map[string]any{"kind": "quest_route",
+				"neededEntry": needed, "rewardQuestId": float64(0), "allowedQuestIds": allowed, "probes": probes}}
+			if strings.HasSuffix(mode, "invalid") {
+				want = map[string]any{"status": "invalid"}
+			}
+			out, err := r.Evaluate(frame)
+			if err != nil || !reflect.DeepEqual(out, want) {
+				t.Fatal("full-frame/default route contract changed", out, want, err, r.Status())
+			}
+			after, err := json.Marshal(frame)
+			if err != nil || string(before) != string(after) {
+				t.Fatal("route projection changed the actual observed input", err)
+			}
+		})
 	}
 }

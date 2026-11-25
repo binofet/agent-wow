@@ -489,25 +489,29 @@ local function quest_route(input,active,missing,confirmed,known,level,complete)
     if type(r)~="table" or type(r.sessionId)~="string" or #r.sessionId<1 or #r.sessionId>128 or
        type(r.introProbeCurrent)~="boolean" or type(r.eaganProbeCurrent)~="boolean" or
        type(r.wolfProbeCurrent)~="boolean" or not array(r.givers,128) or type(r.offer)~="table" then return invalid() end
-    local giver={}
+    local o,giver=r.offer,nil
     for _,row in ipairs(r.givers) do
         if type(row)~="table" or not decimal(row.guid) or row.guid=="0" or
            type(row.entry)~="number" or row.entry%1~=0 or row.entry<1 or row.entry>4294967295 then return invalid() end
-        giver[row.guid]=row.entry
+        if row.guid==o.npcGuid then giver=row.entry end
     end
-    local o=r.offer
     if type(o.objectKnown)~="boolean" or type(o.questsKnown)~="boolean" or type(o.introQuestsKnown)~="boolean" or
        not decimal(o.npcGuid) or not decimal(o.expiresInMs) or not array(o.quests,32) then return invalid() end
-    local offered={}
+    local intro,eagan,wolves,rest=false,false,false,false
     for _,row in ipairs(o.quests) do
         if type(row)~="table" or type(row.questId)~="number" or row.questId%1~=0 or
            row.questId<0 or row.questId>4294967295 or type(row.available)~="boolean" then return invalid() end
-        if row.available then offered[tostring(row.questId)]=true end
+        if row.available then
+            if row.questId==783 then intro=true
+            elseif row.questId==5261 then eagan=true
+            elseif row.questId==33 then wolves=true
+            elseif row.questId==3903 then rest=true end
+        end
     end
     local reward=0
-    for _,q in ipairs({783,5261,33}) do
-        if active[tostring(q)] and (q~=33 or complete) then reward=q;break end
-    end
+    if active["783"] then reward=783
+    elseif active["5261"] then reward=5261
+    elseif active["33"] and complete then reward=33 end
     local needed=823
     if reward~=0 then needed=reward==783 and 197 or 196
     elseif missing["7"] then needed=confirmed["783"] and 197 or 823
@@ -516,21 +520,21 @@ local function quest_route(input,active,missing,confirmed,known,level,complete)
     local probes={}
     local fresh=o.objectKnown and o.expiresInMs~="0"
     if missing["7"] and not active["783"] then
-        if fresh and giver[o.npcGuid]==823 and o.introQuestsKnown and not offered["783"] then
+        if fresh and giver==823 and o.introQuestsKnown and not intro then
             probes.intro=true
         end
         if r.introProbeCurrent or probes.intro then needed=197 end
     end
     if active["7"] and missing["3903"] and not confirmed["5261"] and not confirmed["33"] and
-       not active["5261"] and not active["33"] and fresh and giver[o.npcGuid]==823 and
-       o.questsKnown and not offered["5261"] and not offered["3903"] then
+       not active["5261"] and not active["33"] and fresh and giver==823 and
+       o.questsKnown and not eagan and not rest then
         probes.eagan,probes.wolf=true,false
         needed=196
     end
     -- An empty fresh Eagan menu permits another Willem query. It never
     -- manufactures reward confirmation or permission to accept an absent row.
     if reward==0 and missing["3903"] and not active["5261"] and not active["33"] and
-       fresh and giver[o.npcGuid]==196 and o.questsKnown and not offered["33"] then
+       fresh and giver==196 and o.questsKnown and not wolves then
         probes.wolf=true
         needed=823
     end
@@ -539,7 +543,8 @@ local function quest_route(input,active,missing,confirmed,known,level,complete)
     elseif needed==823 then
         if missing["7"] then allowed[#allowed+1]=783 end
         if known and level>=2 then
-            for _,q in ipairs({18,3903}) do if missing[tostring(q)] then allowed[#allowed+1]=q end end
+            if missing["18"] then allowed[#allowed+1]=18 end
+            if missing["3903"] then allowed[#allowed+1]=3903 end
         end
         if missing["3903"] and not confirmed["5261"] and not confirmed["33"] then allowed[#allowed+1]=5261 end
     elseif needed==196 and missing["3903"] and not confirmed["33"] then allowed={33} end
@@ -557,20 +562,22 @@ function M.decide(input)
     if not active or not desired or not confirmed or not decimal(input.selfGuid) or type(input.autonomous)~="boolean" then return invalid() end
     local missing,exact={},true
     for q in pairs(desired) do if not active[q] then missing[q]=true; exact=false end end
-    for q in pairs(active) do if not desired[q] then exact=false end end
-    local complete,failed=input.wolfComplete==true,input.wolfFailed==true
-    local wolves=active["33"] and not complete and not failed
+    local complete=input.wolfComplete==true
     local known,level=input.levelKnown==true,input.level
     if known and (type(level)~="number" or level<1 or level>80 or level%1~=0) then return invalid() end
-    local xp=known and level==1 and (input.selfGuid=="4" or input.selfGuid=="5") and missing["18"] and (active["3903"] or confirmed["33"])
-    local needed=wolves and known and level>=1 and level<=5 or xp
     local routine,a=input.routine,input.actions
-    if routine==nil then routine={} end
-    if a==nil then a={} end
-    if type(routine)~="table" or type(a)~="table" then return invalid() end
+    if routine~=nil and type(routine)~="table" or a~=nil and type(a)~="table" then return invalid() end
     if input.stage=="quest_route" then
         return quest_route(input,active,missing,confirmed,known,level,complete)
-    elseif input.stage=="classify" then
+    end
+    for q in pairs(active) do if not desired[q] then exact=false end end
+    local failed=input.wolfFailed==true
+    local wolves=active["33"] and not complete and not failed
+    local xp=known and level==1 and (input.selfGuid=="4" or input.selfGuid=="5") and missing["18"] and (active["3903"] or confirmed["33"])
+    local needed=wolves and known and level>=1 and level<=5 or xp
+    if routine==nil then routine={} end
+    if a==nil then a={} end
+    if input.stage=="classify" then
         if exact and not (input.autonomous and routine.practiceOwned==true) then
             return ready(wait("matched_requested_active_quest_ids"))
         end
