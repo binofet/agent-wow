@@ -565,6 +565,7 @@ end
 -- Cohort policy shares the explicit encounter's resource validator. The
 -- stronger initial cohort gate deliberately retains the old 60% max-mana
 -- admission rule; per-body continuation still uses 45% of known base mana.
+local function cave_uint(v) return type(v)=="number" and v>=0 and v<=4294967295 and v%1==0 end
 local function cave_bit(value,mask) return value%(mask*2)>=mask end
 function M.cave_tuning()
     return {minimum_mana=60,mana_pool="maximum",engagers={"4","1","5"},prefer_nearest=true,
@@ -618,14 +619,14 @@ local function cave_point(row,patrol)
 end
 
 local function cave_creature(r,id,priority)
-    if not array(r,20) or #r<10 or not id(r[1]) or not uint(r[2]) or not uint(r[3]) or r[3]>4095 or
-        not uint(r[4]) or not uint(r[8]) or not uint(r[9]) or not uint(r[10]) or not uint(r[11] or 0) or
-        not uint(r[12] or 0) or not uint(r[13] or 0) or not uint(r[14] or 0) or not uint(r[18] or 0) or
+    if not array(r,20) or #r<10 or not id(r[1]) or not cave_uint(r[2]) or not cave_uint(r[3]) or r[3]>4095 or
+        not cave_uint(r[4]) or not cave_uint(r[8]) or not cave_uint(r[9]) or not cave_uint(r[10]) or not cave_uint(r[11] or 0) or
+        not cave_uint(r[12] or 0) or not cave_uint(r[13] or 0) or not cave_uint(r[14] or 0) or not cave_uint(r[18] or 0) or
         not number(r[5]) or math.abs(r[5])>=40000 or not number(r[6]) or math.abs(r[6])>=40000 or
         not number(r[7]) or math.abs(r[7])>=40000 or not id(r[15] or "0") or not id(r[16] or "0") or
         not id(r[17] or "0") or not id(r[19] or "0") then return end
     local t=r[20]
-    if t and (not array(t,6) or #t~=6 or not uint(t[1]) or t[1]>31 or not id(t[2]) or not uint(t[3]) or
+    if t and (not array(t,6) or #t~=6 or not cave_uint(t[1]) or t[1]>31 or not id(t[2]) or not cave_uint(t[3]) or
         not number(t[4]) or math.abs(t[4])>=40000 or not number(t[5]) or math.abs(t[5])>=40000 or
         not number(t[6]) or math.abs(t[6])>=40000) then return end
     local f=r[3]
@@ -673,14 +674,14 @@ local function cave_scenes(input)
            not array(v.l,5) or #v.l~=5 or not array(v.o,6) or #v.o~=6 or not array(v.i,3) or #v.i~=3 or
            not array(v.q,25) or #v.q~=25 or not array(v.c,32) or not array(v.g,40) or #v.g<3 or type(v.t)~="boolean" then return end
         for i=2,5 do if not id(v.b[i]) then return end end
-        for _,n in ipairs(v.s) do if not uint(n) then return end end
-        for i=1,2 do if not uint(v.p[i]) then return end end
+        for _,n in ipairs(v.s) do if not cave_uint(n) then return end end
+        for i=1,2 do if not cave_uint(v.p[i]) then return end end
         for i=3,5 do if not number(v.p[i]) or math.abs(v.p[i])>=40000 then return end end
-        if not id(v.p[6]) or not uint(v.a[1]) or not id(v.a[3]) or not uint(v.a[4]) or
+        if not id(v.p[6]) or not cave_uint(v.a[1]) or not id(v.a[3]) or not cave_uint(v.a[4]) or
            not id(v.a[5]) or not id(v.a[6]) or type(v.a[2])~="string" or #v.a[2]>128 or type(v.a[7])~="string" or #v.a[7]>128 or
-           not uint(v.l[1]) or type(v.l[2])~="string" or #v.l[2]>128 or not id(v.l[3]) or not id(v.l[4]) or type(v.l[5])~="boolean" or
-           type(v.o[1])~="boolean" or type(v.o[2])~="boolean" or not uint(v.o[3]) or type(v.o[4])~="string" or #v.o[4]>128 or
-           not uint(v.o[5]) or type(v.o[6])~="boolean" then return end
+           not cave_uint(v.l[1]) or type(v.l[2])~="string" or #v.l[2]>128 or not id(v.l[3]) or not id(v.l[4]) or type(v.l[5])~="boolean" or
+           type(v.o[1])~="boolean" or type(v.o[2])~="boolean" or not cave_uint(v.o[3]) or type(v.o[4])~="string" or #v.o[4]>128 or
+           not cave_uint(v.o[5]) or type(v.o[6])~="boolean" then return end
         for _,n in ipairs(v.i) do if not number(n) or n<0 or n%1~=0 then return end end
         local s=v.s
         local player={guid=guid,present=cave_bit(s[1],1),aliveKnown=cave_bit(s[1],2),alive=cave_bit(s[1],4),healthKnown=cave_bit(s[1],8),
@@ -690,17 +691,17 @@ local function cave_scenes(input)
             unitFlags=s[10],movementFlags=s[11],extraMovementFlags=s[12],playerFlags=s[13]}
         local log,group,nearby={},{},{}
         for _,q in ipairs(v.q) do
-            if not array(q,3) or #q~=3 or not uint(q[1]) or not uint(q[2]) or not uint(q[3]) or q[3]>3 or q[1]~=0 and log[q[1]]~=nil then return end
+            if not array(q,3) or #q~=3 or not cave_uint(q[1]) or not cave_uint(q[2]) or not cave_uint(q[3]) or q[3]>3 or q[1]~=0 and log[q[1]]~=nil then return end
             if q[1]~=0 then log[q[1]]=cave_bit(q[3],1) and cave_bit(q[2],1) end
         end
         for _,m in ipairs(v.g) do
-            if not array(m,2) or #m~=2 or not id(m[1]) or m[1]=="0" or group[m[1]]~=nil or not uint(m[2]) or m[2]>3 or
+            if not array(m,2) or #m~=2 or not id(m[1]) or m[1]=="0" or group[m[1]]~=nil or not cave_uint(m[2]) or m[2]>3 or
                cave_bit(m[2],2)~=(m[1]==guid) then return end
             group[m[1]]=cave_bit(m[2],1)
         end
         for _,g in ipairs({"1","4","5"}) do if group[g]~=true then return end end
-        for _,ref in ipairs(v.c) do if not uint(ref) or not rows[ref] then return end;nearby[#nearby+1]=rows[ref] end
-        if not uint(v.r) or v.r~=0 and not rows[v.r] then return end
+        for _,ref in ipairs(v.c) do if not cave_uint(ref) or not rows[ref] then return end;nearby[#nearby+1]=rows[ref] end
+        if not cave_uint(v.r) or v.r~=0 and not rows[v.r] then return end
         scenes[guid]={raw=v,self=player,log=log,nearby=nearby,target=rows[v.r],group=v.b[5],
             position={x=v.p[3],y=v.p[4],z=v.p[5]},farg={active=cave_bit(v.a[4],1),target=v.a[5],engager=v.a[6],phase=v.a[7]}}
         players[guid]=player
@@ -755,7 +756,7 @@ local function cave_candidate(scenes,tuning,attempted)
                     u%0x100000<0x80000 and u%0x4000000<0x2000000
             end
             if okay then
-                for _,s in pairs(scenes) do if not s.self.levelKnown or c.level>s.self.level+tuning.level_above_self or distance2(p,s.position)>tuning.maximum_range^2 then okay=false end end
+                for _,s in pairs(scenes) do if not s.self.levelKnown or c.level>s.self.level+tuning.level_above_self or distance2(p,s.position)>tuning.maximum_range^2 then okay=false;break end end
             end
             if okay then candidates[c.guid]={creature=c,position=p} end
         end
@@ -874,7 +875,7 @@ local function cave_search(scenes,task,tuning)
             cursor,reanchor=reconnect,true
         end
     else
-        if not uint(cursor) or not station(cursor) or direction~=1 and direction~=-1 then return end
+        if not cave_uint(cursor) or not station(cursor) or direction~=1 and direction~=-1 then return end
         if saved.phase=="preempted" then
             if saved.preempted~=true then return {kind="stop",phase="corridor_previous_leg_requires_reconciliation"} end
             if all_near(saved.station,tuning.arrival+.0001) then cursor=saved.station end
@@ -910,7 +911,7 @@ function M.cave_cohort(input)
     local tuning,task=M.cave_tuning(),input.task
     if type(tuning)~="table" or type(tuning.entries)~="table" or type(tuning.prefer_nearest)~="boolean" or
        not array(M.fargodeep_pull.quests,25) or not array(task.attempted,96) or type(task.controlsMatch)~="boolean" or
-       not uint(task.idle) or not uint(task.legs) or not number(task.remaining) or task.remaining<0 or
+       not cave_uint(task.idle) or not cave_uint(task.legs) or not number(task.remaining) or task.remaining<0 or
        not decimal(task.corpseArrival) or type(task.search)~="table" then return invalid() end
     for _,key in ipairs({"minimum_mana","maximum_range","isolation_yards","minimum_level","maximum_level","level_above_self", "idle_polls",
         "loot_wait","loot_limit","search_legs","search_history","search_seconds","arrival","station_floor","origin_yards","station_yards","reconnect_yards","preempted_yards",
@@ -920,7 +921,7 @@ function M.cave_cohort(input)
     local attempted={}
     for _,guid in ipairs(task.attempted) do if not decimal(guid) or guid=="0" then return invalid() end;attempted[guid]=true end
     local row=task.row
-    if row and (type(row)~="table" or not decimal(row.target) or not uint(row.entry) or not scenes[row.engager] or type(row.requests)~="table" or
+    if row and (type(row)~="table" or not decimal(row.target) or not cave_uint(row.entry) or not scenes[row.engager] or type(row.requests)~="table" or
         type(row.phase)~="string" or type(row.deadObserved)~="boolean") then return invalid() end
     if input.mode=="safe_pull" then return ready({kind="admission",allowed=cave_admission(scenes,players,tuning,row,false)}) end
     if input.mode=="safe_search" then return ready({kind="admission",allowed=task.controlsMatch and cave_admission(scenes,players,tuning,nil,true)}) end
@@ -928,7 +929,7 @@ function M.cave_cohort(input)
         return ready({kind="admission",allowed=row~=nil and task.controlsMatch and cave_admission(scenes,players,tuning,row,true,true)})
     end
     if input.mode=="corpse_plan" then
-        if not row or not uint(row.approachCount) then return invalid() end
+        if not row or not cave_uint(row.approachCount) then return invalid() end
         local corpse=cave_corpse(scenes,row,tuning)
         if not corpse then return ready({kind="stop",phase="bound_corpse_context_changed_no_retry"}) end
         if corpse.missing then return ready({kind="missing"}) end
@@ -963,7 +964,7 @@ function M.cave_cohort(input)
     end
     if input.mode=="search_arrival" then
         local saved=task.search
-        if not uint(saved.station) or not array(tuning.stations,64) or not tuning.stations[saved.station+1] or
+        if not cave_uint(saved.station) or not array(tuning.stations,64) or not tuning.stations[saved.station+1] or
             saved.direction~=1 and saved.direction~=-1 then return invalid() end
         local direction=saved.direction
         if saved.station~=saved.cursor then direction=saved.station>saved.cursor and 1 or -1 end
