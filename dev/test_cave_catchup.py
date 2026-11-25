@@ -1042,6 +1042,13 @@ class KnownSearchStopTests(unittest.TestCase):
         self.assertEqual(w.data['search']['cursor'], 11); self.assertEqual(w.data['search']['direction'], -1)
         self.assertFalse(leg['arrivalObservation']['oldRpcSuccessClaimed'])
 
+    def test_witnessed_backward_midcorridor_reconnect_preserves_lua_direction(self):
+        p,saved=self.legacy_yielded_arrival();leg=saved['search']['legs'][-1]
+        saved['search'].update(cursor=5,direction=1);leg.update(station=4,goal=station(4))
+        calls=len(p.routes());w=p.worker(stored=saved);w.tick()
+        self.assertFalse(w.done);self.assertEqual(len(p.routes()),calls)
+        self.assertEqual(saved['search']['cursor'],4);self.assertEqual(saved['search']['direction'],-1)
+
     def test_known_preemption_still_counts_every_attempt_toward_eight_and_body_binding(self):
         p = PriorityParty(); w = p.worker()
         for n in range(8):

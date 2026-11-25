@@ -29,7 +29,7 @@ local function decimal(v)
     for i=1,#v do local c=byte_at(v,i); if c<48 or c>57 then return false end end
     return true
 end
-local function number(v) return type(v)=="number" and v-v==0 and math.abs(v)<=9007199254740991 end
+local function number(v) return type(v)=="number" and v>=-9007199254740991 and v<=9007199254740991 end
 local function uint(v) return number(v) and v>=0 and v<=4294967295 and v%1==0 end
 local function bit(v,mask) return math.floor((v or 0)/mask)%2==1 end
 local function point(p) return type(p)=="table" and number(p.x or 0) and number(p.y or 0) and number(p.z or 0) end
@@ -961,8 +961,7 @@ function M.cave_cohort(input)
         if not uint(saved.station) or not array(tuning.stations,64) or not tuning.stations[saved.station+1] or
             saved.direction~=1 and saved.direction~=-1 then return invalid() end
         local direction=saved.direction
-        if saved.cursor==#tuning.stations-1 and saved.station<saved.cursor then direction=-1
-        elseif saved.cursor==0 and saved.station>saved.cursor then direction=1 end
+        if saved.station~=saved.cursor then direction=saved.station>saved.cursor and 1 or -1 end
         return ready({kind="arrival",direction=direction})
     end
     if input.mode=="arm" then
