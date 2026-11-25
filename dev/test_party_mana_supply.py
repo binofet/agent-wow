@@ -2,6 +2,8 @@
 import copy
 import hashlib
 import io
+import importlib.machinery
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -313,6 +315,26 @@ class SupplyTest(unittest.TestCase):
                 self.turn(state,now=50000)
                 self.assertEqual(state['last']['outcome'],'transport_unconfirmed')
                 self.rpc=ordinary
+
+    def test_standalone_worker_preserves_create_refusal_but_keeps_read_error_handling(self):
+        loader=importlib.machinery.SourceFileLoader('supply_worker_refusal_test',str(self.root/'dev/party-mana'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        worker=importlib.util.module_from_spec(spec);loader.exec_module(worker)
+        bound=self.rejected_create_rpc()
+        class Client:
+            def __init__(self,port):self.port=port
+            def call(self,method,params,timeout):return bound(self.port,method,params)
+        worker._RPC_CLIENTS={port:Client(port) for port in self.observations}
+        state={}
+        self.assertEqual(supply.maintain_supply(worker.rpc,self.observations,state,
+            bridge=self.bridge,now_ms=1000),'water_supply_not_dispatched')
+        self.assertEqual(state['last']['rejection']['grpc_status'],'FailedPrecondition')
+        self.assertEqual(len(self.calls),1)
+        error=supply.runtime.RPCRejected('buddy-world.snapshot','http://127.0.0.1:8087/rpc',1,
+            -32000,'read unavailable',dict(module='buddy-world',method='snapshot'))
+        with patch.object(worker._RPC_CLIENTS[8087],'call',side_effect=error):
+            with self.assertRaises(worker.RPCError):worker.rpc(8087,'buddy-world.snapshot')
+            self.assertIsNone(worker.observe(8087))
 
     def test_error_text_alone_and_refusal_persistence_failure_remain_unknown(self):
         ordinary=self.rpc

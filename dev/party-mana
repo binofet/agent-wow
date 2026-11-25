@@ -38,6 +38,11 @@ def rpc(port, method, params=None):
     try:
         return _RPC_CLIENTS[port].call(method, params or {}, timeout=1.5)
     except runtime.Error as error:
+        # Preserve validated rejection provenance for the supply adapter's
+        # narrowly audited pre-cast CreateItem contract. Read errors retain
+        # the worker's existing observation/error handling.
+        if method == 'buddy-actions.create_item' and isinstance(error, runtime.RPCRejected):
+            raise
         raise RPCError(str(error)) from error
 
 
