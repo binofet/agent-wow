@@ -807,7 +807,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-Ñ¡
+Ð¢
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1780,7 +1780,8 @@ candidates"­
 EncounterParty3
 group (2.warcraftbuddy.party.v1.GroupRgroupJ
 raid_targets (2'.warcraftbuddy.party.v1.RaidTargetStateRraidTargets
-revision (Rrevision"Ð	
+revision (Rrevision"¡
+
 EncounterPlayer
 guid (Rguid
 present (Rpresent
@@ -1828,7 +1829,9 @@ comboKnown*
 position_age_ms# (RpositionAgeMs+
 position_inferred$ (RpositionInferred-
 position_estimated% (RpositionEstimated,
-position_age_known& (RpositionAgeKnownB	
+position_age_known& (RpositionAgeKnown,
+combat_reach_known' (RcombatReachKnown!
+combat_reach( (RcombatReachB	
 _map_idB
 _alive"­
 EncounterCreature
@@ -2336,13 +2339,14 @@ trigger_id (R	triggerId<
 observed_visit_id (RobservedVisitId1
 destination_observed (RdestinationObserved
 error (	RerrorE
-source_scope (2".agentwow.module.v1.TransportScopeRsourceScope"‰
+source_scope (2".agentwow.module.v1.TransportScopeRsourceScope"·
 MovementPoint
 x (Rx
 y (Ry
 z (Rz!
 radius_yards (RradiusYards+
-expires_at_unix_ms (RexpiresAtUnixMs"Æ
+expires_at_unix_ms (RexpiresAtUnixMs,
+ground_effect_guid (RgroundEffectGuid"Æ
 MovementPointsRequest
 
 session_id (	R	sessionId

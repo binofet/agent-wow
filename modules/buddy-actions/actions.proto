@@ -921,6 +921,8 @@ message EncounterPlayer {
   bool position_inferred = 36;
   bool position_estimated = 37;
   bool position_age_known = 38;
+  bool combat_reach_known = 39;
+  float combat_reach = 40;
 }
 message EncounterCreature {
   uint64 guid = 1;
@@ -1500,6 +1502,10 @@ service BuddyActions {
 message MovementPoint {
   float x = 1; float y = 2; float z = 3;
   float radius_yards = 4; uint64 expires_at_unix_ms = 5;
+  // Optional current observed object: radius stays the source radius; native
+  // clearance is a 3D sphere plus this body's observed combat reach. Zero keeps
+  // ordinary authored point semantics unchanged.
+  uint64 ground_effect_guid = 6;
 }
 message MovementPointsRequest {
   string session_id = 1; uint64 self_guid = 2; uint32 map_id = 3;

@@ -504,11 +504,16 @@ func TestMovementPointsMissingOrFailedSetNeverEntersEscapeButAllowsUrgentHeal(t 
 	}
 }
 func TestMovementPointsNoOpProofNeverUsesStaleBodyOrLosesUnknownFlag(t *testing.T) {
-	for _, kind := range []string{"stale_prior", "current_written", "current_unconfirmed", "motion_unknown", "wrong_body"} {
+	for _, kind := range []string{"stale_prior", "clearance_unknown", "clearance_unknown_motion", "current_written", "current_unconfirmed", "motion_unknown", "wrong_body"} {
 		t.Run(kind, func(t *testing.T) {
 			r := newMovementPointsRig(t, movementPointsActionSource("movement_points_step", true))
 			response := map[string]any{"sessionId": "points", "selfGuid": "4", "movementPoints": map[string]any{"reason": "protected_operation_pending"}}
+			if strings.HasPrefix(kind, "clearance_unknown") {
+				response["movementPoints"] = map[string]any{"reason": "observed_effect_clearance_unknown"}
+			}
 			switch kind {
+			case "clearance_unknown_motion":
+				response["motionUnconfirmed"] = true
 			case "stale_prior":
 				response["bodyMovement"] = map[string]any{"sequenceId": "3", "visitId": "1", "transportWritten": true}
 			case "current_written":
@@ -525,8 +530,8 @@ func TestMovementPointsNoOpProofNeverUsesStaleBodyOrLosesUnknownFlag(t *testing.
 			if err != nil || receipt == nil {
 				t.Fatal(receipt, err)
 			}
-			if kind == "stale_prior" {
-				if receipt.Outcome != behavior.ActionNotDispatched {
+			if kind == "stale_prior" || kind == "clearance_unknown" {
+				if receipt.Outcome != behavior.ActionNotDispatched || receipt.Payload["reconciliationRequired"] == true {
 					t.Fatal("unrelated old body row was attributed to this invocation", receipt)
 				}
 			} else if receipt.Outcome == behavior.ActionNotDispatched || receipt.Payload["reconciliationRequired"] != true || receipt.Payload["effect_observed"] != false {

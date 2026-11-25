@@ -288,7 +288,7 @@ func (op *policySpell) movementPointsNoDispatch(method moddisc.Method, state *ac
 	}
 	reason := points.Get(reasonField).String()
 	switch reason {
-	case "already_clear", "no_current_unexpired_points", "protected_cast_pending", "protected_operation_pending", "no_navigable_escape", "hard_constraints_or_navigation_blocked":
+	case "already_clear", "observed_effect_clearance_unknown", "no_current_unexpired_points", "protected_cast_pending", "protected_operation_pending", "no_navigable_escape", "hard_constraints_or_navigation_blocked":
 		return reason, true
 	}
 	return "", false

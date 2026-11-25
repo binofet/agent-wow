@@ -42,7 +42,7 @@ function M.bind_visible(points,sightings)
         end
         if match then
             local expires=p.expiresAtUnixMs or p.expiresAtMs
-            if number(expires) then bound[#bound+1]={x=p.x,y=p.y,z=p.z,radiusYards=match.radiusYards,
+            if number(expires) then bound[#bound+1]={x=p.x,y=p.y,z=p.z,radiusYards=match.radiusYards,groundEffectGuid=match.groundEffectGuid,
                 expiresAtUnixMs=math.min(expires,match.observedAtMs+M.reference_duration_ms)} end
         end
     end
@@ -57,7 +57,7 @@ function M.project(frame,obs,points)
         if not (number(p.x) and number(p.y) and number(p.z) and number(p.radiusYards) and p.radiusYards>0 and number(expires)) then
             return nil
         end
-        if expires>frame.clock.unixMs then active[#active+1]={x=p.x,y=p.y,z=p.z,radiusYards=p.radiusYards,expiresAtUnixMs=expires} end
+        if expires>frame.clock.unixMs then active[#active+1]={x=p.x,y=p.y,z=p.z,radiusYards=p.radiusYards,expiresAtUnixMs=expires,groundEffectGuid=p.groundEffectGuid} end
     end
     return {sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId,points=active}
 end
@@ -82,7 +82,15 @@ function M.prioritize(frame,obs,sequence,out,input,explicitSpell,ownMovement,tas
        not number(own.x) or not number(own.y) or not number(own.z) then return end
     local inside=false
     for _,p in ipairs(input.points) do
-        if math.abs(own.z-p.z)<=2 and (own.x-p.x)^2+(own.y-p.y)^2<p.radiusYards*p.radiusYards then inside=true end
+        if p.groundEffectGuid~=nil and p.groundEffectGuid~=0 and p.groundEffectGuid~="0" then
+            local reach=own.combatReach
+            if reach==nil and own.combatReachKnown==true then reach=0 end -- proto3 known zero
+            if own.combatReachKnown~=true or not number(reach) or reach<0 then
+                out.movementPointStatus={phase="observed_effect_clearance_unknown",insideKnown=false};return
+            end
+            local radius=p.radiusYards+reach
+            if (own.x-p.x)^2+(own.y-p.y)^2+(own.z-p.z)^2<radius*radius then inside=true end
+        elseif math.abs(own.z-p.z)<=2 and (own.x-p.x)^2+(own.y-p.y)^2<p.radiusYards*p.radiusYards then inside=true end
     end
     if not inside then out.movementPointStatus={phase="outside_authored_points",inside=false};return end
     local owner=nav.movementOwner
