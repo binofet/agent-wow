@@ -118,6 +118,50 @@ class PublicRPC:
 
 
 class DirectBrainIntegrationTests(unittest.TestCase):
+    def test_combat_review_initial_ordinary_wire_keeps_material_peer_damage(self):
+        from combat_context import CombatContext
+        tracker=CombatContext('4',spell_names={700101:'Synthetic public damage label'})
+        with self.rig([spoken('Reviewed only the supplied synthetic evidence.')]) as (loop,brain,state,http):
+            tracker.bind(self.rpc.core)
+            tracker.observe(dict(self=dict(guid='4',present=True,aliveKnown=True,alive=True,
+                unitFlagsKnown=True,unitFlags=0x80000)),{},
+                dict(known=True,inGroup=True,members=[dict(guid='3'),dict(guid='4'),dict(guid='5')]))
+            events=[]
+            def add(kind='cast_go',**values):
+                row=dict(sequence=str(len(events)+1),receivedAtUnixMs=str(100000+len(events)),kind=kind,
+                    sourceGuid='4',targetGuid='99',spellId=800000+len(events));row.update(values);events.append(row)
+            for _ in range(300):add()
+            for _ in range(7):add('spell_damage',sourceGuid='12345',targetGuid='3',spellId=700101,amountKnown=True,amount=180)
+            add('spell_damage',sourceGuid='12345',targetGuid='5',spellId=700102,amountKnown=False)
+            add('heal',targetGuid='3',spellId=700101,amountKnown=True,amount=9999)
+            add('spell_damage',targetGuid='99',spellId=700101,amountKnown=True,amount=9999)
+            tracker.ingest(dict(sessionId=self.rpc.core,selfGuid='4',latestSequence=str(len(events)),
+                nextSequence=str(len(events)),events=events,gaps=[dict(fromSequence='2',throughSequence='3',reason='durability_unavailable')]))
+            state['combat']=tracker.context()
+            self.assertGreater(state['combat']['omittedGroups'],0)
+            state['combat_review']=dict(key='synthetic-review',reason='combat_ended')
+            state['current_request']=converse.AgentBrain._CombatReviewRequest(source='combat_review',
+                reviewKey='synthetic-review',owned_review_check=lambda guid,sid,url,key:
+                    guid==4 and sid==self.rpc.core and url==self.rpc.url and key=='synthetic-review',
+                controls_allowed=False,repair_requests_allowed=False)
+            state['inventory']=dict(available=True,items=[dict(raw='synthetic bulk '*20000)])
+            original=copy.deepcopy(state['combat'])
+            brain.generate([dict(text='Internal synthetic combat review.')],state)
+            wire=http.requests[0]['body']
+            view=json.loads(wire['messages'][0]['content'].split('Current observations and control state JSON:\n',1)[1])
+            damage=view['combat']['incomingDamage'];first=damage['ranked'][0]
+            self.assertEqual((first['targetGuid'],first['spellId'],first['knownAmount'],first['packetCount']),('3',700101,1260,7))
+            self.assertEqual(first['spellName'],'Synthetic public damage label')
+            self.assertEqual(damage['observedSelfDamagePackets'],0)
+            self.assertEqual(damage['gapCount'],1)
+            self.assertEqual(damage['rawEvidence']['method'],'buddy-world.combat_events')
+            self.assertEqual(view['combat']['contextPath'],['combat'])
+            self.assertTrue(view['combat']['eventsDeferred'])
+            self.assertEqual(view['combat_review']['key'],'synthetic-review')
+            self.assertTrue(view['inventory']['deferred'])
+            self.assertEqual(state['combat'],original)
+            self.assertFalse(self.rpc.commands or self.rpc.replies)
+
     def test_local_archived_read_is_available_through_existing_context_tool(self):
         from test_direct_model import chat
         def recover(request):
