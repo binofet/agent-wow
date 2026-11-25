@@ -673,7 +673,7 @@ local function ranged_hold(obs,frame,out,row,status,wanted,stopTarget)
         local remaining=math.floor(math.min(4294967295,row.expiresUnixMs-now))
         if remaining<1 then status.phase="movement_hold_deadline";out.action=nil;return true end
         local a={capability="movement_owner",sessionId=obs.sessionId,selfGuid=obs.selfGuid,owner=hold.owner,mode="acquire",leaseMs=remaining}
-        out.action=a;ranged_hold_proposal={action=a,hold=hold};status.phase="acquiring_movement_hold";return true
+        out.action=a;ranged_hold_proposal={action=a,hold=hold,untilUnixMs=row.expiresUnixMs};status.phase="acquiring_movement_hold";return true
     end
     local self=(obs.players or {})[obs.selfGuid]
     local stopped=self and self.movementKnown==true and self.moving~=true and (obs.navigation or {}).motionUnconfirmed~=true
@@ -893,6 +893,7 @@ local function ranged_finish(selected)
     end
     ranged_ground_proposal=nil
     if ranged_hold_proposal and ranged_hold_proposal.action==selected then
+        if selected.mode=="acquire" then ranged_hold_proposal.hold.untilUnixMs=ranged_hold_proposal.untilUnixMs end
         ranged_hold_proposal.hold.operation={mode=selected.mode,owner=selected.owner}
     end
     ranged_hold_proposal=nil

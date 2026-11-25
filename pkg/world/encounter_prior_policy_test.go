@@ -288,3 +288,58 @@ func TestEncounterPriorExactExplicitSpellWinsWithoutAuthorizingAutomaticPull(t *
 		t.Fatal("explicit requested spell was mistaken for broad assist", out)
 	}
 }
+
+func TestEncounterPriorReacquireUnknownRetainsSelectedLeaseHorizon(t *testing.T) {
+	read := func(name string) string {
+		b, e := os.ReadFile(filepath.Join("..", "..", "behaviors", name))
+		if e != nil {
+			t.Fatal(e)
+		}
+		return string(b)
+	}
+	source := "local encounter_priors=(function()\n" + read("encounter-priors.lua") + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
+end)()
+return {on_event=commands.on_event,export_state=commands.export_state,import_state=commands.import_state,decide=function(frame)
+ local owner="ranged:maraudon_sludge_backline"
+ local obs={sessionId="fixture",selfGuid="4",mapId=349,visitId="1",navigation={movementOwner={active=false}},players={['4']={guid="4",present=true,aliveKnown=true,alive=true,mapKnown=true,mapId=349,positionKnown=true,x=0,y=0,z=0,movementKnown=true,moving=false}},targets={['9']={guid="9",entry=12222,present=true,aliveKnown=true,alive=true,mapKnown=true,mapId=349,positionKnown=true,x=22,y=0,z=0}}}
+ commands.on_event({kind="encounter_observation",sequence="1",value=obs})
+ local function step(now,select)
+  local f={session_id="fixture",input={observationSequence="1"},pending={},clock={monotonicMs=now,unixMs=now}}
+  local row,status=commands.ranged_stance(obs,f);local out={}
+  commands.ranged_filter(obs,f,"1",out,row,status,nil)
+  commands.ranged_finish(select and out.action or nil)
+  return out,status
+ end
+ step(0,true)
+ commands.on_event({receipt={action_id="1",outcome="confirmed",payload={capability="movement_owner",mode="acquire",owner=owner,result={token="old-token",state={sessionId="fixture",selfGuid="4",movementOwner={active=true,owner=owner}}}}}})
+ obs.navigation.movementOwner={active=true,owner=owner}
+ commands.on_event({kind="command",value={task="ranged_only",id="maraudon_sludge_backline",creatureEntry=12222,mapId=349,visitId="1",minRangeYards=14,maxRangeYards=36,clearanceYards=2,durationMs=1200000}})
+ step(1,true)
+ obs.navigation.movementOwner={active=false}
+ local unselected=step(600001,false)
+ local oldHorizon=commands.export_state().data.rangedHold.untilUnixMs
+ local reacquire=step(600002,true)
+ local newHorizon=commands.export_state().data.rangedHold.untilUnixMs
+ commands.on_event({receipt={action_id="2",outcome="unknown",payload={capability="movement_owner",mode="acquire",owner=owner}}})
+ local later,status=step(600003,true)
+ return {oldHorizon=oldHorizon,newHorizon=newHorizon,unselected=unselected.action,reacquire=reacquire.action,later=later.action,phase=status.phase}
+end}`
+	host, e := behavior.NewSession(context.Background(), "prior-renewal", source)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer host.Close()
+	d, e := host.Decide(context.Background(), map[string]any{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if d.Output["oldHorizon"] != float64(600000) || d.Output["newHorizon"] != float64(1200001) || d.Output["later"] != nil || d.Output["phase"] != "movement_hold_unknown" {
+		t.Fatal("new selected lease reused an old UNKNOWN horizon", d.Output)
+	}
+	for _, key := range []string{"unselected", "reacquire"} {
+		a, _ := d.Output[key].(map[string]any)
+		if a["capability"] != "movement_owner" || a["mode"] != "acquire" {
+			t.Fatal(key, d.Output)
+		}
+	}
+}
