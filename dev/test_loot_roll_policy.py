@@ -94,7 +94,7 @@ end}
             stackCount=1, metadataKnown=True, enhancementsKnown=True, durabilityKnown=True,
             durability=30, maxDurability=30)
 
-    def assert_wait_then_fallback(self, expected="greed"):
+    def assert_wait_then_fallback(self, expected="disenchant"):
         self.assertNotIn('action', self.tick())
         self.view['offers'][0]['remainingMs'] = '1500'
         self.assertEqual(self.tick()['action']['choice'], expected)
@@ -111,8 +111,8 @@ end}
                 self.assertNotIn(333, [s['skillId'] for s in self.view['skills']])
                 self.choice('disenchant')
 
-    def test_only_assigned_mira_body_disenchants_other_bodies_greed(self):
-        for actor, expected in (('4', 'disenchant'), ('5', 'greed'), ('11', 'greed')):
+    def test_only_assigned_mira_body_disenchants_other_bodies_pass(self):
+        for actor, expected in (('4', 'disenchant'), ('5', 'pass'), ('11', 'pass')):
             with self.subTest(actor=actor):
                 self.setUp()
                 self.view['selfGuid'] = actor
@@ -131,51 +131,43 @@ end}
         self.view['offers'][0]['offeredMask'] = 3
         self.assertEqual(self.tick()['action']['choice'], 'pass')
 
-    def test_known_fallback_greeds_when_need_or_assigned_disenchant_is_unoffered(self):
-        for useful, mask in ((True, 5), (True, 4), (False, 7), (False, 4)):
-            with self.subTest(useful=useful, mask=mask):
-                self.setUp()
-                if not useful:
-                    self.equip()
-                    self.view['metadata'].append(armor(5001, armor=20))
-                self.view['offers'][0]['offeredMask'] = mask
-                action = self.tick()['action']
-                self.assertEqual(action['choice'], 'greed')
-                self.assertEqual(action['offeredMask'], mask)
-                self.assertEqual(action['rollGuid'], GUID)
+    def test_known_non_need_role_choices_cover_every_mask_without_greed(self):
+        for actor in ('4','5','11'):
+            for useful in (True,False):
+                for mask in range(16):
+                    with self.subTest(actor=actor,useful=useful,mask=mask):
+                        self.setUp();self.view['selfGuid']=self.view['player']['guid']=actor
+                        if not useful:
+                            self.equip();self.view['metadata'].append(armor(5001,armor=20))
+                        self.view['offers'][0]['offeredMask']=mask
+                        expected=('need' if useful and mask&2 else 'disenchant' if actor=='4' and mask&8 else 'pass' if mask&1 else None)
+                        action=self.tick().get('action')
+                        self.assertEqual(action and action['choice'],expected)
+                        if action:self.assertEqual(action['offeredMask'],mask)
 
-    def test_unknown_facts_wait_then_use_only_an_offered_safe_deadline_choice(self):
-        for mask, expected in ((15, 'greed'), (7, 'greed'), (4, 'greed'),
-                               (1, 'pass'), (3, 'pass'), (9, 'pass'), (2, None), (8, None)):
-            with self.subTest(mask=mask):
-                self.setUp()
-                self.view['metadata'] = []
-                self.view['offers'][0].update(offeredMask=mask, remainingMs='1501')
-                self.assertNotIn('action', self.tick())
-                self.view['offers'][0]['remainingMs'] = '1500'
-                action = self.tick().get('action')
-                if expected is None:
-                    self.assertIsNone(action)
-                else:
-                    self.assertEqual(action['choice'], expected)
-                    self.assertEqual(action['offeredMask'], mask)
-                    self.assertNotEqual(action['choice'], 'need')
-                self.view['offers'] = [self.offer(rollGuid=str(int(GUID)+1), offeredMask=mask, remainingMs='0')]
-                self.assertNotIn('action', self.tick())
+    def test_unknown_facts_wait_then_offered_role_choice_at_exact_deadline(self):
+        for actor in ('4','5','11'):
+            for mask in range(16):
+                with self.subTest(actor=actor,mask=mask):
+                    self.setUp();self.view['selfGuid']=self.view['player']['guid']=actor
+                    self.view['metadata']=[]
+                    self.view['offers'][0].update(offeredMask=mask,remainingMs='1501')
+                    self.assertNotIn('action',self.tick())
+                    self.view['offers'][0]['remainingMs']='1500'
+                    expected='disenchant' if actor=='4' and mask&8 else 'pass' if mask&1 else None
+                    action=self.tick().get('action')
+                    self.assertEqual(action and action['choice'],expected)
+                    self.view['offers']=[self.offer(rollGuid=str(int(GUID)+1),offeredMask=mask,remainingMs='0')]
+                    self.assertNotIn('action',self.tick())
 
-    def test_greed_checkpoint_and_legacy_reserved_votes_never_revote_after_reload(self):
-        self.equip()
-        self.view['metadata'].append(armor(5001, armor=20))
-        self.view['offers'][0]['offeredMask'] = 7
-        self.choice('greed')
-        self.assertNotIn('action', self.tick())
-        for reserved in ('pass', 'need', 'disenchant', 'greed'):
+    def test_historical_greed_and_other_reserved_votes_survive_import_without_revote(self):
+        for reserved in ('pass','need','disenchant','greed'):
             with self.subTest(reserved=reserved):
                 self.setUp()
-                self.checkpoint = dict(version=1, data=dict(sessionId='aw-roll-test', selfGuid='4',
-                    reservations={'3:'+GUID+':1': reserved}))
-                self.assertNotIn('action', self.tick())
-                self.assertEqual(self.checkpoint['data']['reservations']['3:'+GUID+':1'], reserved)
+                self.checkpoint=dict(version=1,data=dict(sessionId='aw-roll-test',selfGuid='4',
+                    reservations={'3:'+GUID+':1':reserved}))
+                self.assertNotIn('action',self.tick())
+                self.assertEqual(self.checkpoint['data']['reservations']['3:'+GUID+':1'],reserved)
 
     def test_same_shared_scorer_edit_changes_next_offer_without_replaying_reserved_vote(self):
         self.equip()
@@ -235,7 +227,7 @@ return gear
         self.view['metadata'][0]['allowableClass'] = 1
         self.choice('disenchant')
 
-    def test_unknown_identity_proficiency_equipment_or_metadata_waits_then_greeds(self):
+    def test_unknown_identity_proficiency_equipment_or_metadata_waits_then_role_fallback(self):
         for fault in ('class', 'race', 'level', 'skills', 'incomplete_skills', 'equipment', 'missing', 'omitted', 'special'):
             with self.subTest(fault=fault):
                 self.setUp()
@@ -379,12 +371,12 @@ return gear
                 output = self.bridge.evaluate(self.source, frame)
                 self.assertNotIn('action', output['decision'])
 
-    def test_unknown_never_disenchants_and_unoffered_choices_never_escape(self):
+    def test_unknown_mira_disenchants_only_after_wait_and_pass_is_explicit(self):
         self.view['metadata'] = []
         self.view['offers'][0]['offeredMask'] = 8
         self.assertNotIn('action', self.tick())
         self.view['offers'][0]['remainingMs'] = '1'
-        self.assertNotIn('action', self.tick())
+        self.assertEqual(self.tick()['action']['choice'],'disenchant')
         self.setUp()
         self.view['offers'][0]['offeredMask'] = 1
         self.choice('pass')  # Complete facts, but no eligible positive choice.

@@ -3,7 +3,8 @@
 -- Joel's assigned disenchanter is the verified Mira body GUID4. This role is
 -- authored Lua intent; the observed self GUID still binds every offer/vote.
 -- Keep the legacy deadline knob name for authored policies. It controls when
--- incomplete facts fall back; it is not an explicit preference to pass.
+-- incomplete facts fall back to the assigned Mira DE / other Pass intent.
+-- Never propose Greed; legacy Greed reservations remain importable below.
 local M = {tuning = {future_levels = 3, pass_below_ms = 1500, disenchanter_guid = "4"}}
 local observation, sequence, proposed
 local state = {reservations = {}}
@@ -179,9 +180,8 @@ function M.decide(frame,gear)
             local result=classification(view,o,templates,gear)
             local choice
             if result=="useful" and bit(o.offeredMask,1) then choice="need"
-            elseif result=="not_useful" and view.selfGuid==M.tuning.disenchanter_guid and bit(o.offeredMask,3) then choice="disenchant"
             elseif result~="unknown" or millis(o.remainingMs)<=M.tuning.pass_below_ms then
-                if bit(o.offeredMask,2) then choice="greed"
+                if view.selfGuid==M.tuning.disenchanter_guid and bit(o.offeredMask,3) then choice="disenchant"
                 elseif bit(o.offeredMask,0) then choice="pass" end
             end
             if choice then
