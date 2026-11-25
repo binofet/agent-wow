@@ -83,7 +83,7 @@ func TestPolicyContainerCapacityResumeUsesNativeRouteWithoutPhysicalPending(t *t
 				w.InventoryBags = append(w.InventoryBags, bag)
 			}
 			callback := &corpseNativeCallback{manager: m, world: w, actions: &actionsv1.State{SessionId: "corpse-body", SelfGuid: 6, Position: &actionsv1.ClientPosition{Known: true, MapKnown: true, Revision: 1}}}
-			native := buddyloot.NewService(callback, 6, "corpse-body")
+			native := buddyloot.NewAutomaticService(callback, 6, "corpse-body")
 			server := grpc.NewServer()
 			lootv1.RegisterBuddyLootServer(server, &capacityResumeNative{Service: native, loseResponse: unknown})
 			listener := bufconn.Listen(1 << 20)

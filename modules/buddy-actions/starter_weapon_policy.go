@@ -55,7 +55,7 @@ func (s *Service) practiceTaskObservationsLocked(ctx context.Context, targetGUID
 	if !self.ClassKnown || (self.ClassId != 4 && self.ClassId != 5 && self.ClassId != 8) || !self.LevelKnown || !self.HealthKnown || !self.PowerKnown ||
 		!northshire(playerPosition(self)) || !northshire(s.pos) || !known || !northshire(point) ||
 		!self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 ||
-		!eligiblePracticeWolf(target) || !exactOffenseTarget(w, target, targetGUID, nil) || len(w.NearbyCreatures) > 32 ||
+		!practiceCreatureAvailable(target, self.MapId) || !exactOffenseTarget(w, target, targetGUID, nil) || len(w.NearbyCreatures) > 32 ||
 		target.AttackVictimKnown && target.AttackVictimGuid != s.selfGUID || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 ||
 		s.failedAssistTarget == targetGUID {
 		return nil, nil, position{}, false
@@ -79,12 +79,6 @@ func (s *Service) practiceTaskObservationsLocked(ctx context.Context, targetGUID
 	point, known, _ = creaturePosition(target)
 	if !known {
 		return nil, nil, position{}, false
-	}
-	for _, other := range w.NearbyCreatures {
-		if other != nil && other.Entry != 299 && other.Present && other.AliveKnown && other.Alive &&
-			other.AttackVictimKnown && other.AttackVictimGuid == s.selfGUID && other.AttackAgeMs <= 30000 {
-			return nil, nil, position{}, false
-		}
 	}
 	return w, target, point, current()
 }
