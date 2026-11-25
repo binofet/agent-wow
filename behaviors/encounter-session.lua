@@ -13,6 +13,7 @@ local self_mana = encounter_self_mana
 local support_policy = encounter_support
 local control_recovery = encounter_control_recovery
 local consumables = encounter_consumables
+local auto_equipment = encounter_auto_equipment
 local corpse_loot = encounter_corpse_loot
 local buffs = encounter_buffs
 local death_recovery = encounter_death_recovery
@@ -62,6 +63,7 @@ local function on_event(event)
     if healing and not healing.on_event(event) then return false end
     if self_mana and not self_mana.on_event(event) then return false end
     if support_policy and support_policy.on_event and not support_policy.on_event(event) then return false end
+    if auto_equipment and not auto_equipment.on_event(event) then return false end
     if consumables and not consumables.on_event(event) then return false end
     if corpse_loot and not corpse_loot.on_event(event) then return false end
     if buffs and not buffs.on_event(event) then return false end
@@ -101,6 +103,7 @@ local function export_state()
                             tasks=transient_tasks and transient_tasks.export_state(),
                             spellInvocation=spell_invocation and spell_invocation.export_state(),
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
+                            autoEquipment=auto_equipment and auto_equipment.export_state(),
                             consumables=consumables and consumables.export_state(),
                             corpseLoot=corpse_loot and corpse_loot.export_state(),
                             movement=movement and movement.export_state and movement.export_state()}}
@@ -131,6 +134,7 @@ local function import_state(checkpoint)
     if checkpoint.data.spellInvocation and (not spell_invocation or not spell_invocation.import_state(checkpoint.data.spellInvocation)) then return false end
     if checkpoint.data.controlRecovery and (not control_recovery or not control_recovery.import_state(checkpoint.data.controlRecovery)) then return false end
     if checkpoint.data.support and (not support_policy or not support_policy.import_state or not support_policy.import_state(checkpoint.data.support)) then return false end
+    if checkpoint.data.autoEquipment and (not auto_equipment or not auto_equipment.import_state(checkpoint.data.autoEquipment)) then return false end
     if checkpoint.data.consumables and (not consumables or not consumables.import_state(checkpoint.data.consumables)) then return false end
     if checkpoint.data.corpseLoot and (not corpse_loot or not corpse_loot.import_state(checkpoint.data.corpseLoot)) then return false end
     if checkpoint.data.movement and (not movement or not movement.import_state or
@@ -738,6 +742,17 @@ local function decide_policy(frame)
         if not out.action and #frame.pending==0 then out.action=resting.action end
         if resting.hold then return out end
     end
+    if auto_equipment and encounter_gear and (policy_observation or observation) then
+        local equipment=auto_equipment.decide(frame,policy_observation or observation,
+            host_can_decide(policy_observation or observation) and out.action==nil and not out.focusGuid and #frame.pending==0 and not (task_view and task_view.hold),encounter_gear)
+        out.equipment=equipment
+        if not out.action and #frame.pending==0 and equipment.action then
+            out.action=equipment.action
+            -- Do not start a formation/portal move in the same dispatch that
+            -- needs a stationary exact equipment swap. Intents stay enabled.
+            out.followFormation=nil;out.portalCatchup=nil
+        end
+    end
     if not self_mana or out.action or #frame.pending ~= 0 then return out end
     local input, encounter = frame.input, policy_observation or observation
     local expected
@@ -839,6 +854,7 @@ local function decide(frame)
     end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
     if spell_invocation then spell_invocation.commit(out.action) end
+    if auto_equipment then auto_equipment.commit(out.action) end
     return out
 end
 
