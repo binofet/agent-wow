@@ -812,16 +812,37 @@ class LocalPromptBudgetTests(unittest.TestCase):
     def test_auxiliary_assistant_reasoning_archives_only_in_opt_in_api_copy(self):
         client=self.Transport([],local_prompt_budget_bytes=200000);client.last_receipt={}
         rows=[dict(role='user',content='Exact original goal'),
-            dict(chat(('same-id','mutate',dict(key='exact-action')))['choices'][0]['message'],
-                reasoning_content='Old auxiliary thinking '*100),
-            dict(role='tool',tool_call_id='same-id',content=json.dumps(dict(commandWritten=True,operationId='exact')))]
+            dict(role='assistant',content='Historical discussion',reasoning_content='Old auxiliary thinking '*100)]
+        for identity in ('old','recent1','recent2'):
+            rows += [chat((identity,'observe',dict(key=identity)))['choices'][0]['message'],
+                dict(role='tool',tool_call_id=identity,content=json.dumps(dict(facts='x'*1500)))]
         original=copy.deepcopy(rows)
-        payload,audit=client._local_prompt('Exact SYSTEM',rows,[],set(),{},None,canonical=rows)
+        payload,audit=client._local_prompt('Exact SYSTEM',rows,[],{'observe'},{},None,canonical=rows)
         self.assertNotIn('reasoning_content',payload['messages'][2])
-        self.assertEqual(payload['messages'][2]['tool_calls'],rows[1]['tool_calls'])
-        self.assertEqual(payload['messages'][3],rows[2])
+        self.assertEqual(payload['messages'][3:],rows[2:])
         self.assertEqual(rows,original)
         self.assertEqual(audit['archivedAssistantReasoning'][0]['sha256'],hashlib.sha256(rows[1]['reasoning_content'].encode()).hexdigest())
+
+    def test_duplicate_receipts_and_current_two_batches_are_protected_at_both_stages(self):
+        client=self.Transport([],local_prompt_budget_bytes=200000);client.last_receipt={}
+        rows=[dict(role='user',content='Exact original goal')]
+        for identity,key,result in [('receipt0','receipt-query',dict(receipt=dict(phase='completed',spellId=9474),raw='r'*2000)),
+                ('receipt1','receipt-query',dict(receipt=dict(phase='completed',spellId=9474),raw='s'*2000)),
+                ('recent0','same-read',dict(facts='a'*2000)),('recent1','same-read',dict(facts='b'*2000))]:
+            rows += [dict(chat((identity,'observe',dict(key=key)))['choices'][0]['message'],reasoning_content='Recent reasoning'),
+                dict(role='tool',tool_call_id=identity,content=json.dumps(result))]
+        original=copy.deepcopy(rows)
+        ordinary=client._active_conversation(rows,{'observe'},{},None)
+        self.assertTrue(json.loads(ordinary[2]['content'])['historicalRead'])
+        self.assertTrue(json.loads(ordinary[6]['content'])['historicalRead'])
+        protected=client._active_conversation(rows,{'observe'},{},None,protect_local=True)
+        self.assertEqual(protected,rows)
+        # Even an already-projected caller cannot smuggle the older markers
+        # through the budget stage in place of canonical protected evidence.
+        payload,audit=client._local_prompt('System',ordinary,[],{'observe'},{},None,canonical=rows,aggressive=True)
+        self.assertEqual(payload['messages'][1:],rows)
+        self.assertEqual(audit['archivedReadResults'],[])
+        self.assertEqual(rows,original)
 
 
 if __name__=="__main__":unittest.main()

@@ -181,6 +181,20 @@ def _read_custody(value):
     return False
 
 
+def _receipt_evidence(value):
+    """A completed reconciliation receipt is protected too, not just UNKNOWN."""
+    if isinstance(value, list): return any(_receipt_evidence(row) for row in value)
+    if not isinstance(value, dict): return False
+    for key, item in value.items():
+        name = key.lower() if isinstance(key, str) else ""
+        if (name in {"commandwritten", "transportwritten", "outcome", "operationid", "operationrevision",
+                "knownnotdispatched", "outcomeunknown", "replayallowed"} or
+                item and ("receipt" in name or name.endswith("operation") or "failure" in name)):
+            return True
+        if _receipt_evidence(item): return True
+    return False
+
+
 def _decode(raw):
     def unique(pairs):
         result = {}
@@ -523,7 +537,32 @@ class DirectModel:
                        if isinstance(part, dict) and isinstance(part.get("text"), str)
                        and (part.get("type")=="text" if self.provider=="claude" else part.get("thought") is not True))
 
-    def _active_conversation(self, conversation, read_only_tools, unknown, pending):
+    def _local_protected_rows(self, conversation, read_only_tools, unknown):
+        batches = [index for index, row in enumerate(conversation)
+            if row.get('role') == 'assistant' and row.get('tool_calls')]
+        protected = set(range(batches[-2], len(conversation))) if len(batches) >= 2 else (
+            set(range(batches[0], len(conversation))) if batches else set())
+        calls, assistant_index = {}, None
+        for index, row in enumerate(conversation):
+            if row.get('role') == 'assistant':
+                assistant_index = index
+                calls = {call.get('id'):call for call in row.get('tool_calls',[]) if isinstance(call,dict)}
+                if any(call.get('function',{}).get('name') not in read_only_tools for call in calls.values()):
+                    protected.add(index)
+            elif row.get('role') == 'tool':
+                try:
+                    function=calls[row['tool_call_id']]['function']
+                    fingerprint=hashlib.sha256(_packed([function['name'],_decode(function['arguments'])],self.max_request_bytes)).hexdigest()
+                    value=_decode(row['content'])
+                    if function['name'] not in read_only_tools or fingerprint in unknown or _read_custody(value) or _receipt_evidence(value):
+                        protected.add(index)
+                        if assistant_index is not None: protected.add(assistant_index)
+                except (KeyError,TypeError,ValueError,UnicodeError,RecursionError):
+                    protected.add(index)
+                    if assistant_index is not None: protected.add(assistant_index)
+        return protected
+
+    def _active_conversation(self, conversation, read_only_tools, unknown, pending, *, protect_local=False):
         """Supersede only repeated, completed pure-read bodies in the API copy.
 
         The original calls/results, human messages and action custody remain in
@@ -533,6 +572,7 @@ class DirectModel:
         """
         active = copy.deepcopy(conversation)
         if pending: return active
+        protected = self._local_protected_rows(conversation,read_only_tools,unknown) if protect_local else set()
         pairs, calls = [], {}
         for index, message in enumerate(conversation):
             if not isinstance(message, dict): continue
@@ -578,6 +618,7 @@ class DirectModel:
                         pairs.append((index, ("parts", part, "functionResponse", "response"), (name, args), native_id))
         latest, eligible = {}, []
         for index, path, (name, args), call_id in pairs:
+            if index in protected: continue
             if not isinstance(name, str) or name not in read_only_tools or not isinstance(args, dict): continue
             fingerprint = hashlib.sha256(_packed([name, args], self.max_request_bytes)).hexdigest()
             if fingerprint in unknown: continue
@@ -620,9 +661,12 @@ class DirectModel:
         schema/template overhead); this module never guesses bytes/token.
         """
         projected = copy.deepcopy(active)
+        protected = self._local_protected_rows(canonical,read_only_tools,unknown)
+        for index in protected:
+            projected[index] = copy.deepcopy(canonical[index])
         auxiliary = []
         for index, message in enumerate(projected):
-            if message.get('role') != 'assistant': continue
+            if index in protected or message.get('role') != 'assistant': continue
             for key in ('reasoning_content','reasoning'):
                 if isinstance(message.get(key),str):
                     raw=message.pop(key).encode()
@@ -645,19 +689,6 @@ class DirectModel:
         def fits(size, tokens):
             return ((self.local_prompt_budget_bytes is None or size <= self.local_prompt_budget_bytes)
                     and (self.local_prompt_token_limit is None or tokens <= self.local_prompt_token_limit))
-        def receipt_evidence(value):
-            # Reconciliation reads can carry COMPLETED action evidence too.
-            # Keep those exact structures, not merely unresolved/UNKNOWN ones.
-            if isinstance(value, list): return any(receipt_evidence(row) for row in value)
-            if not isinstance(value, dict): return False
-            for key, item in value.items():
-                name = key.lower() if isinstance(key, str) else ""
-                if (name in {"commandwritten", "transportwritten", "outcome", "operationid", "operationrevision",
-                        "knownnotdispatched", "outcomeunknown", "replayallowed"} or
-                        item and ("receipt" in name or name.endswith("operation") or "failure" in name)):
-                    return True
-                if receipt_evidence(item): return True
-            return False
         before_bytes, before_tokens = measure()
         size, tokens = before_bytes, before_tokens
         changed = []
@@ -684,6 +715,7 @@ class DirectModel:
                         {m.get("tool_call_id") for _, m in results} != set(group["calls"])):
                     continue
                 for index, message in results:
+                    if index in protected: continue
                     call_id = message.get("tool_call_id")
                     call = group["calls"][call_id]
                     function = call.get("function", {})
@@ -694,7 +726,7 @@ class DirectModel:
                         fingerprint = hashlib.sha256(_packed([name, args], self.max_request_bytes)).hexdigest()
                         full = canonical[index]["content"]
                         result = _decode(full)
-                        if fingerprint in unknown or _read_custody(result) or receipt_evidence(result): continue
+                        if fingerprint in unknown or _read_custody(result) or _receipt_evidence(result): continue
                     except (KeyError, TypeError, ValueError, RecursionError, UnicodeError): continue
                     raw = full.encode()
                     reference = dict(transcriptMessage=index, toolCallId=call_id,
@@ -816,9 +848,9 @@ class DirectModel:
                 index = 0
                 while self.natural_tool_rounds is None or index < self.natural_tool_rounds:
                     self._check(cancelled, deadline)
-                    active = self._active_conversation(conversation, read_only_tools, state["unknown"], state["pending"])
                     enabled = self.provider == "local" and (self.local_prompt_budget_bytes is not None or
                         self.local_prompt_token_limit is not None)
+                    active = self._active_conversation(conversation, read_only_tools, state["unknown"], state["pending"], protect_local=enabled)
                     def prepare(aggressive=False):
                         self.last_receipt.pop("promptBudget", None)
                         try:
