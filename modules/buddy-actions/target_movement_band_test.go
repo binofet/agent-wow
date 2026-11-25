@@ -61,6 +61,14 @@ func TestTargetMovementBandPathChecksWholeSegmentsAndWithdrawal(t *testing.T) {
 	if targetBandPathValid([]position{{x: 2}, {x: 1}, {x: 15}}, position{x: 2}, position{}, 10, 20, nil, 0) {
 		t.Fatal("inside withdrawal first moved toward body")
 	}
+	creeping := []position{{x: 3}}
+	for x := float32(2.97); x > 0; x -= .03 {
+		creeping = append(creeping, position{x: x})
+	}
+	creeping = append(creeping, position{x: 15})
+	if targetBandPathValid(creeping, position{x: 3}, position{}, 10, 20, nil, 0) {
+		t.Fatal("per-segment tolerance accumulated into a body crossing")
+	}
 	if !targetBandPathValid([]position{{x: 2}, {x: 15}}, position{x: 2}, position{}, 10, 20, nil, 0) {
 		t.Fatal("safe outward route rejected")
 	}
@@ -98,5 +106,49 @@ func TestTargetMovementBandEdgesUnknownClearanceAndLegacyDefault(t *testing.T) {
 	got, err = s.ApproachTarget(ctx, r)
 	if err != nil || got.Moving || got.TargetMovement.Ready {
 		t.Fatal("missing route became direct withdrawal", got, err)
+	}
+}
+
+func TestTargetMovementBandRechecksTargetAfterClockBeforeActualWrite(t *testing.T) {
+	s, f, r, ctx, _ := targetMovementFixture(t)
+	f.world.RequestedCreature.X = 3
+	r.RangeYards = 23
+	r.MinRangeYards = 17
+	f.onClock = func() { f.world.RequestedCreature.X = -3; f.onClock = nil }
+	got, err := s.ApproachTarget(ctx, r)
+	if err != nil || got.Moving || countOpcode(f, opcode.MSGMoveStartForward) != 0 || countOpcode(f, opcode.MSGMoveHeartbeat) != 0 {
+		t.Fatal("stale target path crossed final clock callback", got, err, f.packets)
+	}
+}
+
+func TestTargetMovementBandStaleCacheCannotFallThroughToUnconstrainedReplan(t *testing.T) {
+	s, f, r, ctx, advance := targetMovementFixture(t)
+	f.world.RequestedCreature.X = 3
+	r.RangeYards = 23
+	r.MinRangeYards = 17
+	if _, err := s.ApproachTarget(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	s.targetMovement.nav.expected = position{x: 100}
+	advance(200 * time.Millisecond)
+	s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
+		return []position{from, {x: 3}, to}, nil
+	}
+	before := countOpcode(f, opcode.MSGMoveHeartbeat)
+	got, err := s.ApproachTarget(ctx, r)
+	if err != nil || got.Moving || countOpcode(f, opcode.MSGMoveHeartbeat) != before || got.TargetMovement.Ready {
+		t.Fatal("stale cached path allowed ordinary body-crossing replan", got, err, f.packets)
+	}
+}
+
+func TestTargetMovementBandReadinessRechecksTargetAfterStop(t *testing.T) {
+	s, f, r, ctx, _ := targetMovementFixture(t)
+	s.state.Moving = true
+	r.RangeYards = 23
+	r.MinRangeYards = 17
+	f.onClock = func() { f.world.RequestedCreature.X = 3; f.onClock = nil }
+	got, err := s.ApproachTarget(ctx, r)
+	if err != nil || got.TargetMovement.Ready || got.Moving {
+		t.Fatal("STOP callback changed target but readiness was claimed", got, err, f.packets)
 	}
 }

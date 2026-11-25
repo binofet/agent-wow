@@ -551,6 +551,10 @@ local function decide_encounter(frame)
             if (obs.targets or {})[target] and obs.targets[target].entry==ranged_config.creatureEntry then options.rangeYards=rank.maxRange-ranged_config.clearanceYards end
             options=commands.ranged_options(obs,ranged_config,target,options)
             if not options then return end
+            -- The old actuator cannot admit a band-constrained approach.
+            -- Final stance arbitration may retain only an already-stationary,
+            -- geometrically safe real ranged cast; it never closes to cast.
+            if obs.hostTargetRangeBandSupported~=true and (obs.targets or {})[target] and obs.targets[target].entry==ranged_config.creatureEntry then return end
         end
         local result = movement.for_spell(obs, state.sequence, target, rank, options)
         return result.action
@@ -873,6 +877,7 @@ local function decide(frame)
     if commands and commands.ranged_filter and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence then
         commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status)
     end
+    if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
     if spell_invocation then spell_invocation.commit(out.action) end
     if warrior then warrior.commit(out.action) end

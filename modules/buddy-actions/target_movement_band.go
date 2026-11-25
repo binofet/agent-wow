@@ -90,11 +90,13 @@ func targetBandPathValid(path []position, from, target position, minimum, maximu
 	}
 	for i, h := range obstacles {
 		previous := from
+		floor := min(radii[i], distance(from, h))
 		for _, next := range path {
-			floor := min(radii[i], distance(previous, h))
 			if segmentDistance(previous, next, h) < floor-.05 {
 				return false
 			}
+			// Tolerance must not accumulate across a finely sampled route.
+			floor = max(floor, min(radii[i], distance(next, h)))
 			previous = next
 		}
 	}
