@@ -194,6 +194,8 @@ class OwnedGMLuaTests(unittest.TestCase):
         first = self.step(invoke=True, operation='lua-explicit-a')
         self.assertTrue(first['ok'], first)
         self.assertFalse(first['result']['execution']['commandTransportWritten'])
+        self.assertTrue(first['result']['execution']['selectionTransportWritten'])
+        self.assertTrue(first['result']['gameplayDispatched'])
         self.rig.rpc.selected = self.rig.die_new
         result = self.tools.dispatch('gm_execute', dict(command='.die'), operation_id='raw-bare-b')
         self.assertTrue(result['ok'], result)

@@ -1040,8 +1040,11 @@ class DirectTools:
         except ToolOutcomeUnknown as error:
             error.receipt['ownedDecision'] = metadata
             raise
-        written=native.get('transportWritten')
-        dispatched=written if type(written) is bool else (False if native.get('knownNotDispatched') is True or native.get('knownNoCommand') is True else None)
+        transport_flags = [native.get('commandTransportWritten', native.get('transportWritten')),
+                           native.get('selectionTransportWritten')]
+        dispatched = (True if any(flag is True for flag in transport_flags) else
+                      False if all(flag is False for flag in transport_flags) or
+                      native.get('knownNotDispatched') is True else None)
         return dict(result, invoked=True, gameplayDispatched=dispatched,
                     execution=copy.deepcopy(native))
 
