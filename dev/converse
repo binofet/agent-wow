@@ -2020,6 +2020,16 @@ class CapabilityUnavailable(ConversationError):
     pass
 
 
+class ChatPollTimeout(ConversationError):
+    """A read-only chat poll timed out; no tool/action was entered."""
+
+
+def cancellation_reason(cancelled):
+    reason = getattr(cancelled, "interrupt_reason", None)
+    return reason if reason in {"owner_input_waiting", "peer_input_waiting", "chat_body_changed",
+        "owned_body_changed", "chat_freshness_unavailable"} else "owner_input_waiting"
+
+
 class OwnerInputPending(ConversationError):
     """A fresh owner message supersedes the current model turn."""
 
@@ -2277,7 +2287,10 @@ class RPC:
             if method not in ("session.policy_state","session.policy_source","buddy-inventory.state","buddy-inventory.discover") and len(raw) > response_limit:
                 raise ConversationError("Chat RPC response exceeds the limit")
             result = json.loads(raw)
-        except (OSError, ValueError, urllib.error.URLError):
+        except (OSError, ValueError, urllib.error.URLError) as error:
+            cause = error.reason if isinstance(error, urllib.error.URLError) else error
+            if method == "buddy-chat.poll" and isinstance(cause, TimeoutError):
+                raise ChatPollTimeout("Read-only chat poll timed out") from None
             raise ConversationError("Chat RPC is unavailable or returned invalid JSON") from None
         if (not isinstance(result, dict) or result.get("jsonrpc") != "2.0"
                 or type(result.get("id")) is not int or result["id"] != self.request_id):
@@ -2696,7 +2709,7 @@ class AgentBrain:
             return self._generate(history,control_state,cancelled)
         except BaseException as error:
             if self.last_failure_receipt is None:
-                reason=('owner_input_waiting' if isinstance(error,OwnerInputPending) else
+                reason=(cancellation_reason(cancelled) if isinstance(error,OwnerInputPending) else
                     'stop_requested' if isinstance(error,Stopped) else
                     'process_spawn_failed' if self._generation['stage']=='spawning' else
                     'developer_binding_changed' if self._generation['stage']=='binding_check' else 'preparation_failed')
@@ -3064,7 +3077,7 @@ class DirectBrain(AgentBrain):
             return reply
         except BaseException as error:
             self.last_api_receipt = self.client.last_receipt
-            reason = ("stop_requested" if self.stopped() else "owner_input_waiting"
+            reason = ("stop_requested" if self.stopped() else cancellation_reason(cancelled)
                 if isinstance(error, (Cancelled, OwnerInputPending)) else
                 error.reason if isinstance(error, ModelError) else type(error).__name__)
             record.update(outcome="failed", reason=reason, errorType=type(error).__name__,
@@ -4902,17 +4915,37 @@ class Conversation:
         # One synchronous model process remains; a cheap read interrupts it
         # without advancing the chat cursor or undoing already-written code.
         next_poll = [0.0]
+        freshness_retry_used = [False]
         interrupt_reason = ["owner_input_waiting"]
-        def cancelled():
+        bound_chat, bound_cursor, bound_guid = self.session_id, self.cursor, self.character_guid
+        def check_freshness():
             now = time.monotonic()
             if now < next_poll[0]: return False
             next_poll[0] = now + 0.75
+            params = {"afterSequence": str(bound_cursor), "limit": 256, "sessionId": bound_chat}
             try:
-                result = self.rpc.call("buddy-chat.poll", {"afterSequence": str(self.cursor),
-                    "limit": 256, "sessionId": self.session_id}, timeout=0.5)
-                if result.get("sessionId") != self.session_id:
+                try:
+                    result = self.rpc.call("buddy-chat.poll", params, timeout=0.5)
+                except ChatPollTimeout:
+                    # Only a failed pure read may retry, once, on the same bound cursor.
+                    remaining = now + 0.8 - time.monotonic()
+                    if (self.stopped() or self.session_id != bound_chat or self.cursor != bound_cursor
+                            or self.character_guid != bound_guid):
+                        interrupt_reason[0] = "owned_body_changed"
+                        return True
+                    if remaining <= 0 or freshness_retry_used[0]:
+                        raise
+                    freshness_retry_used[0] = True
+                    result = self.rpc.call("buddy-chat.poll", dict(params), timeout=min(0.3, remaining))
+                    if time.monotonic() > now + 0.8:
+                        raise ChatPollTimeout("Chat freshness read deadline elapsed")
+                if result.get("sessionId") != bound_chat:
                     interrupt_reason[0] = "chat_body_changed"
                     self.reset_body(); return True
+                if (self.session_id != bound_chat or self.cursor != bound_cursor
+                        or self.character_guid != bound_guid):
+                    interrupt_reason[0] = "owned_body_changed"
+                    return True
                 if self.owner_message_waiting(result):return True
                 if still_current is not None:
                     if self.combat_review_peer_waiting(result):
@@ -4923,9 +4956,13 @@ class Conversation:
                         return True
                 return False
             except ConversationError:
-                # Unknown freshness cannot authorize a stale gameplay reply.
+                # Persistent/invalid freshness never authorizes a stale reply or write.
                 interrupt_reason[0] = "chat_freshness_unavailable"
                 return True
+        def cancelled():
+            interrupted = check_freshness()
+            cancelled.interrupt_reason = interrupt_reason[0]
+            return interrupted
         development=state.get('development',{}) if isinstance(state,dict) else {}
         sid=development.get('sessionId') if isinstance(development,dict) else None
         context=dict(sessionId=sid if isinstance(sid,str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid) else self.session_id,

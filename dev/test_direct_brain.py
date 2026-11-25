@@ -116,6 +116,16 @@ class PublicRPC:
 
 
 class DirectBrainIntegrationTests(unittest.TestCase):
+    def test_chat_freshness_failure_retains_exact_cancellation_cause_without_http(self):
+        def cancelled():return True
+        cancelled.interrupt_reason='chat_freshness_unavailable'
+        with self.rig([]) as (loop,brain,state,http):
+            with self.assertRaises(converse.OwnerInputPending):brain.generate([],state,cancelled=cancelled)
+            self.assertEqual(brain.last_failure_receipt['reason'],'chat_freshness_unavailable')
+            self.assertEqual(http.requests,[])
+            self.assertEqual(brain.last_failure_receipt.get('tools',[]),[])
+            self.assertEqual(brain.last_failure_receipt.get('pendingTools',[]),[])
+
     def gm_guide_fixture(self):
         rpc = PublicRPC(); rpc.guid = rpc.catalog_guid = "87"
         state = dict(character=dict(guid="87"), gm_controls_available=True,
