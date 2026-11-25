@@ -37,7 +37,7 @@ local function request(v)
        v.responseYards~=nil and (not number(v.responseYards) or v.responseYards<=0) or
        v.deadlineMonotonicMs~=nil and (not number(v.deadlineMonotonicMs) or v.deadlineMonotonicMs<0) then return end
     if v.task=="pull_back" then
-        if #v.id>75 or not guid(v.targetGuid) or not guid(v.tankGuid) or not uint32(v.spellId) or
+        if not guid(v.targetGuid) or not guid(v.tankGuid) or not uint32(v.spellId) or
            not v.deadlineMonotonicMs or v.targetGuid==v.tankGuid then return end
         return {id=v.id,kind=v.task,targetGuid=v.targetGuid,tankGuid=v.tankGuid,spellId=v.spellId,
             childId="pull:"..v.id,guideGuid=v.tankGuid,destinationGuid=v.tankGuid,
@@ -184,6 +184,7 @@ local function pull_step(task,obs,frame,sequence,can_act)
         if victim==task.tankGuid then finish(task,"tank_handoff_observed") end
         return -- Return through the same ordinary rally/lease path below, even in combat.
     end
+    if spell_request.request_status(task.childId) then finish(task,"pull_child_id_already_used");return end
     if npc.protected==true then finish(task,"pull_target_protected");return end
     if npc.engaged==true or victim or type(npc.attackObservation)~="table" or npc.attackObservation.victimKnown==true then
         finish(task,"pull_requires_unengaged_target");return
@@ -223,7 +224,14 @@ local function pull_step(task,obs,frame,sequence,can_act)
     if can_act then
         spell_request.on_event({kind="command",value={task="cast_spell",id=task.childId,spellId=task.spellId,
             targets={mask=2,objectGuid=task.targetGuid},requirements={stationary=true}}})
-        task.childQueued=true;task.cast=spell_request.request_status(task.childId)
+        local child=spell_request.request_status(task.childId)
+        local b=child and child.binding
+        if not child or child.current~=true or child.spellId~=task.spellId or
+           not child.targets or child.targets.objectGuid~=task.targetGuid or child.targets.mask~=2 or
+           not b or b.sessionId~=obs.sessionId or b.selfGuid~=obs.selfGuid or b.visitId~=obs.visitId then
+            finish(task,"pull_child_request_not_accepted");return
+        end
+        task.childQueued=true;task.cast=child
     end
     return waiting("arming_one_pull_cast")
 end
@@ -452,7 +460,7 @@ function M.import_state(checkpoint)
     if type(checkpoint)~="table" or checkpoint.version~=1 or type(checkpoint.data)~="table" or
        type(checkpoint.data.retired)~="table" then return false end
     for _,task in pairs({checkpoint.data.current,checkpoint.data.next}) do
-        local pull=type(task)=="table" and task.kind=="pull_back" and id(task.id) and #task.id<=75 and guid(task.targetGuid) and guid(task.tankGuid) and
+        local pull=type(task)=="table" and task.kind=="pull_back" and id(task.id) and guid(task.targetGuid) and guid(task.tankGuid) and
             uint32(task.spellId) and task.childId=="pull:"..task.id and number(task.deadline) and
             number(task.responseYards) and task.responseYards>0
         local rally=type(task)=="table" and task.kind=="rally_to" and guid(task.guideGuid) and

@@ -409,13 +409,14 @@ function M.pending() return state.current~=nil or state.cancel~=nil or state.rel
 -- settles, cancels or retries native custody.
 function M.request_status(request)
     if state.current and state.current.id==request then
-        local out=status(state.current);out.current=true;return out
+        local out=status(state.current);out.current=true;out.targets=copy(state.current.targets);out.binding=copy(state.current.binding);return out
     end
     if state.last and state.last.id==request then
         local out=copy(state.last)
         out.pendingCleanup=state.releasing and state.releasing.id==request or false
         return out
     end
+    if state.seen[request] then return {id=request,retired=true,phase=state.seen[request]} end
 end
 -- A coalesced spellbook change is an observation, not a failed cast. The host
 -- only computes the actual ID delta; this accepted policy chooses when one

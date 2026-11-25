@@ -4,6 +4,7 @@ import (
 	"context"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"strings"
 	"testing"
 )
 
@@ -276,5 +277,28 @@ func TestPullBackKnownCastRefusalDoesNotRetry(t *testing.T) {
 		if out["task"].(map[string]any)["reason"] != "pull_cast_refused" {
 			t.Fatal(out)
 		}
+	}
+}
+
+func TestPullBackRejectsPreexistingChildWithoutBorrowingItsEffect(t *testing.T) {
+	for _, last := range []string{",last={id='pull:back',spellId=133,phase='transport_receipt',receipt={actionId='old-cast',outcome='confirmed',targetGuid='" + fallbackGUID(fallbackNPC) + "',effectObserved=true}}", ""} {
+		t.Run(map[bool]string{true: "old_receipt", false: "retired_only"}[last != ""], func(t *testing.T) {
+			source := strings.Replace(readEncounterBundle(t), "local function decide(frame)", "local seeded=encounter_spell_invocation.import_state({version=1,data={seen={['pull:back']='transport_receipt'}"+last+"}})\nlocal function decide(frame)", 1)
+			host, err := behavior.NewSession(context.Background(), fallbackSession, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer host.Close()
+			p := &fallbackPolicyTest{t: t, host: host}
+			obs := pullBackObservation()
+			waitTaskCommand(t, p, map[string]any{"task": "pull_back", "id": "back", "targetGuid": fallbackGUID(fallbackNPC), "tankGuid": "3", "spellId": 585, "deadlineMonotonicMs": 999999999999})
+			for i := 0; i < 3; i++ {
+				out := p.decide(observeSparseEncounter(t, p, obs)).Output
+				task := out["task"].(map[string]any)
+				if out["action"] != nil || task["contact"] != nil || task["reason"] != "pull_child_id_already_used" {
+					t.Fatal("borrowed or replaced original child", out)
+				}
+			}
+		})
 	}
 }
