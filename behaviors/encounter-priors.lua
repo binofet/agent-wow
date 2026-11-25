@@ -1,5 +1,6 @@
 -- Model-editable encounter knowledge. Engage means assist/focus, not pull.
 -- A deliberate `engage {pull=true}` overrides this default for that exact GUID.
+-- The exact current explicit cast_spell proposal also wins; automatic casts do not.
 -- These are roles and observed hazards, never inferred pack links or aggro.
 -- Pull admission remains a standing prior. Automatic positioning activates only
 -- once per body/map/visit for durationMs; expiry/cancel needs a new explicit
@@ -42,12 +43,14 @@ local function admission(obs,id,explicitPull)
     end
     return false,"waiting_for_tank_attack_witness"
 end
-local function filter(obs,out,status,explicitPull)
+local function filter(obs,out,status,explicitPull,requestedSpell)
     local r=rule(obs)
     if not r then return end
     local action=out.action
     local id=action and (action.targetGuid or (action.targets or {}).objectGuid) or out.focusGuid
     local allowed,reason=admission(obs,id,explicitPull)
+    if requestedSpell and requestedSpell.capability=="cast_spell" and
+       (requestedSpell.targets or {}).objectGuid==id then allowed,reason=true,"explicit_spell_request" end
     local waiting=false
     for target,npc in pairs(obs.targets or {}) do
         if npc.entry==r.creatureEntry and not admission(obs,target,explicitPull) then waiting=true end

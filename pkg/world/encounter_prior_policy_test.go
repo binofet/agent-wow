@@ -268,3 +268,23 @@ end}`
 		}
 	}
 }
+
+func TestEncounterPriorExactExplicitSpellWinsWithoutAuthorizingAutomaticPull(t *testing.T) {
+	raw, e := os.ReadFile(filepath.Join("..", "..", "behaviors", "spell-invocation.lua"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	p := newFallbackPolicyTest(t, "local encounter_spell_invocation=(function()\n"+string(raw)+"\nend)()\n")
+	o := sludgePriorObservation()
+	settlePriorLease(t, p, o, true)
+	_, e = p.host.Enqueue(behavior.Event{Kind: "command", Value: map[string]any{"task": "cast_spell", "id": "owner-explicit-cast", "spellId": float64(133), "targets": map[string]any{"mask": float64(2), "objectGuid": fallbackGUID(fallbackNPC)}, "requirements": map[string]any{"stationary": false}}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	out := p.decide(observeRanged(t, p, o, true)).Output
+	a, _ := out["action"].(map[string]any)
+	prior, _ := out["encounterPrior"].(map[string]any)
+	if a["capability"] != "cast_spell" || a["spellId"] != float64(133) || prior["reason"] != "explicit_spell_request" {
+		t.Fatal("explicit requested spell was mistaken for broad assist", out)
+	}
+}

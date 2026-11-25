@@ -32,6 +32,7 @@ local policy_observation
 local task_view
 local ranged_config,ranged_status
 local prior_intent
+local prior_requested_spell
 local task_support_action
 -- Existing interactions yield to observed needs chosen here, never a native
 -- emergency controller. Loot closes its actual window through corpse-loot.
@@ -573,7 +574,7 @@ local function decide_encounter(frame)
             return commands and commands.ranged_options and commands.ranged_options(current,ranged_config,target,options)
         end})
         out.spellInvocation=status
-        if requested then out.action=requested;return out end
+        if requested then prior_requested_spell=requested;out.action=requested;return out end
     end
     local breaking = control_recovery and control_recovery.decide(frame,obs)
     if breaking then breaking.observationSequence=state.sequence;out.action=breaking;task_support_action=true;return out end
@@ -839,6 +840,7 @@ end
 local function decide(frame)
     ranged_config,ranged_status=nil,nil
     prior_intent=nil
+    prior_requested_spell=nil
     if commands and commands.ranged_stance and observation then ranged_config,ranged_status=commands.ranged_stance(observation,frame) end
     if spell_invocation then spell_invocation.capture(frame) end
     local out=decide_policy(frame)
@@ -889,7 +891,7 @@ local function decide(frame)
         if ranged_config and transient_tasks and not task_support_action and not transient_tasks.allow(task_view,current,out.action) then out.action=nil end
     end
     if encounter_priors and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence then
-        encounter_priors.filter(current,out,ranged_status,prior_intent and prior_intent.explicitPullGuid)
+        encounter_priors.filter(current,out,ranged_status,prior_intent and prior_intent.explicitPullGuid,prior_requested_spell==out.action and prior_requested_spell or nil)
     end
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
