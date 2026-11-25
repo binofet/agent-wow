@@ -1899,6 +1899,31 @@ class AttachedPolicyPatchTests(unittest.TestCase):
         self.assertEqual(self.rpc.source,before);self.assertFalse(self.rpc.writes)
         self.assertFalse(list(self.rig.workspace.iterdir()))
 
+    def test_literal_find_declaration_scan_is_line_local_on_large_blank_prefix(self):
+        # A bounded child keeps the former quadratic pattern from hanging CI.
+        # Exercise the real bound tool, not a replacement regex microbenchmark.
+        code = """
+from test_direct_tools import AttachedPolicyPatchTests
+case=AttachedPolicyPatchTests('runTest')
+case.setUp()
+try:
+    case.rpc.source='\\n'*200000+'  local function discover_me (x) return x end\\nreturn {}\\n'
+    result=case.tools.dispatch('policy_show',dict(find='Fireball',path=['source'],offset=0,limit=512))
+    assert result['ok'],result
+    view=result['result']
+    assert view['matches']==0
+    assert 'discover_me' in view['discoveredDeclarations']['functions']
+    found=case.tools.dispatch('policy_show',view['examples']['findDiscoveredFunction'])
+    assert found['ok'],found
+    assert found['result']['matchOffset']==200008,found
+    assert not case.rpc.writes
+finally:
+    case.doCleanups()
+"""
+        completed=subprocess.run([sys.executable,'-B','-c',code],cwd=ROOT,
+            env=dict(os.environ,PYTHONPATH=str(ROOT/'dev')),capture_output=True,text=True,timeout=5)
+        self.assertEqual(completed.returncode,0,completed.stdout+completed.stderr)
+
     def test_existing_self_edit_lock_collision_cannot_apply(self):
         self.tools.dispatch('policy_show',{})
         lock_path=self.rig.edit.DATA/self.rpc.guid/'edit.lock'

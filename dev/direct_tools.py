@@ -612,7 +612,7 @@ class DirectTools:
             match = source.find(text, offset)
             next_match = match + len(text) if match >= 0 else None
             modules = list(dict.fromkeys(re.findall(r"(?m)^local ([A-Za-z_][A-Za-z0-9_]{0,127}) = \(function\(\)", source)))
-            functions = list(dict.fromkeys(re.findall(r"(?m)^\s*(?:local )?function ([A-Za-z_][A-Za-z0-9_.:]{0,127})\s*\(", source)))
+            functions = list(dict.fromkeys(re.findall(r"(?m)^[ \t]*(?:local )?function ([A-Za-z_][A-Za-z0-9_.:]{0,127})[ \t]*\(", source)))
             examples = dict(readSource=dict(path=["source"], offset=offset, limit=4096))
             if match >= 0:
                 examples["readMatch"] = dict(path=["source"], offset=match, limit=4096)
