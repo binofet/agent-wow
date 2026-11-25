@@ -1,7 +1,7 @@
 -- One shared editable death lifecycle: release, own-corpse query, ghost route,
 -- reclaim timing and continuation. Go supplies facts and exact physical inputs.
 local M={tuning={release_delay_ms=0,route_retry_ms=1000,reclaim_range=35,
-    unknown_reclaim_delay_ms=120000,deadline_ms=0,offer_max_age_ms=60000,offer_scope='party'}}
+    unknown_reclaim_delay_ms=120000,deadline_ms=0,offer_max_age_ms=60000,offer_scope='party',trusted_offer_casters={}}}
 local state={}
 local function valid_id(v)return type(v)=='string' and v~='' and v~='0' end
 local function alive(p)return p and p.present==true and p.aliveKnown==true and p.alive==true end
@@ -82,7 +82,11 @@ function M.decide(frame,obs,sequence)
             if p.guid==offer.casterGuid and p.online==true then member=true end
         end
         local within_age=M.tuning.offer_max_age_ms<=0 or tonumber(offer.ageMs or '0')<=M.tuning.offer_max_age_ms
-        if (member or M.tuning.offer_scope=='any_offer') and within_age then
+        -- Per-actor editable exact GUID set. Empty by default; this extends
+        -- party trust without accepting arbitrary outsiders or inventing offers.
+        local trusted=type(M.tuning.trusted_offer_casters)=='table' and
+            M.tuning.trusted_offer_casters[offer.casterGuid]==true
+        if (member or trusted or M.tuning.offer_scope=='any_offer') and within_age then
             if (obs.navigation or {}).motionUnconfirmed==true then return {phase='waiting_for_actual_motion_before_offer'} end
             if r.active==true or r.motionPending==true then return stop('resurrection_offer_owned_stop') end
             local a=action('accept_resurrection');a.casterGuid=offer.casterGuid;a.expectedOfferRevision=offer.revision
