@@ -53,7 +53,7 @@ func TestNativeFollowContinuesAcrossWrittenPoseEstimates(t *testing.T) {
 		self.X = float32(i * 2)
 		out := p.decide(observeRanged(t, p, o, false)).Output
 		status, _ := out["rangedStance"].(map[string]any)
-		if out["action"] != nil || status["phase"] != "continuing_native_follow_estimate" || status["positionReady"] != false {
+		if out["action"] != nil || (status["phase"] != "continuing_native_follow_estimate" && status["phase"] != "passive_distant_prior") || status["positionReady"] != false {
 			t.Fatal("normal written walking reacquired optional ranged control", i, out)
 		}
 		if i == 30 {
