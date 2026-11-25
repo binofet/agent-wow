@@ -262,7 +262,7 @@ func TestPackagedInventoryObservedLuaRoll(t *testing.T) {
 	}{
 		{"other companion needs useful armor", policyMageGUID, false, 1},
 		{"Mira disenchants equal armor when offered", 4, true, 3},
-		{"other companion greeds equal armor", policyMageGUID, true, 2},
+		{"other companion passes equal armor", policyMageGUID, true, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			choice := test.choice
