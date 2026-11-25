@@ -45,7 +45,7 @@ local function finish(reason,receipt)
     local task=state.current
     state.seen[task.id]=reason
     state.last={id=task.id,spellId=task.spellId,phase=reason,receipt=receipt}
-    if task.preparation then state.releasing={binding=task.binding,preparation=task.preparation} end
+    if task.preparation then state.releasing={id=task.id,binding=task.binding,preparation=task.preparation} end
     state.current=nil;state.error=nil
 end
 
@@ -111,7 +111,8 @@ function M.on_event(event)
            id(receipt.action_id) and (not task.actionId or task.actionId==receipt.action_id) then
             task.actionId=receipt.action_id
             local actual={actionId=receipt.action_id,outcome=receipt.outcome,phase=p.phase,grpcStatus=p.grpc_status,
-                          grpcMessage=p.grpc_message}
+                          grpcMessage=p.grpc_message,targetGuid=p.target_guid,transportWritten=p.transport_written,
+                          serverCastGo=p.server_cast_go,effectObserved=p.effect_observed}
             if receipt.outcome=="confirmed" or receipt.outcome=="failed" or
                receipt.outcome=="not_dispatched" or receipt.outcome=="settled_unverified" then
                 -- A receipt outcome is not an invented damage/aura/channel
@@ -208,7 +209,7 @@ local function required(task,obs)
 end
 local function status(task)
     return {id=task.id,spellId=task.spellId,phase=task.phase,cancelRequested=task.cancelRequested,
-        receipt=copy(task.receipt),preparation=task.preparation and {phase=task.preparation.phase,
+        receipt=copy(task.receipt),issued=task.issued,actionId=task.actionId,preparation=task.preparation and {phase=task.preparation.phase,
         owner=task.preparation.owner,receipt=copy(task.preparation.receipt)}}
 end
 
@@ -404,6 +405,18 @@ end
 
 function M.export_state() return {version=1,data=copy(state)} end
 function M.pending() return state.current~=nil or state.cancel~=nil or state.releasing~=nil end
+-- Read-only coordination for an exact caller-owned child request. This never
+-- settles, cancels or retries native custody.
+function M.request_status(request)
+    if state.current and state.current.id==request then
+        local out=status(state.current);out.current=true;return out
+    end
+    if state.last and state.last.id==request then
+        local out=copy(state.last)
+        out.pendingCleanup=state.releasing and state.releasing.id==request or false
+        return out
+    end
+end
 -- A coalesced spellbook change is an observation, not a failed cast. The host
 -- only computes the actual ID delta; this accepted policy chooses when one
 -- ordinary private review should inspect the new abilities.
