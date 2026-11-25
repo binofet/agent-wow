@@ -913,11 +913,12 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
     local ids,nearest,distance,complete=ranged_targets(obs,row)
     status.matchedTargets=#ids
     if #ids==0 and complete then if #frame.pending==0 then ranged_hold(obs,frame,out,row,status,false) end;return end
+    local self=(obs.players or {})[obs.selfGuid]
     local prior=row.origin=="learned_prior" and (obs.navigation or {}).following==true and
         encounter_priors and encounter_priors.rule(obs)
-    local follow_safe=prior and ranged_travel_safe(obs,row,false,prior.attackWitnessMaxAgeMs)
+    local follow_safe=prior and self and self.positionEstimated~=true and
+        ranged_travel_safe(obs,row,false,prior.attackWitnessMaxAgeMs)
     if not follow_safe then out.followFormation,out.portalCatchup=nil,nil end
-    local self=(obs.players or {})[obs.selfGuid]
     if not self or self.aliveKnown~=true or self.alive~=true then return end
     local action=out.action
     local cleanup=action and (action.capability=="fear_break" or action.capability=="cancel_spell" or action.capability=="loot_close" or action.capability=="release_interaction" or action.capability=="melee_stop")

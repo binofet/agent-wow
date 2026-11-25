@@ -107,7 +107,7 @@ func TestLearnedPriorReleasesForNativeFollowWithoutRally(t *testing.T) {
 }
 
 func TestNativeFollowDoesNotOverrideExplicitDangerOrUnknownFacts(t *testing.T) {
-	for _, kind := range []string{"explicit_order", "fresh_attack", "stale_victim_fighting", "self_combat", "unknown_pose", "near_hazard"} {
+	for _, kind := range []string{"explicit_order", "fresh_attack", "stale_victim_fighting", "self_combat", "unknown_pose", "estimated_self", "inferred_self", "near_hazard"} {
 		t.Run(kind, func(t *testing.T) {
 			p, o, _ := nativeFollowPrior(t)
 			o.Navigation.Following = true
@@ -124,6 +124,10 @@ func TestNativeFollowDoesNotOverrideExplicitDangerOrUnknownFacts(t *testing.T) {
 				o.Players["4"].InCombat = true
 			case "unknown_pose":
 				n.PositionKnown = false
+			case "estimated_self":
+				o.Players["4"].PositionEstimated = true
+			case "inferred_self":
+				o.Players["4"].PositionInferred = true
 			case "near_hazard":
 				n.X = 3
 			}
