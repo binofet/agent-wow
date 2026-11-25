@@ -137,6 +137,47 @@ func TestCorpseApproachPlanCannotChangeBodyVisitOrExactTarget(t *testing.T) {
 	}
 }
 
+func TestCorpseApproachCleanupClockCannotStopReplacementBodyOrLease(t *testing.T) {
+	for _, mode := range []string{"unchanged", "new session", "new visit", "same owner new token", "different owner new token"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance, request := navLootRig(t)
+			out, err := s.ApproachLoot(context.Background(), request)
+			if err != nil || !out.Moving {
+				t.Fatal(out, err)
+			}
+			advance(200 * time.Millisecond)
+			clocks := 0
+			f.onClock = func() {
+				clocks++
+				if clocks == 1 {
+					f.world.LootableCorpses[0].Alive = true
+					return
+				}
+				f.onClock = nil
+				switch mode {
+				case "new session":
+					s.sessionID += "-replacement"
+				case "new visit":
+					f.world.VisitRevision++
+				case "same owner new token":
+					s.interactionToken = "replacement"
+				case "different owner new token":
+					s.interactionToken, s.state.InteractionOwner = "replacement", "professions"
+				}
+			}
+			out, err = s.ApproachLoot(context.Background(), request)
+			wantStops := 0
+			if mode == "unchanged" {
+				wantStops = 1
+			}
+			if err != nil || clocks != 2 || countPackets(f, opcode.MSGMoveStop) != wantStops ||
+				countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 || s.lootApproachGuard != nil {
+				t.Fatal("cleanup clock reused old body/lease authority or lost the owned STOP", out, err, clocks, f.packets)
+			}
+		})
+	}
+}
+
 func TestCorpseApproachEnteredMovementLossRetainsUnknownWithoutReplay(t *testing.T) {
 	for _, heartbeat := range []bool{false, true} {
 		t.Run(fmt.Sprint(heartbeat), func(t *testing.T) {
