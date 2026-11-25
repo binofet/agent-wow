@@ -577,6 +577,7 @@ local function decide_encounter(frame)
             return commands and commands.ranged_options and commands.ranged_options(current,ranged_config,target,options)
         end})
         out.spellInvocation=status
+        if transient_tasks and transient_tasks.pull_spell_proposal then transient_tasks.pull_spell_proposal(task_view,requested,status) end
         if requested then prior_requested_spell=requested;out.action=requested;return out end
     end
     local breaking = control_recovery and control_recovery.decide(frame,obs)
@@ -890,11 +891,14 @@ local function decide(frame)
         if cancel then out.action=cancel;out.followFormation=nil;out.portalCatchup=nil end
     end
     if commands and commands.ranged_filter and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence then
-        commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status,out.rangedOffenseEligible and damage_spell or nil,task_view)
+        commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status,out.rangedOffenseEligible and damage_spell or nil,task_view,
+            transient_tasks and transient_tasks.pull_context and transient_tasks.pull_context(current) or nil)
         if ranged_config and transient_tasks and not task_support_action and not transient_tasks.allow(task_view,current,out.action) then out.action=nil end
     end
     if encounter_priors and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence then
-        encounter_priors.filter(current,out,ranged_status,prior_intent and prior_intent.explicitPullGuid,prior_requested_spell==out.action and prior_requested_spell or nil)
+        local directed_pull=transient_tasks and transient_tasks.pull_context and transient_tasks.pull_context(current)
+        encounter_priors.filter(current,out,ranged_status,prior_intent and prior_intent.explicitPullGuid or directed_pull and directed_pull.targetGuid,
+            prior_requested_spell==out.action and prior_requested_spell or nil)
     end
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end

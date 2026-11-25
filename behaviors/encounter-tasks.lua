@@ -1,8 +1,9 @@
 -- Temporary script tasks. The host transports structured intent and finite
 -- movement ownership; this module owns the task's conditions and lifecycle.
-local M = {tuning={lease_ms=3000,renew_below_ms=1500,response_yards=10,anchor_yards=2}}
+local M = {tuning={lease_ms=3000,renew_below_ms=1500,response_yards=10,anchor_yards=2,pull_regroup_yards=10,pull_min_range_yards=8,pull_range_padding=2,contact_age_ms=5000}}
 local state = {retired={}}
 local instance_entry = encounter_instance_entry
+local spell_request = encounter_spell_invocation
 local function number(n) return type(n)=="number" and n==n and n>-math.huge and n<math.huge end
 local function id(s) return type(s)=="string" and #s>0 and #s<=80 end
 local function guid(s)
@@ -22,9 +23,11 @@ end
 local function witnessed_position(player,map)
     if player and player.positionEstimated~=true and player.positionInferred~=true then return position(player,map) end
 end
+local function uint32(n) return number(n) and n>0 and n<=4294967295 and n%1==0 end
 local function finish(task,reason) task.finishing=task.finishing or reason end
 local function pop(task)
-    state.last={id=task.id,kind=task.kind,phase="complete",reason=task.finishing}
+    state.last={id=task.id,kind=task.kind,phase="complete",reason=task.finishing,
+        targetGuid=task.targetGuid,tankGuid=task.tankGuid,spellId=task.spellId,contact=task.contact,cast=task.cast}
     if task.kind=="enter_instance" then state.retired[task.id]={reason=task.finishing,task=task}
     else state.retired[task.id]=task.finishing end
     state.current=nil
@@ -33,6 +36,13 @@ local function request(v)
     if not id(v.id) or v.ownerGuid~=nil and not guid(v.ownerGuid) or
        v.responseYards~=nil and (not number(v.responseYards) or v.responseYards<=0) or
        v.deadlineMonotonicMs~=nil and (not number(v.deadlineMonotonicMs) or v.deadlineMonotonicMs<0) then return end
+    if v.task=="pull_back" then
+        if not guid(v.targetGuid) or not guid(v.tankGuid) or not uint32(v.spellId) or
+           not v.deadlineMonotonicMs or v.targetGuid==v.tankGuid then return end
+        return {id=v.id,kind=v.task,targetGuid=v.targetGuid,tankGuid=v.tankGuid,spellId=v.spellId,
+            childId="pull:"..v.id,guideGuid=v.tankGuid,destinationGuid=v.tankGuid,
+            responseYards=v.responseYards or M.tuning.pull_regroup_yards,deadline=v.deadlineMonotonicMs}
+    end
     if v.task=="rally_to" then
         if not guid(v.guideGuid) or not v.deadlineMonotonicMs or
            v.destinationGuid~=nil and not guid(v.destinationGuid) then return end
@@ -57,7 +67,9 @@ function M.on_event(event)
         if p.capability=="movement_owner" and p.owner==op.owner and p.mode==op.mode then
             if receipt.outcome=="confirmed" then
                 local result=p.result or {}
-                if op.mode=="release" then task.token=nil;task.released=true
+                if op.mode=="release" then
+                    task.token=nil
+                    if op.handoff then task.aimReleased=true else task.released=true end
                 elseif type(result.token)=="string" and #result.token>0 then
                     task.token=result.token;task.granted=true
                 else task.uncertain=true end
@@ -70,6 +82,9 @@ function M.on_event(event)
             end
         end
     end
+    if task and task.kind=="pull_back" and task.childQueued and spell_request and spell_request.request_status then
+        task.cast=spell_request.request_status(task.childId) or task.cast
+    end
     if event.kind~="command" or type(event.value)~="table" then return true end
     local v=event.value
     if v.task=="cancel_task" or v.task=="wait_for_pull" and v.cancel==true then
@@ -80,7 +95,7 @@ function M.on_event(event)
         if state.next and (v.id==nil or v.id==state.next.id) then
             state.retired[state.next.id]="canceled";state.next=nil
         end
-    elseif v.task=="wait_for_pull" or v.task=="enter_instance" or v.task=="rally_to" then
+    elseif v.task=="wait_for_pull" or v.task=="enter_instance" or v.task=="rally_to" or v.task=="pull_back" then
         local next_task
         if v.task=="enter_instance" then next_task=instance_entry and instance_entry.request(v,state.observed)
         else next_task=request(v) end
@@ -103,6 +118,7 @@ end
 local function status(task,phase)
     return {id=task.id,kind=task.kind,phase=phase,ownerGuid=task.ownerGuid,
             guideGuid=task.guideGuid,destinationGuid=task.destinationGuid,
+            targetGuid=task.targetGuid,tankGuid=task.tankGuid,spellId=task.spellId,contact=task.contact,cast=task.cast,
             anchor=task.anchor,responseYards=task.responseYards,reason=task.finishing,
             deadlineMonotonicMs=task.deadline,error=task.refusal}
 end
@@ -113,6 +129,111 @@ local function pulled_to_anchor(obs,task,targets)
            (attack.victimGuid==task.ownerGuid or target==obs.observedOwnerFocus) and
            near(task.anchor,position((obs.targets or {})[target],obs.mapId),task.responseYards) then return target end
     end
+end
+
+-- Directed one-shot pull: exact observed target/rank, then ordinary movement
+-- back toward the witnessed tank. No retry is inferred from GO, ACK or a
+-- timeout. Spacing and evidence horizons are editable policy, not host rules.
+local function attack_victim(obs,target)
+    local npc=(obs.targets or {})[target]
+    local a=npc and npc.attackObservation
+    local age=a and tonumber(a.ageMs or "0")
+    if not alive(npc) or not a or a.victimKnown~=true or not guid(a.victimGuid) or
+       not age or age<0 or age>M.tuning.contact_age_ms or
+       a.targetKnown==true and a.targetGuid~=a.victimGuid then return end
+    return a.victimGuid
+end
+local function pull_step(task,obs,frame,sequence,can_act)
+    task.pullReady=nil
+    local players=obs.players or {}
+    local self,tank=players[obs.selfGuid],players[task.tankGuid]
+    local npc=(obs.targets or {})[task.targetGuid]
+    local function waiting(phase) return {task=task,hold=true,status=status(task,phase)} end
+    if not spell_request or not spell_request.request_status then finish(task,"pull_spell_mechanic_unavailable");return end
+    if task.tankGuid==obs.selfGuid or task.targetGuid==obs.selfGuid then finish(task,"self_target");return end
+    if not alive(self) or not witnessed_position(self,obs.mapId) then return waiting("waiting_for_pull_body_witness") end
+    if not alive(tank) or not witnessed_position(tank,obs.mapId) then
+        if task.sessionId then finish(task,"tank_witness_lost");return end
+        return waiting("waiting_for_visible_tank")
+    end
+    if not alive(npc) or not witnessed_position(npc,obs.mapId) or npc.attackable~=true then
+        finish(task,"pull_target_unavailable");return
+    end
+    if not task.sessionId then
+        task.sessionId,task.selfGuid,task.visitId,task.mapId=obs.sessionId,obs.selfGuid,obs.visitId,obs.mapId
+    end
+    local victim=attack_victim(obs,task.targetGuid)
+    task.pullReady=true
+    if task.childQueued then
+        task.cast=spell_request.request_status(task.childId) or task.cast
+        local receipt=task.cast and task.cast.receipt
+        if not task.contact and (victim==obs.selfGuid or victim==task.tankGuid) then
+            task.contact={kind="observed_attack",targetGuid=task.targetGuid,victimGuid=victim}
+        elseif not task.contact and receipt and receipt.effectObserved==true and receipt.targetGuid==task.targetGuid then
+            task.contact={kind="observed_spell_effect",targetGuid=task.targetGuid,actionId=receipt.actionId}
+        end
+        if task.cast and task.cast.current or task.cast and task.cast.pendingCleanup or #frame.pending~=0 then
+            return waiting(task.cast and task.cast.phase=="outcome_unknown" and "pull_cast_outcome_unknown" or "waiting_for_pull_cast_custody")
+        end
+        if not task.cast then finish(task,"pull_cast_state_unavailable");return end
+        if not task.contact then
+            if receipt and (receipt.outcome=="failed" or receipt.outcome=="not_dispatched") then finish(task,"pull_cast_refused");return end
+            return waiting("waiting_for_real_pull_contact")
+        end
+        task.pullReady=true
+        if victim==task.tankGuid then finish(task,"tank_handoff_observed") end
+        return -- Return through the same ordinary rally/lease path below, even in combat.
+    end
+    if spell_request.request_status(task.childId) then finish(task,"pull_child_id_already_used");return end
+    if npc.protected==true then finish(task,"pull_target_protected");return end
+    if npc.engaged==true or victim or type(npc.attackObservation)~="table" or npc.attackObservation.victimKnown==true then
+        finish(task,"pull_requires_unengaged_target");return
+    end
+    local rank=(obs.spells or {})[tostring(task.spellId)]
+    if not rank or rank.known~=true or rank.metadataKnown~=true or rank.capability~="offense" or
+       rank.weaponStrike==true or not number(rank.directDamage) or rank.directDamage<=0 or
+       not number(rank.maxRange) or rank.maxRange<=M.tuning.pull_min_range_yards then
+        finish(task,"known_single_ranged_damage_spell_required");return
+    end
+    if rank.ready~=true then return waiting("waiting_for_exact_pull_spell") end
+    if spell_request.pending() then return waiting("waiting_for_existing_spell_request") end
+    task.pullReady=true
+    local owner=(obs.navigation or {}).movementOwner or {}
+    if (obs.navigation or {}).motionUnconfirmed==true then return waiting("waiting_for_pull_motion_confirmation") end
+    local range=math.max(M.tuning.pull_min_range_yards,rank.maxRange-M.tuning.pull_range_padding)
+    local result=encounter_movement.for_spell(obs,sequence,task.targetGuid,rank,{rangeYards=range,requireFacing=true})
+    if not result.ready then
+        if not task.token then
+            if owner.active==true then return waiting("movement_owned_elsewhere") end
+            local view=waiting("acquiring_pull_aim_ownership");view.action=can_act and action(obs,task,"acquire") or nil;return view
+        end
+        if (tonumber(owner.remainingMs) or 0)<=M.tuning.renew_below_ms then
+            local view=waiting("renewing_pull_aim_ownership");view.action=can_act and action(obs,task,"renew") or nil;return view
+        end
+        local view=waiting("positioning_exact_pull_spell");view.action=can_act and result.action or nil;return view
+    end
+    if near(witnessed_position(self,obs.mapId),witnessed_position(npc,obs.mapId),math.max(rank.minRange or 0,M.tuning.pull_min_range_yards)) then
+        finish(task,"pull_target_too_close");return
+    end
+    if self.movementKnown~=true or self.moving==true then return waiting("waiting_for_stationary_pull_position") end
+    if task.token then
+        local view=waiting("releasing_pull_aim_for_spell");view.releaseForCast=true
+        view.action=can_act and action(obs,task,"release") or nil;return view
+    end
+    if owner.active==true then return waiting("waiting_for_pull_aim_release") end
+    if can_act then
+        spell_request.on_event({kind="command",value={task="cast_spell",id=task.childId,spellId=task.spellId,
+            targets={mask=2,objectGuid=task.targetGuid},requirements={stationary=true}}})
+        local child=spell_request.request_status(task.childId)
+        local b=child and child.binding
+        if not child or child.current~=true or child.spellId~=task.spellId or
+           not child.targets or child.targets.objectGuid~=task.targetGuid or child.targets.mask~=2 or
+           not b or b.sessionId~=obs.sessionId or b.selfGuid~=obs.selfGuid or b.visitId~=obs.visitId then
+            finish(task,"pull_child_request_not_accepted");return
+        end
+        task.childQueued=true;task.cast=child
+    end
+    return waiting("arming_one_pull_cast")
 end
 
 -- Called once per current observation. Proposals do not reserve an operation:
@@ -167,11 +288,15 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act,pause_rally)
         if current and not near(task.anchor,current,M.tuning.anchor_yards) then finish(task,"anchor_abandoned")
         elseif pulled_to_anchor(obs,task,targets) then finish(task,"pull_arrived") end
     end
-    local rally=task.kind=="rally_to"
+    if task.kind=="pull_back" and not task.finishing then
+        local view=pull_step(task,obs,frame,sequence,can_act)
+        if view then return view end
+    end
+    local rally=task.kind=="rally_to" or task.kind=="pull_back"
     if rally and not task.finishing then
         local guide=players[task.guideGuid]
         local destination=players[task.destinationGuid or task.guideGuid]
-        if in_combat then finish(task,"combat")
+        if in_combat and task.kind~="pull_back" then finish(task,"combat")
         elseif task.guideGuid==obs.selfGuid or task.destinationGuid==obs.selfGuid then finish(task,"self_target")
         elseif guide and guide.aliveKnown==true and guide.alive==false then finish(task,"guide_dead")
         elseif alive(self) and self.movementKnown==true and self.moving~=true and alive(destination) and
@@ -179,8 +304,18 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act,pause_rally)
             finish(task,"rendezvous_observed")
         end
     end
-    if rally and not task.finishing then task.pausedForEncounter=pause_rally==true or nil end
+    if task.kind=="rally_to" and not task.finishing then task.pausedForEncounter=pause_rally==true or nil end
     if task.finishing or task.pausedForEncounter then
+        if task.kind=="pull_back" and task.childQueued and spell_request then
+            local child=spell_request.request_status(task.childId)
+            if child and child.current and child.issued~=true and not task.cancelChild then
+                spell_request.on_event({kind="command",value={task="cancel_spell_request",id=task.childId}});task.cancelChild=true
+                child=spell_request.request_status(task.childId)
+            end
+            if #frame.pending~=0 or child and (child.current or child.pendingCleanup) then
+                return {status=status(task,"finishing_with_pull_cast_unsettled"),task=task,hold=true}
+            end
+        end
         if task.token and owner.active==true and owner.owner=="task:"..task.id then
             if rally and bound and bound.visitId==obs.visitId and bound.mapId==obs.mapId then
                 if nav.motionUnconfirmed==true or not self or self.movementKnown~=true then
@@ -188,9 +323,9 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act,pause_rally)
                 end
                 if self.moving==true then
                     local motion=obs.targetMovement or {}
-                    local own=task.approached and not task.stopIssued and motion.targetGuid==task.guideGuid and motion.visitId==obs.visitId
+                    local own=task.approached and not task.stopIssued and motion.targetGuid==(task.approachGuid or task.guideGuid) and motion.visitId==obs.visitId
                     return {status=status(task,"waiting_for_stopped_rally"),task=task,
-                            action=can_act and own and encounter_movement.stop(obs,sequence,task.guideGuid) or nil}
+                            action=can_act and own and encounter_movement.stop(obs,sequence,task.approachGuid or task.guideGuid) or nil}
                 end
             end
             return {status=status(task,"releasing_movement_ownership"),task=task,
@@ -260,15 +395,15 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act,pause_rally)
 end
 
 function M.commit(view,chosen)
-    if view and view.task and view.task.kind=="rally_to" and chosen==view.action and chosen then
-        if chosen.capability=="approach_target" then view.task.approached=true
+    if view and view.task and (view.task.kind=="rally_to" or view.task.kind=="pull_back") and chosen==view.action and chosen then
+        if chosen.capability=="approach_target" then view.task.approached=true;view.task.approachGuid=chosen.targetGuid;view.task.stopIssued=nil
         elseif chosen.capability=="stop_movement" then view.task.stopIssued=true end
     end
     if view and view.task and view.task.kind=="enter_instance" and instance_entry then
         instance_entry.commit(view.task,chosen);return
     end
-    if view and view.task and chosen and chosen.capability=="movement_owner" then
-        view.task.operation={mode=chosen.mode,owner=chosen.owner}
+    if view and view.task and chosen and chosen.capability=="movement_owner" and chosen.owner=="task:"..view.task.id then
+        view.task.operation={mode=chosen.mode,owner=chosen.owner,handoff=view.releaseForCast==true}
     end
 end
 
@@ -277,8 +412,11 @@ end
 function M.allow(view,obs,proposed)
     if not proposed or not view or not view.hold then return true end
     local cap=proposed.capability
-    if view.task and view.task.kind=="rally_to" and
-       (view.action==proposed or view.task.pausedForEncounter and view.rangedWithdrawal==proposed) then return true end
+    if view.task and (view.task.kind=="rally_to" or view.task.kind=="pull_back") and
+       (view.action==proposed or view.task.kind=="rally_to" and view.task.pausedForEncounter and view.rangedWithdrawal==proposed) then return true end
+    if view.task and view.task.kind=="pull_back" and proposed==view.pullSpellAction then return true end
+    if view.task and view.task.kind=="pull_back" and
+       (cap=="offense" or cap=="melee_start" or cap=="cast_spell" or cap=="polymorph" or cap=="sap") then return false end
     if view.task and view.task.kind=="enter_instance" then
         if view.action==proposed then return true end
         -- Entry owns voluntary travel only; current defense and healing retain
@@ -314,15 +452,30 @@ function M.allow(view,obs,proposed)
     return anchor and alive(victim) and near(anchor,position(victim,obs.mapId),range) or false
 end
 
+-- Explicit same-Lua handoff: the ranged module releases only its OWN hold;
+-- this task still obtains its own normal finite lease, never a foreign token.
+function M.pull_context(obs)
+    local task=state.current
+    if task and task.kind=="pull_back" and (task.pullReady or task.finishing) and
+       task.sessionId==obs.sessionId and task.selfGuid==obs.selfGuid and task.visitId==obs.visitId and task.mapId==obs.mapId then
+        return {id=task.id,targetGuid=task.targetGuid,tankGuid=task.tankGuid}
+    end
+end
+function M.pull_spell_proposal(view,proposed,spell)
+    if view and view.task and view.task.kind=="pull_back" and spell and spell.id==view.task.childId then view.pullSpellAction=proposed end
+end
 function M.export_state() return {version=1,data=state} end
 function M.import_state(checkpoint)
     if type(checkpoint)~="table" or checkpoint.version~=1 or type(checkpoint.data)~="table" or
        type(checkpoint.data.retired)~="table" then return false end
     for _,task in pairs({checkpoint.data.current,checkpoint.data.next}) do
+        local pull=type(task)=="table" and task.kind=="pull_back" and id(task.id) and guid(task.targetGuid) and guid(task.tankGuid) and
+            uint32(task.spellId) and task.childId=="pull:"..task.id and number(task.deadline) and
+            number(task.responseYards) and task.responseYards>0
         local rally=type(task)=="table" and task.kind=="rally_to" and guid(task.guideGuid) and
             (task.destinationGuid==nil or guid(task.destinationGuid)) and number(task.responseYards) and
             task.responseYards>0 and number(task.deadline)
-        if type(task)~="table" or not id(task.id) or (task.kind~="wait_for_pull" and not rally and (not instance_entry or not instance_entry.validate(task))) or
+        if type(task)~="table" or not id(task.id) or (task.kind~="wait_for_pull" and not rally and not pull and (not instance_entry or not instance_entry.validate(task))) or
            task.pausedForEncounter~=nil and type(task.pausedForEncounter)~="boolean" or
            task.token~=nil and (type(task.token)~="string" or #task.token==0) or
            task.deadline~=nil and (not number(task.deadline) or task.deadline<0) then return false end

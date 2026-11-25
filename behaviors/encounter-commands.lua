@@ -883,7 +883,7 @@ local function ranged_travel_safe(obs,row,in_combat)
     return true
 end
 
-local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task_view)
+local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task_view,directed_pull)
     out.rangedStance=status
     if not row then
         if #frame.pending==0 then ranged_hold(obs,frame,out,nil,status,false) end
@@ -916,6 +916,12 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
     if swinging and (active and active.entry==row.creatureEntry or distance and distance<row.minRangeYards+row.clearanceYards) then
         out.action={capability="melee_stop",sessionId=obs.sessionId,selfGuid=obs.selfGuid,targetGuid=swinging,visitId=obs.visitId,observationSequence=sequence}
         status.phase="stopping_melee";return
+    end
+    if directed_pull then
+        status.yieldingToTask=directed_pull.id
+        if ranged_hold(obs,frame,out,row,status,false,nearest) then return end
+        status.phase="yielded_to_directed_pull_task"
+        return -- No token borrowing or native admission override.
     end
     if ranged_hold(obs,frame,out,row,status,true,nearest) then return end
     if obs.hostTargetRangeBandSupported~=true then
