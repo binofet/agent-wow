@@ -246,7 +246,7 @@ func (s *Service) FargodeepEncounter(ctx context.Context, r *actionsv1.Fargodeep
 	}
 	party := s.readFargodeepPartyLocked(ctx)
 	fresh, err := s.snapshot(ctx, r.TargetGuid)
-	if err != nil || !s.fargodeepReadinessMatchesLocked(ctx, decision, fresh, party, false) {
+	if err != nil || !s.fargodeepReadinessMatchesLocked(ctx, decision, fresh, party) {
 		return refuse("Fargodeep admission source or observations changed")
 	}
 	if s.fargodeepSeen == nil {
@@ -446,7 +446,7 @@ func (s *Service) fargodeepObservedActionAllowedLocked(ctx context.Context, targ
 		}
 		return s.fargodeepObservedActionAllowedLocked(ctx, targetGUID, spell, movement, selected, &decision)
 	}
-	if readiness.kind != wanted || !s.fargodeepReadinessMatchesLocked(ctx, *readiness, w, party, false) {
+	if readiness.kind != wanted || !s.fargodeepReadinessMatchesLocked(ctx, *readiness, w, party) {
 		return false
 	}
 	if !current() {

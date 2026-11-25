@@ -100,7 +100,7 @@ func (s *Service) fargodeepCleanupCurrentLocked(ctx context.Context) bool {
 	w, err := s.snapshot(ctx, s.fargodeep.target)
 	return err == nil && w != nil && s.fargodeepAttemptCurrentLocked(ctx) &&
 		s.fargodeep.bodySession == s.sessionID && s.fargodeep.self == s.selfGUID &&
-		w.VisitRevision == s.fargodeep.visit && fargodeepCharacter(w, s.selfGUID)
+		w.VisitRevision == s.fargodeep.visit && safeSelfCombat(w, s.selfGUID) == ""
 }
 
 func (s *Service) fargodeepReadinessFactsLocked(w *worldv1.SnapshotResponse, p *partyv1.StateResponse) map[string]any {
@@ -167,11 +167,8 @@ func (s *Service) fargodeepWorkflowFactsLocked(w *worldv1.SnapshotResponse, p *p
 	}
 	point := func(p position) map[string]any { return map[string]any{"x": p.x, "y": p.y, "z": p.z} }
 	targetPos, known := fargodeepCreaturePosition(target)
-	armPatrol := false
 	if !known && fargodeepPatrol(target) {
 		targetPos = position{target.X, target.Y, target.Z, target.Orientation}
-		end := position{target.Trajectory.DestinationX, target.Trajectory.DestinationY, target.Trajectory.DestinationZ, target.Orientation}
-		armPatrol = distance(s.pos, end) <= 35
 	}
 	nearby, _ := scene["nearbyCreatures"].([]any)
 	for i, creature := range w.NearbyCreatures {
@@ -183,23 +180,24 @@ func (s *Service) fargodeepWorkflowFactsLocked(w *worldv1.SnapshotResponse, p *p
 		row["motionPositionKnown"], row["motionPosition"], row["patrolKnown"] = visible, point(pos), fargodeepPatrol(creature)
 	}
 	f := s.fargodeep
+	routeKnown := f.route != nil && f.routeIndex >= 0 && f.routeIndex <= len(f.route) &&
+		f.routeRevision == s.positionRevision && distance(f.routeExpected, s.pos) <= .05 && distance(f.routeTarget, targetPos) <= .25
+	remaining, direct := 0.0, false
+	if routeKnown {
+		remaining, direct = routeRemaining(s.pos, f.route, f.routeIndex), directRemainingRoute(s.pos, targetPos, f.route, f.routeIndex)
+	}
 	input["mission"].(map[string]any)["pulled"] = f.pulled
-	input["workflow"] = map[string]any{"stage": stage, "scene": scene, "party": party, "players": fullPlayers, "safePlayers": safe,
+	input["workflow"] = map[string]any{"stage": stage, "scene": scene, "party": party, "players": fullPlayers, "safePlayers": safe, "nearbyPlayerCount": len(w.NearbyPlayers),
 		"clientPosition": point(s.pos), "selfSafe": safeSelfCombat(w, s.selfGUID) == "", "targetPosition": point(targetPos),
-		"targetPositionKnown": known, "targetPatrol": fargodeepPatrol(target), "armPatrolKnown": armPatrol,
+		"targetPositionKnown": known, "targetPatrol": fargodeepPatrol(target),
 		"targetGuidType": f.target >> 48, "targetGuidEntry": uint32(f.target >> 24 & 0xffffff), "failedTarget": s.failedAssistTarget == f.target,
 		"authorized": s.now().Before(f.until) && s.state.Assisting && s.now().Before(s.assistUntil), "learnedHealing": s.hasLearnedHealingLocked(),
 		"castPending": s.state.CastPending, "autoAttackUnconfirmed": s.state.AutoAttackUnconfirmed,
-		"routeKnown":     f.route != nil && f.routeRevision == s.positionRevision && distance(f.routeExpected, s.pos) <= .05 && distance(f.routeTarget, targetPos) <= .25,
-		"routeRemaining": routeRemaining(s.pos, f.route, f.routeIndex), "routeDirect": directRemainingRoute(s.pos, targetPos, f.route, f.routeIndex)}
+		"routeKnown": routeKnown, "routeRemaining": remaining, "routeDirect": direct}
 	return input
 }
 
-func (s *Service) fargodeepReadinessDecisionLocked(ctx context.Context, w *worldv1.SnapshotResponse, p *partyv1.StateResponse, stages ...string) (fargodeepReadinessDecision, bool) {
-	stage := "tick"
-	if len(stages) == 1 {
-		stage = stages[0]
-	}
+func (s *Service) fargodeepReadinessDecisionLocked(ctx context.Context, w *worldv1.SnapshotResponse, p *partyv1.StateResponse, stage string) (fargodeepReadinessDecision, bool) {
 	input := s.fargodeepWorkflowFactsLocked(w, p, stage)
 	if input == nil || !s.fargodeepReadinessCurrentLocked(ctx) {
 		return fargodeepReadinessDecision{}, false
@@ -241,11 +239,11 @@ func (s *Service) fargodeepReadinessDecisionLocked(ctx context.Context, w *world
 	return decision, true
 }
 
-func (s *Service) fargodeepReadinessMatchesLocked(ctx context.Context, selected fargodeepReadinessDecision, w *worldv1.SnapshotResponse, p *partyv1.StateResponse, requireReady bool) bool {
+func (s *Service) fargodeepReadinessMatchesLocked(ctx context.Context, selected fargodeepReadinessDecision, w *worldv1.SnapshotResponse, p *partyv1.StateResponse) bool {
 	scope, _ := ctx.Value(fargodeepReadinessKey{}).(*fargodeepReadinessScope)
 	workflow, _ := selected.facts["workflow"].(map[string]any)
 	stage, _ := workflow["stage"].(string)
-	return scope != nil && selected.revision == scope.revision && w.VisitRevision == scope.visit &&
+	return scope != nil && w != nil && selected.revision == scope.revision && w.VisitRevision == scope.visit &&
 		s.fargodeepReadinessCurrentLocked(ctx) && reflect.DeepEqual(selected.facts, s.fargodeepWorkflowFactsLocked(w, p, stage))
 }
 
@@ -260,5 +258,5 @@ func (s *Service) fargodeepPolicySnapshotLocked(ctx context.Context, w *worldv1.
 	fresh, err := s.snapshot(ctx, s.fargodeep.target)
 	return selected, fresh, err == nil && fresh != nil && s.fargodeepAttemptCurrentLocked(ctx) &&
 		fresh.VisitRevision == w.VisitRevision && s.refreshPositionLocked(fresh) &&
-		s.fargodeepReadinessMatchesLocked(ctx, selected, fresh, freshParty, false)
+		s.fargodeepReadinessMatchesLocked(ctx, selected, fresh, freshParty)
 }

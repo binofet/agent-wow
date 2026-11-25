@@ -1,7 +1,7 @@
 -- Starter mission objectives and practice lifecycle. The caller owns observed
 -- facts, exact native toggles, durable mutation reservations and receipt custody.
 local M = {}
-M.fargodeep_pull={minimum_health=95, minimum_mana=45, minimum_energy=90,stand_yards={[4]=3.5,[5]=28,[8]=33}}
+M.fargodeep_pull={minimum_health=95, minimum_mana=45, minimum_energy=90,stand_yards={[4]=3.5,[5]=28,[8]=33},quests={47,60}}
 local function array(v,max)
     if type(v)~="table" or #v>max then return false end
     local n=0
@@ -287,7 +287,7 @@ function M.fargodeep_lifecycle(input)
     end
     if type(w)~="table" or type(m)~="table" or not decimal(m.targetGuid) or m.targetGuid=="0" or
        type(m.pulled)~="boolean" or (m.engagerGuid~="1" and m.engagerGuid~="4" and m.engagerGuid~="5") or
-       type(w.scene)~="table" or not array(w.scene.nearbyCreatures or {},32) or
+       type(w.scene)~="table" or not uint(w.nearbyPlayerCount) or w.nearbyPlayerCount>64 or not array(w.scene.nearbyCreatures or {},32) or
        not array(w.scene.selfQuestLog or {},25) or type(w.selfSafe)~="boolean" then return stop("observations_unavailable") end
     local scene,self,target=w.scene,w.scene.self,w.scene.requestedCreature
     local classes={["1"]=5,["4"]=8,["5"]=4}
@@ -301,8 +301,13 @@ function M.fargodeep_lifecycle(input)
     stand=readiness.standYards
     if not number(stand) or stand<=0 or stand>240 then return stop("readiness_policy_unavailable_or_changed") end
     local rows=quest_rows({questLogKnown=scene.selfQuestLogKnown,questLog=scene.selfQuestLog})
-    local active=rows and (active_quest(rows[47]) or active_quest(rows[60]))
-    local needed=rows and (incomplete(rows[47]) or incomplete(rows[60]))
+    local goals=ids(M.fargodeep_pull.quests,25)
+    if not goals or not next(goals) then return stop("readiness_policy_unavailable_or_changed") end
+    local active,needed=false,false
+    if rows then for q in pairs(goals) do
+        active=active or active_quest(rows[tonumber(q)])
+        needed=needed or incomplete(rows[tonumber(q)])
+    end end
     if type(target)~="table" or target.guid~=m.targetGuid then return stop("target_unsafe_or_cast_failed") end
     if target.aliveKnown==true and target.alive~=true and target.healthKnown==true and (target.health or 0)==0 and w.stage~="arm" then
         return stop("target_death_observed")
@@ -320,8 +325,15 @@ function M.fargodeep_lifecycle(input)
     end
     local p=w.targetPosition
     if not area(p) or distance2(w.clientPosition,p)>35*35 or
-       w.targetPositionKnown~=true and (w.stage~="arm" or w.armPatrolKnown~=true) and w.targetPatrol~=true then
+       w.targetPositionKnown~=true and w.targetPatrol~=true then
         return stop("target_position_unavailable_or_outside_range")
+    end
+    if w.stage=="arm" and w.targetPositionKnown~=true then
+        local t=target.trajectory or {}
+        local endpoint={x=t.destinationX,y=t.destinationY,z=t.destinationZ}
+        if w.targetPatrol~=true or not point(endpoint) or distance2(w.clientPosition,endpoint)>35*35 then
+            return stop("target_position_unavailable_or_outside_range")
+        end
     end
     local party=w.party
     local group=type(party)=="table" and party.group
@@ -330,7 +342,8 @@ function M.fargodeep_lifecycle(input)
     if scene.owner and scene.owner.present==true then return stop("owner_returned") end
     local members={}
     for _,member in ipairs(group.members) do
-        if type(member)~="table" or not decimal(member.guid) or member.guid=="0" or #member.guid>15 or members[member.guid]~=nil or
+        if type(member)~="table" or not decimal(member.guid) or member.guid=="0" or #member.guid>15 or
+           #member.guid==15 and member.guid>"281474976710655" or members[member.guid]~=nil or
            (member.self==true)~=(member.guid==input.selfGuid) then return stop("current_party_unknown_or_changed") end
         members[member.guid]=member.online==true
     end
