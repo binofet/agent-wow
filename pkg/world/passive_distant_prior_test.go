@@ -264,3 +264,66 @@ func TestPassivePriorDoesNotBorrowOldVictimsDifferentFight(t *testing.T) {
 		})
 	}
 }
+
+func TestPassivePriorRetainsStationaryCareAfterCorrelatedGroundSettlement(t *testing.T) {
+	p := passivePriorPolicy(t, "")
+	o := positionedHealObservation()
+	o.MapId = proto.Uint32(349)
+	for _, v := range o.Players {
+		v.MapId = proto.Uint32(349)
+		v.CombatKnown = true
+		v.InCombat = false
+		v.HealthKnown = true
+		v.Health = 100
+		v.MaxHealth = 100
+	}
+	o.Healing.Patients[0].Health = 100
+	n := proto.Clone(sludgePriorObservation().Targets[fallbackGUID(fallbackNPC)]).(*actionsv1.EncounterCreature)
+	o.Targets[fallbackGUID(fallbackNPC)] = n
+	self := o.Players["4"]
+	n.X, n.Y, n.Z = self.X+3, self.Y, self.Z
+	o.Navigation = &actionsv1.NavigationObservation{Following: false, BodyMovementSupported: true, MovementOwner: &actionsv1.MovementOwnerState{}}
+	d := p.decide(observeRanged(t, p, o, false))
+	a, _ := d.Output["action"].(map[string]any)
+	if a["mode"] != "acquire" {
+		t.Fatal("fixture did not acquire actual near-hazard lease", d.Output)
+	}
+	settleFollowPrior(t, p, d, "acquire", behavior.ActionConfirmed)
+	o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: "ranged:maraudon_sludge_backline"}
+	d = p.decide(observeRanged(t, p, o, false))
+	a, _ = d.Output["action"].(map[string]any)
+	if a["capability"] != "move_body" {
+		t.Fatal("fixture did not enter actual ground proposal", d.Output)
+	}
+	id, e := p.host.ReserveAction(d)
+	if e != nil {
+		t.Fatal(e)
+	}
+	payload := map[string]any{"capability": "move_body", "self_guid": "4", "visit_id": "1", "sequence_id": a["sequenceId"], "phase": "body_input_written", "transport_written": true}
+	if _, e = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionUnknown, Payload: payload}}); e != nil {
+		t.Fatal(e)
+	}
+	n.X = self.X + 170
+	o.Healing.Patients[0].Health = 20
+	o.Players["8"].Health = 20
+	out := p.decide(observeRanged(t, p, o, false)).Output
+	if out["action"] != nil || len(p.host.Outstanding()) != 1 {
+		t.Fatal("unresolved harness custody permitted another effect", out)
+	}
+	// A later exact correlated receipt may settle the original reservation; it
+	// is not an erased ledger, reissued input, or invented server pose.
+	if _, e = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionSettledUnverified, Payload: payload}}); e != nil {
+		t.Fatal(e)
+	}
+	out = p.decide(observeRanged(t, p, o, false)).Output
+	a, _ = out["action"].(map[string]any)
+	if a["capability"] != "heal" || a["targetGuid"] != "8" || len(p.host.Outstanding()) != 0 {
+		t.Fatal("passive default suppressed otherwise-admitted stationary care", out, p.host.Outstanding())
+	}
+	o.Healing.Patients[0].Health = 100
+	o.Players["8"].Health = 100
+	out = p.decide(observeRanged(t, p, o, false)).Output
+	if out["action"] != nil {
+		t.Fatal("friendly care cleared or replayed retained ground custody", out)
+	}
+}

@@ -974,7 +974,7 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
     end
     -- A known stationary, owned lease can still permit the existing direct
     -- friendly support while unrelated ground custody remains unresolved.
-    if prior and ground and (ground.operation or ground.uncertain) and
+    if row.origin=="learned_prior" and ground and (ground.operation or ground.uncertain) and
        hold and not hold.operation and not hold.uncertain and hold.token and
        hold.sessionId==obs.sessionId and hold.selfGuid==obs.selfGuid and
        type(nav.movementOwner)=="table" and nav.movementOwner.active==true and
