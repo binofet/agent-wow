@@ -1022,6 +1022,37 @@ end}
             system=http.requests[0]['body']['messages'][0]['content']
             self.assertIn('A missing handler is not itself a missing mechanic',system)
 
+    def test_synthetic_party_owner_patches_attached_bundle_without_workspace_copy(self):
+        original,_=self.tactical_self_edit_fixture()
+        replacement="allowDamage=(f.owner.healthKnown==true and f.owner.health/f.owner.maxHealth>=0.5)"
+        candidate=original.replace("allowDamage=true",replacement)
+        old=hashlib.sha256(original.encode()).hexdigest()
+        args=dict(expected_revision=old, edits=[dict(old='allowDamage=true',new=replacement)],frame=self.rpc.frame)
+        responses=[chat(('preview','policy_patch',args)),
+            chat(('apply','policy_patch',dict(args,apply=True))),
+            chat(('verify','read_observation',dict(method='session.policy_state',params={}))),
+            spoken('Applied the tested attached edit; physical effects remain unverified.')]
+        with self.rig(responses) as (loop,brain,state,http):
+            loop.controls.refresh=lambda:None
+            loop.controls.context=lambda:dict(observations=copy.deepcopy(self.rpc.frame),synthetic=True)
+            loop.controls.execute=lambda *args,**kwargs:None
+            loop.initialized=False;loop.session_id=None;loop.cursor=0
+            loop.tick();loop.tick()
+            self.assertEqual(self.rpc.source,candidate)
+            self.assertEqual(len(self.rpc.policy_writes),1)
+            self.assertEqual(self.rpc.pending,['original-UNKNOWN-retained'])
+            self.assertFalse(self.rpc.commands)
+            names={row['function']['name'] for row in http.requests[0]['body']['tools']}
+            self.assertIn('policy_patch',names)
+            tools=brain.last_development_result['tools']
+            self.assertEqual([r['name'] for r in tools],['policy_patch','policy_patch','read_observation'])
+            preview=json.loads(http.requests[1]['body']['messages'][-1]['content'])['result']
+            applied=json.loads(http.requests[2]['body']['messages'][-1]['content'])['result']
+            self.assertFalse(preview['applied'])
+            self.assertTrue(applied['applied'])
+            observed=json.loads(http.requests[-1]['body']['messages'][-1]['content'])['result']
+            self.assertFalse(observed['latestDecision']['output']['allowDamage'])
+
     def test_synthetic_tactical_acknowledgement_and_banter_do_not_apply_behavior(self):
         self.tactical_self_edit_fixture()
         for owner_text,reply,developer in [(self.TACTICAL_SELF_EDIT_REQUEST,'I heard the request; the behavior is not applied or verified.',True),
