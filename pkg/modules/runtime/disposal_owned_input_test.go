@@ -15,6 +15,7 @@ import (
 	questsv1 "github.com/agent-wow/agent-wow/modules/buddy-quests/api"
 	tradev1 "github.com/agent-wow/agent-wow/modules/buddy-trade/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	moddisc "github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
@@ -218,6 +219,27 @@ func TestOwnedDisposalCollectsOnlyRawFactsAndOverwritesLuaWitness(t *testing.T) 
 	if len(host.vm.Outstanding()) != 0 {
 		t.Fatal("read-only factual callback allocated action authority")
 	}
+}
+
+// Native accepted exports use the real persistent Session's default budget,
+// independently of a fresh standalone CLI's smaller resource-turn contract.
+func TestOwnedDisposalActualArmorHasRequiredDefaultBudgetDecision(t *testing.T) {
+	m, peer := disposalOwnedManager(t)
+	host := disposalOwnedStart(t, m, followFallbackBundle(t))
+	if host.vm.Options().ExecutionLimit != behavior.DefaultSessionExecutionLimit {
+		t.Fatal("native accepted-source execution budget changed", host.vm.Options())
+	}
+	before, err := host.vm.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := disposalOwnedRead(t, m, disposalOwnedRequest(t, peer, disposalOwnedInput(t, peer)))
+	decision, _ := result["decision"].(map[string]any)
+	if result["available"] != true || result["revision"] != host.vm.Status().Revision || decision["status"] != "eligible" ||
+		decision["reason"] != "known_worn_armor_dominates" || !reflect.DeepEqual(peer.calls, disposalOwnedTrace()) || peer.writes != 0 {
+		t.Fatal("actual native default export did not return its complete required armor decision", result, peer.calls, peer.writes)
+	}
+	assertFollowFallbackState(t, host, before)
 }
 
 func TestOwnedDisposalActualMiscellaneousDoesNotRequireArmorDestinations(t *testing.T) {
