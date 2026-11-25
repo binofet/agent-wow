@@ -10,6 +10,7 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -154,13 +155,78 @@ def _page(value, path=None, offset=0, limit=20, *, metadata=None, force_keys=(),
     return page
 
 
-def _gm_inspect_view(observed):
+def _gm_inspect_view(observed, *, actor_guid, session_id, rpc_url):
     """Keep identity-scoped player facts readable, with explicit raw paths."""
     clients = observed.get("clients", [])
     identities = {"3", *[str(row.get("guid")) for row in clients]}
     for row in clients:
         for member in (row.get("group") or {}).get("members", []):
             if member.get("guid") is not None: identities.add(str(member["guid"]))
+
+    def owner_evidence(row, index, *, acting=False):
+        path = ["clients", str(index)]
+        facts = row.get("observations", {})
+        world, actions = facts.get("world", {}), facts.get("actions", {})
+        own = world.get("self", {})
+        sid = actions.get("sessionId")
+        bound = (row.get("identityMatches") is True and not row.get("errors")
+            and str(own.get("guid")) == str(actions.get("selfGuid")) == str(row.get("guid"))
+            and isinstance(sid,str) and bool(sid) and sid == facts.get("party",{}).get("sessionId"))
+        if acting: bound = bound and sid == session_id and row.get("rpcUrl") == rpc_url
+        actor, actor_path = own, path+["observations","world","self"]
+        if not acting:
+            candidates = [(n,p) for n,p in enumerate(world.get("nearbyPlayers",[])) if str(p.get("guid")) == actor_guid]
+            actor = candidates[0][1] if len(candidates) == 1 else {}
+            actor_path = path+["observations","world","nearbyPlayers",str(candidates[0][0])] if len(candidates) == 1 else None
+        owner = world.get("owner", {})
+        owner_path = path+["observations","world","owner"]
+        result = dict(observerGuid=str(row.get("guid")), observerName=row.get("name"), observerSessionId=sid,
+            observerIdentityMatches=bool(bound), actorGuid=actor_guid, ownerGuid="3",
+            actorLocallyObserved=actor.get("present",False) if str(actor.get("guid")) == actor_guid else None,
+            ownerLocallyObserved=owner.get("present",False) if str(owner.get("guid")) == "3" else None,
+            distanceKnown=False, observedDistance3D=None, rawPath=path,
+            comparisonScope="one_observer_world_snapshot_only", gameEffectClaimed=False)
+        if not bound:
+            # Raw visibility from an unverified/stale body is not a headline
+            # observation by this bound actor, even when its coordinates match.
+            result["actorLocallyObserved"] = result["ownerLocallyObserved"] = None
+        for key,person,source in (("actorPose",actor,actor_path),("ownerPose",owner,owner_path)):
+            known = person.get("positionKnown") is True
+            result[key] = dict(rawPath=source,positionKnown=known,
+                positionAgeMs=copy.deepcopy(person.get("positionAgeMs",0 if known else None)),
+                observationAgeMs=copy.deepcopy(person.get("observationAgeMs",0 if person.get("present") is True else None)),
+                positionRevision=person.get("positionRevision","0" if known else None),
+                positionInferred=person.get("positionInferred",False if known else None))
+        reason = "observer_identity_unverified" if not bound else (
+            "actor_not_locally_observed" if result["actorLocallyObserved"] is not True else
+            "owner_not_locally_observed" if result["ownerLocallyObserved"] is not True else None)
+        poses = []
+        if reason is None:
+            for person in (actor,owner):
+                coordinates = [person.get(key,0) for key in ("x","y","z")]
+                map_id = person.get("mapId",0)
+                if (person.get("mapKnown") is not True or type(map_id) is not int or not 0 <= map_id <= 4294967295
+                        or person.get("positionKnown") is not True or person.get("positionInferred",False) is not False
+                        or not all(type(n) in (int,float) and math.isfinite(n) for n in coordinates)):
+                    reason = "pose_unknown_or_inferred"; break
+                poses.append((map_id,coordinates))
+        if reason is None and poses[0][0] != poses[1][0]: reason = "observed_maps_differ"
+        if reason is None:
+            distance = math.dist(poses[0][1],poses[1][1])
+            if math.isfinite(distance): result.update(distanceKnown=True,observedDistance3D=distance)
+            else: reason = "distance_not_finite"
+        result["reason"] = reason or "actor_and_owner_locally_observed"
+        return result
+
+    actor_rows = [(n,row) for n,row in enumerate(clients)
+                  if str(row.get("guid")) == actor_guid and row.get("rpcUrl") == rpc_url]
+    actor_owner = owner_evidence(actor_rows[0][1],actor_rows[0][0],acting=True) if len(actor_rows) == 1 else dict(
+        actorGuid=actor_guid,ownerGuid="3",distanceKnown=False,observedDistance3D=None,
+        actorLocallyObserved=None,ownerLocallyObserved=None,reason="actor_observation_unavailable_or_ambiguous",gameEffectClaimed=False)
+    actor_owner["meaning"] = ("Only this GM's own World owner visibility and same-observer poses are used here. "
+        "Owner absence is not global absence or a proven different copy. Matching map/coordinates in other clients, "
+        "named command ACKs and saved binds do not verify this GM's arrival. Distance uses retained observations with the ages shown, not refreshed poses.")
+    witnesses = [owner_evidence(row,n) for n,row in enumerate(clients) if str(row.get("guid")) != actor_guid]
 
     def omitted(value, path):
         return dict(omitted=True, type=_kind(value), count=len(value), rawPath=path)
@@ -207,7 +273,8 @@ def _gm_inspect_view(observed):
         view["observations"] = dict(world=visible,
             actions=copy.deepcopy(facts.get("actions", {})), party=copy.deepcopy(facts.get("party", {})))
         rows.append(view)
-    return dict(observedAtUnixMs=observed.get("observedAtUnixMs"), clients=rows, gameEffectClaimed=False,
+    return dict(actorOwnerObservation=actor_owner, otherClientOwnerWitnesses=witnesses,
+        observedAtUnixMs=observed.get("observedAtUnixMs"), clients=rows, gameEffectClaimed=False,
         presentation=dict(kind="compact_identity_scoped_observations", byteLimit=GM_INSPECT_BYTES,
             witnessScope="fixed owner, configured clients, and GUIDs in observed party rosters; membership knownness is unchanged",
             readTime="observedAtUnixMs is this client-read time, not a refreshed server pose. Preserve each fact's position/vitals age, revision, knownness and estimated provenance; a newly read old pose is still old.",
@@ -1602,7 +1669,7 @@ class DirectTools:
                  '{task:"focus",targetGuid:"123"}; {task:"kill_order",order:["skull","123"]}; '
                  '{task:"wait_for_pull",id:"wait-1",ownerGuid:"3",responseYards:10}; {task:"cancel_task",id:"wait-1"}; '
                  '{task:"cast_spell",id:"cast-1",spellId:1449}; {task:"cancel_spell",id:"cancel-1",spellId:10,expectedOperationRevision:"observed",channel:true}. '
-                 'Use learned IDs from spell_inspect; ground casts pass targets:{mask:64,destination:{x,y,z}} with observed coordinates. '
+                 'Optional requirements.position={minRangeYards:15,maxRangeYards:25} requests finite unit LoS/facing preparation on an observed exact unit with a positive stand-off; omitted keeps explicit try-now. Requires the installed attested range-band actuator and existing movement custody; unknown/refused geometry never proves arrival or permits a cast. Use your observed spell range and hazard-safe minimum, not these example distances as a universal safe radius. Use learned IDs from spell_inspect; ground casts pass targets:{mask:64,destination:{x,y,z}} with observed coordinates. '
                  'ranged_only accepts id, creatureEntry, mapId, visitId, minRangeYards, maxRangeYards, clearanceYards, durationMs, enabled:true; '
                  'use observed creature entry/map/visit and suitable ability ranges, not an NPC-name guess. '
                  'Cancel the same id with enabled:false or cancel:true. It is scoped to that entry/map/visit and duration. '
@@ -1788,7 +1855,7 @@ class DirectTools:
             elif name.startswith("gm_task_") or name in ("gm_current_task", "gm_execute", "gm_inspect"):
                 result = self._gm(name, args, operation_id)
                 if name == "gm_inspect" and args.get("path",[])==[] and type(args.get("offset",0)) is int and args.get("offset",0)==0 and type(args.get("limit",20)) is int and args.get("limit",20)==20:
-                    result = _gm_inspect_view(result)
+                    result = _gm_inspect_view(result,actor_guid=self.self_guid,session_id=self.session_id,rpc_url=self.rpc.url)
                 elif name in ("gm_task_status", "gm_current_task", "gm_inspect"):
                     result = self._project(result, args)
             else:

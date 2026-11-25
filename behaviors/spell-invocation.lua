@@ -17,7 +17,12 @@
 -- Add requirements={stationary=true} for a ground/channel spell whose timing
 -- is not in the encounter feed, or forward generic castTimeMs/channeled facts.
 -- An explicit stationary=false preserves caller-selected moving casts.
-local M={learning={quiet_ms=3000,stable_observations=2},preparation={lease_ms=3000,renew_below_ms=1500}}
+-- Opt-in unit preparation: requirements={position={minRangeYards=15,maxRangeYards=25}}.
+-- This requests current learned-range/LoS/facing preparation with a positive
+-- minimum stand-off, not another cast attempt. Default requests still try now.
+-- Preparation is finite and requires the attested range-band actuator; a
+-- refusal/UNKNOWN never licenses a cast or walking closer without that floor.
+local M={learning={quiet_ms=3000,stable_observations=2},preparation={lease_ms=3000,renew_below_ms=1500,position_ms=8000}}
 local state={seen={}}
 local proposed
 local proposed_cancel
@@ -31,6 +36,11 @@ local function copy(value)
     return out
 end
 local function number(n) return type(n)=="number" and n==n and n>-math.huge and n<math.huge end
+local function positioning(value)
+    if value==nil then return true end
+    return type(value)=="table" and number(value.minRangeYards) and value.minRangeYards>0 and
+        number(value.maxRangeYards) and value.maxRangeYards>value.minRangeYards
+end
 local function finish(reason,receipt)
     local task=state.current
     state.seen[task.id]=reason
@@ -137,7 +147,8 @@ function M.on_event(event)
            value.requirements~=nil and (type(value.requirements)~="table" or
                value.requirements.stationary~=nil and type(value.requirements.stationary)~="boolean" or
                value.requirements.channeled~=nil and type(value.requirements.channeled)~="boolean" or
-               value.requirements.castTimeMs~=nil and (not number(value.requirements.castTimeMs) or value.requirements.castTimeMs<0)) then
+               value.requirements.castTimeMs~=nil and (not number(value.requirements.castTimeMs) or value.requirements.castTimeMs<0) or
+               not positioning(value.requirements.position)) then
             state.error="invalid_explicit_spell_request"
         elseif state.seen[value.id] or state.current and state.current.id==value.id then
             -- Delivery retries and reloads never replay an issued cast.
@@ -190,6 +201,7 @@ local function lease_view(holder,obs,now)
 end
 local function required(task,obs)
     local r=task.requirements or {}
+    if r.position then return true end
     if r.stationary~=nil then return r.stationary end
     local spell=(obs.spells or {})[tostring(task.spellId)] or {}
     return r.channeled==true or (r.castTimeMs or spell.castTimeMs or 0)>0
@@ -200,7 +212,7 @@ local function status(task)
         owner=task.preparation.owner,receipt=copy(task.preparation.receipt)}}
 end
 
-function M.propose(frame,obs,sequence)
+function M.propose(frame,obs,sequence,geometry)
     proposed=nil
     local task=state.current
     if not task then return nil,state.error and {phase=state.error} or copy(state.last) end
@@ -215,6 +227,20 @@ function M.propose(frame,obs,sequence)
     end
     if task.issued or #frame.pending~=0 then return nil,status(task) end
     if state.releasing then task.phase="waiting_for_prior_movement_release";return nil,status(task) end
+    local position=(task.requirements or {}).position
+    local now=(frame.clock or {}).monotonicMs
+    if position then
+        if not number(now) then task.phase="positioning_clock_unavailable";return nil,status(task) end
+        task.positionDeadline=task.positionDeadline or now+M.preparation.position_ms
+        if (obs.navigation or {}).motionUnconfirmed==true then
+            task.phase="positioning_motion_unconfirmed";return nil,status(task)
+        end
+        if now>=task.positionDeadline and stopped(obs) then
+            finish("positioning_timeout");return nil,copy(state.last)
+        elseif now>=task.positionDeadline and (not self or self.movementKnown~=true) then
+            task.phase="positioning_timeout_waiting_for_stationary_facts";return nil,status(task)
+        end
+    end
     if required(task,obs) then
         local prep=task.preparation
         if not prep then prep={owner="spell:"..task.id};task.preparation=prep end
@@ -255,6 +281,33 @@ function M.propose(frame,obs,sequence)
             return prepare_action(task,obs,sequence,now,"renew"),status(task)
         end
         prep.phase="stationary_cast_ready"
+    end
+    if position then
+        local target=task.targets and task.targets.objectGuid
+        local spell=(obs.spells or {})[tostring(task.spellId)]
+        local unit=target and ((obs.targets or {})[target] or (obs.players or {})[target])
+        if not geometry or not geometry.movement or obs.hostTargetRangeBandSupported~=true then
+            task.phase="positioning_unsupported";return nil,status(task)
+        end
+        if not task.targets or task.targets.mask~=2 or not id(target) or target==obs.selfGuid or
+           not unit or unit.guid~=target or unit.present~=true or unit.mapKnown~=true or unit.mapId~=obs.mapId or
+           unit.positionKnown~=true or unit.positionInferred==true or unit.positionEstimated==true or
+           not self or self.mapKnown~=true or self.mapId~=obs.mapId or self.positionKnown~=true or
+           self.positionInferred==true or self.positionEstimated==true or not number(self.orientation or 0) then
+            task.phase="positioning_target_facts_unavailable";return nil,status(task)
+        end
+        if not spell or spell.known~=true or spell.metadataKnown~=true or not number(spell.maxRange) or spell.maxRange<=0 then
+            task.phase="positioning_spell_range_unavailable";return nil,status(task)
+        end
+        local options={minRangeYards=math.max(position.minRangeYards,spell.minRange or 0),
+            rangeYards=math.min(position.maxRangeYards,spell.maxRange),requireLos=true,requireFacing=true}
+        if geometry.ranged then options=geometry.ranged(obs,target,options) end
+        if not options or options.rangeYards<=options.minRangeYards then
+            task.phase="positioning_safe_range_unavailable";return nil,status(task)
+        end
+        local step=geometry.movement.decide(obs,sequence,target,options)
+        task.phase=step.phase
+        if not step.ready then return step.action,status(task) end
     end
     proposed={capability="cast_spell",sessionId=obs.sessionId,selfGuid=obs.selfGuid,
         visitId=obs.visitId,spellId=task.spellId,observationSequence=sequence,
@@ -382,7 +435,9 @@ function M.import_state(checkpoint)
     local task=checkpoint.data.current
     if task and (not id(task.id) or not uint32(task.spellId) or type(task.binding)~="table" or
        not id(task.binding.sessionId) or not id(task.binding.selfGuid) or not id(task.binding.visitId) or
-       task.issued~=nil and type(task.issued)~="boolean") then return false end
+       task.issued~=nil and type(task.issued)~="boolean" or
+       task.positionDeadline~=nil and not number(task.positionDeadline) or
+       task.requirements~=nil and (type(task.requirements)~="table" or not positioning(task.requirements.position))) then return false end
     if not valid_preparation(task) or not valid_preparation(checkpoint.data.releasing) then return false end
     local cancel=checkpoint.data.cancel
     if cancel and (not id(cancel.id) or not uint32(cancel.spellId) or type(cancel.binding)~="table" or
