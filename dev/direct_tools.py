@@ -399,15 +399,24 @@ def _lua_numeric_tuning(source, selector):
     stack, tables, parens, brackets = [], [], 0, 0
 
     def field(table, end):
-        if end - table['segment'] > 6:
-            return
-        part = tokens[table['segment']:end]
-        if len(part) >= 3 and part[0][0] == 'name' and part[1][1] == '=':
-            key, value = part[0][1], part[2:]
-        elif len(part) >= 5 and part[0][1] == '[' and part[1][0] == 'string' and part[2][1] == ']' and part[3][1] == '=':
-            key, value = part[1][1], part[4:]
+        begin = table['segment']
+        width = end - begin
+        if width >= 3 and tokens[begin][0] == 'name' and tokens[begin+1][1] == '=':
+            key, value_start = tokens[begin][1], begin+2
+        elif width >= 5 and tokens[begin][1] == '[' and tokens[begin+1][0] == 'string' and tokens[begin+2][1] == ']' and tokens[begin+3][1] == '=':
+            key, value_start = tokens[begin+1][1], begin+4
         else:
+            if width and tokens[begin][1] == '[':
+                table['ambiguous'] = True
             return
+        if key in table['keys']:
+            table['ambiguous'] = True
+        table['keys'].add(key)
+        # Count every direct key BEFORE excluding nonliteral values. Otherwise
+        # a later expression could silently shadow the numeric field or id.
+        if width > 6:
+            return
+        value = tokens[value_start:end]
         if key in ('id', 'name') and len(value) == 1 and value[0][0] == 'string':
             table['names'].append(value[0][1])
         start = value[0][2] if value else 0
@@ -441,7 +450,7 @@ def _lua_numeric_tuning(source, selector):
                     name, before = tokens[before-1][1] + '.' + name, before-2
                 names.append(name)
             stack.append(dict(names=names, fields=[], sourceOffset=start, segment=index+1,
-                              parens=parens, brackets=brackets, function=False))
+                              parens=parens, brackets=brackets, function=False, keys=set(), ambiguous=False))
         elif text == '}' and stack:
             table = stack.pop()
             field(table, index)
@@ -461,11 +470,14 @@ def _lua_numeric_tuning(source, selector):
             brackets -= 1
     rows = []
     matches = [table for table in tables if not selector or selector in table['names']]
+    rejected = [table['sourceOffset'] for table in matches if table['ambiguous']]
     for table in sorted(matches, key=lambda table: table['sourceOffset']):
+        if table['ambiguous']:
+            continue
         for value in table['fields']:
             rows.append(dict(table=selector or table['names'][0], tableNames=list(dict.fromkeys(table['names'])),
                              table_offset=table['sourceOffset'], **value))
-    return rows, len(matches)
+    return rows, len(matches), rejected
 
 
 
@@ -796,24 +808,24 @@ class DirectTools:
                     "attached_source_unavailable")
             require(self.self_guid != "87", "ordinary_attached_numeric_tuning_only")
             source = result["source"]
-            rows, count = _lua_numeric_tuning(source, args["tuning"])
+            rows, count, rejected = _lua_numeric_tuning(source, args["tuning"])
             if "tuning_field" in args:
                 require(isinstance(args["tuning_field"], str) and 0 < len(args["tuning_field"]) <= 256,
                         "exact_numeric_tuning_field_required")
                 rows = [row for row in rows if row["field"] == args["tuning_field"]]
             examples = {}
             offset = args.get("offset", 0)
-            if count == 1 and type(offset) is int and 0 <= offset < len(rows):
+            if count == 1 and not rejected and type(offset) is int and 0 <= offset < len(rows):
                 first = rows[offset]
                 examples["policy_patch"] = dict(expected_revision=sha(source.encode()),
                     numeric_tuning=dict(table=first["table"], table_offset=first["table_offset"],
                         field=first["field"], old_literal=first["old_literal"], new_value=first["value"]),
                     test=dict(kind="idle"), apply=False)
             metadata = dict(resultType="attached_numeric_tuning", sessionId=self.session_id, characterGuid=self.self_guid,
-                revision=sha(source.encode()), matchedTables=count,
+                revision=sha(source.encode()), matchedTables=count, ambiguousTables=len(rejected),
                 examples=examples, pureTestContract=self._policy_test_contract(), gameplayDispatched=False,
                 tuningSemantics="Direct finite numeric literals in data-only tables, selected by exact plain quoted id/name or table variable name. "
-                    "Empty tuning lists discoverable fields. Expressions and function-valued tables are not edited. "
+                    "Empty tuning lists discoverable fields. Duplicate/unsupported keys, expressions and function-valued tables are not editable. "
                     "Offsets are source characters tied to this revision, not runtime values. "
                     "Replace example new_value with your requested value. Use test OR frame, never both; idle is initialization only. "
                     "No match is not proof of absent runtime tuning. Preview/test first; apply=true uses existing body-bound CAS, preserving pending/UNKNOWN. "
@@ -922,7 +934,9 @@ class DirectTools:
             require(finite, "finite_numeric_new_value_required_not_Lua_code")
             offset = numeric.get("table_offset")
             require(offset is None or type(offset) is int and offset >= 0, "tuning_table_offset_must_be_source_character_offset")
-            rows, count = _lua_numeric_tuning(source, numeric["table"])
+            rows, count, rejected = _lua_numeric_tuning(source, numeric["table"])
+            require(not any(offset is None or offset == rejected_offset for rejected_offset in rejected),
+                    "ambiguous_tuning_table_duplicate_or_unsupported_keys_no_edits_applied")
             require(offset is not None or count == 1, "unique_named_tuning_table_required_use_policy_show_tuning")
             candidates = [row for row in rows if row["field"] == numeric["field"]
                           and (offset is None or row["table_offset"] == offset)]

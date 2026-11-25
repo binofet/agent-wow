@@ -2255,7 +2255,9 @@ local computed={id="calculated", minRangeYards=7+7}
         self.assertTrue(self.tools.dispatch('policy_patch', args)['ok'])
         self.tuning_source()
         self.rpc.source = self.rpc.source.replace('maxRangeYards=36', 'minRangeYards=16')
-        args = self.numeric_args()
+        self.assertEqual(self.discover()['result']['examples'], {})
+        args = dict(expected_revision=checksum(self.rpc.source), numeric_tuning=dict(table='actor_backline',
+            field='minRangeYards',old_literal='14',new_value=18),test=dict(kind='idle'))
         self.assertFalse(self.tools.dispatch('policy_patch', args)['ok'])
         self.assertFalse(self.rpc.writes)
 
@@ -2344,3 +2346,26 @@ return {decide=function(f) return {output={value=tuning.threshold}} end}'''
         self.assertEqual(self.rpc.pending, ['issued-before-edit'])
         self.assertGreater(len(before), 100000)
         self.assertEqual(result['result']['testCoverage']['kind'], 'idle')
+
+    def test_shadowed_id_numeric_expression_and_dynamic_keys_never_preview_or_apply(self):
+        for fields in (
+            "id='actor_backline',minRangeYards=14,id='other'",
+            "id='actor_backline',minRangeYards=14,minRangeYards=math.max(20,30)",
+            "id='actor_backline',minRangeYards=14,['minRangeYards']=30",
+            "id='actor_backline',minRangeYards=14,[string.char(109,105,110,82,97,110,103,101,89,97,114,100,115)]=30",
+            r"id='actor_backline',minRangeYards=14,['\109inRangeYards']=30",
+        ):
+            with self.subTest(fields=fields):
+                self.rpc.source = 'local tuning={' + fields + '}\nreturn {decide=function(f) return {output={value=tuning.minRangeYards}} end}'
+                before = self.rpc.source
+                shown = self.discover()['result']
+                self.assertEqual(shown['ambiguousTables'], 1)
+                self.assertEqual(shown['rows'], [])
+                self.assertEqual(shown['examples'], {})
+                args = dict(expected_revision=checksum(before), numeric_tuning=dict(table='actor_backline',
+                    field='minRangeYards',old_literal='14',new_value=18),test=dict(kind='idle'),apply=True)
+                result = self.tools.dispatch('policy_patch',args)
+                self.assertFalse(result['ok'],result)
+                self.assertIn('ambiguous_tuning_table',result['error']['error'])
+                self.assertEqual(self.rpc.source,before)
+                self.assertFalse(self.rpc.writes)
