@@ -86,12 +86,13 @@ func (f starterStealthStopSession) SendPacket(ctx context.Context, r *modv1.Send
 }
 
 func TestStarterStealthRevalidatesAfterActualStop(t *testing.T) {
-	for _, mode := range []string{"unchanged", "source", "body", "visit", "combat", "caster", "cancel"} {
+	for _, mode := range []string{"unchanged", "source", "body", "visit", "combat", "caster", "cancel", "extra movement revision", "replaced pose"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, target, source, _ := starterStealthRig(t)
 			s.refreshPositionLocked(f.world)
 			s.practiceTarget, s.practicePullStarted = target.Guid, true
 			point, _, _ := creaturePosition(target)
+			s.state.Moving = true
 			chosen := s.starterWeaponDecisionLocked(context.Background(), f.world, target, point)
 			if !chosen.valid || chosen.kind != "cast_self" {
 				t.Fatal(chosen, s.starterSpells.failure())
@@ -99,7 +100,6 @@ func TestStarterStealthRevalidatesAfterActualStop(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			stops := 0
-			s.state.Moving = true
 			s.session = starterStealthStopSession{f, func() {
 				stops++
 				switch mode {
@@ -118,6 +118,12 @@ func TestStarterStealthRevalidatesAfterActualStop(t *testing.T) {
 					f.world.Self.AuraState = 1 << 11
 				case "cancel":
 					cancel()
+				case "extra movement revision":
+					s.posRevision++
+				case "replaced pose":
+					f.world.Self.X++
+					f.world.Self.PositionRevision++
+					s.refreshPositionLocked(f.world)
 				}
 			}}
 			s.castStarterSelfLocked(ctx, f.world, target.Guid, chosen)
@@ -127,6 +133,58 @@ func TestStarterStealthRevalidatesAfterActualStop(t *testing.T) {
 			}
 			if stops != 1 || countPackets(f, opcode.CMSGCastSpell) != want || countPackets(f, opcode.CMSGAttackswing) != 0 {
 				t.Fatal("old self-cast escaped the post-STOP boundary", stops, s.stateLocked(), f.packets)
+			}
+		})
+	}
+}
+
+func TestStarterStealthLateAuraReconcilesOnlyItsExactCurrentGO(t *testing.T) {
+	for _, mode := range []string{"confirm", "aura without GO", "wrong spell", "foreign caster", "newer operation", "replaced visit"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, _, advance := starterStealthRig(t)
+			s.Tick(context.Background())
+			op := s.supportOp
+			if op == nil || op.view.SpellId != 1785 || countPackets(f, opcode.CMSGCastSpell) != 1 {
+				t.Fatal("fixture did not enter exact self-Stealth", s.stateLocked())
+			}
+			if mode != "aura without GO" {
+				emitPolymorph(s, opcode.SMSGSpellGo, starterWeaponObservedGo(s, s.selfGUID, s.castCount))
+			}
+			advance(6 * time.Second)
+			s.Tick(context.Background())
+			if s.starterSpells.uncertainStrike != op {
+				t.Fatal("fixture did not retain expired uncertainty", op.view)
+			}
+			spell, caster := uint32(1785), s.selfGUID
+			switch mode {
+			case "wrong spell":
+				spell = 1784
+			case "foreign caster":
+				caster++
+			case "newer operation":
+				heal, _ := s.spellData.Lookup(lesserHeal)
+				s.reserveHealReceiptLocked("", heal, s.selfGUID)
+			case "replaced visit":
+				emitPolymorph(s, opcode.SMSGNewWorld, make([]byte, 20))
+			}
+			emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(s.selfGUID, caster, 2, spell, 0))
+			if mode == "confirm" {
+				if s.starterSpells.uncertainStrike != nil || !op.view.ServerCastGo || !op.view.EffectObserved || op.view.Phase != "confirmed_aura" {
+					t.Fatal("matching native confirmation could not settle exact old uncertainty", op.view)
+				}
+				s.refreshPositionLocked(f.world)
+				target := f.world.NearbyCreatures[0]
+				target.X = -8930
+				point, _, _ := creaturePosition(target)
+				selected := s.starterWeaponDecisionLocked(context.Background(), f.world, target, point)
+				if !selected.valid || selected.kind != "cast" || selected.spell.ID != sinisterStrike {
+					t.Fatal("proven aura left ordinary named offense permanently blocked", selected, s.starterSpells.failure())
+				}
+			} else if s.starterSpells.uncertainStrike != op {
+				t.Fatal("unmatched/newer aura evidence cleared old uncertainty", op.view)
+			}
+			if countPackets(f, opcode.CMSGCastSpell) != 1 {
+				t.Fatal("reconciliation sent another Stealth", f.packets)
 			}
 		})
 	}

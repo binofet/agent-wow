@@ -36,6 +36,7 @@ type supportAttempt struct {
 	breakAura             observedBuffAura
 	breakItem             uint64
 	cooldown              *cooldownReservation
+	starterBinding        *practiceLifecycleBinding
 }
 type resurrectionOffer struct {
 	caster, revision, epoch uint64

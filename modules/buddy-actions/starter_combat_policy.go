@@ -294,14 +294,26 @@ func (s *Service) starterSelfSpellAvailableLocked(w *worldv1.SnapshotResponse) b
 // policy. STOP and subsequent callbacks cannot retain an old task or choice.
 func (s *Service) castStarterSelfLocked(ctx context.Context, w *worldv1.SnapshotResponse, target uint64, chosen starterSpellDecision) bool {
 	binding, source := s.practiceLifecycleBindingLocked(w), s.starterSpells.revision
-	if !s.stopLocked(ctx) {
+	before, err := s.snapshot(ctx, target)
+	creature := practiceTargetObservation(before, target)
+	point, known, _ := creaturePosition(creature)
+	if err != nil || !known || !binding.current(s, ctx, before) || !s.practiceLifecycleSourceCurrentLocked(source) ||
+		!s.starterSpellFactsMatchLocked(chosen, before, creature, point) {
 		return false
 	}
+	revision := binding.clientRevision
+	if s.state.Moving {
+		revision++
+	}
+	if !s.stopLocked(ctx) || !binding.sameTask(s, ctx) || s.pos != binding.position ||
+		s.positionRevision != binding.positionRevision || s.posRevision != revision {
+		return false
+	}
+	binding.clientRevision = revision
 	fresh, creature, point, valid := s.practiceWeaponAuthorityLocked(ctx, target)
-	if !valid || !binding.sameTask(s, ctx) || fresh.VisitRevision != binding.visit || !s.practiceLifecycleSourceCurrentLocked(source) {
+	if !valid || !binding.current(s, ctx, fresh) {
 		return false
 	}
-	binding = s.practiceLifecycleBindingLocked(fresh)
 	selected := s.starterWeaponDecisionLocked(ctx, fresh, creature, point)
 	if !selected.valid || selected.kind != "cast_self" || selected.spell.ID != chosen.spell.ID || s.starterSpells.revision != source {
 		return false
@@ -313,6 +325,8 @@ func (s *Service) castStarterSelfLocked(ctx context.Context, w *worldv1.Snapshot
 		return false
 	}
 	s.castSupportLocked(ctx, selected.spell, s.selfGUID, target)
+	s.supportOp.starterBinding = &binding
+	s.supportOp.view.VisitId = binding.visit
 	if !s.supportOp.view.TransportWritten {
 		s.starterSpells.uncertainStrike = s.supportOp
 	}
