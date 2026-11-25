@@ -21,6 +21,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import policy_binding
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -67,12 +68,13 @@ class NoStopRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class StopRPC:
+    methods = ("buddy-world.snapshot", "buddy-professions.state", "buddy-professions.prepare_stop")
     def __init__(self, opener=None):
         self.opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), NoStopRedirect())
         self.sequence = 0
 
     def call(self, method, params, deadline):
-        if method not in ("buddy-world.snapshot", "buddy-professions.state", "buddy-professions.prepare_stop") or not isinstance(params, dict) or self.sequence >= 4:
+        if method not in self.methods or not isinstance(params, dict) or self.sequence >= 4:
             raise BuddyError("Stop safeguard request is invalid; no signal sent")
         self.sequence += 1
         expired = "Stop deadline expired before SIGTERM; no signal sent"
@@ -101,6 +103,10 @@ class StopRPC:
         if not isinstance(reply["result"], dict):
             raise BuddyError("Stop safeguard RPC state is invalid; no signal sent")
         return reply["result"]
+
+
+class PolicyStartupRPC(StopRPC):
+    methods = ("buddy-actions.status",)
 
 
 def stop_integer(value, maximum=2**64 - 1):
@@ -612,6 +618,17 @@ def start(*, deadline=None):
             raise BuddyError(f"{RPC_HOST}:{RPC_PORT} is occupied; its owner was left untouched.") from None
     environment = os.environ.copy()
     environment.update(RELEASE_ENV)
+    launch_policy = None
+    if CHARACTER_GUID is not None and "AGENT_WOW_POLICY_FILE" in RELEASE_ENV:
+        try:
+            binary_info = BINARY.stat()
+            startup_identity = dict(profile_identity(), config=str(CONFIG), binary=str(BINARY),
+                binaryIdentity=[binary_info.st_dev, binary_info.st_ino, binary_info.st_size, binary_info.st_mtime_ns])
+            launch_policy = policy_binding.prepare(ROOT / "data/self-edit", CHARACTER_GUID,
+                startup_identity, RELEASE_ENV["AGENT_WOW_POLICY_FILE"], RELEASE_ENV)
+        except (OSError, ValueError) as error:
+            raise BuddyError(f"Confirmed startup policy unavailable: {error}") from None
+        environment["AGENT_WOW_POLICY_FILE"] = launch_policy["policyFile"]
     trace_environment(environment, independent)
     environment.update(BUDDY_INDEPENDENT="true" if independent else "false",
                        AGENT_WOW_MODULE_DIR=str(MODULE_DIR or ROOT / "modules"), AGENT_WOW_LOG_LEVEL="debug",
@@ -644,6 +661,15 @@ def start(*, deadline=None):
             remaining_time(deadline, f"Startup deadline expired; PID {child.pid} was preserved. Log: {LOG_FILE}")
             record["ready_offset"] = found
             save_record(record)
+            if launch_policy is not None:
+                try:
+                    body = PolicyStartupRPC().call("buddy-actions.status", {}, deadline)
+                    if stop_integer(body.get("selfGuid"), 2**48-1) != CHARACTER_GUID:
+                        raise BuddyError("Startup policy body identity changed")
+                    policy_binding.ready(ROOT / "data/self-edit", CHARACTER_GUID, launch_policy, body.get("sessionId"))
+                except (BuddyError, StopRPCFault, OSError, ValueError) as error:
+                    # The running process is retained; no old-body edit can promote.
+                    print(f"Policy persistence unavailable for this session: {error}")
             remaining_time(deadline, f"Startup deadline expired; PID {child.pid} was preserved. Log: {LOG_FILE}")
             print(f"Started: PID {child.pid}; world session ready event observed at startup.\nRealm connection: unverified\nLog: {LOG_FILE}")
             return 0
