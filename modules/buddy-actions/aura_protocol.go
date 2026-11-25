@@ -145,15 +145,15 @@ func (s *Service) applyBuffAurasLocked(guid uint64, updates []auraDelta, all boo
 		a.revision = s.buffAuraRevision
 		set.slots[v.slot] = a
 		if op := s.supportOp; op != nil && op.view.Capability == "stealth" && op.view.TargetGuid == guid && op.view.SpellId == a.spell && a.caster == s.selfGUID && a.positive {
-			if b := op.starterBinding; b != nil && (b.session != s.sessionID || b.self != s.selfGUID || b.self != guid ||
-				b.visit != s.lastWorld.GetVisitRevision() || b.encounter != s.encounterVisit) {
-				continue
-			}
-			op.view.EffectObserved = true
-			if op.view.ServerCastGo {
-				op.view.Phase = "confirmed_aura"
-				if s.starterSpells.uncertainStrike == op {
-					s.starterSpells.uncertainStrike = nil
+			b := op.starterBinding
+			if b == nil || b.session == s.sessionID && b.self == s.selfGUID && b.self == guid &&
+				b.visit == s.lastWorld.GetVisitRevision() && b.encounter == s.encounterVisit {
+				op.view.EffectObserved = true
+				if op.view.ServerCastGo {
+					op.view.Phase = "confirmed_aura"
+					if b != nil && s.starterSpells.uncertainStrike == op {
+						s.starterSpells.uncertainStrike = nil
+					}
 				}
 			}
 		}
