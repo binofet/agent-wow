@@ -72,6 +72,76 @@ func TestPracticeLifecycleSameSessionCASOwnsReadinessAndGoalContinuation(t *test
 	}
 }
 
+func TestPracticeLifecycleSameSessionCASOwnsScenarioEligibility(t *testing.T) {
+	s, f, _ := practiceRig(t, 8)
+	target := f.world.NearbyCreatures[0]
+	target.Entry, target.Level = 69, 2 // Synthetic observed scene; not a realm spawn claim.
+	target.Guid = uint64(0xf130)<<48 | uint64(target.Entry)<<24 | 1
+	ctx := context.Background()
+	s.practiceTickLocked(ctx)
+	if countPackets(f, opcode.CMSGCastSpell) != 0 || s.state.PracticePulls != 0 {
+		t.Fatal("default Lua admitted a different scenario", s.stateLocked(), f.packets)
+	}
+	source := strings.Replace(behaviors.StarterSpellSource, "target_entry=299,target_level=1", "target_entry=69,target_level=2", 1)
+	if source == behaviors.StarterSpellSource {
+		t.Fatal("actual Lua scenario tuning missing")
+	}
+	revision := reloadPracticeLifecycleSource(t, s, source)
+	sid, self, until := s.sessionID, s.selfGUID, s.practiceUntil
+	s.practiceTickLocked(ctx)
+	if lastCast(f) != fireball || s.state.PracticePulls != 1 || s.practiceTarget != target.Guid ||
+		s.sessionID != sid || s.selfGUID != self || s.practiceUntil != until || s.starterSpells.revision != revision {
+		t.Fatal("same-session Lua target rule remained blocked by a Go scenario", s.stateLocked(), s.starterSpells.lastError, f.packets)
+	}
+	// The tuned target's actual attack is part of the existing fight, not an
+	// unexpected creature solely because its entry differs from old wolf299.
+	f.world.Self.UnitFlags |= 0x80000
+	target.AttackVictimKnown, target.AttackVictimGuid = true, self
+	s.practiceTickLocked(ctx)
+	if !s.state.Practicing || countPackets(f, opcode.CMSGCastSpell) != 1 {
+		t.Fatal("compiled unexpected-attacker rule shadowed Lua or replayed cast", s.stateLocked(), f.packets)
+	}
+	other := proto.Clone(target).(*worldv1.CreatureState)
+	other.Entry, other.Guid = 299, uint64(0xf130)<<48|uint64(299)<<24|2
+	f.world.NearbyCreatures = append(f.world.NearbyCreatures, other)
+	s.practiceTickLocked(ctx)
+	if s.state.Practicing || s.state.PracticePhase != "unexpected_hostile_requires_help" || countPackets(f, opcode.CMSGCastSpell) != 1 {
+		t.Fatal("Lua did not own unexpected encounter admission", s.stateLocked(), f.packets)
+	}
+}
+
+func TestPracticeLuaScenarioCannotOverridePhysicalCreatureAvailability(t *testing.T) {
+	for _, mode := range []string{"guid", "map", "dead", "health_unknown", "attack_immune"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _ := practiceRig(t, 8)
+			target := f.world.NearbyCreatures[0]
+			start := strings.Index(behaviors.StarterSpellSource, "local function practice_target(c,tuning)")
+			end := strings.Index(behaviors.StarterSpellSource[start:], "local function unclaimed(c)") + start
+			if start < 0 || end < start {
+				t.Fatal("actual scenario predicate missing")
+			}
+			source := behaviors.StarterSpellSource[:start] + "local function practice_target(c,tuning) return true end\n" + behaviors.StarterSpellSource[end:]
+			reloadPracticeLifecycleSource(t, s, source)
+			switch mode {
+			case "guid":
+				target.Guid = 3
+			case "map":
+				target.MapId = 1
+			case "dead":
+				target.Alive = false
+			case "health_unknown":
+				target.HealthKnown = false
+			case "attack_immune":
+				target.UnitFlags |= 0x100
+			}
+			s.practiceTickLocked(context.Background())
+			if countPackets(f, opcode.CMSGCastSpell) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 || s.state.PracticePulls != 0 {
+				t.Fatal("Lua scenario choice bypassed physical admission", s.stateLocked(), f.packets)
+			}
+		})
+	}
+}
+
 func TestPracticeLifecycleSameSessionCASOwnsRankingAndFiniteLease(t *testing.T) {
 	s, f, _ := practiceRig(t, 8)
 	second := proto.Clone(f.world.NearbyCreatures[0]).(*worldv1.CreatureState)

@@ -68,9 +68,9 @@ local function owned_fight(input,target)
     return input.practice.pullStarted==true and bit(input.self.unitFlags,0x80000) and type(target)=="table" and
         target.attackVictimKnown==true and target.attackVictimGuid==input.selfGuid and recent_age(target.attackAgeMs or 0)
 end
-local function wolf(c)
-    return type(c)=="table" and decimal(c.guid) and c.guid~="0" and c.entry==299 and c.present==true and c.mapKnown==true and (c.mapId or 0)==0 and
-        c.levelKnown==true and c.level==1 and c.healthKnown==true and uint(c.health) and c.health>0 and uint(c.maxHealth) and c.maxHealth>0 and
+local function practice_target(c,tuning)
+    return type(c)=="table" and decimal(c.guid) and c.guid~="0" and c.entry==tuning.target_entry and c.present==true and c.mapKnown==true and (c.mapId or 0)==0 and
+        c.levelKnown==true and c.level==tuning.target_level and c.healthKnown==true and uint(c.health) and c.health>0 and uint(c.maxHealth) and c.maxHealth>0 and
         c.aliveKnown==true and c.alive==true and (c.npcFlags or 0)==0 and (c.unitFlags2 or 0)%2==0 and
         not bit(c.unitFlags,2) and not bit(c.unitFlags,0x80) and not bit(c.unitFlags,0x100) and not bit(c.unitFlags,0x10000) and
         not bit(c.unitFlags,0x2000000) and not bit(c.unitFlags,0x80000000)
@@ -78,7 +78,7 @@ end
 local function unclaimed(c)
     return not bit(c.unitFlags,0x80000) and (c.dynamicFlags or 0)==0 and c.attackVictimKnown~=true and (c.targetKnown~=true or (c.targetGuid or "0")=="0")
 end
-M.practice_pull={minimum_health=95,priest_mana=45,mage_mana=40,minimum_energy=90,max_range=120,lease_ms=600000,prefer_nearest=true}
+M.practice_pull={minimum_health=95,priest_mana=45,mage_mana=40,minimum_energy=90,max_range=120,lease_ms=600000,prefer_nearest=true,target_entry=299,target_level=1}
 function M.practice_lifecycle(input)
     local p=type(input)=="table" and type(input.practice)=="table" and input.practice or {}
     local function out(kind,phase,target,quest,finishing,lease)
@@ -92,8 +92,8 @@ function M.practice_lifecycle(input)
     local self,tuning=input.self,M.practice_pull
     if self.classId~=4 and self.classId~=5 and self.classId~=8 then return refuse end
     if type(tuning)~="table" or type(tuning.prefer_nearest)~="boolean" then return refuse end
-    for _,key in ipairs({"minimum_health","priest_mana","mage_mana","minimum_energy","max_range","lease_ms"}) do if not uint(tuning[key]) then return refuse end end
-    if tuning.minimum_health>100 or tuning.priest_mana>100 or tuning.mage_mana>100 or tuning.max_range>240 or tuning.lease_ms==0 or tuning.lease_ms>600000 then return refuse end
+    for _,key in ipairs({"minimum_health","priest_mana","mage_mana","minimum_energy","max_range","lease_ms","target_entry","target_level"}) do if not uint(tuning[key]) then return refuse end end
+    if tuning.target_entry==0 or tuning.target_level==0 or tuning.minimum_health>100 or tuning.priest_mana>100 or tuning.mage_mana>100 or tuning.max_range>240 or tuning.lease_ms==0 or tuning.lease_ms>600000 then return refuse end
     local rows=quest_rows(input)
     local q=rows and rows[33]
     local active,needed=active_quest(q),incomplete(q)
@@ -104,9 +104,17 @@ function M.practice_lifecycle(input)
         return out("start","waiting_for_safe_pull","0",needed,false,tuning.lease_ms)
     end
     if not number(p.remainingMs) or p.remainingMs<=0 then return out("stop","goal_expired","0",quest) end
+    -- The same accepted scenario owns unexpected encounter admission at the
+    -- initial decision and every native pre-action lifecycle recheck.
+    for _,other in ipairs(input.nearby) do
+        if type(other)=="table" and other.entry~=tuning.target_entry and other.present==true and other.aliveKnown==true and other.alive==true and
+           other.attackVictimKnown==true and other.attackVictimGuid==input.selfGuid and recent_age(other.attackAgeMs or 0) then
+            return out("stop","unexpected_hostile_requires_help","0",quest)
+        end
+    end
     local target=input.selected
     local goal=needed and self.level<=5 or not active and self.level==1 and self.classId~=5 and not p.questGoal
-    local finishing=not goal and wolf(target) and owned_fight(input,target)
+    local finishing=not goal and practice_target(target,tuning) and owned_fight(input,target)
     if not goal and not finishing then
         local phase="level_two_observed"
         if quest then phase=not active and "own_quest_33_absent_or_unknown" or needed and "quest_33_level_limit" or "quest_33_completion_observed" end
@@ -137,7 +145,7 @@ function M.practice_lifecycle(input)
             -- A tied or worse row cannot replace the already valid winner.
             -- Validate identity/eligibility only for an actual improvement;
             -- every row and its geometry still participates in the choice.
-            if d<tuning.max_range*tuning.max_range and (not selected or tuning.prefer_nearest and d<best or not tuning.prefer_nearest and d>best) and wolf(c) and unclaimed(c) then best,selected=d,c end
+            if d<tuning.max_range*tuning.max_range and (not selected or tuning.prefer_nearest and d<best or not tuning.prefer_nearest and d>best) and practice_target(c,tuning) and unclaimed(c) then best,selected=d,c end
         end
     end
     return out(selected and "select" or "wait",selected and "fighting_observed_young_wolf" or "waiting_for_observed_level_one_young_wolf",selected and selected.guid or "0",quest)
