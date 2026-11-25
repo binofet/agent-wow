@@ -91,10 +91,6 @@ func (s *Service) pauseOrdinaryCleanup(ctx context.Context) {
 }
 
 func (s *Service) tickOrdinaryCleanup(ctx context.Context) {
-	if s.state.Enabled && s.lootPolicyExpired(s.now()) {
-		s.state.Enabled = false
-		s.state.Reason = "automatic_loot_enable_expired"
-	}
 	if s.retireUnconfirmedItem(ctx) {
 		return
 	}

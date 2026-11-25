@@ -146,7 +146,6 @@ func TestExactCorpseCallbackRefusalDoesNotInventTransportOrRetireSource(t *testi
 
 func TestProductionLootTicksCannotSelectOrdinaryCorpses(t *testing.T) {
 	s, f, _ := exactCorpseRig(t)
-	s.automatic = true
 	for _, enabled := range []bool{true, false, true} {
 		s.Enable(context.Background(), &lootv1.EnableRequest{Enabled: enabled})
 		s.Tick(context.Background())

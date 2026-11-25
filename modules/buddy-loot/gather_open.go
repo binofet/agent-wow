@@ -158,7 +158,7 @@ func (s *Service) OpenGather(ctx context.Context, r *lootv1.OpenGatherRequest) (
 		}
 		return s.gatherReceiptLocked(prior), nil
 	}
-	if !s.state.Enabled || s.lootPolicyExpired(s.now()) || s.token != "" || s.cleanup.source != 0 ||
+	if !s.state.Enabled || s.token != "" || s.cleanup.source != 0 ||
 		s.gatherSeen[r.SourceGuid] || s.retired[r.SourceGuid] || len(s.gatherRequests) >= 128 || len(s.gatherSeen) >= 128 || s.state.InventoryPaused {
 		return nil, status.Error(codes.FailedPrecondition, "available gather operation with no active uncertain or retired source required")
 	}

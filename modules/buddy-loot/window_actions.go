@@ -120,7 +120,7 @@ func (s *Service) takeWindow(ctx context.Context, r *lootv1.TakeLootRequest, mon
 		return nil, status.Error(codes.FailedPrecondition, "exact owned stopped loot custody required")
 	}
 	w := &worldv1.SnapshotResponse{}
-	if err := s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), w); err != nil {
+	if err := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, w); err != nil {
 		return nil, err
 	}
 	if w.GetSelf().GetGuid() != s.selfGUID || !money && (!w.InventoryKnown || w.InventoryRevision != r.ExpectedInventoryRevision) || ctx.Err() != nil {
