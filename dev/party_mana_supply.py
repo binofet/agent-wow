@@ -42,6 +42,22 @@ def _catalog(rpc,port,identity):
     return catalog
 
 
+def _trade_state_revision(view,catalog,identity):
+    """Hydrate only a reflected proto3 zero in this detached current state."""
+    trade=view.get('trade')
+    if isinstance(trade,dict) and 'revision' in trade:return
+    methods=[row for row in catalog['methods'] if isinstance(row,dict) and row.get('name')=='buddy-trade.state']
+    schema=catalog['messages'].get(methods[0].get('outputType'),{}) if len(methods)==1 else {}
+    fields=[row for row in schema.get('fields',[]) if isinstance(row,dict) and row.get('name')=='revision']
+    if (not isinstance(trade,dict) or trade.get('sessionId')!=identity['sessionId']
+            or not isinstance(trade.get('phase'),str) or not trade['phase']
+            or len(fields)!=1 or fields[0].get('kind')!='uint64'
+            or any(fields[0].get(key) is not False for key in ('repeated','map','optional','required'))
+            or fields[0].get('hasDefault',False) is not False or fields[0].get('oneof')):
+        raise runtime.Error('current_reflected_trade_state_revision_required')
+    trade['revision']='0' # Canonical protobuf JSON representation of uint64 zero.
+
+
 def _metadata(rpc,mage,observations):
     toolkit=mage.get('spell_toolkit')
     if toolkit is None:toolkit=rpc(MIRA,'buddy-actions.spell_toolkit',{})
@@ -123,6 +139,7 @@ def _evaluate(rpc,observations,state,bridge,now_ms,query=None):
     for port,guid in RECIPIENTS.items():
         if port in observations:identities[port]=_identity(observations[port],guid)
     catalogs={str(port):_catalog(rpc,port,body) for port,body in identities.items()}
+    for port,body in identities.items():_trade_state_revision(views[str(port)],catalogs[str(port)],body)
     toolkit,metadata=_metadata(rpc,mage,observations);views[str(MIRA)]['spell_toolkit']=toolkit
     wrapped=('local policy=(function()\n'+source+'\nend)()\nreturn {decide=function(input) '
         'if type(policy.mana_supply_plan)~="function" then return {available=false} end '

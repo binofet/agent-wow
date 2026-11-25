@@ -185,6 +185,27 @@ local function carried(v,usable,spare,destination)
     end
     return best
 end
+local function waiting_arm(t)
+    return (t.partnerGuid==nil or id(t.partnerGuid)=='0') and t.phase=='IDLE'
+        and t.waterGiftArmed==true and t.reason=='waiting_for_water_gift_invitation'
+end
+local function pending_source_current(v,p)
+    local w=v.world or {};local source=p.source or {};local rows
+    if source.backpackRevision then
+        if w.backpackKnown~=true or id(w.backpackRevision)~=source.backpackRevision then return false end
+        rows=w.backpack or {}
+    elseif source.inventoryRevision then
+        if w.inventoryKnown~=true or id(w.inventoryRevision)~=source.inventoryRevision then return false end
+        for _,bag in ipairs(w.inventoryBags or {}) do
+            if n(bag.bag)==source.sourceBag and bag.contentsKnown==true then rows=bag.slots end
+        end
+    end
+    for _,item in ipairs(rows or {}) do
+        if n(item.slot)==(source.backpackSlot or source.sourceSlot) and id(item.itemGuid)==p.itemGuid
+            and n(item.entry)==p.entry and n(item.stackCount)==p.count and item.metadataKnown==true then return true end
+    end
+    return false
+end
 local function result(memory,phase,action)
     memory.phase=phase;return {memory=memory,phase=phase,action=action}
 end
@@ -406,14 +427,20 @@ function M.plan(frame,disposal,gear)
             if last.id~=p.actionId then return result(m,'awaiting_recipient_reservation') end
             if last.outcome~='rpc_result' then return result(m,'recipient_reservation_unconfirmed') end
             local receipt=last.result or {}
-            if receipt.sessionId~=p.recipientSession or receipt.waterGiftArmed~=true or id(receipt.partnerGuid)~=guid
+            local anonymous_arm=waiting_arm(receipt)
+            if receipt.sessionId~=p.recipientSession or receipt.waterGiftArmed~=true
+                or not (id(receipt.partnerGuid)==guid or anonymous_arm)
                 or not after(receipt.revision,p.recipientRevision) then return result(m,'recipient_reservation_unconfirmed') end
+            local peer_partner=id(peer.trade.partnerGuid)
+            if peer_partner~='' and peer_partner~='0' and peer_partner~=guid then return result(m,'awaiting_recipient_reservation_observation') end
             if peer.trade.waterGiftArmed~=true and peer.trade.phase=='IDLE' and after(peer.trade.revision,receipt.revision) then
                 -- The recipient's finite metadata ended before this task ever
                 -- proposed its donor write. An unknown arm reply stays above.
                 m.pending=nil;m.nextAtMs=now;return result(m,'recipient_reservation_ended_before_offer')
             end
-            if peer.trade.waterGiftArmed~=true or id(peer.trade.partnerGuid)~=guid or after(receipt.revision,peer.trade.revision) then
+            if peer.trade.waterGiftArmed~=true or after(receipt.revision,peer.trade.revision)
+                or anonymous_arm and (not waiting_arm(peer.trade) or id(peer.trade.revision)~=id(receipt.revision))
+                or not anonymous_arm and peer_partner~=guid then
                 return result(m,'awaiting_recipient_reservation_observation')
             end
             if not body(mage.world.self,guid) or not body(peer.world.self,p.recipientGuid)
@@ -421,6 +448,7 @@ function M.plan(frame,disposal,gear)
                 or (mage.actions or {}).castPending or (mage.actions or {}).moving then
                 return result(m,'awaiting_safe_trade_continuation')
             end
+            if not pending_source_current(mage,p) then return result(m,'awaiting_current_water_source') end
             p.stage='offered'
             local params={sessionId=p.mageSession,revision=id(mage.trade.revision),partnerGuid=p.recipientGuid,
                 itemEntry=p.entry,itemCount=p.count,expectedItemGuid=p.itemGuid}
