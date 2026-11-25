@@ -374,10 +374,13 @@ local function control_action(obs, frame, focusGuid, planned_control, allow_acti
         end
     end
     for _, request in ipairs(state.requests) do
-        if request.auto and not request.controlActive and not request.controlPending then
+        if request.auto and #frame.pending == 0 and not request.controlActive and not request.controlPending then
             local target = automatic_target(obs,request,focusGuid)
             if target then request.boundGuid,request.visitId = target,obs.visitId
-            elseif request.boundGuid == focusGuid or request.boundGuid == obs.observedOwnerFocus then
+            else
+                -- A prior automatic choice is not a standing explicit order.
+                -- Keep actual effect/cast/reservation custody above, but do not
+                -- approach or cast at an add that is no longer eligible.
                 request.boundGuid,request.visitId = nil,nil
             end
         end
