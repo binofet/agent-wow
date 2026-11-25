@@ -13,6 +13,7 @@ import re
 import stat
 import tempfile
 import time
+import policy_binding
 
 ROOT = Path(__file__).resolve().parent.parent
 loader = importlib.machinery.SourceFileLoader('self_edit_converse', str(ROOT / 'dev/converse'))
@@ -190,6 +191,7 @@ def edit(command, guid, sid, rpc, source=None, expected=None, data=None):
             return result
         if revision != expected:
             raise c.ConversationError('Live policy changed; read it before editing')
+        binding = policy_binding.capture(actor, sid, expected) if session_policy else None
         target = digest(source) if command == 'apply' else ''
         if command == 'apply':
             save_source(actor / (target + '.lua'), source)
@@ -214,7 +216,13 @@ def edit(command, guid, sid, rpc, source=None, expected=None, data=None):
         after = read_session_policy() if session_policy else owned(rpc, guid, sid)
         if after.get('revision', '') != target:
             raise c.ConversationError('Policy is not current; inspect quarantine or concurrent edit')
+        durable = False
+        confirmed_source = after.get('source') if session_policy else None
+        if isinstance(confirmed_source, str) and digest(confirmed_source) == target:
+            save_source(actor / (target + '.lua'), confirmed_source)
+            durable = policy_binding.promote(actor, binding, target, sid)
         return dict(characterGuid=str(guid), sessionId=sid, revision=target,
+                    startupBindingConfirmed=durable,
                     phase='already_current' if revision == target else 'live', reconnected=False,
                     elapsedMs=round((time.monotonic() - started) * 1000, 2),
                     evaluations=after.get('evaluations', '0'))

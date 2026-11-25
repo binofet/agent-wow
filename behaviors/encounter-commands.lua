@@ -1,7 +1,7 @@
 -- Identity-bound command events are queued by the host. Every gameplay choice
 -- below stays in Lua, including binding marks, approaching and entering Stealth.
 local state = {requests={}}
-local ranged_options, ranged_control_proposal, ranged_hold_proposal
+local ranged_options, ranged_control_proposal, ranged_hold_proposal, ranged_ground_proposal
 local movement = encounter_movement
 local tactics = encounter_tactics
 local icons = {star=1,circle=2,diamond=3,triangle=4,moon=5,square=6,x=7,skull=8}
@@ -59,6 +59,34 @@ local function on_event(event)
                 if payload.capability == "cast_self" and payload.spell_id == row.stealthPending then row.stealthPending = nil end
                 if payload.capability == row.technique and payload.target_guid == row.boundGuid and
                    payload.spell_id == row.controlPending then row.controlPending = nil end
+            end
+        end
+    end
+    local ground=state.rangedGround
+    if ground and ground.operation and event.receipt then
+        local receipt,p=event.receipt,event.receipt.payload or {}
+        local op=ground.operation
+        -- The Session harness validates receipt session/action reservation;
+        -- generic spell payloads intentionally have no self/visit fields.
+        if guid(receipt.action_id) and (not op.actionId or op.actionId==receipt.action_id) and
+           (op.kind=="move_body" and p.capability=="move_body" and p.self_guid==ground.selfGuid and p.visit_id==ground.visitId and p.sequence_id==op.sequence or
+            op.kind=="cast_spell" and p.capability=="cast_spell" and p.target_guid==op.target and p.spell_id==op.spell) then
+            op.actionId=receipt.action_id
+            if receipt.outcome=="unknown" then ground.uncertain=true
+            elseif terminal[receipt.outcome] then
+                ground.operation=nil
+                ground.lastPhase,ground.lastDetail=p.phase,type(p.detail)=="string" and #p.detail>0 and p.detail or p.grpc_message or p.error
+                if op.kind=="cast_spell" then
+                    if receipt.outcome=="failed" or receipt.outcome=="not_dispatched" then ground.castRefused={key=ground.key,target=op.target,spell=op.spell} end
+                elseif p.transport_written==true and p.phase=="body_input_written" then
+                    ground.awaiting=op;ground.observedSequence=op.sequence
+                else
+                    -- A refused ray is not a reason to resend it every tick.
+                    -- Falling/STOP-only outcomes are not horizontal progress.
+                    ground.blocked[op.heading]=true
+                    if p.phase=="body_settled_written" and p.transport_written==true then ground.observedSequence=op.sequence
+                    elseif p.phase~="local_physics_refused" then ground.refused=ground.positionKey end
+                end
             end
         end
     end
@@ -472,6 +500,21 @@ local function import_state(saved)
             if key=="rangedOnly" and (type(row.sessionId)~="string" or not guid(row.selfGuid) or type(row.expiresAt)~="number" or type(row.expiresUnixMs)~="number") then return false end
         end
     end
+    local ground=saved.data.rangedGround
+    if ground~=nil and (type(ground)~="table" or type(ground.sessionId)~="string" or not guid(ground.selfGuid) or not guid(ground.visitId) or type(ground.key)~="string" or type(ground.blocked)~="table" or ground.operation~=nil and type(ground.operation)~="table" or ground.awaiting~=nil and type(ground.awaiting)~="table") then return false end
+    if ground then
+        if type(ground.id)~="string" or ground.uncertain~=nil and type(ground.uncertain)~="boolean" or ground.observedSequence~=nil and not guid(ground.observedSequence) then return false end
+        local refused=ground.castRefused
+        if refused~=nil and type(refused)~="string" and (type(refused)~="table" or type(refused.key)~="string" or not guid(refused.target) or not spell_id(refused.spell)) then return false end
+        for k,v in pairs(ground.blocked) do if type(k)~="string" or type(v)~="boolean" then return false end end
+        for _,op in pairs({operation=ground.operation,awaiting=ground.awaiting}) do
+            if type(op)~="table" or not guid(op.sequence) or op.actionId~=nil and not guid(op.actionId) or (op.kind~="move_body" and op.kind~="cast_spell") then return false end
+            if op.kind=="move_body" then
+                if type(op.heading)~="string" then return false end
+                for _,k in ipairs({"x","y","z"}) do local n=op[k];if type(n)~="number" or n~=n or n<=-math.huge or n>=math.huge then return false end end
+            elseif not guid(op.target) or not spell_id(op.spell) then return false end
+        end
+    end
     local hold=saved.data.rangedHold
     if hold~=nil and (type(hold)~="table" or type(hold.owner)~="string" or type(hold.sessionId)~="string" or not guid(hold.selfGuid) or type(hold.untilUnixMs)~="number" or hold.token~=nil and type(hold.token)~="string") then return false end
     state = saved.data
@@ -623,7 +666,147 @@ local function ranged_hold(obs,frame,out,row,status,wanted,stopTarget)
     status.stationaryObserved=stopped==true
     return false
 end
-local function ranged_filter(obs,frame,sequence,out,row,status)
+-- Older native clients already provide physics-checked straight body inputs.
+-- Their observed speed is validated natively in [0.1,14] yards/s. Check the
+-- ENTIRE worst-case ray here; the native floor/collision check may refuse it.
+-- This is observed geometry, not a claim about future hazards or server arrival.
+local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choose_spell)
+    out.action=nil
+    status.positionReady=false
+    status.positioningMode="legacy_ground_input"
+    local nav=obs.navigation or {}
+    local self=(obs.players or {})[obs.selfGuid]
+    local from=movement and movement.current_pose and movement.current_pose(self)
+    if nav.bodyMovementSupported~=true then status.phase="body_movement_unsupported";return end
+    if not from or self.positionInferred==true or self.mapKnown~=true or self.mapId~=obs.mapId or nav.motionUnconfirmed==true or status.stationaryObserved~=true then
+        status.phase="ground_pose_unavailable";return
+    end
+    local hazards,key={},row.id..":"..tostring(row.minRangeYards)..":"..tostring(row.maxRangeYards)..":"..tostring(row.clearanceYards)..":"..tostring(from.x)..":"..tostring(from.y)..":"..tostring(from.z)
+    local positionKey=key
+    for _,id in ipairs(ids) do
+        local target=obs.targets[id]
+        local point=movement.current_pose(target)
+        if not point or target.positionInferred==true or target.positionEstimated==true then
+            status.phase="hazard_pose_unavailable";return
+        end
+        hazards[#hazards+1]=point
+        key=key..":"..id..":"..tostring(point.x)..":"..tostring(point.y)..":"..tostring(point.z)
+    end
+    local ground=state.rangedGround
+    if ground and (ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or ground.id~=row.id) and (ground.operation or ground.uncertain) then
+        status.phase="ground_input_prior_scope_unsettled";return
+    end
+    if not ground or ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or ground.id~=row.id then
+        ground={sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,id=row.id,key=key,positionKey=positionKey,blocked={}}
+        state.rangedGround=ground
+    end
+    status.lastInputPhase,status.lastInputDetail=ground.lastPhase,ground.lastDetail
+    if ground.uncertain then status.phase="ground_input_unknown";return end
+    if ground.operation then status.phase="waiting_for_ground_input_receipt";return end
+    local function matching_body_pose(body,expected)
+        if not body or body.sequenceId~=expected or body.visitId~=obs.visitId or body.transportWritten~=true or
+           (body.phase~="body_input_written" and body.phase~="body_settled_written") then return false end
+        if self.positionEstimated~=true then return true end
+        return body.positionEstimated==true and
+            math.abs(from.x-(body.x or 0))<=0.0001 and math.abs(from.y-(body.y or 0))<=0.0001 and math.abs(from.z-(body.z or 0))<=0.0001
+    end
+    if ground.awaiting then
+        local op,body=ground.awaiting,nav.bodyMovement
+        if not matching_body_pose(body,op.sequence) then
+            status.phase="waiting_for_ground_input_observation";return
+        end
+        ground.awaiting=nil
+        if (from.x-op.x)^2+(from.y-op.y)^2+(from.z-op.z)^2<0.00000001 then ground.blocked[op.heading]=true end
+        status.poseSource=self.positionEstimated==true and "client_written_pose" or "observed_pose"
+    elseif self.positionEstimated==true then
+        -- Do not borrow an unrelated estimated pose as a starting point.
+        if not ground.observedSequence or not matching_body_pose(nav.bodyMovement,ground.observedSequence) then status.phase="uncorrelated_estimated_pose";return end
+    end
+    -- Collision/floor refusal is tied to OWN origin and direction. A moving
+    -- enemy does not make an unchanged refused physical ray worth retrying.
+    if not ground.positionKey then ground.positionKey=positionKey end
+    if ground.positionKey~=positionKey then ground.positionKey,ground.blocked=positionKey,{} end
+    ground.key=key
+    if ground.refused==positionKey then status.phase="ground_input_refused_at_observed_pose";return end
+    local focus=out.focusGuid and obs.targets[out.focusGuid]
+    local target=focus and focus.entry==row.creatureEntry and focus.present==true and focus.protected~=true and obs.targetProtectionOverflow~=true and focus.aliveKnown==true and focus.alive==true and focus or nil
+    local targetId=target and out.focusGuid
+    local point=target and movement.current_pose(target)
+    local spellId=point and choose_spell and choose_spell(obs,target,{require_ready=false,require_metadata=true})
+    local spell=spellId and (obs.spells or {})[tostring(spellId)]
+    if spell and (spell.metadataKnown~=true or spell.weaponStrike==true or spell.capability~="offense" or type(spell.maxRange)~="number" or spell.maxRange<=row.minRangeYards+2*row.clearanceYards) then spell=nil end
+    local lower=row.minRangeYards+row.clearanceYards
+    local upper=spell and math.min(row.maxRangeYards-row.clearanceYards,spell.maxRange-row.clearanceYards)
+    local unsafe=false
+    for _,p in ipairs(hazards) do if (p.x-from.x)^2+(p.y-from.y)^2<lower*lower then unsafe=true end end
+    local dx,dy,distance
+    if point then dx,dy=point.x-from.x,point.y-from.y;distance=math.sqrt(dx*dx+dy*dy+(point.z-from.z)^2) end
+    if not unsafe and not spell then status.phase="supported_ranged_option_unavailable";return end
+    local facing=point and dx*math.cos(from.o)+dy*math.sin(from.o)
+    if not unsafe and distance and distance>=lower and distance<=upper and facing and facing>=math.sqrt(dx*dx+dy*dy)*0.98 then
+        local ready=choose_spell(obs,target,{require_metadata=true})
+        if ready then
+            out.action={capability="cast_spell",sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,observationSequence=sequence,
+                spellId=ready,targets={mask=2,objectGuid=targetId}}
+            status.phase="stationary_targeted_ranged_cast"
+            local refused=ground.castRefused
+            if refused==key or type(refused)=="table" and refused.key==key and refused.target==targetId and refused.spell==ready then out.action=nil;status.phase="ranged_cast_refused_at_observed_pose"
+            else ranged_ground_proposal={action=out.action,ground=ground,operation={kind="cast_spell",sequence=sequence,target=targetId,spell=ready}} end
+        else status.phase="waiting_for_ranged_spell" end
+        return
+    end
+    -- A non-fighting stance can withdraw, but cannot choose a new pull target.
+    if not unsafe and not point then status.phase="holding_ranged_only";return end
+    local length=unsafe and 3 or math.min(3,math.abs(distance-(lower+upper)*0.5))
+    local facingOnly=not unsafe and distance>=lower and distance<=upper
+    if facingOnly then length=0.014 end
+    local duration=math.max(1,math.min(500,math.floor(length/14*1000)))
+    if type(status.remainingMs)~="number" or duration>=status.remainingMs then status.phase="ground_input_deadline";return end
+    length=14*duration/1000
+    local best,bestScore
+    for i=0,31 do
+        local angle=i*0.196349540849362
+        local vx,vy=math.cos(angle),math.sin(angle)
+        local ex,ey=from.x+vx*length,from.y+vy*length
+        local allowed=ground.blocked[tostring(i)]~=true
+        local score=0
+        for _,p in ipairs(hazards) do
+            local hx,hy=p.x-from.x,p.y-from.y
+            local initial=hx*hx+hy*hy
+            local projection=math.max(0,math.min(length,hx*vx+hy*vy))
+            local closest=(hx-vx*projection)^2+(hy-vy*projection)^2
+            if initial<lower*lower then
+                -- Inside: never take a first step towards ANY hazard.
+                if initial>0 and hx*vx+hy*vy>=-math.min(0.001,math.sqrt(initial)*0.01) then allowed=false end
+                score=score+((ex-p.x)^2+(ey-p.y)^2-initial)
+            elseif initial<(lower+0.01)^2 then
+                -- Relative bearings are encoded as float32 by native. Keep a
+                -- strict outward component at the boundary, and a small
+                -- numeric margin for rays passing a different hazard.
+                if hx*vx+hy*vy>=-0.001 then allowed=false end
+            elseif closest<(lower+0.01)^2 then allowed=false end
+        end
+        if not unsafe then
+            if facingOnly then score=dx*vx+dy*vy
+            else
+                local after=math.sqrt((ex-point.x)^2+(ey-point.y)^2+(from.z-point.z)^2)
+                score=math.abs(distance-(lower+upper)*0.5)-math.abs(after-(lower+upper)*0.5)
+            end
+        end
+        if allowed and score>0 and (not bestScore or score>bestScore) then best,bestScore=i,score end
+    end
+    if not best then status.phase="no_clear_ground_input";return end
+    local bearing=best*0.196349540849362-from.o
+    while bearing>3.141592653589793 do bearing=bearing-6.283185307179586 end
+    while bearing< -3.141592653589793 do bearing=bearing+6.283185307179586 end
+    local a={capability="move_body",sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,observationSequence=sequence,
+        sequenceId=sequence,bearingRadians=bearing,durationMs=duration,jump=false}
+    out.action=a
+    ranged_ground_proposal={action=a,ground=ground,operation={kind="move_body",sequence=sequence,heading=tostring(best),x=from.x,y=from.y,z=from.z}}
+    status.phase=unsafe and "withdrawing_ground_input" or facingOnly and "facing_ground_input" or "approaching_ground_input"
+end
+
+local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell)
     out.rangedStance=status
     if not row then
         if #frame.pending==0 then ranged_hold(obs,frame,out,nil,status,false) end
@@ -651,16 +834,8 @@ local function ranged_filter(obs,frame,sequence,out,row,status)
         if status.stationaryObserved==true and ranged_friendly_support(obs,action) then
             status.phase="stationary_friendly_support";status.positionReady=false;return
         end
-        -- A real stationary ranged cast needs no new movement ABI. This does
-        -- not make an inside/unknown pose safe or claim autorepeat shooting.
-        local target=action and (obs.targets or {})[action.targetGuid]
-        local spell=action and (obs.spells or {})[tostring(action.spellId)]
-        if complete and status.stationaryObserved==true and distance and distance>=row.minRangeYards+row.clearanceYards and distance<=row.maxRangeYards-row.clearanceYards and
-           target and action.targetGuid==nearest and target.entry==row.creatureEntry and (action.capability=="offense" or action.capability=="cast_spell" or action.capability=="polymorph") and
-           spell and spell.metadataKnown==true and spell.weaponStrike~=true and type(spell.maxRange)=="number" and spell.maxRange>=distance+row.clearanceYards then
-            status.phase="stationary_ranged_cast";status.positionReady=false;return
-        end
-        out.action=nil;status.phase="positioning_unsupported";status.positionReady=false;return
+        if not complete then out.action=nil;status.phase="clearance_facts_unavailable";return end
+        ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choose_spell);return
     end
     if (obs.navigation or {}).motionUnconfirmed==true then out.action=nil;status.phase="waiting_for_native_custody";status.positionReady=false;return end
     if action and (action.capability=="heal" or action.capability=="buff") and action.targetGuid==obs.selfGuid then return end
@@ -693,6 +868,10 @@ local function ranged_filter(obs,frame,sequence,out,row,status)
 end
 
 local function ranged_finish(selected)
+    if ranged_ground_proposal and ranged_ground_proposal.action==selected then
+        ranged_ground_proposal.ground.operation=ranged_ground_proposal.operation
+    end
+    ranged_ground_proposal=nil
     if ranged_hold_proposal and ranged_hold_proposal.action==selected then
         ranged_hold_proposal.hold.operation={mode=selected.mode,owner=selected.owner}
     end
