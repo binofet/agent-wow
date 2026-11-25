@@ -208,6 +208,21 @@ class GMCommandEvidenceTests(unittest.TestCase):
         self.assertEqual([code for code,_ in self.rpc.packets],[0x13d])
         for path,raw in before.items():self.assertEqual(path.read_bytes(),raw)
 
+    def test_unsettled_explicit_spawn_cannot_become_other_visible_spawn_on_bare_call(self):
+        for index,command in enumerate(('.die','.damage 6000')):
+            with self.subTest(command=command):
+                self.tools.context=None
+                self.die_world(selected='87');self.rpc.settle_selection=False
+                first=self.execute(command,selected=self.die_old,operation='explicit-'+str(index))
+                self.assertFalse(first['result']['commandTransportWritten'])
+                before={p:p.read_bytes() for p in (self.host/'data/converse/lotharen/gm-commands').glob('*/state.json')}
+                self.rpc.selected=self.die_new
+                second=self.execute(command,operation='bare-'+str(index))
+                self.assertFalse(second['result']['commandTransportWritten'])
+                self.assertEqual(second['result']['targetAdmission']['requiredTargetGuid'],self.die_old)
+                self.assertFalse(self.rpc.commands)
+                for path,raw in before.items():self.assertEqual(path.read_bytes(),raw)
+
     def test_die_bounded_selection_observation_uses_one_selection_then_exact_creature(self):
         self.die_world(selected='87');self.rpc.settle_selection=False
         self.on_wait=lambda:setattr(self.rpc,'selected',self.die_old)

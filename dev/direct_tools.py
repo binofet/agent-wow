@@ -1156,6 +1156,25 @@ class DirectTools:
                 if prior.get("knownNotDispatched") is not True:
                     self._unknown("gm_execute", dict(stateDir=str(folder), commandSHA256=digest,
                         selectedGuid=selected), ToolError("retained_native_command_outcome_unconfirmed"))
+            # An unsettled explicit creature choice cannot silently become the
+            # GM's different current selection on a later bare lethal call.
+            # Read existing custody only: never settle, rewrite or replay it.
+            if selected is None and command.split(' ',1)[0].casefold() in ('.die','.damage'):
+                for candidate in sorted(folder.parent.iterdir()):
+                    if candidate==folder or not re.fullmatch('[a-f0-9]{64}',candidate.name):continue
+                    row=gm.task_store(candidate).load()
+                    if not row or row.get('identity')!=dict(sessionId=self.session_id,guid='87',rpcUrl=self.rpc.url) or row.get('requestId')!=self.request_id:continue
+                    previous=row.get('result') or {}
+                    intended=row.get('selectedGuid')
+                    prior_command=(row.get('commandIntent') or {}).get('command','').split(' ',1)[0].casefold()
+                    targeted=bool(previous.get('targetAdmission')) or prior_command in ('.die','.damage')
+                    if intended not in (None,'0') and targeted and previous.get('commandTransportWritten') is not True:
+                        return dict(commandTransportWritten=False,selectionTransportWritten=False,
+                            transportWritten=False,completion='explicit_target_required_after_unsettled_selection',
+                            targetAdmission=dict(allowed=False,knownNotDispatched=True,
+                                reason='explicit_target_required_after_unsettled_selection',
+                                requiredTargetGuid=intended,priorOperationId=row.get('operationId')),
+                            gameEffectClaimed=False)
             entered = False
             command_intent=None
             command_ordinal=None
