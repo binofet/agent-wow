@@ -1,9 +1,12 @@
-import copy,hashlib,os,unittest
+import contextlib,copy,hashlib,io,json,os,unittest
+from types import SimpleNamespace
+import direct_tools
+from unittest.mock import patch
 from pathlib import Path
 import gear_check as g
 R=Path(__file__).resolve().parents[1];SID='aw-4';GUID='4';ITEM='4611686018427389000';OLD='4611686018427389001'
 def template(entry,armor=0):
- return dict(itemId=entry,available=True,itemClass=4,subclass=2,inventoryType=7,quality=2,armor=armor,stats=[],damages=[],delayMs=0,resistances=[0]*6,armorComparisonKnown=True,flags=0,flags2=0,hasSpell=False,scalingDistribution=0,scalingValue=0,allowableClass=-1,allowableRace=-1,requiredLevel=1,requiredSkill=0,requiredSkillRank=0,requiredSpell=0,requiredHonorRank=0,requiredCityRank=0,requiredReputationFaction=0,requiredReputationRank=0,area=0,map=0,holiday=0)
+ return dict(itemId=entry,available=True,itemClass=4,subclass=2,inventoryType=7,quality=2,maxCount=0,armor=armor,stats=[],damages=[],delayMs=0,resistances=[0]*6,armorComparisonKnown=True,flags=0,flags2=0,hasSpell=False,scalingDistribution=0,scalingValue=0,allowableClass=-1,allowableRace=-1,requiredLevel=1,requiredSkill=0,requiredSkillRank=0,requiredSpell=0,requiredHonorRank=0,requiredCityRank=0,requiredReputationFaction=0,requiredReputationRank=0,area=0,map=0,holiday=0)
 class Check(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
@@ -54,6 +57,40 @@ class Check(unittest.TestCase):
  def test_equipment_duplicate_guid_and_unobserved_empty_never_invent_slot(self):
   self.inv['items']=[];self.inv['equipment'][7].update(itemGuid=OLD,entry=101);self.assertEqual(self.check()['reason'],'complete_own_equipment_baseline_required')
   self.inv['equipment'][7]=dict(slot=7,slotKnown=False);self.assertEqual(self.check()['status'],'unknown')
+ def test_offline_public_sheet_same_scorer_explicit_defaults_and_no_body_claim(self):
+  import gear_reference
+  sheet=json.loads((R/'dev/testdata/gear-sheet-base.json').read_text());before=copy.deepcopy(sheet)
+  r=g.compare_set(sheet,item_entry=2962,lookup=gear_reference.lookup,bridge=self.bridge)
+  self.assertEqual(r['status'],'upgrade');self.assertEqual(r['comparisons'][0]['worn']['entry'],1366);self.assertNotIn('sessionId',r);self.assertNotIn('characterGuid',r);self.assertNotIn('itemGuid',r['comparisons'][0]['worn']);self.assertEqual(sheet,before);self.assertIn('not_spec_or_talent',r['policyBasis'])
+  sheet.pop('emptyUnlistedSlots');self.assertEqual(g.compare_set(sheet,item_entry=2962,lookup=gear_reference.lookup,bridge=self.bridge)['status'],'unknown')
+ def test_actual_sheet_cli_entrypoint_requires_no_rpc(self):
+  output=io.StringIO();real=g._runtime()
+  class Runtime:
+   def Bridge(*args,**kwargs):return self.bridge
+   MAX_SOURCE=real.MAX_SOURCE
+   def RPC(*args,**kwargs):raise AssertionError('offline sheet made RPC')
+  with patch.object(g,'_runtime',return_value=Runtime),contextlib.redirect_stdout(output):
+   g.main(['--sheet-json',str(R/'dev/testdata/gear-sheet-base.json'),'--item-entry','2962'])
+  self.assertEqual(json.loads(output.getvalue())['status'],'upgrade')
+ def test_actual_agent_tool_calls_real_shared_inspector_without_mutation(self):
+  self.inv['items']=[];test=self;calls=[]
+  class RPC:
+   url='http://127.0.0.1:8087/rpc'
+   def call(self,name,params):
+    calls.append(name)
+    if name=='session.describe':return dict(sessionId=SID,characterGuid=GUID,revision='c')
+    if name=='session.policy_source':return dict(sessionId=SID,characterGuid=GUID,source=test.source,revision=test.rev)
+    if name=='buddy-inventory.state':return copy.deepcopy(test.inv)
+    if name=='buddy-world.snapshot':return copy.deepcopy(test.world)
+    raise AssertionError(name)
+  helper=SimpleNamespace(inspect=lambda rpc,**kwargs:g.inspect(rpc,lookup=self.templates.get,bridge=self.bridge,**kwargs))
+  tools=direct_tools.DirectTools(RPC(),SID,GUID,None,R,owner_allowed=lambda:True,helpers={'gear_check':helper})
+  result=tools.dispatch('check_gear_upgrade',dict(item_entry=100))
+  self.assertTrue(result['ok'],result);self.assertEqual(result['result']['status'],'upgrade');self.assertEqual(set(calls),{'session.describe','session.policy_source','buddy-inventory.state','buddy-world.snapshot'})
+ def test_readonly_actor_policy_failure_is_unknown_not_false_negative(self):
+  self.inv['items']=[]
+  r=g.check_inventory(self.inv,session_id=SID,character_guid=GUID,item_entry=100,world=self.world,lookup=self.templates.get,evaluate=lambda _:(_ for _ in ()).throw(RuntimeError('private details')),policy_revision=self.rev)
+  self.assertEqual(r['status'],'unknown');self.assertEqual(r['reason'],'gear_policy_evaluation_failed');self.assertNotIn('private details',json.dumps(r))
  def test_inspect_source_body_before_after_and_no_mutations(self):
   self.inv['items']=[];calls=[];test=self
   class RPC:

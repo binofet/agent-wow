@@ -1,0 +1,8 @@
+{
+  "character": {"classKnown": true, "classId": 4, "raceKnown": true, "raceId": 1, "levelKnown": true, "level": 20},
+  "skillsComplete": true,
+  "skills": {"414": 100},
+  "emptyUnlistedSlots": true,
+  "assumeUnmodifiedWornBase": true,
+  "equipment": [{"slot": 6, "slotKnown": true, "entry": 1366}]
+}
