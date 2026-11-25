@@ -243,7 +243,7 @@ func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	f.actions.SessionId, f.actions.Position.Revision = "loot-session", 1
 	f.world.LootableCorpses[0].PositionRevision = 1
 	fixtureCarriedInventory(f.world)
-	s := NewService(f, 1, "loot-session")
+	s := NewAutomaticService(f, 1, "loot-session")
 	now := time.Unix(1000, 0)
 	s.now = func() time.Time { return now }
 	return s, f, func(d time.Duration) { now = now.Add(d) }
@@ -276,8 +276,8 @@ func TestSharedCorpsePolicyDoesNotDependOnLivingPresentOrNonAFKOwner(t *testing.
 	for _, mode := range []string{"missing", "afk", "dead"} {
 		s, f, _ := rig(t)
 		enable(t, s)
-		if current(t, s).EnabledRemainingMs != uint64(4*time.Hour/time.Millisecond) {
-			t.Fatal("intent duration")
+		if !current(t, s).Enabled || current(t, s).EnabledRemainingMs != 0 {
+			t.Fatal("maintained availability must not expire or start a native chooser")
 		}
 		switch mode {
 		case "missing":
@@ -484,8 +484,10 @@ func TestTransportFailureDoesNotRetryAndLogoutCloses(t *testing.T) {
 	tickCorpseLua(t, s)
 	advance(time.Second)
 	tickCorpseLua(t, s)
-	if len(f.packets) != 1 || current(t, s).Enabled || f.releases != 1 {
-		t.Fatal("ambiguous open retried")
+	op := s.corpseReceiptLocked()
+	if len(f.packets) != 1 || !current(t, s).Enabled || f.releases != 1 || op == nil ||
+		!op.OpeningTransportAttempted || op.OpeningTransportWritten || !op.Terminal || !s.retired[corpseGUID] {
+		t.Fatal("maintained availability lost exact unknown-source custody", current(t, s), op, f.packets)
 	}
 	s, f, _ = rig(t)
 	openItem(t, s)

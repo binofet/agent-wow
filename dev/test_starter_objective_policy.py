@@ -216,9 +216,14 @@ class StarterObjectivePolicyTests(unittest.TestCase):
         value = quest_route_facts(activeQuestIds=[783, 5261])
         before = copy.deepcopy(value)
         self.quest_route_choice(value, 197, [7], reward=783)
-        expression = "for _,q in ipairs({783,5261,33}) do"
+        expression = ('    if active["783"] then reward=783\n'
+                      '    elseif active["5261"] then reward=5261\n'
+                      '    elseif active["33"] and complete then reward=33 end')
         self.assertEqual(self.source.count(expression), 1)
-        edited = self.source.replace(expression, "for _,q in ipairs({5261,783,33}) do", 1)
+        priority = ('    if active["5261"] then reward=5261\n'
+                    '    elseif active["783"] then reward=783\n'
+                    '    elseif active["33"] and complete then reward=33 end')
+        edited = self.source.replace(expression, priority, 1)
         self.assertNotEqual(hashlib.sha256(self.source.encode()).hexdigest(), hashlib.sha256(edited.encode()).hexdigest())
         # Bridge.evaluate launches the normal evaluator with fresh source per
         # call. This proves edit effect on one Bridge, not a VM reload/CAS API.

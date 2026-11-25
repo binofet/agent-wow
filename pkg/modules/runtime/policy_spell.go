@@ -53,6 +53,7 @@ type policySpell struct {
 	recovery       *policyRecovery
 	consumable     *policyConsumable
 	corpse         *policyCorpse
+	gather         *policyGather
 	instanceEntry  *policyInstanceEntry
 	genericRequest *actionsv1.CastSpellRequest
 	cancelRequest  *actionsv1.CancelSpellRequest
@@ -84,11 +85,17 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	if capability == "loot_resume_source" {
 		return p.resolveLootCapacityResume(action)
 	}
-	if capability == "release_spirit" || capability == "query_corpse" || capability == "approach_corpse" || capability == "stop_corpse" || capability == "reclaim_corpse" || capability == "accept_resurrection" {
+	if capability == "loot_gather" {
+		return p.resolveGatherLoot(action)
+	}
+	if capability == "release_spirit" || capability == "query_corpse" || capability == "approach_corpse" || capability == "enter_corpse_instance" || capability == "stop_corpse" || capability == "reclaim_corpse" || capability == "accept_resurrection" {
 		return p.resolveDeathAction(action, capability)
 	}
 	if capability == "loot_open" || capability == "loot_close" || capability == "loot_money" || capability == "loot_slot" {
 		return p.resolveCorpseLoot(action, capability)
+	}
+	if capability == "equip_gear" {
+		return p.resolveGearEquip(action)
 	}
 	if capability == "consume" {
 		return p.resolveConsumable(action)
@@ -395,7 +402,7 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 
 	err := m.session.SendPacket(modsession.WithWriteOrigin(ctx, op.origin), code, payload)
 	spells.mu.Lock()
-	if (op.genericRequest != nil || op.cancelRequest != nil) && modcb.PacketWasNotDispatched(err) {
+	if (op.genericRequest != nil || op.cancelRequest != nil || op.gather != nil) && modcb.PacketWasNotDispatched(err) {
 		op.attempted = false
 	}
 	op.written = op.written || err == nil
@@ -406,6 +413,9 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
 	if op.instanceEntry != nil {
 		return op.matchesInstanceEntryPacket(code, payload)
+	}
+	if op.gather != nil {
+		return op.matchesGatherPacket(code, payload)
 	}
 	if op.capability == "acquire_idle_interaction" {
 		return false // Custody metadata cannot authorize any physical packet.

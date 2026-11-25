@@ -1148,15 +1148,16 @@ func (x *GearDestination) GetBlockedReason() string {
 }
 
 type GearItemFacts struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	EnhancementsKnown bool                   `protobuf:"varint,1,opt,name=enhancements_known,json=enhancementsKnown,proto3" json:"enhancements_known,omitempty"`
-	HasEnhancements   bool                   `protobuf:"varint,2,opt,name=has_enhancements,json=hasEnhancements,proto3" json:"has_enhancements,omitempty"`
-	DurabilityKnown   bool                   `protobuf:"varint,3,opt,name=durability_known,json=durabilityKnown,proto3" json:"durability_known,omitempty"`
-	Durability        uint32                 `protobuf:"varint,4,opt,name=durability,proto3" json:"durability,omitempty"`
-	MaxDurability     uint32                 `protobuf:"varint,5,opt,name=max_durability,json=maxDurability,proto3" json:"max_durability,omitempty"`
-	Destinations      []*GearDestination     `protobuf:"bytes,6,rep,name=destinations,proto3" json:"destinations,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state              protoimpl.MessageState    `protogen:"open.v1"`
+	EnhancementsKnown  bool                      `protobuf:"varint,1,opt,name=enhancements_known,json=enhancementsKnown,proto3" json:"enhancements_known,omitempty"`
+	HasEnhancements    bool                      `protobuf:"varint,2,opt,name=has_enhancements,json=hasEnhancements,proto3" json:"has_enhancements,omitempty"`
+	DurabilityKnown    bool                      `protobuf:"varint,3,opt,name=durability_known,json=durabilityKnown,proto3" json:"durability_known,omitempty"`
+	Durability         uint32                    `protobuf:"varint,4,opt,name=durability,proto3" json:"durability,omitempty"`
+	MaxDurability      uint32                    `protobuf:"varint,5,opt,name=max_durability,json=maxDurability,proto3" json:"max_durability,omitempty"`
+	Destinations       []*GearDestination        `protobuf:"bytes,6,rep,name=destinations,proto3" json:"destinations,omitempty"`
+	EnhancementDetails *api.ItemEnhancementState `protobuf:"bytes,7,opt,name=enhancement_details,json=enhancementDetails,proto3" json:"enhancement_details,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *GearItemFacts) Reset() {
@@ -1227,6 +1228,13 @@ func (x *GearItemFacts) GetMaxDurability() uint32 {
 func (x *GearItemFacts) GetDestinations() []*GearDestination {
 	if x != nil {
 		return x.Destinations
+	}
+	return nil
+}
+
+func (x *GearItemFacts) GetEnhancementDetails() *api.ItemEnhancementState {
+	if x != nil {
+		return x.EnhancementDetails
 	}
 	return nil
 }
@@ -3542,7 +3550,7 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"\x0eequipment_slot\x18\x01 \x01(\rR\requipmentSlot\x12=\n" +
 	"\x1bexpected_equipped_item_guid\x18\x02 \x01(\x04R\x18expectedEquippedItemGuid\x12\x1a\n" +
 	"\beligible\x18\x03 \x01(\bR\beligible\x12%\n" +
-	"\x0eblocked_reason\x18\x04 \x01(\tR\rblockedReason\"\xac\x02\n" +
+	"\x0eblocked_reason\x18\x04 \x01(\tR\rblockedReason\"\x8b\x03\n" +
 	"\rGearItemFacts\x12-\n" +
 	"\x12enhancements_known\x18\x01 \x01(\bR\x11enhancementsKnown\x12)\n" +
 	"\x10has_enhancements\x18\x02 \x01(\bR\x0fhasEnhancements\x12)\n" +
@@ -3551,7 +3559,8 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"durability\x18\x04 \x01(\rR\n" +
 	"durability\x12%\n" +
 	"\x0emax_durability\x18\x05 \x01(\rR\rmaxDurability\x12O\n" +
-	"\fdestinations\x18\x06 \x03(\v2+.warcraftbuddy.inventory.v1.GearDestinationR\fdestinations\"\xc2\x03\n" +
+	"\fdestinations\x18\x06 \x03(\v2+.warcraftbuddy.inventory.v1.GearDestinationR\fdestinations\x12]\n" +
+	"\x13enhancement_details\x18\a \x01(\v2,.warcraftbuddy.world.v1.ItemEnhancementStateR\x12enhancementDetails\"\xc2\x03\n" +
 	"\vGearContext\x12\x1f\n" +
 	"\vclass_known\x18\x01 \x01(\bR\n" +
 	"classKnown\x12\x19\n" +
@@ -3819,47 +3828,48 @@ func file_modules_buddy_inventory_inventory_proto_rawDescGZIP() []byte {
 
 var file_modules_buddy_inventory_inventory_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_modules_buddy_inventory_inventory_proto_goTypes = []any{
-	(*ItemRef)(nil),                // 0: warcraftbuddy.inventory.v1.ItemRef
-	(*ItemEligibility)(nil),        // 1: warcraftbuddy.inventory.v1.ItemEligibility
-	(*Operation)(nil),              // 2: warcraftbuddy.inventory.v1.Operation
-	(*State)(nil),                  // 3: warcraftbuddy.inventory.v1.State
-	(*GearStat)(nil),               // 4: warcraftbuddy.inventory.v1.GearStat
-	(*GearDamage)(nil),             // 5: warcraftbuddy.inventory.v1.GearDamage
-	(*GearTemplate)(nil),           // 6: warcraftbuddy.inventory.v1.GearTemplate
-	(*GearDestination)(nil),        // 7: warcraftbuddy.inventory.v1.GearDestination
-	(*GearItemFacts)(nil),          // 8: warcraftbuddy.inventory.v1.GearItemFacts
-	(*GearContext)(nil),            // 9: warcraftbuddy.inventory.v1.GearContext
-	(*GroupRollReceipt)(nil),       // 10: warcraftbuddy.inventory.v1.GroupRollReceipt
-	(*ConsumableAuraEffect)(nil),   // 11: warcraftbuddy.inventory.v1.ConsumableAuraEffect
-	(*ConsumableSpell)(nil),        // 12: warcraftbuddy.inventory.v1.ConsumableSpell
-	(*ConsumableMetadata)(nil),     // 13: warcraftbuddy.inventory.v1.ConsumableMetadata
-	(*ConsumableContext)(nil),      // 14: warcraftbuddy.inventory.v1.ConsumableContext
-	(*ConsumableUse)(nil),          // 15: warcraftbuddy.inventory.v1.ConsumableUse
-	(*DiscoverRequest)(nil),        // 16: warcraftbuddy.inventory.v1.DiscoverRequest
-	(*Vendor)(nil),                 // 17: warcraftbuddy.inventory.v1.Vendor
-	(*Discovery)(nil),              // 18: warcraftbuddy.inventory.v1.Discovery
-	(*MoveRequest)(nil),            // 19: warcraftbuddy.inventory.v1.MoveRequest
-	(*EquipRequest)(nil),           // 20: warcraftbuddy.inventory.v1.EquipRequest
-	(*SellRequest)(nil),            // 21: warcraftbuddy.inventory.v1.SellRequest
-	(*EquipGearRequest)(nil),       // 22: warcraftbuddy.inventory.v1.EquipGearRequest
-	(*DrinkRequest)(nil),           // 23: warcraftbuddy.inventory.v1.DrinkRequest
-	(*DrinkReceipt)(nil),           // 24: warcraftbuddy.inventory.v1.DrinkReceipt
-	(*EatBuffFoodRequest)(nil),     // 25: warcraftbuddy.inventory.v1.EatBuffFoodRequest
-	(*EatBuffFoodReceipt)(nil),     // 26: warcraftbuddy.inventory.v1.EatBuffFoodReceipt
-	(*RollOffer)(nil),              // 27: warcraftbuddy.inventory.v1.RollOffer
-	(*RollReceipt)(nil),            // 28: warcraftbuddy.inventory.v1.RollReceipt
-	(*RollState)(nil),              // 29: warcraftbuddy.inventory.v1.RollState
-	(*RollRequest)(nil),            // 30: warcraftbuddy.inventory.v1.RollRequest
-	nil,                            // 31: warcraftbuddy.inventory.v1.GearContext.TemplatesEntry
-	(*api.InventoryBag)(nil),       // 32: warcraftbuddy.world.v1.InventoryBag
-	(*api.EquipmentSlotState)(nil), // 33: warcraftbuddy.world.v1.EquipmentSlotState
-	(*api1.PlayerAuras)(nil),       // 34: warcraftbuddy.actions.v1.PlayerAuras
-	(*api.CreatureState)(nil),      // 35: warcraftbuddy.world.v1.CreatureState
-	(*api.PlayerState)(nil),        // 36: warcraftbuddy.world.v1.PlayerState
-	(*api.SkillState)(nil),         // 37: warcraftbuddy.world.v1.SkillState
-	(*api2.ItemDetails)(nil),       // 38: warcraftbuddy.trade.v1.ItemDetails
-	(*emptypb.Empty)(nil),          // 39: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),         // 40: agentwow.module.v1.WorldPacket
+	(*ItemRef)(nil),                  // 0: warcraftbuddy.inventory.v1.ItemRef
+	(*ItemEligibility)(nil),          // 1: warcraftbuddy.inventory.v1.ItemEligibility
+	(*Operation)(nil),                // 2: warcraftbuddy.inventory.v1.Operation
+	(*State)(nil),                    // 3: warcraftbuddy.inventory.v1.State
+	(*GearStat)(nil),                 // 4: warcraftbuddy.inventory.v1.GearStat
+	(*GearDamage)(nil),               // 5: warcraftbuddy.inventory.v1.GearDamage
+	(*GearTemplate)(nil),             // 6: warcraftbuddy.inventory.v1.GearTemplate
+	(*GearDestination)(nil),          // 7: warcraftbuddy.inventory.v1.GearDestination
+	(*GearItemFacts)(nil),            // 8: warcraftbuddy.inventory.v1.GearItemFacts
+	(*GearContext)(nil),              // 9: warcraftbuddy.inventory.v1.GearContext
+	(*GroupRollReceipt)(nil),         // 10: warcraftbuddy.inventory.v1.GroupRollReceipt
+	(*ConsumableAuraEffect)(nil),     // 11: warcraftbuddy.inventory.v1.ConsumableAuraEffect
+	(*ConsumableSpell)(nil),          // 12: warcraftbuddy.inventory.v1.ConsumableSpell
+	(*ConsumableMetadata)(nil),       // 13: warcraftbuddy.inventory.v1.ConsumableMetadata
+	(*ConsumableContext)(nil),        // 14: warcraftbuddy.inventory.v1.ConsumableContext
+	(*ConsumableUse)(nil),            // 15: warcraftbuddy.inventory.v1.ConsumableUse
+	(*DiscoverRequest)(nil),          // 16: warcraftbuddy.inventory.v1.DiscoverRequest
+	(*Vendor)(nil),                   // 17: warcraftbuddy.inventory.v1.Vendor
+	(*Discovery)(nil),                // 18: warcraftbuddy.inventory.v1.Discovery
+	(*MoveRequest)(nil),              // 19: warcraftbuddy.inventory.v1.MoveRequest
+	(*EquipRequest)(nil),             // 20: warcraftbuddy.inventory.v1.EquipRequest
+	(*SellRequest)(nil),              // 21: warcraftbuddy.inventory.v1.SellRequest
+	(*EquipGearRequest)(nil),         // 22: warcraftbuddy.inventory.v1.EquipGearRequest
+	(*DrinkRequest)(nil),             // 23: warcraftbuddy.inventory.v1.DrinkRequest
+	(*DrinkReceipt)(nil),             // 24: warcraftbuddy.inventory.v1.DrinkReceipt
+	(*EatBuffFoodRequest)(nil),       // 25: warcraftbuddy.inventory.v1.EatBuffFoodRequest
+	(*EatBuffFoodReceipt)(nil),       // 26: warcraftbuddy.inventory.v1.EatBuffFoodReceipt
+	(*RollOffer)(nil),                // 27: warcraftbuddy.inventory.v1.RollOffer
+	(*RollReceipt)(nil),              // 28: warcraftbuddy.inventory.v1.RollReceipt
+	(*RollState)(nil),                // 29: warcraftbuddy.inventory.v1.RollState
+	(*RollRequest)(nil),              // 30: warcraftbuddy.inventory.v1.RollRequest
+	nil,                              // 31: warcraftbuddy.inventory.v1.GearContext.TemplatesEntry
+	(*api.InventoryBag)(nil),         // 32: warcraftbuddy.world.v1.InventoryBag
+	(*api.EquipmentSlotState)(nil),   // 33: warcraftbuddy.world.v1.EquipmentSlotState
+	(*api.ItemEnhancementState)(nil), // 34: warcraftbuddy.world.v1.ItemEnhancementState
+	(*api1.PlayerAuras)(nil),         // 35: warcraftbuddy.actions.v1.PlayerAuras
+	(*api.CreatureState)(nil),        // 36: warcraftbuddy.world.v1.CreatureState
+	(*api.PlayerState)(nil),          // 37: warcraftbuddy.world.v1.PlayerState
+	(*api.SkillState)(nil),           // 38: warcraftbuddy.world.v1.SkillState
+	(*api2.ItemDetails)(nil),         // 39: warcraftbuddy.trade.v1.ItemDetails
+	(*emptypb.Empty)(nil),            // 40: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),           // 41: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_inventory_inventory_proto_depIdxs = []int32{
 	0,  // 0: warcraftbuddy.inventory.v1.ItemEligibility.item:type_name -> warcraftbuddy.inventory.v1.ItemRef
@@ -3877,60 +3887,61 @@ var file_modules_buddy_inventory_inventory_proto_depIdxs = []int32{
 	4,  // 12: warcraftbuddy.inventory.v1.GearTemplate.stats:type_name -> warcraftbuddy.inventory.v1.GearStat
 	5,  // 13: warcraftbuddy.inventory.v1.GearTemplate.damages:type_name -> warcraftbuddy.inventory.v1.GearDamage
 	7,  // 14: warcraftbuddy.inventory.v1.GearItemFacts.destinations:type_name -> warcraftbuddy.inventory.v1.GearDestination
-	31, // 15: warcraftbuddy.inventory.v1.GearContext.templates:type_name -> warcraftbuddy.inventory.v1.GearContext.TemplatesEntry
-	11, // 16: warcraftbuddy.inventory.v1.ConsumableSpell.food_effects:type_name -> warcraftbuddy.inventory.v1.ConsumableAuraEffect
-	12, // 17: warcraftbuddy.inventory.v1.ConsumableMetadata.spells:type_name -> warcraftbuddy.inventory.v1.ConsumableSpell
-	34, // 18: warcraftbuddy.inventory.v1.ConsumableContext.self_auras:type_name -> warcraftbuddy.actions.v1.PlayerAuras
-	0,  // 19: warcraftbuddy.inventory.v1.ConsumableUse.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	35, // 20: warcraftbuddy.inventory.v1.Vendor.creature:type_name -> warcraftbuddy.world.v1.CreatureState
-	3,  // 21: warcraftbuddy.inventory.v1.Discovery.state:type_name -> warcraftbuddy.inventory.v1.State
-	17, // 22: warcraftbuddy.inventory.v1.Discovery.nearby:type_name -> warcraftbuddy.inventory.v1.Vendor
-	0,  // 23: warcraftbuddy.inventory.v1.MoveRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	0,  // 24: warcraftbuddy.inventory.v1.EquipRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	0,  // 25: warcraftbuddy.inventory.v1.SellRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	0,  // 26: warcraftbuddy.inventory.v1.EquipGearRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	0,  // 27: warcraftbuddy.inventory.v1.DrinkRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	15, // 28: warcraftbuddy.inventory.v1.DrinkReceipt.operation:type_name -> warcraftbuddy.inventory.v1.ConsumableUse
-	0,  // 29: warcraftbuddy.inventory.v1.EatBuffFoodRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	15, // 30: warcraftbuddy.inventory.v1.EatBuffFoodReceipt.operation:type_name -> warcraftbuddy.inventory.v1.ConsumableUse
-	27, // 31: warcraftbuddy.inventory.v1.RollState.offers:type_name -> warcraftbuddy.inventory.v1.RollOffer
-	28, // 32: warcraftbuddy.inventory.v1.RollState.receipts:type_name -> warcraftbuddy.inventory.v1.RollReceipt
-	36, // 33: warcraftbuddy.inventory.v1.RollState.player:type_name -> warcraftbuddy.world.v1.PlayerState
-	33, // 34: warcraftbuddy.inventory.v1.RollState.equipment:type_name -> warcraftbuddy.world.v1.EquipmentSlotState
-	37, // 35: warcraftbuddy.inventory.v1.RollState.skills:type_name -> warcraftbuddy.world.v1.SkillState
-	38, // 36: warcraftbuddy.inventory.v1.RollState.metadata:type_name -> warcraftbuddy.trade.v1.ItemDetails
-	6,  // 37: warcraftbuddy.inventory.v1.GearContext.TemplatesEntry.value:type_name -> warcraftbuddy.inventory.v1.GearTemplate
-	39, // 38: warcraftbuddy.inventory.v1.BuddyInventory.Rolls:input_type -> google.protobuf.Empty
-	30, // 39: warcraftbuddy.inventory.v1.BuddyInventory.Roll:input_type -> warcraftbuddy.inventory.v1.RollRequest
-	39, // 40: warcraftbuddy.inventory.v1.BuddyInventory.GetState:input_type -> google.protobuf.Empty
-	39, // 41: warcraftbuddy.inventory.v1.BuddyInventory.RawGearFacts:input_type -> google.protobuf.Empty
-	16, // 42: warcraftbuddy.inventory.v1.BuddyInventory.Discover:input_type -> warcraftbuddy.inventory.v1.DiscoverRequest
-	19, // 43: warcraftbuddy.inventory.v1.BuddyInventory.Move:input_type -> warcraftbuddy.inventory.v1.MoveRequest
-	20, // 44: warcraftbuddy.inventory.v1.BuddyInventory.Equip:input_type -> warcraftbuddy.inventory.v1.EquipRequest
-	22, // 45: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:input_type -> warcraftbuddy.inventory.v1.EquipGearRequest
-	21, // 46: warcraftbuddy.inventory.v1.BuddyInventory.Sell:input_type -> warcraftbuddy.inventory.v1.SellRequest
-	23, // 47: warcraftbuddy.inventory.v1.BuddyInventory.Drink:input_type -> warcraftbuddy.inventory.v1.DrinkRequest
-	25, // 48: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:input_type -> warcraftbuddy.inventory.v1.EatBuffFoodRequest
-	40, // 49: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	39, // 50: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:input_type -> google.protobuf.Empty
-	29, // 51: warcraftbuddy.inventory.v1.BuddyInventory.Rolls:output_type -> warcraftbuddy.inventory.v1.RollState
-	29, // 52: warcraftbuddy.inventory.v1.BuddyInventory.Roll:output_type -> warcraftbuddy.inventory.v1.RollState
-	3,  // 53: warcraftbuddy.inventory.v1.BuddyInventory.GetState:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 54: warcraftbuddy.inventory.v1.BuddyInventory.RawGearFacts:output_type -> warcraftbuddy.inventory.v1.State
-	18, // 55: warcraftbuddy.inventory.v1.BuddyInventory.Discover:output_type -> warcraftbuddy.inventory.v1.Discovery
-	3,  // 56: warcraftbuddy.inventory.v1.BuddyInventory.Move:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 57: warcraftbuddy.inventory.v1.BuddyInventory.Equip:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 58: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 59: warcraftbuddy.inventory.v1.BuddyInventory.Sell:output_type -> warcraftbuddy.inventory.v1.State
-	24, // 60: warcraftbuddy.inventory.v1.BuddyInventory.Drink:output_type -> warcraftbuddy.inventory.v1.DrinkReceipt
-	26, // 61: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:output_type -> warcraftbuddy.inventory.v1.EatBuffFoodReceipt
-	39, // 62: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:output_type -> google.protobuf.Empty
-	39, // 63: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:output_type -> google.protobuf.Empty
-	51, // [51:64] is the sub-list for method output_type
-	38, // [38:51] is the sub-list for method input_type
-	38, // [38:38] is the sub-list for extension type_name
-	38, // [38:38] is the sub-list for extension extendee
-	0,  // [0:38] is the sub-list for field type_name
+	34, // 15: warcraftbuddy.inventory.v1.GearItemFacts.enhancement_details:type_name -> warcraftbuddy.world.v1.ItemEnhancementState
+	31, // 16: warcraftbuddy.inventory.v1.GearContext.templates:type_name -> warcraftbuddy.inventory.v1.GearContext.TemplatesEntry
+	11, // 17: warcraftbuddy.inventory.v1.ConsumableSpell.food_effects:type_name -> warcraftbuddy.inventory.v1.ConsumableAuraEffect
+	12, // 18: warcraftbuddy.inventory.v1.ConsumableMetadata.spells:type_name -> warcraftbuddy.inventory.v1.ConsumableSpell
+	35, // 19: warcraftbuddy.inventory.v1.ConsumableContext.self_auras:type_name -> warcraftbuddy.actions.v1.PlayerAuras
+	0,  // 20: warcraftbuddy.inventory.v1.ConsumableUse.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	36, // 21: warcraftbuddy.inventory.v1.Vendor.creature:type_name -> warcraftbuddy.world.v1.CreatureState
+	3,  // 22: warcraftbuddy.inventory.v1.Discovery.state:type_name -> warcraftbuddy.inventory.v1.State
+	17, // 23: warcraftbuddy.inventory.v1.Discovery.nearby:type_name -> warcraftbuddy.inventory.v1.Vendor
+	0,  // 24: warcraftbuddy.inventory.v1.MoveRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	0,  // 25: warcraftbuddy.inventory.v1.EquipRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	0,  // 26: warcraftbuddy.inventory.v1.SellRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	0,  // 27: warcraftbuddy.inventory.v1.EquipGearRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	0,  // 28: warcraftbuddy.inventory.v1.DrinkRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	15, // 29: warcraftbuddy.inventory.v1.DrinkReceipt.operation:type_name -> warcraftbuddy.inventory.v1.ConsumableUse
+	0,  // 30: warcraftbuddy.inventory.v1.EatBuffFoodRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	15, // 31: warcraftbuddy.inventory.v1.EatBuffFoodReceipt.operation:type_name -> warcraftbuddy.inventory.v1.ConsumableUse
+	27, // 32: warcraftbuddy.inventory.v1.RollState.offers:type_name -> warcraftbuddy.inventory.v1.RollOffer
+	28, // 33: warcraftbuddy.inventory.v1.RollState.receipts:type_name -> warcraftbuddy.inventory.v1.RollReceipt
+	37, // 34: warcraftbuddy.inventory.v1.RollState.player:type_name -> warcraftbuddy.world.v1.PlayerState
+	33, // 35: warcraftbuddy.inventory.v1.RollState.equipment:type_name -> warcraftbuddy.world.v1.EquipmentSlotState
+	38, // 36: warcraftbuddy.inventory.v1.RollState.skills:type_name -> warcraftbuddy.world.v1.SkillState
+	39, // 37: warcraftbuddy.inventory.v1.RollState.metadata:type_name -> warcraftbuddy.trade.v1.ItemDetails
+	6,  // 38: warcraftbuddy.inventory.v1.GearContext.TemplatesEntry.value:type_name -> warcraftbuddy.inventory.v1.GearTemplate
+	40, // 39: warcraftbuddy.inventory.v1.BuddyInventory.Rolls:input_type -> google.protobuf.Empty
+	30, // 40: warcraftbuddy.inventory.v1.BuddyInventory.Roll:input_type -> warcraftbuddy.inventory.v1.RollRequest
+	40, // 41: warcraftbuddy.inventory.v1.BuddyInventory.GetState:input_type -> google.protobuf.Empty
+	40, // 42: warcraftbuddy.inventory.v1.BuddyInventory.RawGearFacts:input_type -> google.protobuf.Empty
+	16, // 43: warcraftbuddy.inventory.v1.BuddyInventory.Discover:input_type -> warcraftbuddy.inventory.v1.DiscoverRequest
+	19, // 44: warcraftbuddy.inventory.v1.BuddyInventory.Move:input_type -> warcraftbuddy.inventory.v1.MoveRequest
+	20, // 45: warcraftbuddy.inventory.v1.BuddyInventory.Equip:input_type -> warcraftbuddy.inventory.v1.EquipRequest
+	22, // 46: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:input_type -> warcraftbuddy.inventory.v1.EquipGearRequest
+	21, // 47: warcraftbuddy.inventory.v1.BuddyInventory.Sell:input_type -> warcraftbuddy.inventory.v1.SellRequest
+	23, // 48: warcraftbuddy.inventory.v1.BuddyInventory.Drink:input_type -> warcraftbuddy.inventory.v1.DrinkRequest
+	25, // 49: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:input_type -> warcraftbuddy.inventory.v1.EatBuffFoodRequest
+	41, // 50: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	40, // 51: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:input_type -> google.protobuf.Empty
+	29, // 52: warcraftbuddy.inventory.v1.BuddyInventory.Rolls:output_type -> warcraftbuddy.inventory.v1.RollState
+	29, // 53: warcraftbuddy.inventory.v1.BuddyInventory.Roll:output_type -> warcraftbuddy.inventory.v1.RollState
+	3,  // 54: warcraftbuddy.inventory.v1.BuddyInventory.GetState:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 55: warcraftbuddy.inventory.v1.BuddyInventory.RawGearFacts:output_type -> warcraftbuddy.inventory.v1.State
+	18, // 56: warcraftbuddy.inventory.v1.BuddyInventory.Discover:output_type -> warcraftbuddy.inventory.v1.Discovery
+	3,  // 57: warcraftbuddy.inventory.v1.BuddyInventory.Move:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 58: warcraftbuddy.inventory.v1.BuddyInventory.Equip:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 59: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 60: warcraftbuddy.inventory.v1.BuddyInventory.Sell:output_type -> warcraftbuddy.inventory.v1.State
+	24, // 61: warcraftbuddy.inventory.v1.BuddyInventory.Drink:output_type -> warcraftbuddy.inventory.v1.DrinkReceipt
+	26, // 62: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:output_type -> warcraftbuddy.inventory.v1.EatBuffFoodReceipt
+	40, // 63: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:output_type -> google.protobuf.Empty
+	40, // 64: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:output_type -> google.protobuf.Empty
+	52, // [52:65] is the sub-list for method output_type
+	39, // [39:52] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_inventory_inventory_proto_init() }

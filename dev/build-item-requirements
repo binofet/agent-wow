@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Build a deterministic static item index from the catalog's pinned public SQL."""
+import argparse
+import gzip
+import hashlib
+import io
+import json
+import math
+from pathlib import Path
+import runpy
+
+sql_rows = runpy.run_path(str(Path(__file__).with_name('build-game-catalog')))['sql_rows']
+SCALARS = {
+    'itemId':'entry', 'requiredLevel':'requiredlevel',
+    'maxCount':'maxcount', 'stackable':'stackable', 'startQuest':'startquest',
+    'lockId':'lockid', 'pageText':'pagetext', 'bagFamily':'bagfamily', 'containerSlots':'containerslots',
+    'allowableClass':'allowableclass', 'allowableRace':'allowablerace',
+    'requiredSkill':'requiredskill', 'requiredSkillRank':'requiredskillrank',
+    'requiredSpell':'requiredspell', 'requiredHonorRank':'requiredhonorrank',
+    'requiredCityRank':'requiredcityrank', 'requiredReputationFaction':'requiredreputationfaction',
+    'requiredReputationRank':'requiredreputationrank', 'area':'area', 'map':'map',
+    'holiday':'holidayid', 'flags':'flags', 'flagsExtra':'flagsextra', 'quality':'quality',
+    'itemLevel':'itemlevel', 'armor':'armor', 'delayMs':'delay', 'bonding':'bonding',
+    'block':'block', 'scalingStatDistribution':'scalingstatdistribution',
+    'scalingStatValue':'scalingstatvalue',
+    'randomProperty':'randomproperty', 'randomSuffix':'randomsuffix', 'itemSet':'itemset',
+    'socketBonus':'socketbonus', 'gemProperties':'gemproperties', 'totemCategory':'totemcategory',
+    'duration':'duration', 'itemLimitCategory':'itemlimitcategory',
+}
+COLUMNS = [*SCALARS, 'stats', 'damage', 'resistances', 'spells', 'sockets', 'armorDamageModifier', 'scriptName']
+RESISTANCES = ['holy_res','fire_res','nature_res','frost_res','shadow_res','arcane_res']
+
+def numeric(value, *, integer=False):
+    if value is None:return value
+    if type(value) not in (int,float) or not math.isfinite(value):
+        raise ValueError('Invalid numeric SQL value')
+    if integer and type(value) is not int:raise ValueError('Expected integer SQL value')
+    return value
+
+def compact_tuples(row, slots, fields):
+    result=[]
+    for slot in slots:
+        values=[numeric(row[field.format(slot)]) for field in fields]
+        # Zero is verified data; only all-zero source slots use the documented
+        # sparse encoding. Null is unknown and cannot disappear as a default.
+        if any(value != 0 for value in values):result.append([slot,*values])
+    return result
+
+def build(source_file, catalog_file):
+    catalog_raw=catalog_file.read_bytes();catalog=json.loads(catalog_raw)
+    pin=catalog['sources']['item_template'];raw=source_file.read_bytes()
+    if len(raw)!=pin['bytes'] or hashlib.sha256(raw).hexdigest()!=pin['sha256']:
+        raise ValueError('Pinned item_template size/checksum mismatch before parse')
+    rows={}
+    for row in sql_rows(source_file):
+        ident=numeric(row['entry'],integer=True)
+        if ident is None or ident<=0 or ident in rows:raise ValueError('Invalid or duplicate item ID')
+        existing=catalog['items'].get(str(ident))
+        use=[row[f'spellid_{i}'] for i in range(1,6) if row[f'spellid_{i}']>0 and row[f'spelltrigger_{i}'] in (0,5)]
+        if not isinstance(existing,dict) or any(existing.get(key)!=row[col] for key,col in
+                (('name','name'),('itemClass','class'),('subclass','subclass'),('inventoryType','inventorytype'))) or existing.get('useSpells',[])!=use:
+            raise ValueError('Pinned item disagrees with catalog join: '+str(ident))
+        values=[numeric(row[column],integer=True) for column in SCALARS.values()]
+        values += [compact_tuples(row,range(1,11),['stat_type{}','stat_value{}']),
+                   compact_tuples(row,range(1,3),['dmg_min{}','dmg_max{}','dmg_type{}']),
+                   [numeric(row[column],integer=True) for column in RESISTANCES],
+                   compact_tuples(row,range(1,6),['spellid_{}','spelltrigger_{}','spellcharges_{}','spellppmrate_{}','spellcooldown_{}','spellcategory_{}','spellcategorycooldown_{}']),
+                   compact_tuples(row,range(1,4),['socketcolor_{}','socketcontent_{}']),
+                   numeric(row['armordamagemodifier']), row['scriptname']]
+        if values[-1] is not None and not isinstance(values[-1],str):raise ValueError('Invalid SQL script name')
+        rows[ident]=values
+    if set(rows)!={int(key) for key in catalog['items']}:raise ValueError('Catalog/item index ID coverage mismatch')
+    return dict(schemaVersion=1,build=catalog['build'],sourceCommit=catalog['sourceCommit'],
+        sourceSHA256=pin['sha256'],provenance=dict(itemTemplate=pin,
+            catalogSHA256=hashlib.sha256(catalog_raw).hexdigest(),
+            generator='dev/build-item-requirements; SQL parser dev/build-game-catalog.sql_rows',
+            generatorSHA256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            sqlParserSHA256=hashlib.sha256(Path(__file__).with_name('build-game-catalog').read_bytes()).hexdigest()),
+        semantics=dict(scope='PINNED_PUBLIC_STATIC_TEMPLATE_NOT_CURRENT_REALM_OR_RECIPIENT_STATE',
+            catalogJoin='Join itemId to catalog.json items for exact name/itemClass/subclass/inventoryType/useSpells.',
+            knownness='Every scalar and fixed resistance slot is present. Numeric zero is verified source data; null is SQL NULL/unknown. No scalar field is omitted; null alone denotes source unknown.',
+            masks='allowableClass/allowableRace and flags/flagsExtra retain raw signed/unsigned source integers; no eligibility interpretation.',
+            sparseSlots='stats/damage omit only source slots whose entire tuple is verified numeric zero. Omitted slots decode to zero, never unknown. Null slots remain explicit.',
+            units=dict(delayMs='milliseconds',damage='raw template damage per hit, not DPS',armor='raw armor points',
+                stats='raw item stat IDs and signed values; scaling fields preserved, not expanded',
+                resistances='raw resistance points; fixed holy/fire/nature/frost/shadow/arcane order'),
+            spellTuple=['slot1to5','id','trigger','charges','ppmRate','cooldownMs','category','categoryCooldownMs'],
+            socketTuple=['slot1to3','color','content'],
+            statsTuple=['slot1to10','statType','statValue'],damageTuple=['slot1to2','min','max','schoolType'],
+            sourceColumns=SCALARS,resistanceColumns=RESISTANCES),
+        columns=COLUMNS,rows=[rows[key] for key in sorted(rows)])
+
+def encoded(value):
+    raw=(json.dumps(value,ensure_ascii=False,allow_nan=False,separators=(',',':'))+'\n').encode()
+    output=io.BytesIO()
+    with gzip.GzipFile(filename='',mode='wb',compresslevel=9,fileobj=output,mtime=0) as stream:stream.write(raw)
+    return output.getvalue()
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source-file',type=Path,required=True)
+    parser.add_argument('--catalog',type=Path,default=Path(__file__).resolve().parents[1]/'pkg/gamecatalog/catalog.json')
+    parser.add_argument('--output',type=Path,default=Path(__file__).resolve().parents[1]/'pkg/gamecatalog/item-requirements.json.gz')
+    args=parser.parse_args();value=build(args.source_file,args.catalog);data=encoded(value)
+    args.output.write_bytes(data)
+    print(json.dumps(dict(items=len(value['rows']),bytes=len(data),sha256=hashlib.sha256(data).hexdigest())))
+if __name__=='__main__':main()

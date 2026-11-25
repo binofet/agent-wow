@@ -64,8 +64,8 @@ func TestPolicyFargodeepReadinessRealBundleUsesCurrentAcceptedObjectives(t *test
 			t.Fatal(err)
 		}
 		available, actual, decision, err := host.starterSpellDecision(ctx, input)
-		if err != nil || !available || actual != revision || len(decision) != 3 ||
-			decision["kind"] != kind || decision["spellId"] != float64(0) || decision["selection"] != selection {
+		if err != nil || !available || actual != revision || len(decision) != 4 ||
+			decision["kind"] != kind || decision["spellId"] != float64(0) || decision["selection"] != selection || decision["standYards"] != float64(33) {
 			t.Fatal("real bundled export lost the current shared readiness decision", available, actual, decision, err)
 		}
 		assertFollowFallbackState(t, host, before)
@@ -88,10 +88,10 @@ func TestPolicyFargodeepReadinessRealBundleUsesCurrentAcceptedObjectives(t *test
 	check(initial, "wait")
 	assertFollowFallbackState(t, host, initialState)
 	metadata(initial, true)
-	if strings.Count(source, "minimum_health=95") != 1 {
+	if strings.Count(source, "M.fargodeep_pull={minimum_health=95") != 1 {
 		t.Fatal("actual bundled objective tuning is not uniquely editable")
 	}
-	edited := strings.Replace(source, "minimum_health=95", "minimum_health=94", 1)
+	edited := strings.Replace(source, "M.fargodeep_pull={minimum_health=95", "M.fargodeep_pull={minimum_health=94", 1)
 	revision, err := host.Reload(ctx, edited, initial)
 	if err != nil || revision == initial || host.vm != session || host.vm.Status().SessionID != sid {
 		t.Fatal("same-host objective tuning CAS failed", revision, err)

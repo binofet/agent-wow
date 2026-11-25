@@ -92,7 +92,13 @@ function M.best_ranks(obs, capability, options)
 end
 
 function M.highest_rank(obs, capability, family, options)
-    local row = M.best_ranks(obs, capability, options)[tostring(family)]
+    local ranks = M.best_ranks(obs, capability, options)
+    local row = ranks[tostring(family)]
+    if family == nil then
+        for _, candidate in pairs(ranks) do
+            if not row or higher_rank(candidate, row, options) then row = candidate end
+        end
+    end
     return row and row.id or nil
 end
 

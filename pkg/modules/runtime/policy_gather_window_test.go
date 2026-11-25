@@ -55,7 +55,7 @@ func TestPolicyGatherWindowUsesRealNativeGameObjectMoneySlotAndRelease(t *testin
 	w := &worldv1.SnapshotResponse{Self: &worldv1.PlayerState{Guid: 6, Present: true, AliveKnown: true, Alive: true,
 		HealthKnown: true, Health: 100, MaxHealth: 100, MapKnown: true, PositionKnown: true, PositionRevision: 1,
 		UnitFlagsKnown: true, MovementFlagsKnown: true, SpeedsKnown: true, RunSpeed: 7}, InventoryKnown: true, InventoryRevision: 1,
-		SelfQuestLogKnown: true, SelfQuestLogRevision: 1, QuestObjects: []*worldv1.GameObjectState{{Guid: source, Entry: 161557,
+		VisitRevision: 1, SelfQuestLogKnown: true, SelfQuestLogRevision: 1, QuestObjects: []*worldv1.GameObjectState{{Guid: source, Entry: 161557,
 			Present: true, MapKnown: true, PositionKnown: true, PositionRevision: 1, X: 2, TypeKnown: true, GameObjectType: 3, FlagsKnown: true}}}
 	for i := range 25 {
 		w.SelfQuestLog = append(w.SelfQuestLog, &worldv1.QuestLogEntry{Slot: uint32(i)})
@@ -73,7 +73,7 @@ func TestPolicyGatherWindowUsesRealNativeGameObjectMoneySlotAndRelease(t *testin
 	}
 	callback := &corpseNativeCallback{manager: m, world: w, actions: &actionsv1.State{SessionId: "corpse-body", SelfGuid: 6,
 		Position: &actionsv1.ClientPosition{Known: true, MapKnown: true, Revision: 1}}}
-	native := buddyloot.NewService(callback, 6, "corpse-body")
+	native := buddyloot.NewAutomaticService(callback, 6, "corpse-body")
 	server := grpc.NewServer()
 	lootv1.RegisterBuddyLootServer(server, native)
 	listener := bufconn.Listen(1 << 20)
@@ -84,33 +84,6 @@ func TestPolicyGatherWindowUsesRealNativeGameObjectMoneySlotAndRelease(t *testin
 	}
 	m.instances["buddy-loot"].conn = conn
 	defer func() { m.cancel(); conn.Close(); server.Stop(); listener.Close() }()
-	// The retained named source/open workflow must actually produce its normal
-	// cast and observe the server window before the shared window policy runs.
-	native.Enable(context.Background(), &lootv1.EnableRequest{Enabled: true})
-	native.Tick(context.Background())
-	if len(writes) != 1 || writes[0] != opcode.CMSGCastSpell {
-		t.Fatal("retained opening did not run", writes)
-	}
-	window := binary.LittleEndian.AppendUint64(nil, source)
-	window = append(window, 6)
-	window = binary.LittleEndian.AppendUint32(window, 5)
-	window = append(window, 2)
-	for _, item := range []struct {
-		slot byte
-		id   uint32
-	}{{1, 42}, {2, 11119}} {
-		row := make([]byte, 22)
-		row[0] = item.slot
-		binary.LittleEndian.PutUint32(row[1:], item.id)
-		binary.LittleEndian.PutUint32(row[5:], 1)
-		row[21] = 4
-		window = append(window, row...)
-	}
-	native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLootResponse, Payload: window})
-	native.Tick(context.Background())
-	if len(writes) != 1 {
-		t.Fatal("native selected window contents", writes)
-	}
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "behaviors", "corpse-loot.lua"))
 	if err != nil {
 		t.Fatal(err)
@@ -143,6 +116,37 @@ func TestPolicyGatherWindowUsesRealNativeGameObjectMoneySlotAndRelease(t *testin
 		}
 		return receipt
 	}
+	// Native ticks no longer select a target or recipe. The actual accepted
+	// Lua module chooses the observed object and routes the exact opening RPC.
+	native.Enable(context.Background(), &lootv1.EnableRequest{Enabled: true})
+	native.Tick(context.Background())
+	if len(writes) != 0 {
+		t.Fatal("native selected a gather target before Lua", writes)
+	}
+	if r := step(false); r == nil || r.Outcome != behavior.ActionSettledUnverified ||
+		len(writes) != 1 || writes[0] != opcode.CMSGCastSpell || r.Payload["source_guid"] != strconv.FormatUint(source, 10) {
+		t.Fatal("actual Lua-selected gather opening did not run", r, writes)
+	}
+	window := binary.LittleEndian.AppendUint64(nil, source)
+	window = append(window, 6)
+	window = binary.LittleEndian.AppendUint32(window, 5)
+	window = append(window, 2)
+	for _, item := range []struct {
+		slot byte
+		id   uint32
+	}{{1, 42}, {2, 11119}} {
+		row := make([]byte, 22)
+		row[0] = item.slot
+		binary.LittleEndian.PutUint32(row[1:], item.id)
+		binary.LittleEndian.PutUint32(row[5:], 1)
+		row[21] = 4
+		window = append(window, row...)
+	}
+	native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLootResponse, Payload: window})
+	native.Tick(context.Background())
+	if len(writes) != 1 {
+		t.Fatal("native selected window contents", writes)
+	}
 	callback.reject = true
 	if r := step(false); r == nil || r.Outcome != behavior.ActionNotDispatched || len(writes) != 1 {
 		t.Fatal("definite callback refusal consumed the money mutation", r, writes)
@@ -171,9 +175,9 @@ func TestPolicyGatherWindowUsesRealNativeGameObjectMoneySlotAndRelease(t *testin
 	if r := step(false); r == nil || len(writes) != 4 || writes[3] != opcode.CMSGLootRelease || callback.actions.InteractionOwner != "" {
 		t.Fatal("collected window did not yield its actual source", r, writes, callback.actions)
 	}
-	for _, origin := range origins[1:] {
+	for _, origin := range origins {
 		if origin.Writer != "lua" || origin.Module != "buddy-loot" || origin.ActionID == "" {
-			t.Fatal("window packet lost Lua attribution", origin)
+			t.Fatal("opening/window packet lost Lua attribution", origin)
 		}
 	}
 	before, _ := native.GetState(context.Background(), &emptypb.Empty{})

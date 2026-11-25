@@ -280,7 +280,7 @@ func TestOrdinaryRetiredSourceCapacityIsBoundedAndDoesNotEraseOldSafety(t *testi
 	}
 	// Retirement and an unresolved outcome are body-local, not persisted or
 	// cleared by blindly toggling the current body.
-	fresh := NewService(f, 1, "new-runtime-body")
+	fresh := NewAutomaticService(f, 1, "new-runtime-body")
 	if len(fresh.retired) != 0 || fresh.cleanup.source != 0 {
 		t.Fatal("foreign body inherited old transaction")
 	}

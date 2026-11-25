@@ -114,6 +114,14 @@ func TestLootCapacityBlocksNewOpenAndRechecksAfterLease(t *testing.T) {
 			f.world.InventoryKnown = true
 			advance(time.Second)
 			tickCapacityLoot(t, s, gather)
+			if gather {
+				// The first fresh view retires the native capacity pause; the
+				// next normal Lua turn chooses the exact new source request.
+				if current(t, s).InventoryPaused || len(f.packets) != 0 {
+					t.Fatal("gather capacity bookkeeping emitted an opening", current(t, s), f.packets)
+				}
+				tickCapacityLoot(t, s, true)
+			}
 			if len(f.packets) != 1 || current(t, s).InventoryPaused {
 				t.Fatal("actual free capacity did not resume", current(t, s), f.packets)
 			}
@@ -278,10 +286,14 @@ func TestLootInventoryFullRequiresNewerFreeInventoryRevision(t *testing.T) {
 			f.world.InventoryKnown = true
 			advance(time.Second)
 			tickCapacityLoot(t, s, gather)
-			if !gather && len(f.packets) == before && !current(t, s).InventoryPaused {
-				// The native item-store barrier may be cleared by this tick;
-				// Lua then consumes its positively updated state on a fresh read.
-				tickCapacityLoot(t, s, false)
+			if gather && (current(t, s).InventoryPaused || len(f.packets) != before) {
+				t.Fatal("source-bound capacity resume was not metadata-only", current(t, s), f.packets)
+			}
+			if len(f.packets) == before && !current(t, s).InventoryPaused {
+				// A native item-store barrier or exact Lua source-capacity
+				// pause can settle on this turn. Lua consumes that positively
+				// updated state only on a fresh normal read, without retrying.
+				tickCapacityLoot(t, s, gather)
 			}
 			if (gather && current(t, s).InventoryPaused || !gather && corpsePolicyPaused(t, s)) || len(f.packets) != before+1 {
 				t.Fatal("newer complete free view did not resume", current(t, s), f.packets)
@@ -290,7 +302,7 @@ func TestLootInventoryFullRequiresNewerFreeInventoryRevision(t *testing.T) {
 	}
 }
 
-func TestLootFinalCapacityReadRetainsOwnWolfQuestAuthority(t *testing.T) {
+func TestLootFinalCapacityReadKeepsLuaCorpseIndependentOfNamedQuest(t *testing.T) {
 	s, f, _ := wolfRig(t)
 	f.onSnapshot = func(n int, w *worldv1.SnapshotResponse) {
 		if n == 4 {
@@ -298,9 +310,12 @@ func TestLootFinalCapacityReadRetainsOwnWolfQuestAuthority(t *testing.T) {
 		}
 	}
 	enable(t, s)
-	tickCapacityLoot(t, s, true)
-	if f.snapshotReads != 4 || len(f.packets) != 0 || s.token != "" || f.releases != 1 {
-		t.Fatal("final quest loss reached corpse loot write", current(t, s), f.snapshotReads, f.packets)
+	// Ordinary corpse opening is selected by the accepted Lua, independently
+	// of the retired named wolf quest controller. Exact native source, pose,
+	// inventory and owned-token guards still apply to this final world read.
+	tickCorpseLua(t, s)
+	if f.snapshotReads != 4 || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot || s.token == "" {
+		t.Fatal("unrelated quest edit changed the exact Lua-selected corpse", current(t, s), f.snapshotReads, f.packets)
 	}
 }
 

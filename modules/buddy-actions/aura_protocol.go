@@ -144,10 +144,18 @@ func (s *Service) applyBuffAurasLocked(guid uint64, updates []auraDelta, all boo
 		a.at = s.now()
 		a.revision = s.buffAuraRevision
 		set.slots[v.slot] = a
-		if op := s.supportOp; op != nil && op.view.Capability == "stealth" && op.view.TargetGuid == guid && op.view.SpellId == a.spell && a.caster == s.selfGUID && a.positive {
-			op.view.EffectObserved = true
-			if op.view.ServerCastGo {
-				op.view.Phase = "confirmed_aura"
+		for i, op := range [2]*supportAttempt{s.supportOp, s.starterSpells.uncertainStrike} {
+			if op == nil || i == 1 && op == s.supportOp || op.view.Capability != "stealth" || op.view.TargetGuid != guid ||
+				op.view.SpellId != a.spell || a.caster != s.selfGUID || !a.positive {
+				continue
+			}
+			b := op.starterBinding
+			if b == nil || s.starterSelfCastBodyCurrentLocked(op) {
+				op.view.EffectObserved = true
+				if op.view.ServerCastGo {
+					op.view.Phase = "confirmed_aura"
+					s.confirmStarterSelfCastLocked(op)
+				}
 			}
 		}
 		if op := s.buffOp; op != nil && op.view.Phase == "waiting_server" && op.view.TargetGuid == guid && op.view.SpellId == a.spell && a.positive && a.caster == s.selfGUID && a.revision > op.baseline && (!a.durationKnown || a.duration > 0) {

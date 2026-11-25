@@ -110,7 +110,7 @@ func TestStarterWeaponNativeCurrentPolicyFailureCannotStartNewAttack(t *testing.
 					case "transport":
 						return false, "", nil, errors.New("current source socket unavailable")
 					case "missing export":
-						return false, strings.Repeat("a", 64), nil, nil
+						return false, runtime.Status().Revision, nil, nil
 					case "extra field":
 						out["nativeFallback"] = true
 					case "unknown rank":
@@ -120,7 +120,7 @@ func TestStarterWeaponNativeCurrentPolicyFailureCannotStartNewAttack(t *testing.
 					case "fractional rank":
 						out["spellId"] = 53.5
 					}
-					return true, strings.Repeat("a", 64), out, nil
+					return true, runtime.Status().Revision, out, nil
 				}
 				s.Tick(context.Background())
 				if reads != 1 || countPackets(f, opcode.CMSGCastSpell) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 {
@@ -151,7 +151,7 @@ func TestStarterWeaponNativeExplicitMeleeStartsOnlyOrdinaryAttack(t *testing.T) 
 			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
 			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
 				if input["selection"] == "weapon_strike" {
-					return true, strings.Repeat("a", 64), map[string]any{"kind": "melee", "spellId": 0}, nil
+					return true, runtime.Status().Revision, map[string]any{"kind": "melee", "spellId": 0}, nil
 				}
 				out, err := runtime.EvaluateContext(ctx, input)
 				return true, runtime.Status().Revision, out, err
@@ -226,7 +226,7 @@ func TestStarterWeaponNativeFinalReadRevalidatesActualMechanicsAndMission(t *tes
 							out = map[string]any{"kind": "wait", "spellId": 0}
 						}
 					}
-					return true, strings.Repeat("a", 64), out, nil
+					return true, runtime.Status().Revision, out, nil
 				}
 				s.Tick(context.Background())
 				if reads != 2 || countPackets(f, opcode.CMSGCastSpell) != 0 || s.state.AssistAttempts != 0 {

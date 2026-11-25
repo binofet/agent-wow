@@ -1,10 +1,13 @@
-"""Mock HTTP only: no live RPC, game packets, actors, processes or body leases."""
+"""Actual public Lua evaluator and mock HTTP; no live actor or game operation."""
 import copy
+import hashlib
 import importlib.machinery
 import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -15,6 +18,17 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 m = importlib.util.module_from_spec(spec)
 loader.exec_module(m)
 URL = "http://127.0.0.1:8192/rpc"
+ROOT = Path(__file__).resolve().parent.parent
+BINARY = Path(os.environ.get("BUDDY_LUAPOLICY_BINARY",
+    os.environ.get("BUDDY_LUAPOLICY_TEST_BINARY", ROOT / "data/bin/luapolicy")))
+
+
+def accepted_source():
+    # An actor publication fixture, not a fallback used by the consumer.
+    gathering = (ROOT / "behaviors/gathering.lua").read_text()
+    return ("local gathering=(function()\n" + gathering + "\nend)()\n"
+            "return {decide=function() return {} end, "
+            "profession_practice_choice=gathering.practice_choice}\n")
 
 
 def initial_state():
@@ -42,6 +56,16 @@ class MockHTTP:
     def __init__(self):
         self.state, self.calls, self.timeouts, self.read_bounds = initial_state(), [], [], []
         self.on_state, self.on_attempt, self.on_cancel, self.raw_reply = None, None, None, None
+        self.source, self.generation, self.faulted = accepted_source(), "1", False
+        self.on_source, self.on_attach = None, None
+        self.source_fields = {}
+
+    @property
+    def source_revision(self):
+        return hashlib.sha256(self.source.encode()).hexdigest()
+
+    def publish(self, source):
+        self.source, self.generation = source, str(int(self.generation) + 1)
 
     def operation(self, request, status="COMPLETED"):
         baseline = m.number(request.get("expectedInventoryRevision", self.state["inventoryRevision"]))
@@ -61,6 +85,7 @@ class MockHTTP:
         if self.raw_reply is not None:
             raw = self.raw_reply(payload)
         else:
+            result = self.state
             if method == "buddy-professions.state":
                 if self.on_state:
                     self.on_state(self)
@@ -78,9 +103,25 @@ class MockHTTP:
                     self.state["operation"]["status"] = "CANCELLED"
                     self.state["operation"]["leaseReleased"] = True
                     self.state["active"] = False
+            elif method == "session.policy_source":
+                if params != dict(sessionId="body1", characterGuid="7"):
+                    raise AssertionError("accepted source read must bind this exact actor")
+                if self.on_source:
+                    self.on_source(self)
+                result = dict(sessionId="body1", characterGuid="7", source=self.source,
+                    revision=self.source_revision, generation=self.generation,
+                    sourceLimitBytes=8 * 1024 * 1024)
+                result.update(copy.deepcopy(self.source_fields))
+            elif method == "session.attach":
+                if params != dict(sessionId="body1", characterGuid="7"):
+                    raise AssertionError("attachment read must bind this exact actor")
+                if self.on_attach:
+                    self.on_attach(self)
+                result = dict(sessionId="body1", characterGuid="7", policy=dict(
+                    revision=self.source_revision, generation=self.generation, faulted=self.faulted))
             else:
                 raise AssertionError(method)
-            raw = json.dumps({"jsonrpc": "2.0", "id": payload["id"], "result": self.state}).encode()
+            raw = json.dumps({"jsonrpc": "2.0", "id": payload["id"], "result": result}).encode()
         owner = self
 
         class Response:
@@ -99,7 +140,11 @@ class MockHTTP:
     def methods(self):
         return [request["method"] for request in self.calls]
 
+    def profession_methods(self):
+        return [method for method in self.methods() if method.startswith("buddy-professions.")]
 
+
+@unittest.skipUnless(BINARY.is_file(), "provide the existing public luapolicy evaluator")
 class SecondaryProfessionTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -171,8 +216,8 @@ class SecondaryProfessionTests(unittest.TestCase):
     def test_exact_fresh_attempt_binding_uuid_and_private_receipt(self):
         result = self.practice()
         self.assertEqual(result["phase"], "bounded_practice_finished")
-        self.assertEqual(self.http.methods(), ["buddy-professions.state", "buddy-professions.state", "buddy-professions.attempt"])
-        request = self.http.calls[-1]["params"]
+        self.assertEqual(self.http.profession_methods(), ["buddy-professions.state", "buddy-professions.state", "buddy-professions.attempt"])
+        request = next(row["params"] for row in self.http.calls if row["method"] == "buddy-professions.attempt")
         self.assertEqual(request, {"sessionId": "body1", "requestId": request["requestId"], "expectedRevision": "5",
                                   "skillId": 129, "spellId": 3275, "expectedSkillsRevision": "8", "expectedBackpackRevision": "11",
                                   "expectedInventoryRevision": "23"})
@@ -191,9 +236,195 @@ class SecondaryProfessionTests(unittest.TestCase):
         self.assertEqual(len({row["requestId"] for row in attempts}), 3)
         self.assertTrue(all(row["skillId"] == 185 for row in attempts))
 
+    def test_balancing_and_ties_come_from_the_same_accepted_lua(self):
+        self.http.state["skills"].reverse()
+        self.http.state["recipes"].reverse()
+        result = self.practice(maximum=3, skills=(356, 185, 129))
+        self.assertEqual(result["phase"], "bounded_practice_finished")
+        attempts = [row["params"] for row in self.http.calls if row["method"] == "buddy-professions.attempt"]
+        self.assertEqual([(row["skillId"], row["spellId"]) for row in attempts],
+                         [(129, 3275), (185, 2538), (356, 7620)])
+        self.assertIn("session.policy_source", self.http.methods())
+        self.assertIn("session.attach", self.http.methods())
+
+    def test_same_body_accepted_lua_edit_changes_the_exact_selected_recipe(self):
+        original, revision = self.http.source, self.http.source_revision
+        self.assertEqual(self.practice()["phase"], "bounded_practice_finished")
+        tuned = original.replace(
+            "local practice_tuning={spells={[3275]=129,[2538]=185,[2540]=185,[7620]=356}}",
+            "local practice_tuning={spells={[7620]=356}}", 1)
+        self.assertNotEqual(tuned, original)
+        self.http.publish(tuned)
+        with mock.patch.object(m.Path, "read_text", side_effect=AssertionError("FILE chooser fallback is forbidden")):
+            result = self.practice()
+        self.assertEqual(result["phase"], "bounded_practice_finished")
+        attempts = [row["params"] for row in self.http.calls if row["method"] == "buddy-professions.attempt"]
+        self.assertEqual([(row["sessionId"], row["skillId"], row["spellId"]) for row in attempts],
+                         [("body1", 129, 3275), ("body1", 356, 7620)])
+        self.assertNotEqual(self.http.source_revision, revision)
+        self.assertEqual(self.http.generation, "2")
+        rows = json.loads(self.path.read_text())["attempts"]
+        self.assertEqual([row["phase"] for row in rows], ["terminal", "terminal"])
+
+    def test_pure_choice_rejects_malformed_facts_and_validates_without_reranking(self):
+        policy = m.AcceptedPracticePolicy(self.rpc(), "body1", 7)
+        facts = dict(sessionId="body1", selfGuid="7", professionState=initial_state(),
+                     requestedSkills=[129, 185, 356], attempts=[], mode="choose")
+        changes = (
+            lambda value: value["professionState"].update(recipes="unknown"),
+            lambda value: value["professionState"]["recipes"].__setitem__(1,
+                copy.deepcopy(value["professionState"]["recipes"][0])),
+            lambda value: value.update(requestedSkills=[129, 129]),
+            lambda value: value.update(requestedSkills=["129"]),
+            lambda value: value["professionState"].update(inventoryKnown=1),
+        )
+        for change in changes:
+            with self.subTest(change=change):
+                malformed = copy.deepcopy(facts)
+                change(malformed)
+                self.assertEqual(policy.evaluate(malformed),
+                    dict(status="blocked", reason="invalid_practice_facts"))
+        facts["attempts"] = [dict(skillId=129, spellId=3275)]
+        self.assertEqual(policy.evaluate(facts), dict(status="selected", skillId=185, spellId=2538))
+        facts.update(mode="validate", selected=dict(skillId=129, spellId=3275))
+        self.assertEqual(policy.evaluate(facts), dict(status="ready", skillId=129, spellId=3275))
+        facts["professionState"]["recipes"][0]["ready"] = False
+        self.assertEqual(policy.evaluate(facts),
+            dict(status="blocked", reason="no_currently_ready_known_recipe"))
+
+    def test_full_maintained_encounter_bundle_exports_the_same_practice_choice(self):
+        self.http.source = subprocess.check_output(
+            [sys.executable, "-B", str(ROOT / "dev/encounter-bundle")], text=True)
+        self.assertGreater(len(self.http.source.encode()), m.MAX_RESPONSE)
+        result = self.practice()
+        self.assertEqual(result["phase"], "bounded_practice_finished")
+        attempt = next(row["params"] for row in self.http.calls if row["method"] == "buddy-professions.attempt")
+        self.assertEqual((attempt["skillId"], attempt["spellId"]), (129, 3275))
+        self.assertIn(m.MAX_SOURCE_RESPONSE + 1, self.http.read_bounds)
+        self.assertIn(m.MAX_RESPONSE + 1, self.http.read_bounds)
+
+    def test_source_response_has_its_own_finite_bound_without_widening_native_reads(self):
+        with mock.patch.object(m, "MAX_SOURCE_RESPONSE", 128):
+            result = self.practice()
+        self.assertEqual(result["phase"], "blocked")
+        self.assertNotIn("buddy-professions.attempt", self.http.methods())
+        self.assertEqual(self.http.read_bounds, [m.MAX_RESPONSE + 1, 129])
+
+    def test_foreign_or_invalid_publication_fails_closed_before_reservation(self):
+        for fields in ({"sessionId": "body2"}, {"characterGuid": "8"},
+                       {"revision": "0" * 64}, {"generation": "0"},
+                       {"sourceLimitBytes": 1}):
+            with self.subTest(fields=fields), tempfile.TemporaryDirectory() as directory:
+                self.path, self.http = Path(directory) / "receipt.json", MockHTTP()
+                self.http.source_fields = fields
+                result = self.practice()
+                self.assertEqual(result["phase"], "blocked")
+                self.assertNotIn("buddy-professions.attempt", self.http.methods())
+                self.assertFalse(self.path.exists())
+
+    def test_missing_export_and_faulted_attachment_never_fall_back_or_attempt(self):
+        for kind in ("missing_export", "faulted"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                self.path, self.http = Path(directory) / "receipt.json", MockHTTP()
+                if kind == "missing_export":
+                    self.http.source = "return {decide=function() return {} end}"
+                else:
+                    self.http.faulted = True
+                with mock.patch.object(m.Path, "read_text", side_effect=AssertionError("FILE chooser fallback is forbidden")):
+                    result = self.practice()
+                self.assertEqual(result["phase"], "blocked")
+                self.assertNotIn("buddy-professions.attempt", self.http.methods())
+
+    def test_source_change_during_last_durable_preflight_prevents_attempt(self):
+        original = m.Journal.save
+        changed = []
+
+        def save_and_edit(journal):
+            original(journal)
+            if not changed and any(row.get("request") for row in journal.data["attempts"]):
+                changed.append(True)
+                self.http.publish(self.http.source + "\n-- accepted owner edit after reservation\n")
+
+        with mock.patch.object(m.Journal, "save", save_and_edit):
+            result = self.practice()
+        self.assertEqual(changed, [True])
+        self.assertEqual(result["phase"], "blocked")
+        self.assertNotIn("buddy-professions.attempt", self.http.methods())
+        row = json.loads(self.path.read_text())["attempts"][0]
+        self.assertEqual(row["phase"], "preflight_blocked")
+
+    def test_local_refusal_after_final_attach_is_known_no_send_until_next_invocation(self):
+        for refusal in ("call_cap", "deadline"):
+            with self.subTest(refusal=refusal), tempfile.TemporaryDirectory() as directory:
+                self.path, self.http, self.clock = Path(directory) / "receipt.json", MockHTTP(), Clock()
+                final_attach, deadline_armed, deadline_advanced = [], [], []
+
+                def now():
+                    current = self.clock.value
+                    # The final attach's post-read deadline check still sees
+                    # the just-observed time; the next RPC preparation does not.
+                    if deadline_armed and not deadline_advanced:
+                        deadline_advanced.append(True)
+                        self.clock.value = 130.0
+                    return current
+
+                self.clock.now = now
+
+                def refuse_after_final_attach(http):
+                    if not self.path.exists():
+                        return
+                    rows = json.loads(self.path.read_text())["attempts"]
+                    if not rows[-1].get("request"):
+                        return
+                    final_attach.append(http.calls[-1]["id"])
+                    if refusal == "call_cap":
+                        # This successful attachment is the last allowed read.
+                        m.MAX_CALLS = http.calls[-1]["id"]
+                    else:
+                        deadline_armed.append(True)
+
+                self.http.on_attach = refuse_after_final_attach
+                with mock.patch.object(m, "MAX_CALLS", 128):
+                    result = self.practice(maximum=3)
+                self.assertEqual(len(final_attach), 1)
+                self.assertEqual(self.http.methods()[-1], "session.attach")
+                self.assertEqual(result["phase"], "blocked")
+                self.assertEqual(result["reason"], "rpc_call_limit_reached" if refusal == "call_cap" else "rpc_deadline_expired")
+                self.assertNotIn("buddy-professions.attempt", self.http.methods())
+                first = json.loads(self.path.read_text())["attempts"]
+                self.assertEqual(len(first), 1)
+                self.assertEqual(first[0]["phase"], "preflight_blocked")
+                self.assertNotIn("operationId", first[0])
+
+                # No inline retry: only a later normal invocation may make a
+                # fresh request after reconciling that durable no-send receipt.
+                self.http.on_attach = None
+                self.assertEqual(self.practice()["phase"], "bounded_practice_finished")
+                rows = json.loads(self.path.read_text())["attempts"]
+                self.assertEqual([row["phase"] for row in rows], ["preflight_blocked", "terminal"])
+                self.assertNotEqual(rows[0]["requestId"], rows[1]["requestId"])
+                self.assertEqual(self.http.methods().count("buddy-professions.attempt"), 1)
+
+    def test_prior_unknown_reconciliation_does_not_require_a_new_choice_export(self):
+        def ambiguous(http):
+            self.pending(http)
+            raise OSError("ambiguous transport")
+
+        self.http.on_attempt = ambiguous
+        self.assertEqual(self.practice()["phase"], "outcome_unconfirmed")
+        self.http.on_attempt = None
+        self.http.state["active"] = False
+        self.http.state["operation"]["status"] = "COMPLETED"
+        self.http.source = "return {decide=function() return {} end}"
+        before = self.http.methods().count("session.policy_source")
+        result = self.practice(maximum=3)
+        self.assertEqual(result["phase"], "prior_attempt_reconciled_no_new_cast")
+        self.assertEqual(self.http.methods().count("buddy-professions.attempt"), 1)
+        self.assertEqual(self.http.methods().count("session.policy_source"), before)
+
     def test_carried_bag_only_revisions_authorize_fresh_requests_and_receipts(self):
         def bag_only_change(http):
-            if len(http.calls) == 2:
+            if http.methods().count("buddy-professions.state") == 2:
                 http.state["inventoryRevision"] = "24"
         self.http.on_state = bag_only_change
         result = self.practice(maximum=2)

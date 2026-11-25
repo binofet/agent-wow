@@ -42,6 +42,22 @@ def _catalog(rpc,port,identity):
     return catalog
 
 
+def _trade_state_revision(view,catalog,identity):
+    """Hydrate only a reflected proto3 zero in this detached current state."""
+    trade=view.get('trade')
+    if isinstance(trade,dict) and 'revision' in trade:return
+    methods=[row for row in catalog['methods'] if isinstance(row,dict) and row.get('name')=='buddy-trade.state']
+    schema=catalog['messages'].get(methods[0].get('outputType'),{}) if len(methods)==1 else {}
+    fields=[row for row in schema.get('fields',[]) if isinstance(row,dict) and row.get('name')=='revision']
+    if (not isinstance(trade,dict) or trade.get('sessionId')!=identity['sessionId']
+            or not isinstance(trade.get('phase'),str) or not trade['phase']
+            or len(fields)!=1 or fields[0].get('kind')!='uint64'
+            or any(fields[0].get(key) is not False for key in ('repeated','map','optional','required'))
+            or fields[0].get('hasDefault',False) is not False or fields[0].get('oneof')):
+        raise runtime.Error('current_reflected_trade_state_revision_required')
+    trade['revision']='0' # Canonical protobuf JSON representation of uint64 zero.
+
+
 def _metadata(rpc,mage,observations):
     toolkit=mage.get('spell_toolkit')
     if toolkit is None:toolkit=rpc(MIRA,'buddy-actions.spell_toolkit',{})
@@ -123,6 +139,7 @@ def _evaluate(rpc,observations,state,bridge,now_ms,query=None):
     for port,guid in RECIPIENTS.items():
         if port in observations:identities[port]=_identity(observations[port],guid)
     catalogs={str(port):_catalog(rpc,port,body) for port,body in identities.items()}
+    for port,body in identities.items():_trade_state_revision(views[str(port)],catalogs[str(port)],body)
     toolkit,metadata=_metadata(rpc,mage,observations);views[str(MIRA)]['spell_toolkit']=toolkit
     wrapped=('local policy=(function()\n'+source+'\nend)()\nreturn {decide=function(input) '
         'if type(policy.mana_supply_plan)~="function" then return {available=false} end '
@@ -172,6 +189,19 @@ class NotDispatched(runtime.Error):
 
 def _not_dispatched(state,reason):
     state['last']=dict(id=state['last']['id'],outcome='not_dispatched',reason=reason)
+
+
+def _create_item_refusal(error,port,method):
+    # The public Actions CreateItem handler returns FailedPrecondition only
+    # before castSupportLocked. Other methods/statuses carry no such proof.
+    if not isinstance(error,runtime.RPCRejected) or method!='buddy-actions.create_item':return None
+    data=error.data
+    if (error.method!=method or error.url!=f'http://127.0.0.1:{port}/rpc' or error.code!=-32000
+            or not isinstance(data,dict) or data.get('module')!='buddy-actions'
+            or data.get('method')!='create_item' or data.get('grpc_status')!='FailedPrecondition'
+            or not isinstance(data.get('grpc_message'),str)):
+        return None
+    return {key:copy.deepcopy(data[key]) for key in ('module','method','grpc_status','grpc_message')}
 
 
 def _persist(persist,state):
@@ -229,7 +259,18 @@ def maintain_supply(rpc,observations,state,*,bridge=None,now_ms=None,persist=Non
             if current.get('sessionId')!=identities[port]['sessionId'] or str(current.get('selfGuid'))!=identities[port]['characterGuid']:
                 raise NotDispatched('supply_body_changed_before_dispatch')
             rpc_entered=True
-            reply=rpc(int(action['port']),action['method'],action['params'])
+            try:
+                reply=rpc(int(action['port']),action['method'],action['params'])
+            except runtime.RPCRejected as error:
+                refusal=_create_item_refusal(error,port,action['method'])
+                if refusal is None:raise
+                settled=copy.deepcopy(state)
+                settled['last']=dict(id=action['id'],outcome='not_dispatched',
+                    reason='create_item_failed_precondition',rejection=refusal)
+                settled['phase']='water_supply_not_dispatched'
+                _persist(persist,settled) # Failed storage retains original UNKNOWN.
+                state.clear();state.update(settled)
+                return state['phase']
             settled=copy.deepcopy(state)
             settled['last']=dict(id=action['id'],outcome='rpc_result',result=reply)
             _persist(persist,settled) # Never use an unpersisted reply next turn.

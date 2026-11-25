@@ -44,6 +44,12 @@ message Group {
   repeated Member members = 5;
   uint32 type_flags = 6;
   uint32 server_counter = 7;
+  // Server-reported group difficulties, not an instance ID or current location.
+  // Unknown until a complete group-list packet supplies its difficulty tail.
+  bool dungeon_difficulty_known = 8;
+  uint32 dungeon_difficulty = 9;
+  bool raid_difficulty_known = 10;
+  uint32 raid_difficulty = 11;
 }
 
 message CommandResult {

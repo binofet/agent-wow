@@ -4,6 +4,8 @@ import importlib.machinery
 import importlib.util
 import os
 from pathlib import Path
+import subprocess
+import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -98,6 +100,68 @@ end}
         self.assertNotIn('action', self.tick())
         self.view['offers'][0]['remainingMs'] = '1500'
         self.assertEqual(self.tick()['action']['choice'], expected)
+
+    def test_current_full_bundle_preserves_roll_winner_checkpoint_and_pure_exports(self):
+        bundle = subprocess.check_output(
+            [sys.executable, '-B', str(ROOT / 'dev/encounter-bundle')], text=True)
+        source = 'local policy=(function()\n'+bundle+'\nend)()\n'+'''
+return {decide=function(input)
+    assert(type(policy.starter_spell)=="function")
+    assert(type(policy.profession_practice_choice)=="function")
+    local frame={session_id=input.session_id,cursor=input.sequence,pending=input.pending or {},
+        input={kind="loot_roll",observationSequence=input.sequence,
+            observationSequences={loot_roll=input.sequence}},clock={monotonicMs=1}}
+    if input.checkpoint then assert(policy.import_state(input.checkpoint)) end
+    assert(policy.on_event({kind="loot_roll_observation",sequence=input.sequence,value=input.view}))
+    local decision=policy.decide(frame)
+    local checkpoint=policy.export_state()
+    checkpoint.session_id=frame.session_id;checkpoint.cursor=frame.cursor;checkpoint.pending=frame.pending
+    local practice=policy.profession_practice_choice({mode="choose",sessionId=frame.session_id,selfGuid="4",
+        professionState={sessionId=frame.session_id,selfGuid="4",revision="1",skillsRevision="1",
+            inventoryRevision="1",backpackRevision="0",skillsKnown=true,spellsKnown=true,inventoryKnown=true,
+            skills={{skillId=129,rank=1,maximum=75}},
+            recipes={{skillId=129,spellId=3275,known=true,ready=true,requirementsVerified=true}}},
+        requestedSkills={129},attempts={}})
+    return {decision=decision,checkpoint=checkpoint,practice=practice,
+        starter=policy.starter_spell({selection="cave_cohort"})}
+end}
+'''
+        # This is the maintained whole accepted-source query profile. It is
+        # not a full-bundle/default5ms or native/live performance assertion.
+        bridge = host.Bridge(self.bridge.binary, ROOT / 'modules', execution_ms=1000)
+        checkpoint, sequence = None, 0
+
+        def step(view, pending=None):
+            nonlocal checkpoint, sequence
+            sequence += 1
+            frame = dict(session_id='aw-roll-test', sequence=str(sequence),
+                         view=copy.deepcopy(view), pending=pending or [])
+            if checkpoint is not None:
+                frame['checkpoint'] = checkpoint
+            result = bridge.evaluate(source, frame)
+            checkpoint = result['checkpoint']
+            self.assertEqual(result['practice'], {'status': 'selected', 'skillId': 129, 'spellId': 3275})
+            self.assertEqual(result['starter'], {'status': 'invalid'})
+            return result['decision']
+
+        first = step(self.view)
+        self.assertEqual(first['action']['capability'], 'loot_roll')
+        self.assertEqual(first['action']['choice'], 'need')
+        self.assertEqual(first['action']['rollGuid'], GUID)
+        key = '3:'+GUID+':1'
+        self.assertEqual(checkpoint['data']['lootRoll']['data']['reservations'], {key: 'need'})
+        for phase, available, remaining in (('pending', True, '60000'),
+                                            ('voted', False, '60000'), ('expired', False, '0')):
+            view = copy.deepcopy(self.view)
+            view['offers'][0].update(phase=phase, available=available, remainingMs=remaining)
+            self.assertNotIn('action', step(view))
+            self.assertEqual(checkpoint['data']['lootRoll']['data']['reservations'], {key: 'need'})
+        view = copy.deepcopy(self.view)
+        view['offers'] = [self.offer(rollGuid=str(int(GUID)+1), remainingMs='0')]
+        self.assertNotIn('action', step(view))
+        view['offers'][0]['remainingMs'] = '60000'
+        self.assertNotIn('action', step(view, [{'action_id': 'prior-owned-action'}]))
+        self.assertEqual(checkpoint['data']['lootRoll']['data']['reservations'], {key: 'need'})
 
     def test_empty_supported_slot_needs_and_proposal_preserves_exact_offer(self):
         self.choice('need')

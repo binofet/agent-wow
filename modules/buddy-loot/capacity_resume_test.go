@@ -79,8 +79,12 @@ func TestContainerCapacityResumeHasOneLuaDecisionAndNoNativeRetry(t *testing.T) 
 	}
 	advance(time.Second)
 	s.Tick(context.Background())
+	if len(f.packets) != before {
+		t.Fatal("metadata resume restarted native source selection", current(t, s), f.packets)
+	}
+	tickGatherWindow(t, s)
 	if len(f.packets) != before+1 || f.packets[before].Opcode != opcode.CMSGCastSpell || current(t, s).LastGather.Id != 2 {
-		t.Fatal("retained opener could not continue after exact Lua resume", current(t, s), f.packets)
+		t.Fatal("Lua-selected opener could not continue after exact Lua resume", current(t, s), f.packets)
 	}
 }
 

@@ -107,6 +107,7 @@ message GearItemFacts {
   bool enhancements_known = 1; bool has_enhancements = 2;
   bool durability_known = 3; uint32 durability = 4; uint32 max_durability = 5;
   repeated GearDestination destinations = 6;
+  warcraftbuddy.world.v1.ItemEnhancementState enhancement_details = 7;
 }
 message GearContext {
   bool class_known = 1; uint32 class_id = 2;

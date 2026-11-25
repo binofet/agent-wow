@@ -25,6 +25,7 @@ func harvestRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	s, f, advance := wolfRig(t)
 	f.world.SelfQuestLog[0].QuestId = 3904
 	f.world.SelfQuestLogRevision = 7
+	f.world.VisitRevision = 1
 	f.world.LootableCorpses = nil
 	f.world.QuestObjects = []*worldv1.GameObjectState{{Guid: harvestGUID, Entry: 161557, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: 1, X: 2, TypeKnown: true, GameObjectType: 3, FlagsKnown: true, DynamicFlagsKnown: true, DynamicFlags: 9}}
 	return s, f, advance
@@ -470,8 +471,17 @@ func TestInventoryFullPausesOnlyUntilKnownFreeSlotAndPreservesExplicitDisable(t 
 			if out.Enabled || len(f.packets) != before {
 				t.Fatal("explicit disable overridden", out)
 			}
-		} else if out.InventoryPaused || len(f.packets) != before+1 || f.packets[len(f.packets)-1].Opcode != opcode.CMSGCastSpell {
-			t.Fatal("known free slot did not resume", out, f.packets)
+		} else {
+			// Exact capacity resume is a metadata-only Lua turn. A new source
+			// is selected only after the next normal observation reflects it.
+			if out.InventoryPaused || len(f.packets) != before {
+				t.Fatal("capacity resume did not remain metadata-only", out, f.packets)
+			}
+			tickGatherWindow(t, s)
+			out = current(t, s)
+			if out.InventoryPaused || len(f.packets) != before+1 || f.packets[len(f.packets)-1].Opcode != opcode.CMSGCastSpell {
+				t.Fatal("known free slot did not resume", out, f.packets)
+			}
 		}
 	}
 }

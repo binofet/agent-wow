@@ -312,6 +312,12 @@ func (s *Service) GetState(ctx context.Context, _ *emptypb.Empty) (*inventoryv1.
 	return s.snapshot(), nil
 }
 func (s *Service) idleLocked(leased bool) string {
+	return s.idleForOperationLocked(leased, false)
+}
+
+// Gear shares the exact native operation/lease/receipt path, but passive
+// follow, assist and loot intents do not constitute an in-flight action.
+func (s *Service) idleForOperationLocked(leased, gear bool) string {
 	if !s.known || s.closed {
 		return "current_owned_observations_required"
 	}
@@ -324,7 +330,7 @@ func (s *Service) idleLocked(leased bool) string {
 	if !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || !p.UnitFlagsKnown || p.UnitFlags&unsafe != 0 || !p.MapKnown || !p.PositionKnown || !finite(p.X) || !finite(p.Y) || !finite(p.Z) || !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) || !p.ChannelObjectKnown || p.ChannelObjectGuid != 0 || !p.ChannelSpellKnown || p.ChannelSpellId != 0 {
 		return "alive_safe_ground_nonchanneling_character_required"
 	}
-	if a == nil || a.Position == nil || !a.Position.Known || !a.Position.MapKnown || a.Position.MapId != p.MapId || !finite(a.Position.X) || !finite(a.Position.Y) || !finite(a.Position.Z) || a.Moving || a.Traveling || a.MotionUnconfirmed || a.CastPending || a.AutoAttacking || a.AutoAttackRequested || a.AutoAttackUnconfirmed || a.Following || a.Assisting || a.Practicing {
+	if a == nil || a.Position == nil || !a.Position.Known || !a.Position.MapKnown || a.Position.MapId != p.MapId || !finite(a.Position.X) || !finite(a.Position.Y) || !finite(a.Position.Z) || a.Moving || a.Traveling || a.MotionUnconfirmed || a.CastPending || a.AutoAttacking || a.AutoAttackRequested || a.AutoAttackUnconfirmed || (!gear && (a.Following || a.Assisting)) || a.Practicing {
 		return "controller_must_be_confirmed_idle"
 	}
 	if !leased && a.InteractionOwner != "" || leased && (a.InteractionOwner != "trade" || a.InteractionLeaseRemainingMs < 11000) {
@@ -333,7 +339,7 @@ func (s *Service) idleLocked(leased bool) string {
 	if !settledTrade(s.trade) {
 		return "trade_or_junk_operation_busy"
 	}
-	if s.loot == nil || s.loot.Enabled || s.loot.PendingCorpseGuid != 0 || s.loot.PendingGameObjectGuid != 0 || (s.loot.Phase != "disabled" && s.loot.Phase != "idle") || s.prof == nil || s.prof.Active || s.prof.Closing || s.prof.Operation != nil && (s.prof.Operation.CleanupUnconfirmed || s.prof.Operation.Status == professionsv1.AttemptStatus_OUTCOME_UNCONFIRMED) {
+	if s.loot == nil || (!gear && s.loot.Enabled) || s.loot.PendingCorpseGuid != 0 || s.loot.PendingGameObjectGuid != 0 || (s.loot.Phase != "disabled" && s.loot.Phase != "idle") || s.prof == nil || s.prof.Active || s.prof.Closing || s.prof.Operation != nil && (s.prof.Operation.CleanupUnconfirmed || s.prof.Operation.Status == professionsv1.AttemptStatus_OUTCOME_UNCONFIRMED) {
 		return "loot_or_profession_operation_busy"
 	}
 	for _, i := range s.view.slots {
@@ -446,7 +452,7 @@ func (s *Service) Discover(ctx context.Context, r *inventoryv1.DiscoverRequest) 
 	return out, nil
 }
 func (s *Service) gateLocked(op *operation, leased bool) string {
-	if reason := s.idleLocked(leased); reason != "" {
+	if reason := s.idleForOperationLocked(leased, op.receipt.Kind == "equip_gear"); reason != "" {
 		return reason
 	}
 	r := op.receipt
@@ -639,7 +645,7 @@ func (s *Service) run(op *operation) {
 	s.mu.Lock()
 	op.token = lease.Token
 	s.mu.Unlock()
-	if lease.Token == "" || !safeLeaseState(lease.State) {
+	if lease.Token == "" || !safeOperationLeaseState(lease.State, op.receipt.Kind == "equip_gear") {
 		s.finish(op, "BLOCKED", "trade_lease_stop_unconfirmed")
 		return
 	}
@@ -661,7 +667,7 @@ func (s *Service) run(op *operation) {
 	// Owner labels alone cannot prove that our exact token still owns the
 	// controller. A replacement trade lease must not authorize this old write.
 	renewed := &actionsv1.InteractionLease{}
-	if e := s.invoke(op.ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "trade", Token: op.token, LeaseMs: 15000}, renewed); e != nil || renewed.Token != op.token || !safeLeaseState(renewed.State) {
+	if e := s.invoke(op.ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "trade", Token: op.token, LeaseMs: 15000}, renewed); e != nil || renewed.Token != op.token || !safeOperationLeaseState(renewed.State, op.receipt.Kind == "equip_gear") {
 		unlockWrite()
 		s.finish(op, "BLOCKED", "exact_trade_lease_renewal_unconfirmed")
 		return
@@ -772,7 +778,10 @@ func (s *Service) run(op *operation) {
 }
 
 func safeLeaseState(a *actionsv1.State) bool {
-	return a != nil && a.InteractionOwner == "trade" && a.InteractionLeaseRemainingMs >= 11000 && !a.Moving && !a.Traveling && !a.MotionUnconfirmed && !a.CastPending && !a.AutoAttacking && !a.AutoAttackRequested && !a.AutoAttackUnconfirmed && !a.Following && !a.Assisting && !a.Practicing
+	return safeOperationLeaseState(a, false)
+}
+func safeOperationLeaseState(a *actionsv1.State, gear bool) bool {
+	return a != nil && a.InteractionOwner == "trade" && a.InteractionLeaseRemainingMs >= 11000 && !a.Moving && !a.Traveling && !a.MotionUnconfirmed && !a.CastPending && !a.AutoAttacking && !a.AutoAttackRequested && !a.AutoAttackUnconfirmed && (gear || !a.Following && !a.Assisting) && !a.Practicing
 }
 func (s *Service) evidenceLocked(v view) {
 	op := s.last

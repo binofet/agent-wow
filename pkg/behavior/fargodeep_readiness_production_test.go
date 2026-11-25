@@ -10,11 +10,11 @@ import (
 
 func TestFargodeepReadinessDefaultCLI(t *testing.T) {
 	source := behaviors.StarterSpellSource
-	const threshold = "minimum_health=95"
+	const threshold = "M.fargodeep_pull={minimum_health=95"
 	if strings.Count(source, threshold) != 1 {
 		t.Fatal("actual shared Fargodeep tuning is missing or ambiguous")
 	}
-	edited := strings.Replace(source, threshold, "minimum_health=94", 1)
+	edited := strings.Replace(source, threshold, "M.fargodeep_pull={minimum_health=94", 1)
 	for _, test := range []struct {
 		name, source, want         string
 		health, mana, base, energy uint32
@@ -53,7 +53,7 @@ func TestFargodeepReadinessDefaultCLI(t *testing.T) {
 			// The maintained helper verifies clean-source CLI provenance and invokes
 			// the ordinary executable once with the real 5ms/32KiB defaults.
 			out, err := evaluateDisposalProduction(t, test.source, frame)
-			want := map[string]any{"kind": test.want, "spellId": float64(0), "selection": "fargodeep_pull_readiness"}
+			want := map[string]any{"kind": test.want, "spellId": float64(0), "selection": "fargodeep_pull_readiness", "standYards": 3.5}
 			if err != nil || !reflect.DeepEqual(out, want) {
 				t.Fatal("ordinary CLI readiness result", out, want, err)
 			}

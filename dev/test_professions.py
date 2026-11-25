@@ -2,21 +2,26 @@
 """Profession learning through fake, strictly bounded normal trainer APIs."""
 import contextlib
 import copy
+import hashlib
 import importlib.machinery
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from test_town_policy import service_source
 
 loader = importlib.machinery.SourceFileLoader("professions_tested", str(Path(__file__).with_name("professions")))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 p = importlib.util.module_from_spec(spec)
 loader.exec_module(p)
 NPC = 0xf130000202000001
+TRAINING_BRIDGE=p.town_policy.runtime.Bridge
 SPELLS = {165: (2155, 2108), 171: (2275, 2259), 182: (2372, 2366), 197: (3911, 3908),
           333: (7414, 7411), 393: (8615, 8613), 129: (3279, 3273), 185: (2551, 2550), 356: (7733, 7620),
           164: (2020, 2018), 186: (2581, 2575), 202: (4039, 4036), 755: (25245, 25229), 773: (45375, 45357)}
@@ -43,6 +48,7 @@ class RPC:
         self.spells = [offered(skill) for skill in (*self.primary_skills, *p.SECONDARY)]
         self.apply, self.error_buy, self.prove, self.after_list, self.after_acquire = True, False, True, None, None
         self.reject,self.offer_revision=False,20
+        self.policy_source,self.generation=service_source(),'1'
 
     def state(self):
         return dict(sessionId=self.session, professionsKnown=self.known, professionsRevision=str(self.revision),
@@ -57,6 +63,12 @@ class RPC:
 
     def call(self, method, params):
         self.calls.append((method, copy.deepcopy(params)))
+        if method=='session.policy_source':
+            return dict(sessionId=self.session,characterGuid=str(self.guid),source=self.policy_source,
+                revision=hashlib.sha256(self.policy_source.encode()).hexdigest(),generation=self.generation,sourceLimitBytes=8*1024*1024)
+        if method=='session.attach':
+            return dict(sessionId=self.session,characterGuid=str(self.guid),policy=dict(
+                revision=hashlib.sha256(self.policy_source.encode()).hexdigest(),generation=self.generation))
         if method == "buddy-world.snapshot":
             return {"self": dict(guid=str(self.guid), present=True, mapKnown=self.map_known, mapId=self.map_id, aliveKnown=True, alive=True,
                                  unitFlagsKnown=True, unitFlags=0x80000 if self.combat else 0,
@@ -112,6 +124,13 @@ class RPC:
 
 
 class ProfessionTests(unittest.TestCase):
+    def setUp(self):
+        binary=Path(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY',p.ROOT/'data/bin/luapolicy'))
+        if not binary.is_file():raise RuntimeError('Actual maintained Lua evaluator is required')
+        bridge=patch.object(p.town_policy.runtime,'Bridge',side_effect=lambda _binary,modules,**options:
+            TRAINING_BRIDGE(binary,modules,**options))
+        bridge.start();self.addCleanup(bridge.stop)
+
     def rig(self, guid=1, stored=None, allow_travel=False):
         rpc, now, saved = RPC(guid), [100.], []
         actor = p.Learner(guid, rpc, save=lambda value: saved.append(copy.deepcopy(value)), stored=stored,
@@ -513,6 +532,237 @@ class ProfessionTests(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(p.main(["stop", "--character-guid", "1"]), 0)
                 self.assertEqual(p.c.read_json(folder/"stop.json"), {"identity": record["identity"], "instance": record["instance"]})
+
+
+    def test_profession_trainer_ranker_owns_radius_anchor_order_and_limit(self):
+        actor,rpc,_,_=self.rig()
+        context=actor.read();actor.anchor=dict(context['actions']['position'])
+        def row(guid,x):
+            npc=rpc.creature();npc.update(guid=str(guid),x=float(x))
+            return dict(creature=npc,interactable=False,blockedReason='confirmed_stopped_position_required')
+        context['nearby']=[row(NPC+2,20),row(NPC+1,20),row(NPC,121)]
+        self.assertEqual([r['guid'] for r in actor.candidates(context)],[NPC+1,NPC+2])
+        rpc.policy_source=rpc.policy_source.replace('search_yards=120,anchor_yards=160,max_candidates=32,prefer_nearest=true',
+            'search_yards=125,anchor_yards=160,max_candidates=1,prefer_nearest=false')
+        rpc.generation='2'
+        self.assertEqual([r['guid'] for r in actor.candidates(context)],[NPC])
+        actor.anchor['x']=-100.
+        self.assertEqual([r['guid'] for r in actor.candidates(context)],[NPC+1])
+        rpc.policy_source=rpc.policy_source.replace('anchor_yards=160','anchor_yards=119');rpc.generation='3'
+        self.assertEqual(actor.candidates(context),[])
+        self.assertEqual(self.buys(rpc),[])
+        self.assertFalse(any(m.startswith('buddy-actions.') and m!='buddy-actions.status' for m,_ in rpc.calls))
+
+    def test_profession_trainer_default_limit_and_exact_numeric_guid_ties(self):
+        actor,rpc,_,_=self.rig();context=actor.read()
+        context['nearby']=[]
+        for offset in reversed(range(40)):
+            npc=rpc.creature();npc['guid']=str(NPC+offset)
+            context['nearby'].append(dict(creature=npc))  # Proto3 omitted interactable is known false.
+        self.assertEqual([r['guid'] for r in actor.candidates(context)],list(range(NPC,NPC+32)))
+
+    def test_same_body_radius_edit_enables_exact_native_travel_and_purchase(self):
+        actor,rpc,now,saved=self.rig(allow_travel=True);rpc.npc_x=121.
+        self.step(actor,now)
+        self.assertFalse(any(m in ('buddy-actions.acquire_interaction','buddy-actions.travel_trainer','buddy-training.list') for m,_ in rpc.calls))
+        rpc.policy_source=rpc.policy_source.replace('search_yards=120,anchor_yards=160','search_yards=125,anchor_yards=160')
+        rpc.generation='2';self.step(actor,now,2)
+        self.assertEqual(len([m for m,_ in rpc.calls if m=='buddy-actions.travel_trainer']),1)
+        self.assertEqual(len(self.buys(rpc)),1)
+        methods=[m for m,_ in rpc.calls]
+        self.assertLess(methods.index('buddy-actions.release_interaction'),methods.index('buddy-training.list'))
+        self.assertEqual(saved[-1]['attempts'][0]['npc'],str(NPC))
+        self.assertEqual(rpc.session,'profession-body')
+
+    def test_missing_profession_trainer_purpose_is_explicit_and_never_uses_class_default(self):
+        actor,rpc,now,_=self.rig()
+        rpc.policy_source=rpc.policy_source.replace('return {trainers=vendors,purpose="profession"}','return {trainers=vendors}')
+        self.step(actor,now)
+        self.assertEqual(actor.status['phase'],'waiting_for_accepted_profession_trainer_policy')
+        self.assertIn('accepted_profession_trainer_destination_required',actor.status['policyError'])
+        self.assertFalse(any(m in ('buddy-training.list','buddy-training.buy_profession','buddy-actions.acquire_interaction') for m,_ in rpc.calls))
+        self.assertEqual(actor.data['attempts'],[])
+
+    def test_rank_final_native_read_source_or_body_change_blocks_every_write(self):
+        for mode in ('source','body','fault'):
+            with self.subTest(mode=mode):
+                actor,rpc,now,_=self.rig();original=rpc.call;ranking=[False]
+                def call(method,params):
+                    result=original(method,params)
+                    if method=='session.policy_source':ranking[0]=True
+                    if method=='buddy-training.state' and ranking[0]:
+                        if mode=='source':rpc.generation='2'
+                        elif mode=='body':rpc.session='replacement-body'
+                    if method=='session.attach' and ranking[0] and mode=='fault':result['policy']['faulted']=True
+                    return result
+                rpc.call=call;self.step(actor,now)
+                self.assertEqual(actor.status['phase'],'waiting_for_accepted_profession_trainer_policy')
+                self.assertFalse(any(m in ('buddy-training.list','buddy-training.buy_profession','buddy-actions.acquire_interaction') for m,_ in rpc.calls))
+
+    def test_unknown_purchase_keeps_exact_trainer_after_ranking_edit_and_reconstruction(self):
+        actor,rpc,now,saved=self.rig();rpc.apply,rpc.prove,rpc.error_buy=False,False,True
+        with self.assertRaises(p.Error):actor.tick()
+        pending=copy.deepcopy(saved[-1]);reads=sum(m=='session.policy_source' for m,_ in rpc.calls)
+        rpc.policy_source=rpc.policy_source.replace('prefer_nearest=true','prefer_nearest=false');rpc.generation='2'
+        resumed=p.Learner(1,rpc,stored=copy.deepcopy(pending),now=lambda:now[0]+10)
+        resumed.tick()
+        self.assertEqual(resumed.status['phase'],'waiting_for_unconfirmed_profession_purchase')
+        self.assertEqual(sum(m=='session.policy_source' for m,_ in rpc.calls),reads)
+        self.assertEqual(len(self.buys(rpc)),1)
+        self.assertEqual(resumed.data['attempts'],pending['attempts'])
+
+    def test_rank_revision_cannot_be_replaced_by_a_new_budget_or_offer_plan(self):
+        for edit_at in ('budget_read','after_list'):
+            with self.subTest(edit_at=edit_at):
+                actor,rpc,now,_=self.rig();original=rpc.call;source_reads=[0]
+                def edit():
+                    rpc.policy_source=rpc.policy_source.replace('max_candidates=32,prefer_nearest=true',
+                        'max_candidates=32,prefer_nearest=false');rpc.generation='2'
+                def call(method,params):
+                    if method=='session.policy_source':
+                        source_reads[0]+=1
+                        if edit_at=='budget_read' and source_reads[0]==2:edit()
+                    value=original(method,params)
+                    if method=='buddy-training.discover_professions':
+                        other=rpc.creature();other.update(guid=str(NPC+1),x=3.)
+                        value['nearby'].append(dict(creature=other))
+                    return value
+                rpc.call=call
+                if edit_at=='after_list':rpc.after_list=lambda _:edit()
+                self.step(actor,now)
+                self.assertEqual(actor.status['phase'],'waiting_for_accepted_profession_trainer_policy')
+                self.assertEqual(self.buys(rpc),[])
+                self.assertEqual(actor.data['attempts'],[])
+                self.assertEqual(sum(m=='buddy-training.list' for m,_ in rpc.calls),int(edit_at=='after_list'))
+                # Actual revised Lua now chooses the other NPC; the old row must
+                # not borrow this source's offer/budget plan as its authority.
+                self.assertEqual(actor.candidates(actor.read())[0]['guid'],NPC+1)
+
+    def test_rank_source_change_after_lease_or_route_reservation_releases_without_travel(self):
+        for edit_at in ('lease','reservation'):
+            with self.subTest(edit_at=edit_at):
+                actor,rpc,now,saved=self.rig(allow_travel=True);rpc.npc_x=20.;original=rpc.call
+                def edit():
+                    rpc.policy_source=rpc.policy_source.replace('max_candidates=32,prefer_nearest=true',
+                        'max_candidates=32,prefer_nearest=false');rpc.generation='2'
+                def call(method,params):
+                    value=original(method,params)
+                    if method=='buddy-training.discover_professions':
+                        other=rpc.creature();other.update(guid=str(NPC+1),x=30.)
+                        value['nearby'].append(dict(creature=other))
+                    return value
+                rpc.call=call
+                if edit_at=='lease':rpc.after_acquire=lambda _:edit()
+                else:
+                    save=actor.save
+                    def save_and_edit(value):
+                        save(value)
+                        if value['travelAttempts']:edit()
+                    actor.save=save_and_edit
+                self.step(actor,now)
+                self.assertEqual(actor.status['phase'],'waiting_for_accepted_profession_trainer_policy')
+                self.assertEqual(sum(m=='buddy-actions.acquire_interaction' for m,_ in rpc.calls),1)
+                self.assertEqual(sum(m=='buddy-actions.release_interaction' for m,_ in rpc.calls),1)
+                self.assertFalse(any(m in ('buddy-actions.travel_trainer','buddy-training.list','buddy-training.buy_profession') for m,_ in rpc.calls))
+                self.assertEqual(saved[-1]['travelAttempts'],{})
+                self.assertEqual(actor.data['attempts'],[])
+                self.assertEqual(rpc.owner,'')
+
+    def test_actor_lua_priority_edit_changes_next_real_offered_choice_without_rebinding_goal(self):
+        actor,rpc,now,_=self.rig()
+        self.step(actor,now)
+        self.assertEqual(self.buys(rpc)[0]['skillId'],171)
+        rpc.policy_source=rpc.policy_source.replace('primary_first=true','primary_first=false')
+        rpc.generation='2'
+        self.step(actor,now)
+        self.assertEqual([row['skillId'] for row in self.buys(rpc)],[171,129])
+        self.assertEqual(actor.primary_skills,p.PRIMARY[1])
+        self.assertEqual(actor.data['attempts'][0]['status'],'confirmed')
+        self.assertEqual(rpc.session,'profession-body')
+
+    def test_profession_offer_reuses_training_cost_order_and_budget_tuning(self):
+        actor,rpc,now,_=self.rig()
+        rpc.spells=[offered(171,40),offered(182,20)]
+        rpc.policy_source=rpc.policy_source.replace('prefer_cheapest=true,primary_first','prefer_cheapest=false,primary_first')
+        self.step(actor,now)
+        self.assertEqual((self.buys(rpc)[0]['skillId'],self.buys(rpc)[0]['purchase']['expectedCostCopper']),(171,40))
+
+    def test_source_change_reopens_same_body_query_cache_without_wallet_or_goal_change(self):
+        actor,rpc,now,_=self.rig()
+        rpc.policy_source=rpc.policy_source.replace('purchase_cap_copper=10000,reserve_copper=0','purchase_cap_copper=5,reserve_copper=0')
+        self.step(actor,now,2)
+        self.assertEqual(self.buys(rpc),[])
+        self.assertEqual(sum(method=='buddy-training.list' for method,_ in rpc.calls),1)
+        goal=copy.deepcopy(actor.identity)
+        rpc.policy_source=rpc.policy_source.replace('purchase_cap_copper=5,reserve_copper=0','purchase_cap_copper=10000,reserve_copper=0')
+        rpc.generation='2';self.step(actor,now)
+        self.assertEqual(sum(method=='buddy-training.list' for method,_ in rpc.calls),2)
+        self.assertEqual(len(self.buys(rpc)),1)
+        self.assertEqual(actor.identity,goal)
+
+    def test_missing_accepted_profession_mode_reports_unknown_without_python_fallback(self):
+        actor,rpc,now,_=self.rig()
+        rpc.policy_source=rpc.policy_source.replace('or input.kind=="profession_training"','')
+        self.step(actor,now)
+        self.assertEqual(actor.status['phase'],'waiting_for_accepted_profession_policy')
+        self.assertEqual(self.buys(rpc),[])
+        self.assertEqual(actor.data['attempts'],[])
+        rpc.policy_source=service_source();rpc.generation='2';self.step(actor,now)
+        self.assertEqual(len(self.buys(rpc)),1)
+
+    def test_current_full_bundle_exposes_profession_mode_without_new_export(self):
+        actor,rpc,now,_=self.rig()
+        rpc.policy_source=subprocess.check_output([sys.executable,'-B',str(Path(__file__).with_name('encounter-bundle'))],text=True)
+        self.step(actor,now)
+        self.assertEqual(self.buys(rpc)[0]['skillId'],171)
+
+    def test_source_change_during_reservation_is_known_no_call_and_retains_original_goal(self):
+        actor,rpc,now,saved=self.rig()
+        original=actor.save
+        def save(data):
+            original(data)
+            if data['attempts'] and data['attempts'][-1]['status']=='reserved':rpc.generation='2'
+        actor.save=save
+        self.step(actor,now)
+        self.assertEqual(self.buys(rpc),[])
+        self.assertEqual((saved[-1]['attempts'],saved[-1]['reservedCopper']),([],0))
+        self.assertEqual(saved[-1]['lastNotDispatched']['status'],'not_dispatched')
+        resumed=p.Learner(1,rpc,stored=copy.deepcopy(saved[-1]),now=lambda:now[0])
+        resumed.tick()
+        self.assertEqual(len(self.buys(rpc)),1)
+
+    def test_stop_during_final_attach_never_enters_profession_buy(self):
+        actor,rpc,now,saved=self.rig()
+        stopped=[False];actor.stopped=lambda:stopped[0]
+        original=rpc.call
+        def call(method,params):
+            result=original(method,params)
+            if method=='session.attach' and actor.data['attempts'] and actor.data['attempts'][-1]['status']=='reserved':
+                stopped[0]=True
+            return result
+        rpc.call=call;self.step(actor,now)
+        self.assertEqual(self.buys(rpc),[])
+        self.assertEqual(saved[-1]['attempts'],[])
+        self.assertEqual(saved[-1]['lastNotDispatched']['status'],'not_dispatched')
+
+    def test_entered_unknown_survives_actor_policy_edit_and_restart_without_reselection(self):
+        actor,rpc,now,saved=self.rig()
+        rpc.apply,rpc.prove,rpc.error_buy=False,False,True
+        with self.assertRaises(p.Error):actor.tick()
+        retained=copy.deepcopy(saved[-1]);pending=copy.deepcopy(retained['attempts'])
+        rpc.policy_source=rpc.policy_source.replace('primary_first=true','primary_first=false');rpc.generation='2'
+        source_reads=sum(method=='session.policy_source' for method,_ in rpc.calls)
+        resumed=p.Learner(1,rpc,stored=retained,now=lambda:now[0]+100)
+        resumed.tick()
+        self.assertEqual(len(self.buys(rpc)),1)
+        self.assertEqual(resumed.data['attempts'],pending)
+        self.assertEqual(sum(method=='session.policy_source' for method,_ in rpc.calls),source_reads)
+
+    def test_unclassified_extra_row_does_not_block_an_actual_ready_profession(self):
+        actor,rpc,now,_=self.rig()
+        rpc.spells=[dict(spellId=999,costCopper=1,pointCost=[0,0]),offered(171)]
+        self.step(actor,now)
+        self.assertEqual(self.buys(rpc)[0]['skillId'],171)
 
 
 if __name__ == "__main__":

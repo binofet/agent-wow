@@ -4,8 +4,11 @@ local spells = assert(encounter_spells)
 local healing = assert(encounter_healing)
 local starter_movement = encounter_movement
 local starter_objectives = encounter_starter_objectives
+local encounter_button_policy = encounter_buttons
 local M = {}
 M.coldridge_pull = {health_percent=95, base_mana_percent=60}
+M.starter_combat = {max_level_above_self=3}
+M.stealth_approach = {enabled=true, rank_order="level_rank"}
 
 local function decimal(value)
     if type(value) ~= "string" or #value == 0 or #value > 20 or #value>1 and byte_at(value, 1) == 48 or
@@ -98,6 +101,17 @@ end
 
 local function weapon_choice(obs, target, self, override)
     local wait={kind="wait",spellId=0}
+    if obs.meleeInRange==false then
+        local tuning=M.stealth_approach
+        if self.classId==4 and self.inCombat==false and obs.activeMeleeTargetGuid=="0" and
+           obs.castPending==false and obs.autoAttackUnconfirmed==false and obs.stealthed==false and
+           type(tuning)=="table" and tuning.enabled==true then
+            local id=spells.highest_rank(obs,"stealth",nil,
+                {rank_order=tuning.rank_order,require_metadata=true})
+            if id then return {kind="cast_self",spellId=id} end
+        end
+        return {kind="melee",spellId=0}
+    end
     if self.classId~=4 or self.powerType~=3 or not offense_mechanics(obs,3) or
        not orientation(self) or not orientation(target) or not boolean(self.comboKnown) then return wait end
     if self.comboKnown==true then
@@ -127,10 +141,23 @@ local function weapon_choice(obs, target, self, override)
 end
 
 function M.decide(input, override, movement, objectives)
+    if type(input)=="table" and input.selection=="cave_cohort" then
+        objectives=objectives or starter_objectives
+        return type(objectives)=="table" and type(objectives.cave_cohort)=="function" and objectives.cave_cohort(input) or {status="invalid"}
+    end
+    if type(input)=="table" and (input.selection=="practice_lifecycle" or input.selection=="coldridge_lifecycle") then
+        objectives=objectives or starter_objectives
+        if type(objectives)~="table" or type(objectives[input.selection])~="function" then return {kind="wait"} end
+        return objectives[input.selection](input)
+    end
+    if type(input)=="table" and input.selection=="thermaplugg_buttons" then
+        if type(encounter_button_policy)~="table" or type(encounter_button_policy.decide)~="function" then return {kind="wait"} end
+        return encounter_button_policy.decide(input)
+    end
     if type(input)=="table" and input.selection=="fargodeep_pull_readiness" then
         objectives=objectives or starter_objectives
         if type(objectives)~="table" or type(objectives.decide)~="function" then
-            return {kind="wait",spellId=0,selection="fargodeep_pull_readiness"}
+            return {kind="wait",spellId=0,selection="fargodeep_pull_readiness",standYards=0}
         end
         return objectives.decide(input)
     end
@@ -156,6 +183,12 @@ function M.decide(input, override, movement, objectives)
     if input.selection=="coldridge_pull_readiness" then return pull_readiness(self) end
     if type(obs.spells)~="table" or type(target)~="table" or not guid(target.guid) or
        not pose(self) or not pose(target) then return wait end
+    if input.selection==nil then
+        local tuning=M.starter_combat
+        if type(tuning)~="table" or not uint(tuning.max_level_above_self) then return wait end
+        if self.levelKnown==true and target.levelKnown==true and
+           (not uint(self.level) or not uint(target.level) or target.level>self.level+tuning.max_level_above_self) then return wait end
+    end
     if input.selection~=nil then
         if input.selection=="weapon_strike" then return weapon_choice(obs,target,self,override) end
         if input.selection~="coldridge_cast" or self.classId~=9 or type(input.pullRequired)~="boolean" then return wait end

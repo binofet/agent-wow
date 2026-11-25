@@ -246,66 +246,6 @@ func TestColdridgePlannedRouteMustStillMatchTargetAndCancellation(t *testing.T) 
 	}
 }
 
-func coldApproachRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *actionsv1.ApproachLootRequest) {
-	t.Helper()
-	s, f, advance := coldridgeRig(t)
-	s.Practice(context.Background(), &actionsv1.ToggleRequest{})
-	f.world.NearbyCreatures = nil
-	f.world.LootableCorpses = []*worldv1.CreatureState{{Guid: coldridgeWolfGUID, Entry: 705, Present: true, MapKnown: true, PositionKnown: true, X: -6230, Y: 331, Z: 383, HealthKnown: true, AliveKnown: true, DynamicFlags: 1}}
-	lease, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "loot", LeaseMs: 15000})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s, f, advance, &actionsv1.ApproachLootRequest{Token: lease.Token, CorpseGuid: coldridgeWolfGUID}
-}
-
-func TestColdridgeCorpseApproachRequiresOwnQuestAndVerifiedBoundedRoute(t *testing.T) {
-	s, f, advance, request := coldApproachRig(t)
-	for range 12 {
-		got, err := s.ApproachLoot(context.Background(), request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.Reason == "loot_approach_within_distance" {
-			break
-		}
-		advance(200 * time.Millisecond)
-	}
-	got := state(t, s)
-	if got.Moving || got.Reason != "loot_approach_within_distance" || got.Position.X < -6233.1 || got.Position.X > -6231.5 || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.CMSGLoot) != 0 {
-		t.Fatal(got)
-	}
-	for _, mode := range []string{"no_assets", "partial", "wrong_entry", "wrong_guid", "unknown_quest", "combat", "changed_after_plan"} {
-		t.Run(mode, func(t *testing.T) {
-			s, f, _, request := coldApproachRig(t)
-			switch mode {
-			case "no_assets":
-				s.navDataDir = ""
-			case "partial":
-				s.planColdridgePath = func(context.Context, string, position, position) ([]position, error) { return nil, errors.New("wall") }
-			case "wrong_entry":
-				f.world.LootableCorpses[0].Entry = 299
-			case "wrong_guid":
-				f.world.LootableCorpses[0].Guid, request.CorpseGuid = approachCorpseGUID, approachCorpseGUID
-			case "unknown_quest":
-				f.world.SelfQuestLogKnown = false
-			case "combat":
-				f.world.Self.UnitFlags |= 0x80000
-			case "changed_after_plan":
-				s.planColdridgePath = func(ctx context.Context, root string, a, b position) ([]position, error) {
-					path, err := coldStraight(ctx, root, a, b)
-					f.world.SelfQuestLog[0].QuestId = 0
-					return path, err
-				}
-			}
-			got, err := s.ApproachLoot(context.Background(), request)
-			if err != nil || got.Moving || countPackets(f, opcode.MSGMoveStartForward) != 0 {
-				t.Fatal(mode, got, err)
-			}
-		})
-	}
-}
-
 func coldThreatGUID(entry uint32) uint64 { return uint64(0xf130)<<48 | uint64(entry)<<24 | 0x123 }
 
 func coldThreatCreature(entry uint32, x float32) *worldv1.CreatureState {

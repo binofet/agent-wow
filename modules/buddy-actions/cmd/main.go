@@ -68,7 +68,6 @@ func run() error {
 			service.UseHostStandingHealing()
 		}
 	}
-	service.UseAutomaticCorpseLoot()
 	if os.Getenv(modcb.FollowPolicyCallbackEnv) == "true" {
 		service.UseHostFollowPolicy()
 	}
