@@ -2,8 +2,10 @@ package buddyactions
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -258,6 +260,68 @@ func TestLootApproachPlannerAndCancellationCleanupRetainOriginalLease(t *testing
 					}
 				})
 			}
+		}
+	}
+}
+
+func TestLootApproachCleanupWorldFailureUsesOnlyOriginalNativeVisit(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		for _, mode := range []string{"unchanged", "session", "same owner token", "different owner token", "native new visit", "native transfer", "unbound visit"} {
+			t.Run(fmt.Sprint(cancelled, "/", mode), func(t *testing.T) {
+				s, f, advance, request := navLootRig(t)
+				s.sessionID = "loot-body"
+				entry := make([]byte, 20)
+				binary.LittleEndian.PutUint32(entry, f.world.Self.MapId)
+				for i, value := range []float32{f.world.Self.X, f.world.Self.Y, f.world.Self.Z, f.world.Self.Orientation} {
+					binary.LittleEndian.PutUint32(entry[4+i*4:], math.Float32bits(value))
+				}
+				if mode != "unbound visit" {
+					encounterTestPacket(t, s, opcode.SMSGLoginVerifyWorld, entry)
+					f.world.VisitRevision = 1
+				}
+				out, err := s.ApproachLoot(context.Background(), request)
+				if err != nil || !out.Moving {
+					t.Fatal(out, err)
+				}
+				advance(200 * time.Millisecond)
+				clocks := 0
+				var retained *worldv1.SnapshotResponse
+				f.onClock = func() {
+					clocks++
+					if !cancelled && clocks == 1 {
+						f.world.LootableCorpses[0].Alive = true
+						return
+					}
+					f.onClock = nil
+					retained, f.failSnapshot = s.lastWorld, true
+					switch mode {
+					case "session":
+						s.sessionID += "-replacement"
+					case "same owner token":
+						s.interactionToken = "replacement"
+					case "different owner token":
+						s.interactionToken, s.state.InteractionOwner = "replacement", "professions"
+					case "native new visit":
+						s.observeEncounterVisitLocked(opcode.SMSGNewWorld, entry)
+					case "native transfer":
+						s.observeEncounterVisitLocked(opcode.SMSGTransferPending, entry[:4])
+					}
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				if cancelled {
+					cancel()
+				}
+				_, err = s.ApproachLoot(ctx, request)
+				wantStops := 0
+				if mode == "unchanged" {
+					wantStops = 1
+				}
+				if cancelled != (err != nil) || retained == nil || s.lastWorld != retained || countPackets(f, opcode.MSGMoveStop) != wantStops ||
+					countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
+					t.Fatal("failed World cleanup lost its native-bound STOP or reused stale visit authority", err, s.stateLocked(), f.packets)
+				}
+			})
 		}
 	}
 }
