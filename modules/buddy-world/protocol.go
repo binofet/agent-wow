@@ -135,6 +135,10 @@ func position(p *observed, x, y, z, o float32, now time.Time) error {
 	}
 	return nil
 }
+func clearOwnExperience(p *observed) {
+	p.xpKnown, p.nextLevelXPKnown, p.xp, p.nextLevelXP = false, false, 0, 0
+}
+
 func markAbsent(p *observed, now time.Time) {
 	if p.guid == 0 {
 		return
@@ -150,6 +154,7 @@ func markAbsent(p *observed, now time.Time) {
 	p.trajectory = observedTrajectory{}
 	clearCastingContext(p)
 	clearInventoryContext(p)
+	clearOwnExperience(p)
 	p.offhandKnown, p.offhand = false, 0
 }
 func setMap(p *observed, self observed) { p.mapID, p.mapKnown = self.mapID, self.mapKnown }
@@ -173,6 +178,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		}
 		clearCastingContext(p)
 		clearInventoryContext(p)
+		clearOwnExperience(p)
 		p.offhandKnown, p.offhand = false, 0
 		markAbsent(&players[1], now)
 		state.nearbyPlayers = make(map[uint64]*observed)
@@ -488,7 +494,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					revision, questRevision, backpackRevision, inventoryEpoch := p.positionRevision, p.questRevision, p.backpackRevision, p.inventoryEpoch
 					selfMap := players[0]
 					self := guid == players[0].guid
-					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, offhandKnown: self, copperKnown: self, skillsKnown: self, freePrimaryKnown: self, bagSlotsKnown: self, equipmentKnown: self, inventoryEpoch: inventoryEpoch}
+					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, offhandKnown: self, copperKnown: self, xpKnown: self, nextLevelXPKnown: self, skillsKnown: self, freePrimaryKnown: self, bagSlotsKnown: self, equipmentKnown: self, inventoryEpoch: inventoryEpoch}
 					if self {
 						p.receivedOwnCreate = true
 						p.ammoKnown = true // Own CREATE omits the selected-ammo zero baseline.
@@ -587,7 +593,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 				}
 			}
 			if typ != 1 {
-				if err := values(c, p, now); err != nil {
+				if err := values(c, p, now, typ == 2 || typ == 3); err != nil {
 					return err
 				}
 				if p != nil && p.cast.spell != 0 && observedCreatureDead(p) {
@@ -764,7 +770,7 @@ func splineCreate(c *cursor, p *observed, now time.Time) error {
 	return c.err
 }
 
-func values(c *cursor, p *observed, now time.Time) error {
+func values(c *cursor, p *observed, now time.Time, create bool) error {
 	n := int(c.u8())
 	masks := make([]uint32, n)
 	total := 0
@@ -786,6 +792,17 @@ func values(c *cursor, p *observed, now time.Time) error {
 				return errBounds
 			}
 			if p != nil && p.isSelf {
+				// A level-only delta cannot make old-level XP a current fact.
+				// Own CREATE's full zero baseline is already established above.
+				if !create && field == 0x36 && (!p.known[field] || p.fields[field] != v) {
+					clearOwnExperience(p)
+				}
+				if field == playerXP {
+					p.xpKnown, p.xp = true, v
+				}
+				if field == playerNextLevelXP {
+					p.nextLevelXPKnown, p.nextLevelXP = true, v
+				}
 				if field == playerAmmo {
 					p.ammoKnown = true
 					p.ammo = v

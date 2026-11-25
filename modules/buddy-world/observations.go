@@ -20,10 +20,13 @@ const (
 	itemOwner          = 6
 	itemStack          = 0xe
 	playerAmmo         = 0x4ae // UNIT_END0x94 + PLAYER_AMMO_ID0x41a, PRIVATE own-only.
-	playerCoinage      = 0x492 // UNIT_END0x94 + PLAYER_FIELD_COINAGE0x3fe, PRIVATE own-only.
-	playerSkillsFirst  = 0x27c // UNIT_END0x94 + PLAYER_SKILL_INFO_1_1 0x1e8, 384 private words.
-	playerFreePrimary  = 0x3fd // UNIT_END0x94 + PLAYER_CHARACTER_POINTS2 0x369.
-	playerOffhand      = 0x164 // PLAYER_FIELD_INV_SLOT_HEAD0x144 + equipment slot16 *2.
+	// AzerothCore49bdb66ce2fe00771c9e27a9859afd344b7b1344 UpdateFields.h:339-340.
+	playerXP          = 0x27a // UNIT_END0x94 + PLAYER_XP0x1e6, PRIVATE own-only.
+	playerNextLevelXP = 0x27b // UNIT_END0x94 + PLAYER_NEXT_LEVEL_XP0x1e7, PRIVATE own-only.
+	playerCoinage     = 0x492 // UNIT_END0x94 + PLAYER_FIELD_COINAGE0x3fe, PRIVATE own-only.
+	playerSkillsFirst = 0x27c // UNIT_END0x94 + PLAYER_SKILL_INFO_1_1 0x1e8, 384 private words.
+	playerFreePrimary = 0x3fd // UNIT_END0x94 + PLAYER_CHARACTER_POINTS2 0x369.
+	playerOffhand     = 0x164 // PLAYER_FIELD_INV_SLOT_HEAD0x144 + equipment slot16 *2.
 )
 
 // Maps are shallow-cloned per packet. target copies each touched object once,
@@ -39,6 +42,7 @@ type observations struct {
 	edited              map[uint64]bool
 	itemRevision        uint64
 	copperRevision      uint64
+	xpRevision          uint64
 	ammoRevision        uint64
 	skillsRevision      uint64
 	freePrimaryRevision uint64
@@ -327,6 +331,9 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 	s.appendEquipment(r)
 	p := s.players[0]
 	r.SelfCopperKnown, r.SelfCopper, r.SelfCopperRevision = p.copperKnown, p.copper, s.copperRevision
+	r.SelfXpKnown, r.SelfXp = p.xpKnown, p.xp
+	r.SelfNextLevelXpKnown, r.SelfNextLevelXp = p.nextLevelXPKnown, p.nextLevelXP
+	r.SelfXpRevision = s.xpRevision
 	r.SelfSkillsKnown, r.SelfSkillsRevision = p.skillsKnown, s.skillsRevision
 	r.SelfFreePrimarySlotsKnown, r.SelfFreePrimarySlots, r.SelfFreePrimarySlotsRevision = p.freePrimaryKnown, p.freePrimary, s.freePrimaryRevision
 	if p.skillsKnown {
