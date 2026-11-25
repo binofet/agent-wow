@@ -209,7 +209,7 @@ function M.decide(frame,obs,available)
   if state.leaseUnknown then return {phase="movement_lease_unconfirmed",hold=true} end
   if not state.token then
     if owner.active==true then return {phase="other_movement_owner"} end
-    return {phase="acquiring_rest_position",hold=true,action=custody(frame,obs,"acquire")}
+    return {phase="acquiring_rest_position",hold=true,selectedKind=attempt.kind,requestId=attempt.id,action=custody(frame,obs,"acquire")}
   end
   if inventory_sequence~=(frame.input.observationSequences or {}).inventory then return {phase="awaiting_current_inventory",hold=true} end
   if not (view.consumableContext or {}).bodyReady then return {phase="awaiting_stationary_body",hold=true} end
