@@ -15,6 +15,7 @@ import queue
 import re
 import socket
 import stat
+import subprocess
 import tempfile
 import threading
 import time
@@ -40,6 +41,34 @@ class Cancelled(ModelError):
 class ToolOutcomeUnknown(RuntimeError):
     """The caller cannot safely repeat an attempted tool operation."""
     outcome_unknown = True
+
+
+class LMStudioPromptCounter:
+    """Bounded local SDK utility only, querying an already loaded exact model."""
+    def __init__(self, sdk_url, model, runner=subprocess.run):
+        try:
+            url = urllib.parse.urlsplit(sdk_url)
+            valid = (url.scheme == 'ws' and url.hostname in ('127.0.0.1','localhost','::1')
+                and url.port is not None and 0 < url.port < 65536 and not url.username and not url.password
+                and not url.query and not url.fragment and url.path == '')
+        except (ValueError, TypeError): valid = False
+        if not valid: raise ModelError('explicit_loopback_sdk_url_required')
+        self.sdk_url, self.model, self.runner, self.last_measurement = sdk_url, model, runner, None
+
+    def __call__(self, payload):
+        if payload.get('model') != self.model: raise ModelError('prompt_meter_model_mismatch')
+        self.last_measurement = None
+        try:
+            result = self.runner(['node', str(Path(__file__).with_name('local_prompt_meter.mjs')), self.sdk_url],
+                input=_packed(payload, 8*1024*1024), capture_output=True, timeout=6, check=False)
+            if result.returncode or len(result.stdout) > 4096: raise ValueError()
+            measured = _decode(result.stdout)
+            if (not isinstance(measured, dict) or measured.get('model') != self.model or measured.get('scope') != 'sdk_tool_aware_template'
+                    or type(measured.get('tokens')) is not int or measured['tokens'] < 0): raise ValueError()
+            self.last_measurement = measured
+            return measured['tokens']
+        except (OSError, ValueError, UnicodeError, RecursionError, subprocess.SubprocessError):
+            raise ModelError('local_prompt_meter_unavailable_or_unsupported') from None
 
 
 class _Transcript:
@@ -244,7 +273,8 @@ class DirectModel:
     def __init__(self, provider, model, base_url, api_key_env=None, timeout=None, *,
                  max_tool_rounds=None, max_request_bytes=8*1024*1024, max_response_bytes=1024*1024,
                  max_output_tokens=8192, local_prompt_budget_bytes=None,
-                 local_prompt_token_limit=None, local_token_counter=None, local_max_output_tokens=None):
+                 local_prompt_token_limit=None, local_token_counter=None, local_max_output_tokens=None,
+                 local_sdk_url=None):
         if provider not in ("local", "openai", "claude", "gemini"):
             raise ModelError("unsupported_provider")
         if not isinstance(model, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", model) is None:
@@ -280,6 +310,10 @@ class DirectModel:
                 type(local_prompt_budget_bytes) is not int or local_prompt_budget_bytes <= 0):
             raise ModelError("local_positive_prompt_byte_budget_required")
         self.local_prompt_budget_bytes = local_prompt_budget_bytes
+        if local_sdk_url is not None:
+            if provider != 'local' or local_prompt_token_limit is None or local_token_counter is not None:
+                raise ModelError('local_sdk_requires_token_limit_without_custom_counter')
+            local_token_counter = LMStudioPromptCounter(local_sdk_url, model)
         if ((local_prompt_token_limit is not None and (provider != "local" or
                 type(local_prompt_token_limit) is not int or local_prompt_token_limit <= 0 or not callable(local_token_counter)))
                 or local_token_counter is not None and local_prompt_token_limit is None
@@ -577,7 +611,8 @@ class DirectModel:
             activeConversationBytes=len(_packed(active, self.max_request_bytes*8)))
         return active
 
-    def _local_prompt(self, system, active, tools, read_only_tools, unknown, pending, *, canonical, aggressive=False):
+    def _local_prompt(self, system, active, tools, read_only_tools, unknown, pending, *, canonical,
+                      aggressive=False, archive_read=None):
         """Only outgoing historical pure-read bodies may be replaced, never receipts.
 
         Byte limits are transport limits, not token estimates. An optional trusted
@@ -585,6 +620,14 @@ class DirectModel:
         schema/template overhead); this module never guesses bytes/token.
         """
         projected = copy.deepcopy(active)
+        auxiliary = []
+        for index, message in enumerate(projected):
+            if message.get('role') != 'assistant': continue
+            for key in ('reasoning_content','reasoning'):
+                if isinstance(message.get(key),str):
+                    raw=message.pop(key).encode()
+                    auxiliary.append(dict(transcriptMessage=index,field=key,bytes=len(raw),
+                        sha256=hashlib.sha256(raw).hexdigest()))
         def payload(): return self._payload(system, projected, tools, natural=True)
         def measure():
             value = payload()
@@ -592,7 +635,10 @@ class DirectModel:
             tokens = None
             if self.local_token_counter is not None:
                 try: tokens = self.local_token_counter(copy.deepcopy(value))
-                except Exception as error: raise ModelError("local_prompt_count_unavailable") from error
+                except Exception as error:
+                    self.last_receipt['promptMeterFailure'] = dict(reason=_safe(
+                        getattr(error,'reason',type(error).__name__)))
+                    raise ModelError("local_prompt_count_unavailable") from error
                 if type(tokens) is not int or tokens < 0:
                     raise ModelError("local_prompt_count_invalid")
             return size, tokens
@@ -657,6 +703,9 @@ class DirectModel:
                         note="Historical pure-read body omitted from this API copy, not a summary or current fact. "
                             "Exact call and full result remain in the same durable transcript. "
                             "Refresh the original read for current facts; no action or receipt was omitted.")
+                    if archive_read is not None:
+                        archive_read(copy.deepcopy(reference), full)
+                        marker['contextPath'] = ['conversationArchive', str(index), 'content']
                     replacement = _packed(marker, self.max_request_bytes).decode()
                     if len(replacement.encode()) >= len(original.encode()): continue
                     projected[index]["content"] = replacement
@@ -664,10 +713,13 @@ class DirectModel:
         if changed: size, tokens = measure()
         audit = dict(reason="context_overflow" if aggressive else "configured_budget",
             canonicalMessagesUnchanged=True, archivedReadResults=changed,
+            archivedAssistantReasoning=auxiliary,
             beforeBytes=before_bytes, afterBytes=size, byteLimit=self.local_prompt_budget_bytes,
             beforeTokens=before_tokens, afterTokens=tokens, tokenLimit=self.local_prompt_token_limit,
             tokenCountKnown=tokens is not None, exactPayloadSHA256=hashlib.sha256(
                 _packed(payload(), self.max_request_bytes*8)).hexdigest())
+        if isinstance(self.local_token_counter, LMStudioPromptCounter):
+            audit['meter'] = copy.deepcopy(self.local_token_counter.last_measurement)
         self.last_receipt["promptBudget"] = copy.deepcopy(audit)
         if not fits(size, tokens):
             raise ModelError("local_prompt_protected_floor_exceeds_budget")
@@ -684,7 +736,7 @@ class DirectModel:
             re.search(r"\bcontext (?:size |length |window )?(?:has been )?exceeded\b", message) is not None)
 
     def _generate_natural(self, system, messages, reply_schema, tools, dispatch, *, cancelled,
-                          request_id, progress, transcript_path, conversation_key, assistant_text, read_only_tools):
+                          request_id, progress, transcript_path, conversation_key, assistant_text, read_only_tools, archive_read):
         identifier = request_id or uuid.uuid4().hex
         self.last_receipt = dict(requestId=identifier, execution="direct_api", provider=self.provider,
             requestedModel=self.model, baseURL=self.base_url, outcome="in_progress", httpRequests=0,
@@ -692,7 +744,7 @@ class DirectModel:
         deadline = None if self.timeout is None else time.monotonic()+self.timeout
         try:
             if (not isinstance(system, str) or not isinstance(messages, list) or not isinstance(tools, list)
-                    or len(tools)>64 or not callable(dispatch)):
+                    or len(tools)>64 or not callable(dispatch) or archive_read is not None and not callable(archive_read)):
                 raise ModelError("invalid_generation_input")
             if (self.provider == "local" and (self.local_prompt_budget_bytes is not None or
                     self.local_prompt_token_limit is not None) and transcript_path is None):
@@ -772,7 +824,8 @@ class DirectModel:
                         try:
                             retained = state.get("compactHistoricalReads") is True and not aggressive
                             prepared, audit = self._local_prompt(system, active, list(functions.values()), read_only_tools,
-                                state["unknown"], state["pending"], canonical=conversation, aggressive=aggressive or retained)
+                                state["unknown"], state["pending"], canonical=conversation, aggressive=aggressive or retained,
+                                archive_read=archive_read)
                             if retained:
                                 audit["reason"] = "retained_overflow_projection"
                                 self.last_receipt["promptBudget"] = audit
@@ -892,11 +945,12 @@ class DirectModel:
             raise ModelError(reason, self.last_receipt) from error
 
     def generate(self, system, messages, reply_schema, tools, dispatch, *, cancelled=None, request_id=None, progress=None,
-                 natural=False, transcript_path=None, conversation_key=None, assistant_text=None, read_only_tools=None):
+                 natural=False, transcript_path=None, conversation_key=None, assistant_text=None, read_only_tools=None,
+                 archive_read=None):
         if natural:
             return self._generate_natural(system, messages, reply_schema, tools, dispatch, cancelled=cancelled,
                 request_id=request_id, progress=progress, transcript_path=transcript_path, conversation_key=conversation_key,
-                assistant_text=assistant_text, read_only_tools=read_only_tools)
+                assistant_text=assistant_text, read_only_tools=read_only_tools, archive_read=archive_read)
         identifier = request_id or uuid.uuid4().hex
         self.last_receipt = dict(requestId=identifier,execution="direct_api",provider=self.provider,
             requestedModel=self.model,baseURL=self.base_url,outcome="in_progress",httpRequests=0,

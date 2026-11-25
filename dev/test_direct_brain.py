@@ -53,8 +53,10 @@ class FakeHTTP:
                 value = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 outer.requests.append(dict(path=self.path, headers=dict(self.headers), body=value))
                 response = outer.responses.pop(0) if outer.responses else dict(error="unexpected request")
+                if callable(response): response=response(outer.requests[-1])
+                status,response=response if isinstance(response,tuple) else (200,response)
                 raw = json.dumps(response).encode()
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
@@ -116,6 +118,27 @@ class PublicRPC:
 
 
 class DirectBrainIntegrationTests(unittest.TestCase):
+    def test_local_archived_read_is_available_through_existing_context_tool(self):
+        from test_direct_model import chat
+        def recover(request):
+            marker=json.loads(next(r['content'] for r in request['body']['messages'] if r.get('tool_call_id')=='old'))
+            self.assertIn('contextPath',marker)
+            return chat(('archive','context_read',dict(path=marker['contextPath'],limit=1000)))
+        responses=[chat(('old','context_read',dict(path=['syntheticArchiveFacts'],offset=0,limit=3000))),
+            chat(('recent1','context_read',dict(path=['syntheticArchiveFacts'],offset=3000,limit=3000))),
+            chat(('recent2','context_read',dict(path=['syntheticArchiveFacts'],offset=6000,limit=3000))),
+            (400,dict(error=dict(message='Context size has been exceeded.'))),recover,
+            dict(choices=[dict(finish_reason='stop',message=dict(role='assistant',content='Inspected the retained historical read.'))])]
+        with self.rig(responses,client_options=dict(local_prompt_budget_bytes=500000,local_max_output_tokens=4096)) as (loop,brain,state,http):
+            state['syntheticArchiveFacts']='synthetic old data '*1000
+            brain.generate([],state)
+            self.assertEqual(len(http.requests),6)
+            result=json.loads(next(r['content'] for r in http.requests[-1]['body']['messages'] if r.get('tool_call_id')=='archive'))
+            self.assertTrue(result['ok'])
+            self.assertIn('synthetic old data',json.dumps(result))
+            self.assertEqual(http.requests[-1]['body']['max_tokens'],4096)
+            self.assertTrue(brain.last_api_receipt['contextOverflowRecovery']['recovered'])
+
     def test_chat_freshness_failure_retains_exact_cancellation_cause_without_http(self):
         def cancelled():return True
         cancelled.interrupt_reason='chat_freshness_unavailable'
@@ -924,13 +947,13 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             blocker.start(); self.addCleanup(blocker.stop)
 
     @contextlib.contextmanager
-    def rig(self, responses, *, developer=True):
+    def rig(self, responses, *, developer=True, client_options=None):
         with FakeHTTP(responses) as http, patch.object(converse, "ROOT", self.workspace), \
              patch.object(converse, "RPC", side_effect=lambda url: self.rpc if url == self.rpc.url else
                           (_ for _ in ()).throw(converse.ConversationError("Foreign RPC"))):
             brain = converse.DirectBrain(self.state, developer_workspace=self.workspace if developer else None,
                 character_name="Mira", character_class="mage", model="fixture-requested-model",
-                provider="local", base_url=http.base)
+                provider="local", base_url=http.base, **(client_options or {}))
             controls = types.SimpleNamespace(actions_available=True, party_available=True,
                 actions=self.rpc.call("buddy-actions.status", {}), party_session=self.rpc.core, events=[])
             loop = converse.Conversation(self.rpc, brain, controls=controls,

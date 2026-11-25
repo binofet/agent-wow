@@ -69,6 +69,26 @@ class FakeChildren:
 
 
 class LauncherTests(unittest.TestCase):
+    def test_opt_in_local_token_byte_output_settings_reach_normal_launcher(self):
+        self.raw['model']=dict(provider='local',model='loaded-exact',base_url='http://127.0.0.1:1234/v1',
+            local_sdk_url='ws://127.0.0.1:1234',local_prompt_token_limit=24000,
+            local_max_output_tokens=4096,local_prompt_budget_bytes=100000)
+        actor=app.normalize(self.raw)[0];command=app.commands(actor)['run']
+        for key in ('local_sdk_url','local_prompt_token_limit','local_max_output_tokens','local_prompt_budget_bytes'):
+            self.assertEqual(command[command.index('--'+key.replace('_','-'))+1],str(actor['model'][key]))
+        status=dict(modelSelection=dict(self.runner.selection,requestedModel='loaded-exact',baseURL=actor['model']['base_url']))
+        self.assertFalse(app.selection_matches(status,actor['model']))
+        status['modelSelection']['localPromptLimits']={k:v for k,v in actor['model'].items() if k.startswith('local_')}
+        self.assertTrue(app.selection_matches(status,actor['model']))
+        for change in (dict(local_prompt_token_limit=True),dict(local_sdk_url='ws://remote.invalid:1234'),
+                       dict(local_max_output_tokens=0),dict(provider='openai',api_key_env='FIXTURE')):
+            with self.subTest(change=change),self.assertRaises(app.Error):
+                app.normalize(dict(self.raw,model=dict(self.raw['model'],**change)))
+        # An older host cannot silently ignore the requested knobs or restart a body.
+        with self.assertRaisesRegex(app.Error,'lacks configured local prompt'):
+            app.operate(actor,'start',self.runner)
+        self.assertFalse(self.runner.spawns)
+
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)

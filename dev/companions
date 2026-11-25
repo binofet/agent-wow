@@ -103,7 +103,8 @@ def endpoint(value, local=False):
 
 
 def model_settings(base, override):
-    allowed = {"provider", "base_url", "model", "api_key_env"}
+    local_fields = {'local_prompt_budget_bytes', 'local_prompt_token_limit', 'local_max_output_tokens', 'local_sdk_url'}
+    allowed = {"provider", "base_url", "model", "api_key_env"} | local_fields
     keys(base, allowed, "model settings")
     keys(override, allowed, "actor model override")
     if "provider" in override and override["provider"] != base.get("provider", "local"):
@@ -129,6 +130,21 @@ def model_settings(base, override):
         raise Error("api_key_env must name an environment variable; never put a key in settings")
     if result["provider"] != "local" and not key:
         raise Error("OpenAI/Claude/Gemini APIs require an explicit api_key_env")
+    if result['provider'] != 'local' and local_fields & result.keys():
+        raise Error('Local prompt limits require the local provider')
+    for name in local_fields - {'local_sdk_url'}:
+        if name in result and (type(result[name]) is not int or result[name] <= 0):
+            raise Error(name+' must be a positive integer')
+    if ('local_prompt_token_limit' in result) != ('local_sdk_url' in result):
+        raise Error('local_prompt_token_limit requires explicit local_sdk_url and vice versa')
+    if 'local_sdk_url' in result:
+        try:
+            sdk = urllib.parse.urlsplit(result['local_sdk_url'])
+            valid = (sdk.scheme == 'ws' and sdk.hostname in ('127.0.0.1','localhost','::1') and
+                sdk.port is not None and 0 < sdk.port < 65536 and not sdk.username and not sdk.password and
+                not sdk.query and not sdk.fragment and not sdk.path)
+        except (ValueError,TypeError): valid = False
+        if not valid: raise Error('local_sdk_url must be an explicit loopback ws://host:port without credentials or path')
     return result
 
 
@@ -219,6 +235,8 @@ def commands(actor):
     for key, flag in (("base_url", "--model-base-url"), ("api_key_env", "--model-api-key-env")):
         if model.get(key):
             run += [flag, model[key]]
+    for key in ('local_prompt_budget_bytes','local_prompt_token_limit','local_max_output_tokens','local_sdk_url'):
+        if key in model: run += ['--'+key.replace('_','-'), str(model[key])]
     if actor["workspace"]:
         run += ["--developer-workspace", actor["workspace"]]
     return dict(native=buddy, conversation=converse, run=run)
@@ -396,7 +414,9 @@ def native_identity(actor, expected_methods=()):
 
 def selection_matches(status, model):
     selected = status.get("modelSelection", {})
-    return (selected.get("execution") == "direct_api" and selected.get("provider") == model["provider"]
+    limits = {key:value for key,value in model.items() if key.startswith('local_')}
+    return (selected.get('localPromptLimits', {}) == limits and
+            selected.get("execution") == "direct_api" and selected.get("provider") == model["provider"]
             and selected.get("requestedModel") == model["model"] and selected.get("baseURL") == model["base_url"])
 
 
@@ -453,6 +473,8 @@ def operate(actor, action, runner=None, continue_owner_whisper=None):
             choices = re.search(r"--model-provider\s+\{([^}]+)\}", help_text)
             if any(flag not in help_text for flag in PROVIDER_FLAGS) or not choices or not DIRECT_PROVIDERS <= set(choices[1].split(",")):
                 raise Error("Maintained converse lacks the direct model API interface; update the coherent host source first")
+            if any('--'+key.replace('_','-') not in help_text for key in actor['model'] if key.startswith('local_')):
+                raise Error('Maintained converse lacks configured local prompt limits; existing listener was preserved')
             if continuation is not None and '--continue-owner-whisper' not in help_text:
                 raise Error('Maintained converse lacks exact owner continuation; existing listener was preserved')
             available = models(actor["model"])

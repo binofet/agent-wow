@@ -4,6 +4,8 @@ import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import subprocess
+import shutil
 from pathlib import Path
 import sys
 import threading
@@ -13,7 +15,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from direct_model import Cancelled, DirectModel, ModelError, ToolOutcomeUnknown
+from direct_model import Cancelled, DirectModel, ModelError, ToolOutcomeUnknown, LMStudioPromptCounter
 
 
 SCHEMA = dict(type="object", properties=dict(text=dict(type="string",maxLength=100),
@@ -606,6 +608,25 @@ class ActiveContextTests(unittest.TestCase):
 
 
 class LocalPromptBudgetTests(unittest.TestCase):
+    def test_tool_aware_sdk_meter_uses_only_fake_websocket_and_bounded_subprocess(self):
+        if shutil.which('node') is None:self.skipTest('Node is not installed; SDK mode requires Node22')
+        result=subprocess.run(['node',str(Path(__file__).with_name('test_local_prompt_meter.mjs'))],
+            capture_output=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stdout.decode()+result.stderr.decode())
+        self.assertIn('# tests 3',result.stdout.decode())
+        calls=[]
+        def runner(argv,**kwargs):
+            calls.append((argv,kwargs))
+            return type('Reply',(),dict(returncode=0,stdout=json.dumps(dict(model='loaded',tokens=237,
+                scope='sdk_tool_aware_template',instanceReference='exact')).encode()))()
+        counter=LMStudioPromptCounter('ws://127.0.0.1:1234','loaded',runner=runner)
+        self.assertEqual(counter(dict(model='loaded',messages=[],tools=[])),237)
+        self.assertEqual(calls[0][1]['timeout'],6)
+        self.assertEqual(json.loads(calls[0][1]['input'])['model'],'loaded')
+        self.assertEqual(counter.last_measurement['instanceReference'],'exact')
+        for url in ('ws://remote.invalid:1234','ws://u:p@127.0.0.1:1234','ws://127.0.0.1:1234/path'):
+            with self.assertRaises(ModelError):LMStudioPromptCounter(url,'loaded',runner=runner)
+
     class Transport(DirectModel):
         """Scripted provider transport only: no socket or real model."""
         def __init__(self, replies, **kwargs):
@@ -787,6 +808,20 @@ class LocalPromptBudgetTests(unittest.TestCase):
             with self.assertRaises(ModelError):
                 client._local_prompt('System',rows,[],{'observe'},{},None,canonical=rows)
             self.assertEqual(client.last_receipt['promptBudget']['archivedReadResults'],[])
+
+    def test_auxiliary_assistant_reasoning_archives_only_in_opt_in_api_copy(self):
+        client=self.Transport([],local_prompt_budget_bytes=200000);client.last_receipt={}
+        rows=[dict(role='user',content='Exact original goal'),
+            dict(chat(('same-id','mutate',dict(key='exact-action')))['choices'][0]['message'],
+                reasoning_content='Old auxiliary thinking '*100),
+            dict(role='tool',tool_call_id='same-id',content=json.dumps(dict(commandWritten=True,operationId='exact')))]
+        original=copy.deepcopy(rows)
+        payload,audit=client._local_prompt('Exact SYSTEM',rows,[],set(),{},None,canonical=rows)
+        self.assertNotIn('reasoning_content',payload['messages'][2])
+        self.assertEqual(payload['messages'][2]['tool_calls'],rows[1]['tool_calls'])
+        self.assertEqual(payload['messages'][3],rows[2])
+        self.assertEqual(rows,original)
+        self.assertEqual(audit['archivedAssistantReasoning'][0]['sha256'],hashlib.sha256(rows[1]['reasoning_content'].encode()).hexdigest())
 
 
 if __name__=="__main__":unittest.main()
