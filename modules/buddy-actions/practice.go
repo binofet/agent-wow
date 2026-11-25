@@ -112,8 +112,9 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 	return s.stateLocked(), nil
 }
 
-func eligiblePracticeWolf(c *worldv1.CreatureState) bool {
-	return c != nil && c.Guid>>48 == 0xf130 && c.Entry == 299 && c.Present && c.MapKnown && c.MapId == 0 && c.LevelKnown && c.Level == 1 && c.HealthKnown && c.MaxHealth > 0 && c.Health > 0 && c.AliveKnown && c.Alive && c.NpcFlags == 0 && c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) == 0 && c.UnitFlags_2&1 == 0
+// The accepted Lua owns scenario identity/level; this is packet eligibility.
+func practiceCreatureAvailable(c *worldv1.CreatureState, mapID uint32) bool {
+	return c != nil && c.Guid>>48 == 0xf130 && c.Present && c.MapKnown && c.MapId == mapID && c.LevelKnown && c.HealthKnown && c.MaxHealth > 0 && c.Health > 0 && c.AliveKnown && c.Alive && c.NpcFlags == 0 && c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) == 0 && c.UnitFlags_2&1 == 0
 }
 
 // A previously selected target may bypass discovery truncation, using the same
@@ -191,12 +192,6 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		s.stopPracticeLocked(ctx, "creature_observations_invalid")
 		return
 	}
-	for _, c := range w.NearbyCreatures {
-		if c != nil && c.Entry != 299 && c.Present && c.AliveKnown && c.Alive && c.AttackVictimKnown && c.AttackVictimGuid == s.selfGUID && c.AttackAgeMs <= 30000 {
-			s.stopPracticeLocked(ctx, "unexpected_hostile_requires_help")
-			return
-		}
-	}
 	original := s.practiceLifecycleBindingLocked(w)
 	selected, fresh, valid := s.practiceLifecycleDecisionLocked(ctx, w, "tick")
 	if !valid {
@@ -246,7 +241,7 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 			}
 		}
 		point, known, _ := creaturePosition(candidate)
-		if !eligiblePracticeWolf(candidate) || candidate.UnitFlags&0x80000 != 0 || candidate.DynamicFlags != 0 ||
+		if !practiceCreatureAvailable(candidate, fresh.Self.MapId) || candidate.UnitFlags&0x80000 != 0 || candidate.DynamicFlags != 0 ||
 			candidate.AttackVictimKnown || candidate.TargetKnown && candidate.TargetGuid != 0 || !known || !northshire(point) {
 			return
 		}
@@ -278,7 +273,7 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 			}
 		}
 	}
-	if !eligiblePracticeWolf(target) || target.AttackVictimKnown && target.AttackVictimGuid != s.selfGUID || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 || s.failedAssistTarget == s.practiceTarget {
+	if !practiceCreatureAvailable(target, w.Self.MapId) || target.AttackVictimKnown && target.AttackVictimGuid != s.selfGUID || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 || s.failedAssistTarget == s.practiceTarget {
 		s.stopPracticeLocked(ctx, "target_unknown_claimed_or_cast_failed")
 		return
 	}
@@ -322,7 +317,7 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		}
 		w, self = current, current.Self
 		target = practiceTargetObservation(w, pull.target)
-		if !eligiblePracticeWolf(target) {
+		if !practiceCreatureAvailable(target, w.Self.MapId) {
 			return
 		}
 		targetPosition, known, _ = creaturePosition(target)
