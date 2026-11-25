@@ -116,13 +116,18 @@ local function on_event(event)
         if state.session and state.session~=obs.sessionId then state.pull=nil end
         local self=(obs.players or {})[obs.selfGuid]
         if self and self.aliveKnown==true and self.alive==false then state.pull=nil end
-        state.session,state.visitId=obs.sessionId,obs.visitId
+        state.session,state.visitId,state.selfGuid,state.mapId=obs.sessionId,obs.visitId,obs.selfGuid,obs.mapId
     end
     if event.kind ~= "command" or type(event.value) ~= "table" then return true end
     local value = event.value
     if value.task == "ranged_only" then
         if type(value.id)~="string" or #value.id==0 or #value.id>80 then return true end
         if value.cancel==true or value.enabled==false then
+            for _,prior in ipairs(encounter_priors and encounter_priors.rules or {}) do
+                if value.id==prior.id and state.session and guid(state.selfGuid) and guid(state.visitId) and state.mapId==prior.mapId then
+                    state.rangedPrior={id=value.id,sessionId=state.session,selfGuid=state.selfGuid,mapId=state.mapId,visitId=state.visitId}
+                end
+            end
             if state.rangedOnly and state.rangedOnly.id==value.id then state.rangedOnly=nil end
             if state.rangedPending and state.rangedPending.id==value.id then state.rangedPending=nil end
             state.rangedStatus={id=value.id,applied=true,active=false,phase="cancelled"}
@@ -147,7 +152,7 @@ local function on_event(event)
         end
     elseif value.task == "engage" then
         if value.enabled==false or value.cancel==true then state.pull=nil
-        elseif guid(value.targetGuid) then state.pull={targetGuid=value.targetGuid,visitId=state.visitId} end
+        elseif guid(value.targetGuid) then state.pull={targetGuid=value.targetGuid,visitId=state.visitId,pull=value.pull==true} end
     elseif value.task == "control" then
         if value.cancel == true or value.enabled == false then
             if value.auto == true then state.autoPolymorph = false end
@@ -254,6 +259,7 @@ local function queue_intent(obs)
             state.pull=nil
         elseif alive(npc) and npc.mapKnown==true and npc.mapId==obs.mapId then
             out.pullGuid=pull.targetGuid
+            if pull.pull==true then out.explicitPullGuid=pull.targetGuid end
         end
     end
     out.focusGuid = out.pullGuid or resolve(obs, state.focus)
@@ -500,6 +506,9 @@ local function import_state(saved)
             if key=="rangedOnly" and (type(row.sessionId)~="string" or not guid(row.selfGuid) or type(row.expiresAt)~="number" or type(row.expiresUnixMs)~="number") then return false end
         end
     end
+    local prior=saved.data.rangedPrior
+    if prior~=nil and (type(prior)~="table" or type(prior.id)~="string" or type(prior.sessionId)~="string" or
+       not guid(prior.selfGuid) or not guid(prior.visitId) or type(prior.mapId)~="number" or prior.mapId<0 or prior.mapId%1~=0) then return false end
     local ground=saved.data.rangedGround
     if ground~=nil and (type(ground)~="table" or type(ground.sessionId)~="string" or not guid(ground.selfGuid) or not guid(ground.visitId) or type(ground.key)~="string" or type(ground.blocked)~="table" or ground.operation~=nil and type(ground.operation)~="table" or ground.awaiting~=nil and type(ground.awaiting)~="table") then return false end
     if ground then
@@ -541,6 +550,17 @@ local function ranged_stance(obs,frame)
             pending.sessionId,pending.selfGuid,pending.expiresAt,pending.expiresUnixMs=obs.sessionId,obs.selfGuid,now+pending.durationMs,unix+pending.durationMs
             state.rangedOnly=pending;state.rangedStatus=nil
         end
+    end
+    -- One finite automatic activation per exact body/map/visit. Expiry or
+    -- cancellation never silently renews it; a fresh explicit order can.
+    local prior=encounter_priors and encounter_priors.rule(obs)
+    local seen=state.rangedPrior
+    local same=prior and seen and seen.id==prior.id and seen.sessionId==obs.sessionId and seen.selfGuid==obs.selfGuid and seen.mapId==obs.mapId and seen.visitId==obs.visitId
+    if not state.rangedOnly and prior and not same then
+        state.rangedPrior={id=prior.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId}
+        state.rangedOnly={id=prior.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId,
+            creatureEntry=prior.creatureEntry,minRangeYards=prior.minRangeYards,maxRangeYards=prior.maxRangeYards,
+            clearanceYards=prior.clearanceYards,durationMs=prior.durationMs,expiresAt=now+prior.durationMs,expiresUnixMs=unix+prior.durationMs}
     end
     local row=state.rangedOnly
     if row and (row.sessionId~=obs.sessionId or row.selfGuid~=obs.selfGuid or row.mapId~=obs.mapId or row.visitId~=obs.visitId or now>=row.expiresAt or unix>=row.expiresUnixMs) then
@@ -653,7 +673,7 @@ local function ranged_hold(obs,frame,out,row,status,wanted,stopTarget)
         local remaining=math.floor(math.min(4294967295,row.expiresUnixMs-now))
         if remaining<1 then status.phase="movement_hold_deadline";out.action=nil;return true end
         local a={capability="movement_owner",sessionId=obs.sessionId,selfGuid=obs.selfGuid,owner=hold.owner,mode="acquire",leaseMs=remaining}
-        out.action=a;ranged_hold_proposal={action=a,hold=hold};status.phase="acquiring_movement_hold";return true
+        out.action=a;ranged_hold_proposal={action=a,hold=hold,untilUnixMs=row.expiresUnixMs};status.phase="acquiring_movement_hold";return true
     end
     local self=(obs.players or {})[obs.selfGuid]
     local stopped=self and self.movementKnown==true and self.moving~=true and (obs.navigation or {}).motionUnconfirmed~=true
@@ -873,6 +893,7 @@ local function ranged_finish(selected)
     end
     ranged_ground_proposal=nil
     if ranged_hold_proposal and ranged_hold_proposal.action==selected then
+        if selected.mode=="acquire" then ranged_hold_proposal.hold.untilUnixMs=ranged_hold_proposal.untilUnixMs end
         ranged_hold_proposal.hold.operation={mode=selected.mode,owner=selected.owner}
     end
     ranged_hold_proposal=nil

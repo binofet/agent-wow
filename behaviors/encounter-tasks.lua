@@ -19,6 +19,9 @@ end
 local function near(a,b,r)
     return a and b and (a.x-b.x)^2+(a.y-b.y)^2+(a.z-b.z)^2<=r*r
 end
+local function witnessed_position(player,map)
+    if player and player.positionEstimated~=true and player.positionInferred~=true then return position(player,map) end
+end
 local function finish(task,reason) task.finishing=task.finishing or reason end
 local function pop(task)
     state.last={id=task.id,kind=task.kind,phase="complete",reason=task.finishing}
@@ -30,6 +33,12 @@ local function request(v)
     if not id(v.id) or v.ownerGuid~=nil and not guid(v.ownerGuid) or
        v.responseYards~=nil and (not number(v.responseYards) or v.responseYards<=0) or
        v.deadlineMonotonicMs~=nil and (not number(v.deadlineMonotonicMs) or v.deadlineMonotonicMs<0) then return end
+    if v.task=="rally_to" then
+        if not guid(v.guideGuid) or not v.deadlineMonotonicMs or
+           v.destinationGuid~=nil and not guid(v.destinationGuid) then return end
+        return {id=v.id,kind=v.task,guideGuid=v.guideGuid,destinationGuid=v.destinationGuid,
+                responseYards=v.responseYards or 5,deadline=v.deadlineMonotonicMs}
+    end
     return {id=v.id,kind="wait_for_pull",ownerGuid=v.ownerGuid,responseYards=v.responseYards,
             deadline=v.deadlineMonotonicMs,stage="requested"}
 end
@@ -71,7 +80,7 @@ function M.on_event(event)
         if state.next and (v.id==nil or v.id==state.next.id) then
             state.retired[state.next.id]="canceled";state.next=nil
         end
-    elseif v.task=="wait_for_pull" or v.task=="enter_instance" then
+    elseif v.task=="wait_for_pull" or v.task=="enter_instance" or v.task=="rally_to" then
         local next_task
         if v.task=="enter_instance" then next_task=instance_entry and instance_entry.request(v,state.observed)
         else next_task=request(v) end
@@ -93,6 +102,7 @@ local function action(obs,task,mode)
 end
 local function status(task,phase)
     return {id=task.id,kind=task.kind,phase=phase,ownerGuid=task.ownerGuid,
+            guideGuid=task.guideGuid,destinationGuid=task.destinationGuid,
             anchor=task.anchor,responseYards=task.responseYards,reason=task.finishing,
             deadlineMonotonicMs=task.deadline,error=task.refusal}
 end
@@ -153,8 +163,31 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act)
         if current and not near(task.anchor,current,M.tuning.anchor_yards) then finish(task,"anchor_abandoned")
         elseif pulled_to_anchor(obs,task,targets) then finish(task,"pull_arrived") end
     end
+    local rally=task.kind=="rally_to"
+    if rally and not task.finishing then
+        local guide=players[task.guideGuid]
+        local destination=players[task.destinationGuid or task.guideGuid]
+        if in_combat then finish(task,"combat")
+        elseif task.guideGuid==obs.selfGuid or task.destinationGuid==obs.selfGuid then finish(task,"self_target")
+        elseif guide and guide.aliveKnown==true and guide.alive==false then finish(task,"guide_dead")
+        elseif alive(self) and self.movementKnown==true and self.moving~=true and alive(destination) and
+               near(witnessed_position(self,obs.mapId),witnessed_position(destination,obs.mapId),task.responseYards) then
+            finish(task,"rendezvous_observed")
+        end
+    end
     if task.finishing then
         if task.token and owner.active==true and owner.owner=="task:"..task.id then
+            if rally and bound and bound.visitId==obs.visitId and bound.mapId==obs.mapId then
+                if nav.motionUnconfirmed==true or not self or self.movementKnown~=true then
+                    return {status=status(task,"waiting_for_motion_confirmation"),task=task}
+                end
+                if self.moving==true then
+                    local motion=obs.targetMovement or {}
+                    local own=task.approached and not task.stopIssued and motion.targetGuid==task.guideGuid and motion.visitId==obs.visitId
+                    return {status=status(task,"waiting_for_stopped_rally"),task=task,
+                            action=can_act and own and encounter_movement.stop(obs,sequence,task.guideGuid) or nil}
+                end
+            end
             return {status=status(task,"releasing_movement_ownership"),task=task,
                     action=can_act and action(obs,task,"release") or nil}
         end
@@ -168,8 +201,10 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act)
     end
     if not task.sessionId then
         if in_combat then return {status=status(task,"waiting_for_current_encounter")} end
-        task.ownerGuid=task.ownerGuid or guid(nav.ownerGuid)
-        if not task.ownerGuid then return {status=status(task,"waiting_for_owner_observation")} end
+        if not rally then
+            task.ownerGuid=task.ownerGuid or guid(nav.ownerGuid)
+            if not task.ownerGuid then return {status=status(task,"waiting_for_owner_observation")} end
+        end
         if not alive(self) or not position(self,obs.mapId) then return {status=status(task,"waiting_for_body_observation")} end
         task.sessionId,task.selfGuid,task.visitId,task.mapId=obs.sessionId,obs.selfGuid,obs.visitId,obs.mapId
         task.responseYards=task.responseYards or M.tuning.response_yards
@@ -177,10 +212,29 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act)
     if owner.active==true and owner.owner~="task:"..task.id then
         return {status=status(task,"movement_owned_elsewhere")}
     end
+    if rally and (not alive(players[task.guideGuid]) or not witnessed_position(players[task.guideGuid],obs.mapId)) then
+        if task.token then finish(task,"guide_lost") end
+        return {status=status(task,"waiting_for_visible_guide"),task=task,hold=true}
+    end
     if not task.token then
         if owner.active==true then return {status=status(task,"waiting_for_owned_lease_expiry"),task=task} end
         return {status=status(task,"acquiring_movement_ownership"),task=task,hold=true,
                 action=can_act and action(obs,task,"acquire") or nil}
+    end
+    if rally then
+        local view={status=status(task,"walking_to_guide"),task=task,hold=true}
+        if nav.motionUnconfirmed==true then view.status.phase="waiting_for_motion_confirmation";return view end
+        local remaining=tonumber(owner.remainingMs)
+        if not number(remaining) or remaining<=M.tuning.renew_below_ms then
+            if can_act then view.action=action(obs,task,"renew") end
+        elseif near(position(self,obs.mapId),position(players[task.guideGuid],obs.mapId),task.responseYards)
+               and self.movementKnown==true and self.moving~=true then
+            view.status.phase=witnessed_position(self,obs.mapId) and "waiting_with_guide" or "waiting_for_position_witness"
+        elseif can_act then
+            view.action=encounter_movement.decide(obs,sequence,task.guideGuid,
+                {target=players[task.guideGuid],rangeYards=task.responseYards}).action
+        end
+        return view
     end
     if not task.anchor then
         if self.movementKnown~=true or self.moving==true then
@@ -198,6 +252,10 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act)
 end
 
 function M.commit(view,chosen)
+    if view and view.task and view.task.kind=="rally_to" and chosen==view.action and chosen then
+        if chosen.capability=="approach_target" then view.task.approached=true
+        elseif chosen.capability=="stop_movement" then view.task.stopIssued=true end
+    end
     if view and view.task and view.task.kind=="enter_instance" and instance_entry then
         instance_entry.commit(view.task,chosen);return
     end
@@ -211,6 +269,7 @@ end
 function M.allow(view,obs,proposed)
     if not proposed or not view or not view.hold then return true end
     local cap=proposed.capability
+    if view.task and view.task.kind=="rally_to" and view.action==proposed then return true end
     if view.task and view.task.kind=="enter_instance" then
         if view.action==proposed then return true end
         -- Entry owns voluntary travel only; current defense and healing retain
@@ -251,7 +310,10 @@ function M.import_state(checkpoint)
     if type(checkpoint)~="table" or checkpoint.version~=1 or type(checkpoint.data)~="table" or
        type(checkpoint.data.retired)~="table" then return false end
     for _,task in pairs({checkpoint.data.current,checkpoint.data.next}) do
-        if type(task)~="table" or not id(task.id) or (task.kind~="wait_for_pull" and (not instance_entry or not instance_entry.validate(task))) or
+        local rally=type(task)=="table" and task.kind=="rally_to" and guid(task.guideGuid) and
+            (task.destinationGuid==nil or guid(task.destinationGuid)) and number(task.responseYards) and
+            task.responseYards>0 and number(task.deadline)
+        if type(task)~="table" or not id(task.id) or (task.kind~="wait_for_pull" and not rally and (not instance_entry or not instance_entry.validate(task))) or
            task.token~=nil and (type(task.token)~="string" or #task.token==0) or
            task.deadline~=nil and (not number(task.deadline) or task.deadline<0) then return false end
     end
