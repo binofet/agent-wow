@@ -116,13 +116,18 @@ local function on_event(event)
         if state.session and state.session~=obs.sessionId then state.pull=nil end
         local self=(obs.players or {})[obs.selfGuid]
         if self and self.aliveKnown==true and self.alive==false then state.pull=nil end
-        state.session,state.visitId=obs.sessionId,obs.visitId
+        state.session,state.visitId,state.selfGuid,state.mapId=obs.sessionId,obs.visitId,obs.selfGuid,obs.mapId
     end
     if event.kind ~= "command" or type(event.value) ~= "table" then return true end
     local value = event.value
     if value.task == "ranged_only" then
         if type(value.id)~="string" or #value.id==0 or #value.id>80 then return true end
         if value.cancel==true or value.enabled==false then
+            for _,prior in ipairs(encounter_priors and encounter_priors.rules or {}) do
+                if value.id==prior.id and state.session and guid(state.selfGuid) and guid(state.visitId) and state.mapId==prior.mapId then
+                    state.rangedPrior={id=value.id,sessionId=state.session,selfGuid=state.selfGuid,mapId=state.mapId,visitId=state.visitId}
+                end
+            end
             if state.rangedOnly and state.rangedOnly.id==value.id then state.rangedOnly=nil end
             if state.rangedPending and state.rangedPending.id==value.id then state.rangedPending=nil end
             state.rangedStatus={id=value.id,applied=true,active=false,phase="cancelled"}
@@ -501,6 +506,9 @@ local function import_state(saved)
             if key=="rangedOnly" and (type(row.sessionId)~="string" or not guid(row.selfGuid) or type(row.expiresAt)~="number" or type(row.expiresUnixMs)~="number") then return false end
         end
     end
+    local prior=saved.data.rangedPrior
+    if prior~=nil and (type(prior)~="table" or type(prior.id)~="string" or type(prior.sessionId)~="string" or
+       not guid(prior.selfGuid) or not guid(prior.visitId) or type(prior.mapId)~="number" or prior.mapId<0 or prior.mapId%1~=0) then return false end
     local ground=saved.data.rangedGround
     if ground~=nil and (type(ground)~="table" or type(ground.sessionId)~="string" or not guid(ground.selfGuid) or not guid(ground.visitId) or type(ground.key)~="string" or type(ground.blocked)~="table" or ground.operation~=nil and type(ground.operation)~="table" or ground.awaiting~=nil and type(ground.awaiting)~="table") then return false end
     if ground then
@@ -543,13 +551,16 @@ local function ranged_stance(obs,frame)
             state.rangedOnly=pending;state.rangedStatus=nil
         end
     end
-    -- Reuse the same finite movement ledger for the editable prior. An explicit
-    -- ranged order wins; cancelling this prior ID suppresses it in this visit.
+    -- One finite automatic activation per exact body/map/visit. Expiry or
+    -- cancellation never silently renews it; a fresh explicit order can.
     local prior=encounter_priors and encounter_priors.rule(obs)
-    if not state.rangedOnly and prior and not (state.rangedStatus and state.rangedStatus.id==prior.id and state.rangedStatus.phase=="cancelled") then
+    local seen=state.rangedPrior
+    local same=prior and seen and seen.id==prior.id and seen.sessionId==obs.sessionId and seen.selfGuid==obs.selfGuid and seen.mapId==obs.mapId and seen.visitId==obs.visitId
+    if not state.rangedOnly and prior and not same then
+        state.rangedPrior={id=prior.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId}
         state.rangedOnly={id=prior.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId,
             creatureEntry=prior.creatureEntry,minRangeYards=prior.minRangeYards,maxRangeYards=prior.maxRangeYards,
-            clearanceYards=prior.clearanceYards,expiresAt=now+prior.durationMs,expiresUnixMs=unix+prior.durationMs}
+            clearanceYards=prior.clearanceYards,durationMs=prior.durationMs,expiresAt=now+prior.durationMs,expiresUnixMs=unix+prior.durationMs}
     end
     local row=state.rangedOnly
     if row and (row.sessionId~=obs.sessionId or row.selfGuid~=obs.selfGuid or row.mapId~=obs.mapId or row.visitId~=obs.visitId or now>=row.expiresAt or unix>=row.expiresUnixMs) then

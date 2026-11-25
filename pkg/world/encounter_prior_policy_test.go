@@ -1,9 +1,13 @@
 package world
 
 import (
+	"context"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"google.golang.org/protobuf/proto"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -70,7 +74,7 @@ func TestEncounterPriorAssistCannotOpenSludgePull(t *testing.T) {
 	}
 }
 func TestEncounterPriorWitnessIsPerCreatureAndCurrent(t *testing.T) {
-	for _, mode := range []string{"tank", "self_defense", "stale", "contradicted", "other_guid"} {
+	for _, mode := range []string{"tank", "self_defense", "party_defense", "unknown_roster", "not_in_group", "stale", "contradicted", "other_guid"} {
 		t.Run(mode, func(t *testing.T) {
 			p := newFallbackPolicyTest(t, "")
 			o := sludgePriorObservation()
@@ -80,6 +84,19 @@ func TestEncounterPriorWitnessIsPerCreatureAndCurrent(t *testing.T) {
 			switch mode {
 			case "self_defense":
 				n.AttackObservation.VictimGuid = 4
+			case "party_defense", "unknown_roster", "not_in_group":
+				n.AttackObservation.VictimGuid = 8
+				o.Players["8"] = fallbackPlayer(8)
+				o.Players["8"].MapId = proto.Uint32(349)
+				o.Party.Group.Members = append(o.Party.Group.Members, &partyv1.Member{Guid: 8, Online: true})
+				if mode == "unknown_roster" {
+					o.Party.Group.Known = false
+					expected = false
+				}
+				if mode == "not_in_group" {
+					o.Party.Group.InGroup = false
+					expected = false
+				}
 			case "stale":
 				n.AttackObservation.AgeMs = 5001
 				expected = false
@@ -198,5 +215,56 @@ func TestEncounterPriorKeepsUrgentStationaryFriendlyHealing(t *testing.T) {
 	a, _ := out["action"].(map[string]any)
 	if a["capability"] != "heal" || a["targetGuid"] != "8" {
 		t.Fatal("tank wait starved legitimate urgent support", out)
+	}
+}
+
+func TestEncounterPriorFiniteActivationAndCancellationScope(t *testing.T) {
+	read := func(name string) string {
+		b, e := os.ReadFile(filepath.Join("..", "..", "behaviors", name))
+		if e != nil {
+			t.Fatal(e)
+		}
+		return string(b)
+	}
+	source := "local encounter_priors=(function()\n" + read("encounter-priors.lua") + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
+end)()
+return {on_event=commands.on_event,export_state=commands.export_state,import_state=commands.import_state,decide=function(frame)
+ local obs={sessionId="fixture",selfGuid="4",mapId=349,visitId="1",targets={a={guid="9",entry=12222,present=true,aliveKnown=true,alive=true}}}
+ local function capture() commands.on_event({kind="encounter_observation",sequence="1",value=obs}) end
+ local function active(now)
+  local cfg,status=commands.ranged_stance(obs,{session_id=obs.sessionId,input={observationSequence="1"},clock={monotonicMs=now,unixMs=now}})
+  return cfg~=nil
+ end
+ capture()
+ local first=active(0)
+ local checkpoint=commands.import_state(commands.export_state())
+ local expired=active(600001)
+ local later=active(600002)
+ commands.on_event({kind="command",value={task="ranged_only",id="maraudon_sludge_backline",cancel=true}})
+ local cancelled=active(600003)
+ obs.visitId="2";capture();local visitTransition=active(600004)
+ commands.on_event({kind="command",value={task="ranged_only",id="maraudon_sludge_backline",cancel=true}})
+ local visitCancelled=active(600005)
+ obs.sessionId="new-body";obs.selfGuid="5";capture();local bodyTransition=active(600006)
+ return {first=first,checkpoint=checkpoint,expired=expired,later=later,cancelled=cancelled,visitTransition=visitTransition,visitCancelled=visitCancelled,bodyTransition=bodyTransition}
+end}`
+	host, e := behavior.NewSession(context.Background(), "prior-lifecycle", source)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer host.Close()
+	d, e := host.Decide(context.Background(), map[string]any{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, key := range []string{"first", "checkpoint", "visitTransition", "bodyTransition"} {
+		if d.Output[key] != true {
+			t.Fatal(key, d.Output)
+		}
+	}
+	for _, key := range []string{"expired", "later", "cancelled", "visitCancelled"} {
+		if d.Output[key] != false {
+			t.Fatal(key, d.Output)
+		}
 	}
 }

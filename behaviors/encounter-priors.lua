@@ -1,6 +1,9 @@
 -- Model-editable encounter knowledge. Engage means assist/focus, not pull.
 -- A deliberate `engage {pull=true}` overrides this default for that exact GUID.
 -- These are roles and observed hazards, never inferred pack links or aggro.
+-- Pull admission remains a standing prior. Automatic positioning activates only
+-- once per body/map/visit for durationMs; expiry/cancel needs a new explicit
+-- ranged_only order to renew. A new visit may activate its own finite stance.
 local rules = {
     {id="maraudon_sludge_backline", mapId=349, creatureEntry=12222,
      tankGuid="3", minRangeYards=14, maxRangeYards=36, clearanceYards=2,
@@ -24,8 +27,11 @@ local function admission(obs,id,explicitPull)
     local victim=a and a.victimGuid
     local player=victim and (obs.players or {})[victim]
     local member=victim==obs.selfGuid or victim==r.tankGuid
-    for _,row in ipairs((((obs.party or {}).group or {}).members) or {}) do
-        if row.guid==victim and row.online==true then member=true end
+    local group=(obs.party or {}).group or {}
+    if group.known==true and group.inGroup==true then
+        for _,row in ipairs(group.members or {}) do
+            if row.guid==victim and row.online==true then member=true end
+        end
     end
     local age=a and tonumber(a.ageMs or "0")
     if a and a.victimKnown==true and member and player and player.present==true and
