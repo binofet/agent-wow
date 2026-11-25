@@ -488,19 +488,24 @@ local function quest_route(input,active,missing,confirmed,known,level,complete)
     local r=input.questRoute
     if type(r)~="table" or type(r.sessionId)~="string" or #r.sessionId<1 or #r.sessionId>128 or
        type(r.introProbeCurrent)~="boolean" or type(r.eaganProbeCurrent)~="boolean" or
-       type(r.wolfProbeCurrent)~="boolean" or not array(r.givers,128) or type(r.offer)~="table" then return invalid() end
-    local o,giver=r.offer,nil
-    for _,row in ipairs(r.givers) do
-        if type(row)~="table" or not decimal(row.guid) or row.guid=="0" or
+       type(r.wolfProbeCurrent)~="boolean" or type(r.givers)~="table" or #r.givers>128 or type(r.offer)~="table" then return invalid() end
+    local o,giver,giverIndex,giverCount=r.offer,nil,0,0
+    for index,row in pairs(r.givers) do
+        if type(index)~="number" or index<1 or index>128 or index%1~=0 or
+           type(row)~="table" or not decimal(row.guid) or row.guid=="0" or
            type(row.entry)~="number" or row.entry%1~=0 or row.entry<1 or row.entry>4294967295 then return invalid() end
-        if row.guid==o.npcGuid then giver=row.entry end
+        giverCount=giverCount+1
+        if index>giverIndex and row.guid==o.npcGuid then giver,giverIndex=row.entry,index end
     end
+    if giverCount~=#r.givers then return invalid() end
     if type(o.objectKnown)~="boolean" or type(o.questsKnown)~="boolean" or type(o.introQuestsKnown)~="boolean" or
-       not decimal(o.npcGuid) or not decimal(o.expiresInMs) or not array(o.quests,32) then return invalid() end
-    local intro,eagan,wolves,rest=false,false,false,false
-    for _,row in ipairs(o.quests) do
-        if type(row)~="table" or type(row.questId)~="number" or row.questId%1~=0 or
+       not decimal(o.npcGuid) or not decimal(o.expiresInMs) or type(o.quests)~="table" or #o.quests>32 then return invalid() end
+    local intro,eagan,wolves,rest,offerCount=false,false,false,false,0
+    for index,row in pairs(o.quests) do
+        if type(index)~="number" or index<1 or index>32 or index%1~=0 or
+           type(row)~="table" or type(row.questId)~="number" or row.questId%1~=0 or
            row.questId<0 or row.questId>4294967295 or type(row.available)~="boolean" then return invalid() end
+        offerCount=offerCount+1
         if row.available then
             if row.questId==783 then intro=true
             elseif row.questId==5261 then eagan=true
@@ -508,6 +513,7 @@ local function quest_route(input,active,missing,confirmed,known,level,complete)
             elseif row.questId==3903 then rest=true end
         end
     end
+    if offerCount~=#o.quests then return invalid() end
     local reward=0
     if active["783"] then reward=783
     elseif active["5261"] then reward=5261
