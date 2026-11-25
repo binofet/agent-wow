@@ -1,10 +1,18 @@
 # Instructions for AI coding agents
 
 - Do not edit README.md or any docs unless explicitly instructed.
+
 - The environment may have a running Azerothcore server (authserver and worldserver) that can be used for end to end testing.
     - You are only allowed to interact with it via the public APIs (just like any client server model).
     - Do not change any of its internals (e.g. server configurations, database schemas or records, source code, etc).
     - You may refer to the source at https://github.com/azerothcore/azerothcore-wotlk to guide implementation of this client.
+
+## Wrath character creation
+
+Use the ordinary client character-selection command for new characters, with
+the intended account's isolated profile and readback/UNKNOWN reconciliation.
+The complete procedure is in [docs/wrath-character-creation.md](docs/wrath-character-creation.md).
+It does not require a GM command or server-internal access.
 
 ## Go harness and Lua behavior
 
