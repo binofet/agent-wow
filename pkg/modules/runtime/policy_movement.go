@@ -107,6 +107,35 @@ func (p *SessionPolicy) resolveMovement(action map[string]any, capability string
 		"range_yards": protoreflect.ValueOfFloat32(float32(radius)), "stop": protoreflect.ValueOfBool(stop),
 		"require_los": protoreflect.ValueOfBool(los), "behind": protoreflect.ValueOfBool(behind),
 	}
+	if raw, exists := action["minRangeYards"]; exists {
+		minimum, ok := raw.(float64)
+		if !ok || math.IsNaN(minimum) || math.IsInf(minimum, 0) || minimum < 0 || minimum >= radius {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "finite minimum below maximum range required")
+		}
+		values["min_range_yards"] = protoreflect.ValueOfFloat32(float32(minimum))
+	}
+	if raw, exists := action["clearanceTargetGuids"]; exists {
+		ids, ok := raw.([]any)
+		clearance, valid := action["clearanceYards"].(float64)
+		if !ok || len(ids) == 0 || !valid || math.IsNaN(clearance) || math.IsInf(clearance, 0) || clearance <= 0 || clearance > math.MaxFloat32 {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact clearance targets and finite positive distance required")
+		}
+		template := (&actionsv1.ApproachTargetRequest{}).ProtoReflect()
+		field := template.Descriptor().Fields().ByName("clearance_target_guids")
+		list := template.NewField(field).List()
+		seen := map[uint64]bool{}
+		for _, v := range ids {
+			raw, ok := v.(string)
+			id, err := strconv.ParseUint(raw, 10, 64)
+			if !ok || err != nil || id == 0 || id == selfGUID || seen[id] || raw != strconv.FormatUint(id, 10) {
+				return PolicyDispatch{}, status.Error(codes.InvalidArgument, "canonical distinct clearance GUIDs required")
+			}
+			seen[id] = true
+			list.Append(protoreflect.ValueOfUint64(id))
+		}
+		values["clearance_target_guids"] = protoreflect.ValueOfList(list)
+		values["clearance_yards"] = protoreflect.ValueOfFloat32(float32(clearance))
+	}
 	op := &policySpell{vm: p.vm, capability: capability, target: targetGUID, encounterVisit: visitID, movement: &policyMovement{self: selfGUID, stop: stop}}
 	dispatch, err := p.preparePolicyDispatch("approach_target", values, op)
 	if err == nil {

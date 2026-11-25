@@ -1,6 +1,7 @@
 -- Identity-bound command events are queued by the host. Every gameplay choice
 -- below stays in Lua, including binding marks, approaching and entering Stealth.
 local state = {requests={}}
+local ranged_options, ranged_control_proposal, ranged_hold_proposal
 local movement = encounter_movement
 local tactics = encounter_tactics
 local icons = {star=1,circle=2,diamond=3,triangle=4,moon=5,square=6,x=7,skull=8}
@@ -61,6 +62,26 @@ local function on_event(event)
             end
         end
     end
+    local hold=state.rangedHold
+    if hold and hold.operation and event.receipt then
+        local receipt,p=event.receipt,event.receipt.payload or {}
+        if p.capability=="movement_owner" and p.owner==hold.owner and p.mode==hold.operation.mode then
+            if receipt.outcome=="confirmed" then
+                local result=p.result or {}
+                local body=hold.operation.mode=="release" and result or result.state
+                if body and body.sessionId==hold.sessionId and body.selfGuid==hold.selfGuid then
+                    if hold.operation.mode=="release" then hold.released=true;hold.token=nil
+                    elseif type(result.token)=="string" and #result.token>0 and (body.movementOwner or {}).active==true and body.movementOwner.owner==hold.owner then hold.token=result.token
+                    else hold.uncertain=true end
+                else hold.uncertain=true end
+                hold.operation=nil
+            elseif receipt.outcome=="not_dispatched" or receipt.outcome=="failed" then
+                hold.operation=nil;hold.refusal=p.error or receipt.outcome
+            elseif receipt.outcome=="settled_unverified" or receipt.outcome=="unknown" then
+                hold.operation=nil;hold.uncertain=true
+            end
+        end
+    end
     if event.kind == "encounter_observation" then
         state.sequence=event.sequence
         local obs=event.value or {}
@@ -71,7 +92,32 @@ local function on_event(event)
     end
     if event.kind ~= "command" or type(event.value) ~= "table" then return true end
     local value = event.value
-    if value.task == "engage" then
+    if value.task == "ranged_only" then
+        if type(value.id)~="string" or #value.id==0 or #value.id>80 then return true end
+        if value.cancel==true or value.enabled==false then
+            if state.rangedOnly and state.rangedOnly.id==value.id then state.rangedOnly=nil end
+            if state.rangedPending and state.rangedPending.id==value.id then state.rangedPending=nil end
+            state.rangedStatus={id=value.id,applied=true,active=false,phase="cancelled"}
+        else
+            local fields={"creatureEntry","mapId","minRangeYards","maxRangeYards","clearanceYards","durationMs"}
+            for _,key in ipairs(fields) do
+                local n=value[key]
+                if type(n)~="number" or n~=n or n<=-math.huge or n>=math.huge then
+                    state.rangedStatus={id=value.id,applied=false,active=false,phase="invalid_directive"};return true
+                end
+            end
+            if not guid(value.visitId) or value.creatureEntry<1 or value.creatureEntry>4294967295 or value.creatureEntry%1~=0 or
+               value.mapId<0 or value.mapId>4294967295 or value.mapId%1~=0 or value.durationMs<=0 or
+               value.minRangeYards<=0 or value.clearanceYards<0 or value.maxRangeYards-value.minRangeYards<=2*value.clearanceYards then
+                state.rangedStatus={id=value.id,applied=false,active=false,phase="invalid_directive"};return true
+            end
+            local next={id=value.id,visitId=value.visitId}
+            for _,key in ipairs(fields) do next[key]=value[key] end
+            local same=state.rangedOnly and state.rangedOnly.id==next.id and state.rangedOnly.visitId==next.visitId
+            if same then for _,key in ipairs(fields) do if state.rangedOnly[key]~=next[key] then same=false end end end
+            if not same then state.rangedPending=next end
+        end
+    elseif value.task == "engage" then
         if value.enabled==false or value.cancel==true then state.pull=nil
         elseif guid(value.targetGuid) then state.pull={targetGuid=value.targetGuid,visitId=state.visitId} end
     elseif value.task == "control" then
@@ -267,6 +313,7 @@ local function automatic_target(obs, request, focusGuid)
 end
 
 local function control_action(obs, frame, focusGuid, planned_control, allow_action)
+    ranged_control_proposal=nil
     refresh(obs)
     local stop=state.stopping
     if stop then
@@ -320,6 +367,8 @@ local function control_action(obs, frame, focusGuid, planned_control, allow_acti
                       targetGuid=request.boundGuid,phase="control_observed"}
         elseif request.boundGuid == focusGuid then status.phase = "waiting_for_focus_change"
         elseif request.visitId ~= obs.visitId then status.phase = "waiting_for_visit"
+        elseif state.rangedOnly and target and target.entry==state.rangedOnly.creatureEntry and
+            (request.technique=="sap" or obs.hostTargetRangeBandSupported~=true) then status.phase="waiting_for_ranged_scope"
         elseif alive(target) and target.mapKnown == true and target.mapId == obs.mapId and target.attackable == true and spell then
             status = {pending=true, requestId=request.id, technique=request.technique,
                       targetGuid=request.boundGuid, phase="waiting_for_spell"}
@@ -340,8 +389,10 @@ local function control_action(obs, frame, focusGuid, planned_control, allow_acti
                     if stealth.row.ready == true and stealth.row.selfCastSupported == true then
                         local active = guid(obs.activeMeleeTargetGuid)
                         if active then return action(obs,frame,"melee_stop",active),status end
+                        local cast=action(obs,frame,"cast_self",obs.selfGuid,stealth.id)
+                        if state.rangedOnly then ranged_control_proposal={request=request,key="stealthPending",prior=request.stealthPending,action=cast} end
                         request.stealthPending = stealth.id
-                        return action(obs,frame,"cast_self",obs.selfGuid,stealth.id),status
+                        return cast,status
                     end
                     return nil,status
                 end
@@ -354,8 +405,13 @@ local function control_action(obs, frame, focusGuid, planned_control, allow_acti
             -- observes current line of sight and stops/faces this exact target.
             local separation = distance(self,target)
             if movement then
-                local moved = movement.decide(obs,frame.input.observationSequence,request.boundGuid,
-                    {rangeYards=range,requireLos=true,behind=request.behind == true})
+                local options={rangeYards=range,requireLos=true,behind=request.behind == true}
+                if state.rangedOnly and ranged_options then
+                    if target.entry==state.rangedOnly.creatureEntry then options.rangeYards=range-state.rangedOnly.clearanceYards end
+                    options=ranged_options(obs,state.rangedOnly,request.boundGuid,options)
+                    if not options then status.phase="range_band_unavailable";return nil,status end
+                end
+                local moved = movement.decide(obs,frame.input.observationSequence,request.boundGuid,options)
                 if moved.action or moved.ready ~= true then
                     status.phase = "approaching_control"
                     return moved.action,status
@@ -373,6 +429,7 @@ local function control_action(obs, frame, focusGuid, planned_control, allow_acti
                 if active then return action(obs,frame,"melee_stop",active),status end
                 local cast=action(obs,frame,request.technique,request.boundGuid,spell.id)
                 if allow_action and not allow_action(cast) then status.phase="waiting_for_task_area";return nil,status end
+                if state.rangedOnly then ranged_control_proposal={request=request,key="controlPending",prior=request.controlPending,action=cast} end
                 request.controlPending = spell.id
                 return cast,status
             end
@@ -404,9 +461,246 @@ local function import_state(saved)
     end
     if saved.data.stopping~=nil and (type(saved.data.stopping)~="table" or
        not guid(saved.data.stopping.targetGuid) or not guid(saved.data.stopping.visitId)) then return false end
+    for _,key in ipairs({"rangedOnly","rangedPending"}) do
+        local row=saved.data[key]
+        if row~=nil then
+            if type(row)~="table" or type(row.id)~="string" or #row.id==0 or not guid(row.visitId) then return false end
+            for _,field in ipairs({"creatureEntry","mapId","minRangeYards","maxRangeYards","clearanceYards","durationMs"}) do
+                local n=row[field];if type(n)~="number" or n~=n or n<=-math.huge or n>=math.huge then return false end
+            end
+            if row.creatureEntry<1 or row.creatureEntry>4294967295 or row.creatureEntry%1~=0 or row.mapId<0 or row.mapId>4294967295 or row.mapId%1~=0 or row.minRangeYards<=0 or row.clearanceYards<0 or row.maxRangeYards-row.minRangeYards<=2*row.clearanceYards or row.durationMs<=0 then return false end
+            if key=="rangedOnly" and (type(row.sessionId)~="string" or not guid(row.selfGuid) or type(row.expiresAt)~="number" or type(row.expiresUnixMs)~="number") then return false end
+        end
+    end
+    local hold=saved.data.rangedHold
+    if hold~=nil and (type(hold)~="table" or type(hold.owner)~="string" or type(hold.sessionId)~="string" or not guid(hold.selfGuid) or type(hold.untilUnixMs)~="number" or hold.token~=nil and type(hold.token)~="string") then return false end
     state = saved.data
     return true
 end
 
+local function ranged_stance(obs,frame)
+    local now=frame.clock and frame.clock.monotonicMs
+    local unix=frame.clock and frame.clock.unixMs
+    if obs.sessionId~=frame.session_id or frame.input.observationSequence~=state.sequence then
+        return nil,{applied=false,active=false,phase="current_scope_unavailable"}
+    end
+    if type(now)~="number" or type(unix)~="number" then
+        local held=state.rangedOnly
+        if held and (held.sessionId~=obs.sessionId or held.selfGuid~=obs.selfGuid or held.mapId~=obs.mapId or held.visitId~=obs.visitId) then held=nil end
+        return held,{id=held and held.id,applied=held~=nil,active=held~=nil,phase="expiry_clock_unavailable"}
+    end
+    local pending=state.rangedPending
+    if pending then
+        state.rangedPending=nil
+        if pending.mapId~=obs.mapId or pending.visitId~=obs.visitId then
+            state.rangedStatus={id=pending.id,applied=false,active=false,phase="scope_mismatch",retainedActiveId=state.rangedOnly and state.rangedOnly.id}
+        else
+            pending.sessionId,pending.selfGuid,pending.expiresAt,pending.expiresUnixMs=obs.sessionId,obs.selfGuid,now+pending.durationMs,unix+pending.durationMs
+            state.rangedOnly=pending;state.rangedStatus=nil
+        end
+    end
+    local row=state.rangedOnly
+    if row and (row.sessionId~=obs.sessionId or row.selfGuid~=obs.selfGuid or row.mapId~=obs.mapId or row.visitId~=obs.visitId or now>=row.expiresAt or unix>=row.expiresUnixMs) then
+        state.rangedStatus={id=row.id,applied=true,active=false,phase=(now>=row.expiresAt or unix>=row.expiresUnixMs) and "expired" or "scope_ended"}
+        state.rangedOnly=nil;row=nil
+    end
+    if not row then return nil,state.rangedStatus or {applied=false,active=false,phase="not_requested"} end
+    return row,{id=row.id,applied=true,active=true,phase="applied",creatureEntry=row.creatureEntry,mapId=row.mapId,visitId=row.visitId,
+        minRangeYards=row.minRangeYards,maxRangeYards=row.maxRangeYards,clearanceYards=row.clearanceYards,remainingMs=math.max(0,row.expiresUnixMs-unix),rejected=state.rangedStatus}
+end
+local function ranged_targets(obs,row)
+    local ids,nearest,nearest_distance={},nil,nil
+    local self=(obs.players or {})[obs.selfGuid]
+    local complete=true
+    for id,target in pairs(obs.targets or {}) do
+        if target.entry==row.creatureEntry and target.present==true and target.alive~=false then
+            if target.aliveKnown~=true or target.positionKnown~=true or target.mapKnown~=true or target.mapId~=obs.mapId or not self or self.positionKnown~=true then complete=false
+            else
+                ids[#ids+1]=id
+                local dx,dy,dz=(self.x or 0)-(target.x or 0),(self.y or 0)-(target.y or 0),(self.z or 0)-(target.z or 0)
+                local d=math.sqrt(dx*dx+dy*dy+dz*dz)
+                if not nearest_distance or d<nearest_distance then nearest,nearest_distance=id,d end
+            end
+        end
+    end
+    for i=2,#ids do
+        local value,j=ids[i],i-1
+        while j>0 and ids[j]>value do ids[j+1]=ids[j];j=j-1 end
+        ids[j+1]=value
+    end
+    return ids,nearest,nearest_distance,complete
+end
+ranged_options=function(obs,row,target,options)
+    local ids,_,_,complete=ranged_targets(obs,row)
+    if not complete then return end
+    local copy={}
+    for key,value in pairs(options or {}) do copy[key]=value end
+    if #ids>0 then copy.clearanceTargetGuids=ids;copy.clearanceYards=row.minRangeYards+row.clearanceYards end
+    if (obs.targets or {})[target] and obs.targets[target].entry==row.creatureEntry then
+        copy.minRangeYards=row.minRangeYards+row.clearanceYards
+        copy.rangeYards=math.min(copy.rangeYards or row.maxRangeYards,row.maxRangeYards-row.clearanceYards)
+        copy.behind=false
+        if copy.rangeYards<=copy.minRangeYards then return end
+    end
+    return copy
+end
+local function ranged_friendly_support(obs,action)
+    if not action or (action.capability~="heal" and action.capability~="cleanse" and action.capability~="buff") then return false end
+    local target=guid(action.targetGuid)
+    local self=(obs.players or {})[obs.selfGuid]
+    local patient=target and (obs.players or {})[target]
+    local spell=(obs.spells or {})[tostring(action.spellId)]
+    if not self or not patient or not spell or spell.metadataKnown~=true or spell.known~=true or
+       type(spell.maxRange)~="number" or spell.maxRange<=0 then return false end
+    local member=false
+    for _,row in ipairs(((obs.party or {}).group or {}).members or {}) do
+        if row.guid==target and row.online==true then member=true end
+    end
+    if not member then return false end
+    for _,unit in ipairs({self,patient}) do
+        if unit.present~=true or unit.aliveKnown~=true or unit.alive~=true or unit.mapKnown~=true or unit.mapId~=obs.mapId or
+           unit.positionKnown~=true or unit.positionInferred==true or unit.positionEstimated==true then return false end
+    end
+    local dx,dy,dz=(self.x or 0)-(patient.x or 0),(self.y or 0)-(patient.y or 0),(self.z or 0)-(patient.z or 0)
+    local d2=dx*dx+dy*dy+dz*dz
+    return d2>=(spell.minRange or 0)^2 and d2<=spell.maxRange^2
+end
+local function ranged_hold(obs,frame,out,row,status,wanted,stopTarget)
+    local hold=state.rangedHold
+    local owner=(obs.navigation or {}).movementOwner
+    local now=frame.clock and frame.clock.unixMs
+    if not hold and not wanted then return false end
+    if #frame.pending~=0 then status.phase="waiting_for_native_custody";out.action=nil;return true end
+    if not hold then
+        hold={owner="ranged:"..row.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,untilUnixMs=row.expiresUnixMs}
+        state.rangedHold=hold
+    end
+    if hold.sessionId~=obs.sessionId or hold.selfGuid~=obs.selfGuid then status.phase="movement_hold_other_body";out.action=nil;return true end
+    if type(owner)~="table" or type(now)~="number" then status.phase="movement_owner_unavailable";out.action=nil;return true end
+    if hold.released then state.rangedHold=nil;return false end
+    if hold.uncertain then
+        -- Unknown ownership is not cleared by an early inactive sample. The
+        -- entire caller-selected finite lease horizon must also have ended.
+        if owner.active==true or now<hold.untilUnixMs then status.phase="movement_hold_unknown";out.action=nil;return true end
+        hold.uncertain=nil;hold.token=nil
+    end
+    if hold.operation then status.phase="waiting_for_movement_hold_receipt";out.action=nil;return true end
+    if hold.token and (owner.active~=true or owner.owner~=hold.owner) then hold.token=nil end
+    if wanted and hold.owner~="ranged:"..row.id then wanted=false end
+    if not wanted then
+        if hold.token and owner.active==true and owner.owner==hold.owner then
+            local a={capability="movement_owner",sessionId=obs.sessionId,selfGuid=obs.selfGuid,owner=hold.owner,token=hold.token,mode="release"}
+            out.action=a;ranged_hold_proposal={action=a,hold=hold};status.phase="releasing_movement_hold";return true
+        end
+        if owner.active==true and owner.owner==hold.owner then status.phase="waiting_for_movement_hold_expiry";out.action=nil;return true end
+        state.rangedHold=nil;return false
+    end
+    if owner.active==true and owner.owner~=hold.owner then status.phase="movement_owned_elsewhere";out.action=nil;return true end
+    if not hold.token then
+        local self=(obs.players or {})[obs.selfGuid]
+        if not self or self.aliveKnown~=true or self.alive~=true then
+            status.phase="movement_body_unavailable";out.action=nil;return true
+        end
+        if self.movementKnown~=true or self.moving==true then
+            local target=guid((obs.targetMovement or {}).targetGuid) or stopTarget
+            out.action=target and movement and movement.stop(obs,frame.input.observationSequence,target) or nil
+            status.phase="stopping_prior_movement";return true
+        end
+        if owner.active==true then status.phase="waiting_for_movement_hold_expiry";out.action=nil;return true end
+        local remaining=math.floor(math.min(4294967295,row.expiresUnixMs-now))
+        if remaining<1 then status.phase="movement_hold_deadline";out.action=nil;return true end
+        local a={capability="movement_owner",sessionId=obs.sessionId,selfGuid=obs.selfGuid,owner=hold.owner,mode="acquire",leaseMs=remaining}
+        out.action=a;ranged_hold_proposal={action=a,hold=hold};status.phase="acquiring_movement_hold";return true
+    end
+    local self=(obs.players or {})[obs.selfGuid]
+    local stopped=self and self.movementKnown==true and self.moving~=true and (obs.navigation or {}).motionUnconfirmed~=true
+    if not stopped and obs.hostTargetRangeBandSupported~=true then
+        local target=guid((obs.targetMovement or {}).targetGuid) or stopTarget
+        out.action=target and movement and movement.stop(obs,frame.input.observationSequence,target) or nil
+        status.phase="stopping_prior_movement";return true
+    end
+    status.movementHoldKnown=owner.active==true and owner.owner==hold.owner
+    status.stationaryObserved=stopped==true
+    return false
+end
+local function ranged_filter(obs,frame,sequence,out,row,status)
+    out.rangedStance=status
+    if not row then
+        if #frame.pending==0 then ranged_hold(obs,frame,out,nil,status,false) end
+        return
+    end
+    local ids,nearest,distance,complete=ranged_targets(obs,row)
+    status.matchedTargets=#ids
+    if #ids==0 and complete then if #frame.pending==0 then ranged_hold(obs,frame,out,row,status,false) end;return end
+    out.followFormation,out.portalCatchup=nil,nil
+    local self=(obs.players or {})[obs.selfGuid]
+    if not self or self.aliveKnown~=true or self.alive~=true then return end
+    local action=out.action
+    local cleanup=action and (action.capability=="fear_break" or action.capability=="cancel_spell" or action.capability=="loot_close" or action.capability=="release_interaction" or action.capability=="melee_stop")
+    if cleanup then return end
+    if #frame.pending~=0 then status.phase="waiting_for_native_custody";return end
+    local swinging=guid(obs.activeMeleeTargetGuid)
+    local active=swinging and (obs.targets or {})[swinging]
+    if swinging and (active and active.entry==row.creatureEntry or distance and distance<row.minRangeYards+row.clearanceYards) then
+        out.action={capability="melee_stop",sessionId=obs.sessionId,selfGuid=obs.selfGuid,targetGuid=swinging,visitId=obs.visitId,observationSequence=sequence}
+        status.phase="stopping_melee";return
+    end
+    if ranged_hold(obs,frame,out,row,status,true,nearest) then return end
+    if obs.hostTargetRangeBandSupported~=true then
+        if action and (action.capability=="heal" or action.capability=="buff") and action.targetGuid==obs.selfGuid then return end
+        if status.stationaryObserved==true and ranged_friendly_support(obs,action) then
+            status.phase="stationary_friendly_support";status.positionReady=false;return
+        end
+        -- A real stationary ranged cast needs no new movement ABI. This does
+        -- not make an inside/unknown pose safe or claim autorepeat shooting.
+        local target=action and (obs.targets or {})[action.targetGuid]
+        local spell=action and (obs.spells or {})[tostring(action.spellId)]
+        if complete and status.stationaryObserved==true and distance and distance>=row.minRangeYards+row.clearanceYards and distance<=row.maxRangeYards-row.clearanceYards and
+           target and action.targetGuid==nearest and target.entry==row.creatureEntry and (action.capability=="offense" or action.capability=="cast_spell" or action.capability=="polymorph") and
+           spell and spell.metadataKnown==true and spell.weaponStrike~=true and type(spell.maxRange)=="number" and spell.maxRange>=distance+row.clearanceYards then
+            status.phase="stationary_ranged_cast";status.positionReady=false;return
+        end
+        out.action=nil;status.phase="positioning_unsupported";status.positionReady=false;return
+    end
+    if (obs.navigation or {}).motionUnconfirmed==true then out.action=nil;status.phase="waiting_for_native_custody";status.positionReady=false;return end
+    if action and (action.capability=="heal" or action.capability=="buff") and action.targetGuid==obs.selfGuid then return end
+    if not complete then out.action=nil;status.phase="clearance_facts_unavailable";return end
+    if distance and distance<row.minRangeYards+row.clearanceYards then
+        local options=ranged_options(obs,row,nearest,{rangeYards=row.maxRangeYards,requireLos=false})
+        local result=options and movement and movement.decide(obs,sequence,nearest,options)
+        out.action=result and result.action;status.phase=result and result.phase or "withdrawal_unavailable";status.positionReady=false;return
+    end
+    if action and action.capability=="approach_target" then
+        local options=ranged_options(obs,row,action.targetGuid,action)
+        if not options then out.action=nil;status.phase="range_band_unavailable";return end
+        local result=movement and movement.decide(obs,sequence,action.targetGuid,options)
+        out.action=result and result.action;status.positionReady=result and result.ready==true;return
+    end
+    local target=action and (obs.targets or {})[action.targetGuid]
+    if target and target.entry==row.creatureEntry then
+        if action.capability=="melee_start" or action.capability=="sap" then out.action=nil;status.phase="holding_ranged_only";return end
+        if action.capability=="offense" or action.capability=="cast_spell" or action.capability=="polymorph" then
+            local spell=(obs.spells or {})[tostring(action.spellId)]
+            if not spell or spell.metadataKnown~=true or spell.weaponStrike==true or type(spell.maxRange)~="number" or spell.maxRange<=row.minRangeYards+2*row.clearanceYards then
+                out.action=nil;status.phase="supported_ranged_option_unavailable";return
+            end
+            local options=ranged_options(obs,row,action.targetGuid,{rangeYards=spell.maxRange-row.clearanceYards,requireLos=true})
+            local result=options and movement and movement.decide(obs,sequence,action.targetGuid,options)
+            status.positionReady=result and result.ready==true
+            if not status.positionReady then out.action=result and result.action;status.phase=result and result.phase or "range_band_unavailable" end
+        end
+    end
+end
+
+local function ranged_finish(selected)
+    if ranged_hold_proposal and ranged_hold_proposal.action==selected then
+        ranged_hold_proposal.hold.operation={mode=selected.mode,owner=selected.owner}
+    end
+    ranged_hold_proposal=nil
+    local proposal=ranged_control_proposal
+    if proposal and proposal.action~=selected then proposal.request[proposal.key]=proposal.prior end
+    ranged_control_proposal=nil
+end
+
 return {on_event=on_event, export_state=export_state, import_state=import_state,
-        queue_intent=queue_intent, control_action=control_action}
+        queue_intent=queue_intent, control_action=control_action, ranged_stance=ranged_stance, ranged_options=ranged_options, ranged_filter=ranged_filter, ranged_finish=ranged_finish}

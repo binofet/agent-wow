@@ -4894,8 +4894,229 @@ class OwnerRoutingTests(unittest.TestCase):
         self.assertTrue(loop.owner_message_waiting(poll([message(1,TACTICAL_ORDER,channel='PARTY')])))
         self.assertFalse(loop.owner_message_waiting(poll([message(1,'Rook, no melee!',channel='PARTY')])))
 
+class LiteralOwnerGMTests(unittest.TestCase):
+    """Fresh packet -> normal DirectBrain/DirectTools -> simulated native wire."""
+    def setUp(self):
+        from test_gm_command_evidence import GMCommandEvidenceTests
+        import direct_tools
+        self.base=RetainedOwnerContinuationTests();self.base.setUp();self.addCleanup(self.base.doCleanups)
+        self.rig=GMCommandEvidenceTests();self.rig.setUp();self.addCleanup(self.rig.doCleanups)
+        self.rig.rpc.sid='aw-42';self.rig.rpc.chat_sid='chat-current';self.rig.tools=self.rig.make_tools()
+        self.rig.rpc.messages=[dict(sequence=str(i),channel='CHANNEL_UNSPECIFIED',senderGuid='0',text='Historical feedback') for i in range(1,109)]
+        self.base.rpc.url=self.rig.rpc.url
+        self.sent=[];self.model_calls=[];self.forwarded=[]
+        def call(method,params,timeout=None):
+            if method=='buddy-chat.send':
+                self.sent.append(copy.deepcopy(params));return dict(transportWritten=True)
+            return self.rig.rpc.call(method,params,timeout=timeout)
+        self.base.rpc.call=call
+        self.base.brain.developer_workspace=self.rig.workspace
+        self.base.controls.actions_available=self.base.controls.party_available=True
+        self.base.controls.actions=dict(sessionId='aw-42',selfGuid='87');self.base.controls.party_session='aw-42'
+        def model(*args,**kwargs):
+            self.model_calls.append(args)
+            return dict(text='Ordinary model path, no command applied.',action='NONE',emote='NONE')
+        self.base.brain.client.generate=model
+        def factory(*args,**kwargs):
+            self.forwarded.append(dict(request_id=kwargs['request_id'],rpcUrl=args[0].url))
+            tools=self.rig.tools
+            tools.request_id=kwargs['request_id']
+            tools.context=copy.deepcopy(kwargs['context'])
+            tools.gm_allowed=kwargs['gm_allowed'];tools.allowed=kwargs['allowed']
+            tools.cancelled=kwargs['cancelled'];tools.owner_allowed=kwargs['owner_allowed']
+            return tools
+        for target,name,value in ((direct_tools,'DirectTools',factory),
+                (converse,'companion_role_context',lambda *a:{}),(converse,'mission_runtime_context',lambda *a:{})):
+            patcher=patch.object(target,name,side_effect=value);patcher.start();self.addCleanup(patcher.stop)
+
+    def request(self,text='gm .appear Joel',*,sender=3,channel='WHISPER',receiver='87',lost=False,resumed=False):
+        sequence=len(self.rig.rpc.messages)+1
+        self.rig.rpc.messages.append(message(sequence,text,sender=sender,channel=channel,receiverGuid=receiver))
+        self.rig.rpc.cursor_lost=lost
+        self.loop=self.base.loop(resume_whispers=resumed)
+        for name in ('maybe_repair_mission','maybe_review_combat','maybe_review_learned_spells','maybe_initiate'):
+            setattr(self.loop,name,lambda:False) # Unrelated idle background work is outside this fixture.
+        if not resumed:
+            self.loop.initialized=True;self.loop.session_id='chat-current';self.loop.cursor=sequence-1
+        self.loop.tick()
+        return self.loop
+
+    def state(self):
+        return dict(character=dict(guid='87'),development=self.loop.development_context('owner'),
+            gm_controls_available=True,current_request=dict(source='owner',senderGuid='3',channel='WHISPER',
+                messages=[dict(text='gm .appear Joel')]))
+
+    def test_fresh_literal_uses_real_guarded_executor_and_current_feedback_without_model(self):
+        self.request()
+        self.assertEqual(self.rig.rpc.commands,['.appear Joel'])
+        self.assertEqual([code for code,_ in self.rig.rpc.packets],[0x95])
+        self.assertFalse(self.model_calls)
+        self.assertIn('Command sent unchanged',self.sent[-1]['text'])
+        self.assertIn('Realm feedback',self.sent[-1]['text'])
+        self.assertIn('game effect is not confirmed',self.sent[-1]['text'])
+        self.assertEqual(self.loop.cursor,109)
+        record=self.base.brain.last_development_result
+        self.assertEqual(record['execution'],'literal_owner_command')
+        self.assertEqual(record['api']['httpRequests'],0)
+        self.assertFalse(record['pendingTools'])
+        self.assertEqual(record['tools'][-1]['name'],'gm_execute')
+        self.assertTrue(self.forwarded[-1]['request_id'].startswith('literal-'))
+        self.assertEqual(self.forwarded[-1]['rpcUrl'],self.rig.rpc.url)
+
+    def test_affirmative_exact_wrapper_runs_once_and_keeps_original_owner_text(self):
+        text='You need to run this gm command: "gm .appear Joel"'
+        self.request(text)
+        self.assertEqual(self.rig.rpc.commands,['.appear Joel'])
+        self.assertFalse(self.model_calls)
+        self.assertEqual(self.loop.history['WHISPER'][0]['text'],text)
+        count=len(self.rig.rpc.packets)
+        reply=self.loop.generate_reply([],self.state(),literal_gm='.appear Joel')
+        self.assertIn('Existing receipt only',reply['text'])
+        self.assertEqual(len(self.rig.rpc.packets),count)
+
+    def test_literal_parser_is_anchored_and_does_not_treat_quotes_as_execution(self):
+        for text in ('gm .gps','Run this gm command: "gm .gps"','You need to run this gm command: “gm .gps”'):
+            self.assertEqual(converse.parse_literal_gm_request(text),'.gps')
+        for text in ('"gm .gps"','Explain "gm .gps"','Do not run this gm command: "gm .gps"',
+                     'You need to run this gm command: "gm .gps" and then "gm .gps"',
+                     'You need to run this gm command: “gm .gps"'):
+            self.assertIsNone(converse.parse_literal_gm_request(text))
+
+    def test_native_sender_receiver_field_still_uses_this_body_whisper(self):
+        self.request('gm .gps',receiver='3')
+        self.assertEqual(self.rig.rpc.commands,['.gps'])
+        self.assertFalse(self.model_calls)
+
+    def test_changed_native_body_refuses_before_literal_packet(self):
+        def replace(method,value):
+            if method=='buddy-actions.status':self.rig.rpc.sid='aw-999'
+        self.rig.rpc.on_read=replace
+        try:self.request()
+        except converse.ConversationError:pass
+        self.assertFalse(self.rig.rpc.packets)
+        self.assertFalse(self.model_calls)
+
+    def test_recreated_exact_literal_operation_returns_history_and_cannot_change_command(self):
+        self.request();packets=len(self.rig.rpc.packets)
+        result=self.loop.generate_reply([],self.state(),literal_gm='.appear Joel')
+        self.assertIn('Existing receipt only',result['text'])
+        self.assertEqual(len(self.rig.rpc.packets),packets)
+        changed=self.loop.generate_reply([],self.state(),literal_gm='.gps')
+        self.assertIn('gm_operation_arguments_changed',changed['text'])
+        self.assertEqual(len(self.rig.rpc.packets),packets)
+        self.assertFalse(self.model_calls)
+
+    def test_active_writer_still_blocks_exact_literal_without_native_packet(self):
+        gm=self.rig.gm
+        with gm.task_store(gm.writer_folder(self.rig.host,'aw-42',{})) as store:
+            store.save(dict(version=1,active=True,stateDir='/synthetic/owned-task'))
+        self.request()
+        self.assertFalse(self.rig.rpc.packets);self.assertFalse(self.model_calls)
+        self.assertIn('owns this body',self.sent[-1]['text'])
+
+    def test_unknown_literal_transport_is_retained_and_not_replayed(self):
+        self.rig.rpc.post_failure='transport'
+        with self.assertRaises(converse.ConversationError):self.request()
+        self.assertEqual(self.rig.rpc.commands,['.appear Joel'])
+        self.assertTrue(self.base.brain.last_failure_receipt['tools'][-1]['unknownReceipt'])
+        count=len(self.rig.rpc.packets)
+        folder=self.rig.host/'data/converse/lotharen/gm-commands'
+        retained={p:p.read_bytes() for p in folder.glob('*/state.json')}
+        try:
+            reply=self.loop.generate_reply([],self.state(),literal_gm='.appear Joel')
+        except converse.ConversationError:pass
+        else:self.assertIn('not dispatched',reply['text'])
+        self.assertEqual(len(self.rig.rpc.packets),count)
+        self.assertTrue(retained)
+        for path,raw in retained.items():self.assertEqual(path.read_bytes(),raw)
+        self.assertFalse(self.model_calls)
+
+    def test_existing_trusted_packet_guard_rejection_is_not_bypassed(self):
+        original=self.rig.gm.execute_command
+        def guarded(*args,**kwargs):
+            old=kwargs['command_guard']
+            def guard(out,phase):
+                if phase=='before_selection':return dict(allowed=False,knownNotDispatched=True,
+                    reason='expected_destination_required',gameEffectClaimed=False)
+                return old(out,phase)
+            kwargs['command_guard']=guard
+            return original(*args,**kwargs)
+        with patch.object(self.rig.gm,'execute_command',side_effect=guarded):self.request('gm .groupsummon Arlen')
+        self.assertFalse(self.rig.rpc.packets);self.assertFalse(self.model_calls)
+        self.assertIn('expected_destination_required',self.sent[-1]['text'])
+
+    def test_feedback_presentation_does_not_downgrade_unknown_or_drop_known_write(self):
+        for result in (None,{},dict(ok=False,error=dict(outcome='unconfirmed'))):
+            text=converse.literal_gm_feedback('.gps',result)['text']
+            self.assertIn('unconfirmed',text);self.assertNotIn('not dispatched',text)
+        result=dict(ok=True,result=dict(commandTransportWritten=True,feedback=None))
+        self.assertIn('sent unchanged',converse.literal_gm_feedback('.gps',result)['text'])
+        result['result']['feedback']=dict(status='cursor_lost',systemMessages=[dict(text='Native feedback'),dict(text=None)])
+        text=converse.literal_gm_feedback('.gps',result)['text']
+        self.assertIn('Native feedback',text);self.assertIn('not effect proof',text)
+
+    def test_literal_fast_path_requires_the_guarded_sender_bundle(self):
+        with patch.object(converse.gm_tasks,'selected_target_admission',None):
+            with self.assertRaises(converse.ConversationError):self.request('gm .gps')
+        self.assertFalse(self.rig.rpc.packets)
+        self.assertFalse(self.model_calls)
+
+    def test_literal_die_never_falls_back_to_self_or_joels_target(self):
+        for command in ('.die','.damage 6000'):
+            self.request('gm '+command)
+            self.assertFalse(self.rig.rpc.packets)
+            self.assertFalse(self.model_calls)
+            self.assertIn('gm_target_self_target_forbidden',self.sent[-1]['text'])
+
+    def test_model_my_target_uses_fresh_owner_guid_not_same_entry_stale_spawn(self):
+        old='17379391167073878318';current='17379391167073878321'
+        self.rig.rpc.selected=old
+        def world(method,value):
+            if method!='buddy-world.snapshot':return
+            value['visitRevision']='1'
+            creature=lambda guid:dict(guid=guid,entry=12222,present=True,mapKnown=True,mapId=349,aliveKnown=True,alive=True)
+            value['owner'].update(targetKnown=True,targetGuid=current)
+            value['ownerTarget']=creature(current);value['nearbyCreatures']=[creature(old),creature(current)]
+        self.rig.rpc.on_read=world
+        results=[]
+        for command,text in [('.die','Kill MY current target with .die command'),
+                ('.damage 6000','Can you use the .damage command to kill my target? 6000 damage should kill it')]:
+            def model(system,messages,schema,tools,dispatch,**kwargs):
+                self.model_calls.append(messages)
+                results.append(dispatch('gm_execute',dict(command=command,select_guid=old)))
+                return dict(text='No kill was dispatched; the current owner target is a different GUID.',action='NONE',emote='NONE')
+            self.base.brain.client.generate=model
+            self.request(text)
+            self.assertFalse(self.rig.rpc.packets)
+            self.assertEqual(results[-1]['result']['targetAdmission']['ownerTargetGuid'],current)
+            self.assertEqual(results[-1]['result']['targetAdmission']['ownerTargetEntry'],12222)
+
+    def test_arrive_is_not_rewritten_and_appear_hint_is_actionable(self):
+        self.request('gm .arrive Joel')
+        self.assertEqual(self.rig.rpc.commands,['.arrive Joel'])
+        self.assertIn('gm .appear <name>',self.sent[-1]['text'])
+        self.assertIn('did not substitute',self.sent[-1]['text'])
+        self.assertFalse(self.model_calls)
+
+    def test_foreign_whisper_stale_or_gap_does_not_enter_literal(self):
+        for changes in (dict(sender=99),dict(receiver='4'),dict(lost=True),dict(resumed=True)):
+            # Each condition has a fresh monotonic owner input; ACK/receipts remain.
+            with self.subTest(changes=changes):
+                before=len(self.rig.rpc.packets)
+                self.request(**changes)
+                self.assertEqual(len(self.rig.rpc.packets),before)
+        self.assertFalse(self.model_calls)
+
+    def test_party_or_quoted_text_keeps_ordinary_model_path_and_no_literal_write(self):
+        for text,channel in [('gm .appear Joel','PARTY'),('Please explain gm .appear Joel','WHISPER'),
+                             ('"gm .appear Joel"','WHISPER'),('The command was "gm .appear Joel", right?','WHISPER')]:
+            self.request(text,channel=channel)
+        self.assertEqual(len(self.model_calls),4)
+        self.assertFalse(self.rig.rpc.packets)
+
 
 from test_companions import LauncherTests
+from test_owned_gm_lua import OwnedGMLuaTests
 
 
 if __name__ == "__main__":
