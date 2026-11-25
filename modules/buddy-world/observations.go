@@ -358,6 +358,7 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 			current := s.carriedItem(guid)
 			item.DurabilityKnown, item.Durability, item.MaxDurability = current.durabilityKnown, current.durability, current.maximum
 			item.EnhancementsKnown, item.HasEnhancements = current.enhancementsKnown, current.enhancements
+			item.EnhancementDetails = current.enhancementDetails.message()
 			if obj := s.items[guid]; obj != nil {
 				owner := uint64(obj.fields[itemOwner]) | uint64(obj.fields[itemOwner+1])<<32
 				item.Entry, item.StackCount = obj.fields[objectEntry], obj.fields[itemStack]
