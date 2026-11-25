@@ -4525,8 +4525,12 @@ type SnapshotResponse struct {
 	SelfMotionAuthority *OwnMotionAuthority          `protobuf:"bytes,50,opt,name=self_motion_authority,json=selfMotionAuthority,proto3" json:"self_motion_authority,omitempty"`
 	SplineCompletion    *SplineCompletionObservation `protobuf:"bytes,51,opt,name=spline_completion,json=splineCompletion,proto3" json:"spline_completion,omitempty"`
 	WorldTransfer       *WorldTransferObservation    `protobuf:"bytes,52,opt,name=world_transfer,json=worldTransfer,proto3" json:"world_transfer,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// PRIVATE PLAYER_AMMO_ID, from this authenticated body's own update fields only.
+	SelfAmmoKnown    bool   `protobuf:"varint,53,opt,name=self_ammo_known,json=selfAmmoKnown,proto3" json:"self_ammo_known,omitempty"`
+	SelfAmmoEntry    uint32 `protobuf:"varint,54,opt,name=self_ammo_entry,json=selfAmmoEntry,proto3" json:"self_ammo_entry,omitempty"`
+	SelfAmmoRevision uint64 `protobuf:"varint,55,opt,name=self_ammo_revision,json=selfAmmoRevision,proto3" json:"self_ammo_revision,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -4921,6 +4925,27 @@ func (x *SnapshotResponse) GetWorldTransfer() *WorldTransferObservation {
 		return x.WorldTransfer
 	}
 	return nil
+}
+
+func (x *SnapshotResponse) GetSelfAmmoKnown() bool {
+	if x != nil {
+		return x.SelfAmmoKnown
+	}
+	return false
+}
+
+func (x *SnapshotResponse) GetSelfAmmoEntry() uint32 {
+	if x != nil {
+		return x.SelfAmmoEntry
+	}
+	return 0
+}
+
+func (x *SnapshotResponse) GetSelfAmmoRevision() uint64 {
+	if x != nil {
+		return x.SelfAmmoRevision
+	}
+	return 0
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.
@@ -5804,7 +5829,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\x8e\x1b\n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\x8c\x1c\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -5862,7 +5887,10 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x11self_spline_facts\x181 \x01(\v2&.warcraftbuddy.world.v1.OwnSplineFactsR\x0fselfSplineFacts\x12^\n" +
 	"\x15self_motion_authority\x182 \x01(\v2*.warcraftbuddy.world.v1.OwnMotionAuthorityR\x13selfMotionAuthority\x12`\n" +
 	"\x11spline_completion\x183 \x01(\v23.warcraftbuddy.world.v1.SplineCompletionObservationR\x10splineCompletion\x12W\n" +
-	"\x0eworld_transfer\x184 \x01(\v20.warcraftbuddy.world.v1.WorldTransferObservationR\rworldTransfer\"q\n" +
+	"\x0eworld_transfer\x184 \x01(\v20.warcraftbuddy.world.v1.WorldTransferObservationR\rworldTransfer\x12&\n" +
+	"\x0fself_ammo_known\x185 \x01(\bR\rselfAmmoKnown\x12&\n" +
+	"\x0fself_ammo_entry\x186 \x01(\rR\rselfAmmoEntry\x12,\n" +
+	"\x12self_ammo_revision\x187 \x01(\x04R\x10selfAmmoRevision\"q\n" +
 	"\x13CombatEventsRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +

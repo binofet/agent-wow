@@ -10,7 +10,7 @@ type itemMetadata struct {
 	name                                                                                                  string
 	known                                                                                                 bool
 	sellPrice                                                                                             uint32
-	entry, class, subclass, quality, flags, flags2, inventoryType, containerSlots                         uint32
+	entry, class, subclass, quality, flags, flags2, inventoryType, containerSlots, ammoType               uint32
 	bonding, startQuest, lockID, pageText, bagFamily, duration, maxDurability                             uint32
 	hasSpell                                                                                              bool
 	onUseSpells                                                                                           [5]uint32
@@ -157,7 +157,7 @@ func parseItemMetadata(data []byte) (itemMetadata, error) {
 		m.resistances[i], _ = read()
 	}
 	m.delay, _ = read()
-	_, _ = read()
+	m.ammoType, _ = read()
 	rangeBits, _ := read()
 	rangeModifier := math.Float32frombits(rangeBits)
 	if math.IsNaN(float64(rangeModifier)) || math.IsInf(float64(rangeModifier), 0) || rangeModifier < 0 {

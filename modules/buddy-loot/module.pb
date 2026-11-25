@@ -77,7 +77,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ёе
+яж
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"г
 PlayerState
 guid (Rguid
@@ -580,7 +580,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"О
+permanent_bonus (RpermanentBonus"М
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -638,7 +638,10 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 self_spline_facts1 (2&.warcraftbuddy.world.v1.OwnSplineFactsRselfSplineFacts^
 self_motion_authority2 (2*.warcraftbuddy.world.v1.OwnMotionAuthorityRselfMotionAuthority`
 spline_completion3 (23.warcraftbuddy.world.v1.SplineCompletionObservationRsplineCompletionW
-world_transfer4 (20.warcraftbuddy.world.v1.WorldTransferObservationRworldTransfer"q
+world_transfer4 (20.warcraftbuddy.world.v1.WorldTransferObservationRworldTransfer&
+self_ammo_known5 (RselfAmmoKnown&
+self_ammo_entry6 (RselfAmmoEntry,
+self_ammo_revision7 (RselfAmmoRevision"q
 CombatEventsRequest
 
 session_id (	R	sessionId%

@@ -23,6 +23,8 @@ message ItemEligibility {
   string gear_blocked_reason = 13;
   ConsumableMetadata consumable = 14;
   GearItemFacts gear_facts = 15;
+  bool ammo_select_eligible = 16;
+  string ammo_blocked_reason = 17;
 }
 message Operation {
   string request_id = 1;
@@ -53,6 +55,11 @@ message Operation {
   uint64 baseline_equipment_revision = 26;
   uint64 observed_equipment_revision = 27;
   uint64 displaced_item_guid = 28;
+  uint64 baseline_ammo_revision = 29;
+  uint64 observed_ammo_revision = 30;
+  uint32 ammo_entry = 31;
+  uint32 baseline_ammo_entry = 32;
+  bool ammo_confirmed = 33;
 }
 message State {
   string session_id = 1;
@@ -83,6 +90,9 @@ message State {
   ConsumableUse last_consumable_use = 40;
   ConsumableContext consumable_context = 41;
   GearContext gear_context = 42;
+  bool ammo_known = 43;
+  uint32 ammo_entry = 44;
+  uint64 ammo_revision = 45;
 }
 
 // Static template facts and exact legal destinations; no upgrade preference.
@@ -164,6 +174,11 @@ message EquipGearRequest {
   ItemRef source = 5; uint32 equipment_slot = 6; uint64 expected_equipment_revision = 7;
   uint64 expected_equipped_item_guid = 8; bool require_conservative_upgrade = 9;
 }
+message SelectAmmoRequest {
+  string session_id = 1; string request_id = 2; uint64 expected_revision = 3; uint64 expected_inventory_revision = 4;
+  ItemRef source = 5; uint64 expected_ammo_revision = 6; uint32 expected_ammo_entry = 7;
+  uint64 expected_equipment_revision = 8; uint64 expected_ranged_item_guid = 9;
+}
 message DrinkRequest {
   string session_id = 1; uint64 self_guid = 2;
   ItemRef source = 3; uint32 spell_id = 4; uint64 expected_inventory_revision = 5; string request_id = 6;
@@ -190,6 +205,7 @@ service BuddyInventory {
   rpc Move(MoveRequest) returns (State);
   rpc Equip(EquipRequest) returns (State);
   rpc EquipGear(EquipGearRequest) returns (State);
+  rpc SelectAmmo(SelectAmmoRequest) returns (State);
   rpc Sell(SellRequest) returns (State);
   rpc Drink(DrinkRequest) returns (DrinkReceipt);
   rpc EatBuffFood(EatBuffFoodRequest) returns (EatBuffFoodReceipt);
