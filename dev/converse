@@ -914,19 +914,24 @@ def attached_policy_faults(guid, sid, policy, actions):
         operation = actions.get(field, {})
         if isinstance(operation, dict) and operation.get('phase') in ATTACHED_OPERATION_FAILURES:
             evidence = dict(operation)
-            if field == 'lastSpellOperation' and 'lastCastFailure' in actions:
-                evidence['lastCastFailure'] = actions['lastCastFailure']
             if field == 'lastSpellOperation':
-                # The status snapshot pairs this code with this operation, not
-                # a remembered spell or the legacy assist controller's reason.
+                # A separate buff operation can update the global last-cast
+                # fields while this support operation remains retained.
+                correlated = (operation['phase']=='server_rejected_no_replay'
+                    and operation.get('spellId') is not None
+                    and str(actions.get('lastCastSpellId'))==str(operation['spellId'])
+                    and str(actions.get('lastCastTargetGuid',0))==str(operation.get('targetGuid',0)))
+                code_known = correlated and 'lastCastFailure' in actions
+                if code_known:evidence['lastCastFailure']=actions['lastCastFailure']
                 evidence['operationFailure'] = dict(
                     **{key: copy.deepcopy(operation[key]) for key in
                        ('spellId', 'targetGuid', 'capability', 'phase', 'operationRevision', 'visitId')
                        if key in operation},
-                    failureCodeKnown='lastCastFailure' in actions,
-                    failureCode=actions.get('lastCastFailure'),
+                    failureCodeKnown=code_known,
+                    failureCode=actions['lastCastFailure'] if code_known else None,
+                    failureCodeCorrelation='matching_last_cast_spell_and_target' if code_known else 'unproven',
                     sessionId=sid, casterGuid=str(guid),
-                    source='same_buddy_actions_status_snapshot')
+                    source='buddy_actions_status_fields_not_an_independent_event_receipt')
             failures.append((field, operation['phase'], evidence))
     command = actions.get('commandFault', {})
     if (isinstance(command, dict) and command.get('sessionId') == sid
