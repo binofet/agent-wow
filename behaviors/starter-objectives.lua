@@ -616,12 +616,22 @@ local function cave_point(row,patrol)
     return row
 end
 
-local function cave_creature(r)
-    if not array(r,20) or #r<10 or not decimal(r[1]) or not uint(r[2]) or not uint(r[3]) or r[3]>4095 then return end
-    for _,i in ipairs({4,8,9,10,11,12,13,14,18}) do if not uint(r[i] or 0) then return end end
-    for i=5,7 do if not number(r[i]) or math.abs(r[i])>=40000 then return end end
-    for _,i in ipairs({15,16,17,19}) do if not decimal(r[i] or "0") then return end end
+local function cave_creature(r,id,priority)
+    if not array(r,20) or #r<10 or not id(r[1]) or not uint(r[2]) or not uint(r[3]) or r[3]>4095 or
+        not uint(r[4]) or not uint(r[8]) or not uint(r[9]) or not uint(r[10]) or not uint(r[11] or 0) or
+        not uint(r[12] or 0) or not uint(r[13] or 0) or not uint(r[14] or 0) or not uint(r[18] or 0) or
+        not number(r[5]) or math.abs(r[5])>=40000 or not number(r[6]) or math.abs(r[6])>=40000 or
+        not number(r[7]) or math.abs(r[7])>=40000 or not id(r[15] or "0") or not id(r[16] or "0") or
+        not id(r[17] or "0") or not id(r[19] or "0") then return end
+    local t=r[20]
+    if t and (not array(t,6) or #t~=6 or not uint(t[1]) or t[1]>31 or not id(t[2]) or not uint(t[3]) or
+        not number(t[4]) or math.abs(t[4])>=40000 or not number(t[5]) or math.abs(t[5])>=40000 or
+        not number(t[6]) or math.abs(t[6])>=40000) then return end
     local f=r[3]
+    if priority then
+        return {guid=r[1],present=bit(f,1),aliveKnown=bit(f,8),alive=bit(f,16),attackVictimKnown=bit(f,1024),
+            victimGuid=r[16] or "0",attackAge=cave_age(r[17] or "0")}
+    end
     local c={guid=r[1],entry=r[2],present=bit(f,1),mapKnown=bit(f,2),positionKnown=bit(f,4),
         aliveKnown=bit(f,8),alive=bit(f,16),healthKnown=bit(f,32),levelKnown=bit(f,64),unitFlagsKnown=bit(f,128),
         dynamicFlagsKnown=bit(f,256),targetKnown=bit(f,512),attackVictimKnown=bit(f,1024),identityValid=bit(f,2048),
@@ -629,10 +639,7 @@ local function cave_creature(r)
         unitFlags=r[11] or 0,unitFlags2=r[12] or 0,dynamicFlags=r[13] or 0,npcFlags=r[14] or 0,
         targetGuid=r[15] or "0",victimGuid=r[16] or "0",attackAge=cave_age(r[17] or "0"),
         movementFlags=r[18] or 0,positionAge=cave_age(r[19] or "0")}
-    if r[20] then
-        local t=r[20]
-        if not array(t,6) or #t~=6 or not uint(t[1]) or t[1]>31 or not decimal(t[2]) or not uint(t[3]) then return end
-        for i=4,6 do if not number(t[i]) or math.abs(t[i])>=40000 then return end end
+    if t then
         c.trajectory={known=bit(t[1],1),stopped=bit(t[1],2),cyclic=bit(t[1],4),transportRelative=bit(t[1],8),
             destinationKnown=bit(t[1],16),age=cave_age(t[2]),duration=t[3],x=t[4],y=t[5],z=t[6]}
     end
@@ -642,9 +649,18 @@ end
 local function cave_scenes(input)
     if type(input)~="table" or input.format~=1 or input.selfGuid~="1" or type(input.actors)~="table" or not array(input.creatures,99) or
        type(input.task)~="table" then return end
+    -- Each repeated immutable decimal is fully validated once in this decode;
+    -- a different value, including a malformed late row, still runs the check.
+    local checked={["0"]=true}
+    local function id(v)
+        if type(v)~="string" then return false end
+        if checked[v] then return true end
+        if not decimal(v) then return false end
+        checked[v]=true;return true
+    end
     local rows,scenes,players={},{},{}
     for i,row in ipairs(input.creatures) do
-        rows[i]=cave_creature(row);if not rows[i] then return end
+        rows[i]=cave_creature(row,id,input.mode=="priority");if not rows[i] then return end
     end
     local count=0
     for guid in pairs(input.actors) do if guid~="1" and guid~="4" and guid~="5" then return end;count=count+1 end
@@ -655,13 +671,13 @@ local function cave_scenes(input)
            not array(v.s,13) or #v.s~=13 or not array(v.p,6) or #v.p~=6 or not array(v.a,7) or #v.a~=7 or
            not array(v.l,5) or #v.l~=5 or not array(v.o,6) or #v.o~=6 or not array(v.i,3) or #v.i~=3 or
            not array(v.q,25) or #v.q~=25 or not array(v.c,32) or not array(v.g,40) or #v.g<3 or type(v.t)~="boolean" then return end
-        for i=2,5 do if not decimal(v.b[i]) then return end end
+        for i=2,5 do if not id(v.b[i]) then return end end
         for _,n in ipairs(v.s) do if not uint(n) then return end end
         for i=1,2 do if not uint(v.p[i]) then return end end
         for i=3,5 do if not number(v.p[i]) or math.abs(v.p[i])>=40000 then return end end
-        if not decimal(v.p[6]) or not uint(v.a[1]) or not decimal(v.a[3]) or not uint(v.a[4]) or
-           not decimal(v.a[5]) or not decimal(v.a[6]) or type(v.a[2])~="string" or #v.a[2]>128 or type(v.a[7])~="string" or #v.a[7]>128 or
-           not uint(v.l[1]) or type(v.l[2])~="string" or #v.l[2]>128 or not decimal(v.l[3]) or not decimal(v.l[4]) or type(v.l[5])~="boolean" or
+        if not id(v.p[6]) or not uint(v.a[1]) or not id(v.a[3]) or not uint(v.a[4]) or
+           not id(v.a[5]) or not id(v.a[6]) or type(v.a[2])~="string" or #v.a[2]>128 or type(v.a[7])~="string" or #v.a[7]>128 or
+           not uint(v.l[1]) or type(v.l[2])~="string" or #v.l[2]>128 or not id(v.l[3]) or not id(v.l[4]) or type(v.l[5])~="boolean" or
            type(v.o[1])~="boolean" or type(v.o[2])~="boolean" or not uint(v.o[3]) or type(v.o[4])~="string" or #v.o[4]>128 or
            not uint(v.o[5]) or type(v.o[6])~="boolean" then return end
         for _,n in ipairs(v.i) do if not number(n) or n<0 or n%1~=0 then return end end
@@ -677,7 +693,7 @@ local function cave_scenes(input)
             if q[1]~=0 then log[q[1]]=bit(q[3],1) and bit(q[2],1) end
         end
         for _,m in ipairs(v.g) do
-            if not array(m,2) or #m~=2 or not decimal(m[1]) or m[1]=="0" or group[m[1]]~=nil or not uint(m[2]) or m[2]>3 or
+            if not array(m,2) or #m~=2 or not id(m[1]) or m[1]=="0" or group[m[1]]~=nil or not uint(m[2]) or m[2]>3 or
                bit(m[2],2)~=(m[1]==guid) then return end
             group[m[1]]=bit(m[2],1)
         end
