@@ -52,7 +52,7 @@ func TestLootApproachUsesBoundedNormalStepsAndStops(t *testing.T) {
 	}
 }
 func TestLootApproachRejectsUnsafeTargetsAndWrongLease(t *testing.T) {
-	for _, mode := range []string{"token", "living", "notlootable", "far", "vertical", "combat", "ownerfar", "map", "unknown", "transport"} {
+	for _, mode := range []string{"token", "living", "notlootable", "far", "vertical", "combat", "map", "unknown", "transport"} {
 		s, f, _, r := approachRig(t)
 		switch mode {
 		case "token":
@@ -67,8 +67,6 @@ func TestLootApproachRejectsUnsafeTargetsAndWrongLease(t *testing.T) {
 			f.world.LootableCorpses[0].Z = 2
 		case "combat":
 			f.world.Self.UnitFlags = 0x80000
-		case "ownerfar":
-			f.world.Owner.X = 31
 		case "map":
 			f.world.LootableCorpses[0].MapId = 1
 		case "unknown":

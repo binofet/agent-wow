@@ -67,7 +67,6 @@ type Service struct {
 	hostEncounterUntil                         time.Time
 	hostEncounterEpoch                         uint64
 	encounterVisit                             encounterVisit
-	automaticCorpseLoot                        bool
 	now                                        func() time.Time
 	state                                      actionsv1.State
 	closed                                     bool
@@ -204,14 +203,6 @@ func NewIndependentService(session sessionAPI, selfGUID uint64, sessionID ...str
 	s.independent = true
 	s.state.Limitation += " Independent mode disables owner follow, healing and assistance; own quest travel and practice retain their existing safety bounds."
 	return s
-}
-
-// UseAutomaticCorpseLoot allows server-offered corpses to use the ordinary
-// local movement policy without requiring the party owner's presence.
-func (s *Service) UseAutomaticCorpseLoot() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.automaticCorpseLoot = true
 }
 
 func (s *Service) stateLocked() *actionsv1.State {
