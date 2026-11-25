@@ -92,6 +92,9 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	if capability == "loot_open" || capability == "loot_close" || capability == "loot_money" || capability == "loot_slot" {
 		return p.resolveCorpseLoot(action, capability)
 	}
+	if capability == "equip_gear" {
+		return p.resolveGearEquip(action)
+	}
 	if capability == "consume" {
 		return p.resolveConsumable(action)
 	}
