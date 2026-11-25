@@ -109,6 +109,140 @@ def _varint(value):
     return bytes(out)+bytes([value])
 
 
+class TargetNotDispatched(ValueError):
+    """A host observation guard failed before the native command packet."""
+    def __init__(self,admission):
+        self.admission=admission
+        self.packet_dispatched=False
+        super().__init__(admission['reason'])
+
+
+SELECTED_CREATURE_COMMANDS=('die','damage')
+
+
+def _selected_target_command_mode(command):
+    if not isinstance(command,str):return None
+    token=command[1:].split(' ',1)[0].casefold() if command.startswith('.') else ''
+    if token in SELECTED_CREATURE_COMMANDS:
+        if token=='die' and command.casefold()!='.die':return 'invalid_tail'
+        return 'exact' # .damage's native argument grammar remains unchanged.
+    if token and any(name.startswith(token) for name in SELECTED_CREATURE_COMMANDS):return 'abbreviation'
+    return None
+
+
+def _target_guid(value):
+    if isinstance(value,bool):return None
+    text=str(value)
+    return text if re.fullmatch(r'0|[1-9][0-9]{0,19}',text) and int(text)<2**64 else None
+
+
+def _target_snapshot(rpc,sid,guid=None):
+    before=rpc.call('buddy-actions.status',{})
+    world=rpc.call('buddy-world.snapshot',dict(creatureGuid=guid) if guid else {})
+    after=rpc.call('buddy-actions.status',{})
+    own=world.get('self',{})
+    if (before.get('sessionId')!=sid or after.get('sessionId')!=sid
+            or str(before.get('selfGuid'))!='87' or str(after.get('selfGuid'))!='87'
+            or str(own.get('guid'))!='87' or own.get('present') is not True
+            or world.get('sessionId',sid)!=sid):
+        raise ValueError('gm_target_current_body_required')
+    return world,own
+
+
+def _target_creatures(world,guid):
+    rows=[world.get('requestedCreature',{}),world.get('ownerTarget',{}),
+        *world.get('nearbyCreatures',[]),*world.get('requestedCreatures',[]),
+        *world.get('questGivers',[]),*world.get('trainerCreatures',[]),*world.get('lootableCorpses',[])]
+    return [row for row in rows if isinstance(row,dict) and _target_guid(row.get('guid'))==guid]
+
+
+def selected_target_admission(rpc,sid,*,requested=None,expected=None,owner_guid=None,require_selection=True):
+    """Read-only, exact-spawn guard; no faction/realm-atomicity inference."""
+    out=dict(allowed=False,knownNotDispatched=True,knownNoCommand=True,realmTargetKnown=False,hostilityKnown=False,
+        scope='explicit_live_nonplayer_creature',requestedTargetGuid=_target_guid(requested),
+        observedSelectionKnown=False,observedSelectionGuid=None,ownerGuid=None,ownerTargetGuid=None)
+    def deny(reason):out['reason']=reason;return out
+    try:
+        world,own=_target_snapshot(rpc,sid,(expected or {}).get('guid') or _target_guid(requested))
+        out.update(observedSelectionKnown=own.get('targetKnown') is True,
+            observedSelectionGuid=_target_guid(own.get('targetGuid',0)) if own.get('targetKnown') is True else None)
+        own_map=own.get('mapId',0)
+        if own.get('mapKnown') is not True or type(own_map) is not int or not 0<=own_map<2**32:
+            return deny('gm_target_current_map_required')
+        owner=world.get('owner',{})
+        if owner.get('present') is True:
+            out['ownerGuid']=_target_guid(owner.get('guid'))
+            if owner.get('targetKnown') is True:out['ownerTargetGuid']=_target_guid(owner.get('targetGuid',0))
+        wanted=_target_guid(requested) if requested is not None else (expected or {}).get('guid')
+        if owner_guid is not None:
+            out['requiredOwnerGuid']=owner_guid
+            if out['ownerGuid']!=owner_guid:return deny('gm_target_current_owner_observation_required')
+            if owner.get('mapKnown') is not True or type(owner.get('mapId',0)) is not int or owner.get('mapId',0)!=own_map:
+                return deny('gm_target_current_owner_same_map_required')
+            if out['ownerTargetGuid'] in (None,'0'):return deny('gm_target_current_owner_target_required')
+            target=world.get('ownerTarget',{})
+            if str(target.get('guid'))!=out['ownerTargetGuid'] or target.get('present') is not True:
+                return deny('gm_target_owner_target_creature_unresolved')
+            out['ownerTargetEntry']=target.get('entry')
+            if wanted is not None and wanted!=out['ownerTargetGuid']:
+                return deny('gm_target_owner_target_changed' if expected else 'gm_target_requested_guid_conflicts_with_current_owner_target')
+            wanted=out['ownerTargetGuid']
+        if wanted is None:wanted=out['observedSelectionGuid']
+        out['requiredTargetGuid']=wanted
+        if wanted in (None,'0'):return deny('gm_target_exact_creature_target_required')
+        if wanted=='87':return deny('gm_target_self_target_forbidden')
+        if require_selection and (not out['observedSelectionKnown'] or out['observedSelectionGuid']!=wanted):
+            return deny('gm_target_intended_selection_not_observed')
+        players=[own,owner,*world.get('nearbyPlayers',[])]
+        if any(str(row.get('guid'))==wanted and row.get('present') is True for row in players):
+            return deny('gm_target_player_target_not_supported')
+        rows=_target_creatures(world,wanted)
+        if not rows:return deny('gm_target_target_creature_not_locally_observed')
+        facts={(r.get('present'),r.get('mapKnown'),r.get('mapId',0),r.get('entry'),r.get('aliveKnown'),r.get('alive',False)) for r in rows}
+        if len(facts)!=1:return deny('gm_target_target_observations_conflict')
+        target=rows[0];entry=target.get('entry');visit=_target_guid(world.get('visitRevision',0))
+        if target.get('present') is not True:return deny('gm_target_target_creature_not_present')
+        if (own.get('mapKnown') is not True or target.get('mapKnown') is not True
+                or type(target.get('mapId',0)) is not int or target.get('mapId',0)!=own_map):
+            return deny('gm_target_same_current_map_required')
+        if visit in (None,'0'):return deny('gm_target_bound_world_visit_required')
+        if type(entry) is not int or not 0<entry<2**32:return deny('gm_target_creature_entry_unknown')
+        if target.get('aliveKnown') is not True or target.get('alive') is not True:
+            return deny('gm_target_live_creature_observation_required')
+        factual=dict(guid=wanted,entry=entry,mapId=own.get('mapId',0),visitRevision=visit)
+        if expected and any(expected.get(key)!=factual[key] for key in factual):
+            return deny('gm_target_target_or_world_visit_changed')
+        out.update(allowed=True,knownNotDispatched=False,knownNoCommand=False,target=factual,
+            selectionConfirmed=out['observedSelectionKnown'] and out['observedSelectionGuid']==wanted,
+            reason='gm_target_live_creature_selection_observed' if require_selection else 'gm_target_live_creature_candidate_observed')
+        return out
+    except Exception as error:
+        out['observationErrorType']=type(error).__name__
+        return deny('gm_target_target_observation_unavailable')
+
+
+def selected_target_effect(rpc,sid,expected):
+    out=dict(known=False,observedDead=None,target=expected,commandCausalityKnown=False)
+    try:
+        world,own=_target_snapshot(rpc,sid,expected['guid'])
+        out.update(gmAliveKnown=own.get('aliveKnown') is True,
+            gmAlive=own.get('alive',False) if own.get('aliveKnown') is True else None)
+        if (_target_guid(world.get('visitRevision',0))!=expected['visitRevision']
+                or own.get('mapKnown') is not True or type(own.get('mapId',0)) is not int
+                or own.get('mapId',0)!=expected['mapId']):
+            out['reason']='gm_target_effect_world_changed';return out
+        rows=_target_creatures(world,expected['guid'])
+        if not rows or any(r.get('present') is not True or r.get('entry')!=expected['entry']
+                or r.get('mapKnown') is not True or r.get('mapId',0)!=expected['mapId']
+                or r.get('aliveKnown') is not True or type(r.get('alive',False)) is not bool for r in rows):
+            out['reason']='gm_target_effect_target_unavailable';return out
+        life={r.get('alive',False) for r in rows}
+        if len(life)!=1:out['reason']='gm_target_effect_observations_conflict';return out
+        out.update(known=True,observedDead=next(iter(life)) is False,
+            reason='gm_target_target_observed_dead' if next(iter(life)) is False else 'gm_target_target_still_observed_alive')
+    except Exception as error:out.update(reason='gm_target_effect_unavailable',errorType=type(error).__name__)
+    return out
+
 class SessionTransport:
     """An exact packet write through the existing authenticated module callback."""
     def __init__(self, rpc, config, before_send=None):
@@ -118,7 +252,7 @@ class SessionTransport:
         if not isinstance(prefix,list) or not all(isinstance(x,str) and '\0' not in x for x in prefix):
             raise ValueError('transport prefix must be an argv list')
         self.prefix=prefix
-    def send(self, opcode, payload, expected_session):
+    def send(self, opcode, payload, expected_session, *, final_check=None):
         attempted=False
         try:
             live=self.rpc.call('buddy-actions.status',{})
@@ -140,6 +274,7 @@ class SessionTransport:
             if guard is not None:guard(opcode,payload)
             final_authorise=getattr(self,'final_authorise',None)
             if final_authorise is not None:final_authorise()
+            if final_check is not None:final_check()
             attempted=True
             reply=subprocess.run(argv,input=wire,capture_output=True,timeout=10)
             if reply.returncode or not re.search(rb'^grpc-status: 0\r?$',reply.stdout,re.M|re.I):
@@ -149,10 +284,24 @@ class SessionTransport:
             error.packet_dispatched=attempted
             raise
 
-    def gm(self,command,sid):
-        if not isinstance(command,str) or re.fullmatch(r'\.[A-Za-z][ -~]{0,253}',command) is None or command!=command.rstrip():
+    def gm(self,command,sid,*,expected_target=None,owner_guid=None):
+        if not isinstance(command,str) or re.fullmatch(r"\.[A-Za-z][ -~]{0,253}",command) is None or command!=command.rstrip():
             raise ValueError('one ASCII native GM command required')
-        return self.send(0x95,struct.pack('<II',1,7)+command.encode('ascii')+b'\0',sid)
+        mode=_selected_target_command_mode(command)
+        payload=struct.pack('<II',1,7)+command.encode('ascii')+b'\0'
+        if mode is None:return self.send(0x95,payload,sid)
+        if mode!='exact':raise TargetNotDispatched(dict(allowed=False,knownNotDispatched=True,
+            reason='gm_target_requires_exact_supported_command_syntax',realmTargetKnown=False))
+        admission=selected_target_admission(self.rpc,sid,expected=expected_target,owner_guid=owner_guid)
+        if not admission['allowed']:raise TargetNotDispatched(admission)
+        expected=admission['target'];last=[admission]
+        def final_check():
+            last[0]=selected_target_admission(self.rpc,sid,expected=expected,owner_guid=owner_guid)
+            if not last[0]['allowed']:raise TargetNotDispatched(last[0])
+        result=self.send(0x95,payload,sid,final_check=final_check)
+        result['targetAdmission']=last[0]
+        result['targetEffect']=selected_target_effect(self.rpc,sid,expected)
+        return result
     def select(self,guid,sid):
         return self.send(0x13d,struct.pack('<Q',int(guid)),sid)
 
@@ -209,7 +358,7 @@ def _feedback_cursor(value):
     return cursor
 
 
-def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expected_session=None,before_send=None,feedback_reader=None,final_authorise=None,command_guard=None):
+def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expected_session=None,before_send=None,feedback_reader=None,final_authorise=None,command_guard=None,target_owner_guid=None):
     if command is not None and (not isinstance(command,str) or
             re.fullmatch(r'\.[A-Za-z][ -~]{0,253}',command) is None or command!=command.rstrip()):
         raise ValueError('one native GM command required')
@@ -228,6 +377,18 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
         transport.final_authorise=final_authorise
         out=dict(sessionId=sid,selectedGuid=select_guid,command=command,transportWritten=False,
             selectionTransportWritten=False,commandTransportWritten=False,gameEffectClaimed=False)
+        target_expected=None
+        if _selected_target_command_mode(command) is not None:
+            if _selected_target_command_mode(command)!='exact':
+                out.update(completion='die_target_not_dispatched',targetAdmission=dict(allowed=False,
+                    knownNotDispatched=True,reason='gm_target_requires_exact_supported_command_syntax'))
+                return out
+            admitted=selected_target_admission(rpc,sid,requested=select_guid,owner_guid=target_owner_guid,
+                require_selection=select_guid is None)
+            out['targetAdmission']=admitted
+            if not admitted['allowed']:
+                out['completion']='die_target_not_dispatched';return out
+            target_expected=admitted['target']
         try:out['selection']=selection_evidence(rpc,sid,select_guid)
         except Exception as error:
             if select_guid is not None:raise
@@ -252,7 +413,25 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
                 except Exception as error:
                     out.update(completion='selection_written_evidence_unavailable; no command was sent or queued',selectionEvidenceError=str(error))
                     return out
+            if target_expected is not None and not out['selection']['selectionMatches']:
+                deadline=time.monotonic()+COMMAND_FEEDBACK_SECONDS
+                while not out['selection']['selectionMatches'] and time.monotonic()<deadline:
+                    try:
+                        if final_authorise is not None:final_authorise()
+                    except Exception as error:
+                        out.update(completion='selection_written_observation_interrupted; no command was sent or queued',selectionEvidenceError=str(error))
+                        return out
+                    time.sleep(min(COMMAND_FEEDBACK_POLL_SECONDS,max(0,deadline-time.monotonic())))
+                    try:out['selection']=selection_evidence(rpc,sid,select_guid)
+                    except Exception as error:
+                        out.update(completion='selection_written_evidence_unavailable; no command was sent or queued',selectionEvidenceError=str(error))
+                        return out
             if not out['selection']['selectionMatches']:
+                if target_expected is not None:
+                    out['targetAdmission']=dict(out['targetAdmission'],allowed=False,knownNotDispatched=True,
+                        knownNoCommand=True,selectionConfirmed=False,reason='gm_target_intended_selection_not_observed',
+                        observedSelectionKnown=out['selection'].get('observedTargetKnown',False),
+                        observedSelectionGuid=out['selection'].get('observedTargetGuid'))
                 out['completion']='selection_written_not_observed; no command was sent or queued'
                 return out
         if command is None:
@@ -282,6 +461,11 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
             if select_guid is not None:
                 out['selection']=selection_evidence(rpc,sid,select_guid)
                 if not out['selection']['selectionMatches']:
+                    if target_expected is not None:
+                        raise TargetNotDispatched(dict(out['targetAdmission'],allowed=False,
+                            knownNotDispatched=True,knownNoCommand=True,reason='gm_target_selection_changed_at_boundary',
+                            observedSelectionKnown=out['selection'].get('observedTargetKnown',False),
+                            observedSelectionGuid=out['selection'].get('observedTargetGuid')))
                     raise ValueError('observed selection changed at final command boundary')
             if command_guard is not None:
                 admitted=command_guard(out,'before_command')
@@ -289,8 +473,11 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
                     out['repeatAdmission']=admitted
                     raise ValueError('same request command is unsettled; no command packet sent')
         transport.before_packet=final_command_guard
-        try:transport.gm(command,sid)
+        try:
+            receipt=(transport.gm(command,sid,expected_target=target_expected,owner_guid=target_owner_guid)
+                if target_expected is not None else transport.gm(command,sid))
         except Exception as error:
+            if isinstance(error,TargetNotDispatched):out['targetAdmission']=error.admission
             if getattr(error,'packet_dispatched',None) is False:
                 out.update(commandTransportWritten=False,completion='command_not_dispatched',commandError=str(error))
                 return out
@@ -298,6 +485,8 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
             error.gm_receipt=out
             raise
         out.update(transportWritten=True,commandTransportWritten=True,completion='effect_not_yet_verified')
+        if target_expected is not None:
+            out.update({key:receipt[key] for key in ('targetAdmission','targetEffect') if key in receipt})
         if feedback_reader is not None and baseline is not None:
             deadline=time.monotonic()+COMMAND_FEEDBACK_SECONDS
             cursor=baseline
@@ -341,7 +530,14 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
 
 
 def single_command(rpc,config,command,root=ROOT):
-    return execute_command(rpc,config,command,root)['sessionId']
+    result=execute_command(rpc,config,command,root)
+    if _selected_target_command_mode(command) is not None and result.get('commandTransportWritten') is not True:
+        admission=dict(result.get('targetAdmission') or {})
+        if admission.get('allowed') is not False:
+            admission.update(allowed=False,knownNotDispatched=True,knownNoCommand=True,
+                reason='gm_target_command_not_dispatched',detail=result.get('commandError'))
+        raise TargetNotDispatched(admission)
+    return result['sessionId']
 
 
 def normalized(world, actions=None):
@@ -573,7 +769,10 @@ class Host:
                 self.data['selection']=dict(known=False,targetGuid=str(action['targetGuid']),sessionId=sid,transportWritten=True)
             else:raise ValueError('unknown mechanical GM action:'+str(kind))
             receipt.update(outcome='written',receipt=result)
-        except Exception as error:receipt.update(outcome='unconfirmed',error=str(error))
+        except Exception as error:
+            if isinstance(error,TargetNotDispatched) and error.packet_dispatched is False:
+                receipt.update(outcome='not_dispatched',error=str(error),targetAdmission=error.admission)
+            else:receipt.update(outcome='unconfirmed',error=str(error))
         self.persist()
     def step(self):
         observations=self.observe()

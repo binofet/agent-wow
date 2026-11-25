@@ -1115,9 +1115,23 @@ class DirectTools:
             self._catalog();self._authorise_gm()
         return None
 
+    def _gm_owner_target_scope(self):
+        # Restriction only: immutable host-captured current owner input, never
+        # a tool argument, agent note, nearby template/name or GM selection.
+        request=(self.context or {}).get('current_request',{})
+        if (not isinstance(request,dict) or request.get('source')!='owner'
+                or request.get('senderGuid')!='3'):return None
+        messages=request.get('messages')
+        require(isinstance(messages,list) and bool(messages),'gm_target_current_owner_request_text_required')
+        latest=messages[-1]
+        require(isinstance(latest,dict) and isinstance(latest.get('text'),str),'gm_target_current_owner_request_text_required')
+        return '3' if re.search(r'\bmy\s+(?:current\s+)?target\b',latest['text'],re.IGNORECASE) else None
+
     def _gm_execute(self, gm, args, operation_id=None):
         self._authorise_gm()
         command = args.get("command")
+        if isinstance(command,str) and any(name.startswith(command.split(' ',1)[0][1:].casefold()) for name in ('die','damage')):
+            require(callable(getattr(gm,'selected_target_admission',None)),'guarded_selected_target_sender_required')
         require(isinstance(command, str) and re.fullmatch(r"\.[A-Za-z][ -~]{0,253}", command)
                 and command == command.rstrip(), "one_native_gm_command_required")
         selected = args.get("select_guid")
@@ -1142,6 +1156,25 @@ class DirectTools:
                 if prior.get("knownNotDispatched") is not True:
                     self._unknown("gm_execute", dict(stateDir=str(folder), commandSHA256=digest,
                         selectedGuid=selected), ToolError("retained_native_command_outcome_unconfirmed"))
+            # An unsettled explicit creature choice cannot silently become the
+            # GM's different current selection on a later bare lethal call.
+            # Read existing custody only: never settle, rewrite or replay it.
+            if selected is None and command.split(' ',1)[0].casefold() in ('.die','.damage'):
+                for candidate in sorted(folder.parent.iterdir()):
+                    if candidate==folder or not re.fullmatch('[a-f0-9]{64}',candidate.name):continue
+                    row=gm.task_store(candidate).load()
+                    if not row or row.get('identity')!=dict(sessionId=self.session_id,guid='87',rpcUrl=self.rpc.url) or row.get('requestId')!=self.request_id:continue
+                    previous=row.get('result') or {}
+                    intended=row.get('selectedGuid',previous.get('selectedGuid'))
+                    prior_command=(row.get('commandIntent') or {}).get('command','').split(' ',1)[0].casefold()
+                    targeted=bool(previous.get('targetAdmission')) or prior_command in ('.die','.damage')
+                    if intended not in (None,'0') and targeted and previous.get('commandTransportWritten') is not True:
+                        return dict(commandTransportWritten=False,selectionTransportWritten=False,
+                            transportWritten=False,completion='explicit_target_required_after_unsettled_selection',
+                            targetAdmission=dict(allowed=False,knownNotDispatched=True,
+                                reason='explicit_target_required_after_unsettled_selection',
+                                requiredTargetGuid=intended,priorOperationId=row.get('operationId')),
+                            gameEffectClaimed=False)
             entered = False
             command_intent=None
             command_ordinal=None
@@ -1169,7 +1202,8 @@ class DirectTools:
             try:
                 result = gm.execute_command(self.rpc, config, command, self.root,
                     select_guid=selected, expected_session=self.session_id, before_send=before_send,
-                    feedback_reader=self._chat_read, final_authorise=self._authorise_gm,command_guard=command_guard)
+                    feedback_reader=self._chat_read, final_authorise=self._authorise_gm,command_guard=command_guard,
+                    **({'target_owner_guid':self._gm_owner_target_scope()} if any(name.startswith(command.split(' ',1)[0][1:].casefold()) for name in ('die','damage')) else {}))
                 if result.get("transportWritten") is False:
                     entered=False  # A final guard can refuse after the durable reservation, before any packet.
                 if not result.get("commandTransportWritten"):
