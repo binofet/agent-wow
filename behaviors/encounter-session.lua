@@ -31,6 +31,7 @@ local healing_input
 local policy_observation
 local task_view
 local ranged_config,ranged_status
+local prior_intent
 local task_support_action
 -- Existing interactions yield to observed needs chosen here, never a native
 -- emergency controller. Loot closes its actual window through corpse-loot.
@@ -202,6 +203,10 @@ local function active_aura(aura, row)
 end
 
 local function damage_spell(obs, target, options)
+    if encounter_priors and target then
+        local allowed=encounter_priors.admission(obs,tostring(target.guid),prior_intent and prior_intent.explicitPullGuid)
+        if not allowed then return end
+    end
     options = options or {}
     local burst = state.burstIntent
     if burst and target and tostring(target.guid) == burst.targetGuid then
@@ -478,6 +483,7 @@ local function decide_encounter(frame)
     local leader_alive = alive(leader)
     local directive = commands and commands.queue_intent(obs) or {}
     if directive.killOrder and #directive.killOrder > 0 then order = directive.killOrder end
+    prior_intent=directive
     if directive.pullGuid and targets[directive.pullGuid] then
         targets[directive.pullGuid].pullRequested=true
         if obs.targets[directive.pullGuid] then obs.targets[directive.pullGuid].pullRequested=true end
@@ -832,6 +838,7 @@ end
 
 local function decide(frame)
     ranged_config,ranged_status=nil,nil
+    prior_intent=nil
     if commands and commands.ranged_stance and observation then ranged_config,ranged_status=commands.ranged_stance(observation,frame) end
     if spell_invocation then spell_invocation.capture(frame) end
     local out=decide_policy(frame)
@@ -880,6 +887,9 @@ local function decide(frame)
     if commands and commands.ranged_filter and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence then
         commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status,out.rangedOffenseEligible and damage_spell or nil)
         if ranged_config and transient_tasks and not task_support_action and not transient_tasks.allow(task_view,current,out.action) then out.action=nil end
+    end
+    if encounter_priors and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence then
+        encounter_priors.filter(current,out,ranged_status,prior_intent and prior_intent.explicitPullGuid)
     end
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end

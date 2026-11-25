@@ -147,7 +147,7 @@ local function on_event(event)
         end
     elseif value.task == "engage" then
         if value.enabled==false or value.cancel==true then state.pull=nil
-        elseif guid(value.targetGuid) then state.pull={targetGuid=value.targetGuid,visitId=state.visitId} end
+        elseif guid(value.targetGuid) then state.pull={targetGuid=value.targetGuid,visitId=state.visitId,pull=value.pull==true} end
     elseif value.task == "control" then
         if value.cancel == true or value.enabled == false then
             if value.auto == true then state.autoPolymorph = false end
@@ -254,6 +254,7 @@ local function queue_intent(obs)
             state.pull=nil
         elseif alive(npc) and npc.mapKnown==true and npc.mapId==obs.mapId then
             out.pullGuid=pull.targetGuid
+            if pull.pull==true then out.explicitPullGuid=pull.targetGuid end
         end
     end
     out.focusGuid = out.pullGuid or resolve(obs, state.focus)
@@ -541,6 +542,14 @@ local function ranged_stance(obs,frame)
             pending.sessionId,pending.selfGuid,pending.expiresAt,pending.expiresUnixMs=obs.sessionId,obs.selfGuid,now+pending.durationMs,unix+pending.durationMs
             state.rangedOnly=pending;state.rangedStatus=nil
         end
+    end
+    -- Reuse the same finite movement ledger for the editable prior. An explicit
+    -- ranged order wins; cancelling this prior ID suppresses it in this visit.
+    local prior=encounter_priors and encounter_priors.rule(obs)
+    if not state.rangedOnly and prior and not (state.rangedStatus and state.rangedStatus.id==prior.id and state.rangedStatus.phase=="cancelled") then
+        state.rangedOnly={id=prior.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId,
+            creatureEntry=prior.creatureEntry,minRangeYards=prior.minRangeYards,maxRangeYards=prior.maxRangeYards,
+            clearanceYards=prior.clearanceYards,expiresAt=now+prior.durationMs,expiresUnixMs=unix+prior.durationMs}
     end
     local row=state.rangedOnly
     if row and (row.sessionId~=obs.sessionId or row.selfGuid~=obs.selfGuid or row.mapId~=obs.mapId or row.visitId~=obs.visitId or now>=row.expiresAt or unix>=row.expiresUnixMs) then
