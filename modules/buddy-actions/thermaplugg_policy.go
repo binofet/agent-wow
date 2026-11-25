@@ -51,25 +51,6 @@ func (b thermapluggBinding) current(s *Service, ctx context.Context, w *worldv1.
 		reflect.DeepEqual(b.worldFacts, thermapluggStableWorld(w))
 }
 
-func thermapluggBosses(w *worldv1.SnapshotResponse) []any {
-	out := []any{}
-	seen := map[uint64]bool{}
-	if w == nil {
-		return out
-	}
-	rows := append([]*worldv1.CreatureState{w.OwnerTarget}, w.NearbyCreatures...)
-	for _, c := range rows {
-		if c.GetGuid() == 0 || c.Entry != thermapluggEntry || seen[c.Guid] {
-			continue
-		}
-		if raw, ok := starterJSON(c); ok {
-			out = append(out, raw)
-			seen[c.Guid] = true
-		}
-	}
-	return out
-}
-
 // Observation ages advance while identical cached facts are read. They are
 // policy input, but do not themselves replace a body/object observation.
 func thermapluggStable(value any) any {
@@ -103,7 +84,7 @@ func thermapluggStableWorld(w *worldv1.SnapshotResponse) any {
 	if w.Owner != nil {
 		owner, _ = starterJSON(w.Owner)
 	}
-	return thermapluggStable(map[string]any{"self": self, "owner": owner, "bosses": thermapluggBosses(w)})
+	return thermapluggStable(map[string]any{"self": self, "owner": owner, "bosses": creatures})
 }
 
 func thermapluggSameObject(a, b *worldv1.GameObjectState) bool {
@@ -168,6 +149,14 @@ func (s *Service) thermapluggPolicySourceCurrent(revision string) bool {
 
 func (s *Service) thermapluggInput(w *worldv1.SnapshotResponse, known bool, candidates []any) map[string]any {
 	r := &s.thermaplugg
+	creatures := []any{}
+	for _, creature := range append([]*worldv1.CreatureState{w.OwnerTarget}, w.NearbyCreatures...) {
+		if creature != nil {
+			if raw, ok := starterJSON(creature); ok {
+				creatures = append(creatures, raw)
+			}
+		}
+	}
 	self, _ := starterJSON(w.Self)
 	var owner any
 	if w.Owner != nil {

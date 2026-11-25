@@ -1,6 +1,6 @@
 -- Pure encounter duty selection. The native caller supplies observed devices
 -- and retains exact movement/use admission and uncertain delivery custody.
-local M={tuning={role_classes={[4]=true},prefer_nearest=true,scan_ms=400,retry_ms=1000,confirm_ms=800}}
+local M={tuning={role_classes={[4]=true},prefer_nearest=true,scan_ms=400,retry_ms=1000,confirm_ms=800,boss_entry=7800}}
 local function number(n) return type(n)=="number" and n==n and n-n==0 end
 local function uint(n) return number(n) and n>=0 and n<=4294967295 and n%1==0 end
 local function decimal(s,zero)
@@ -23,11 +23,17 @@ local function object(o,map)
     return type(o)=="table" and decimal(o.guid) and uint(o.entry) and o.present==true and o.mapKnown==true and o.mapId==map and
         o.typeKnown==true and o.gameObjectType==1 and o.stateKnown==true and o.positionKnown==true and point(o)
 end
-local function boss_active(input)
+local function boss_active(input,entry)
+    local seen={}
+    -- The host supplies raw observed creatures. This policy alone chooses
+    -- which encounter activates the duty; preserve owner-target precedence.
     for _,b in ipairs(input.bosses or {}) do
-        if type(b)=="table" and decimal(b.guid) and b.entry==7800 and b.present==true and b.mapKnown==true and b.mapId==90 and
-           b.aliveKnown==true and b.alive==true and b.healthKnown==true and uint(b.health) and b.health>0 and
-           b.unitFlagsKnown==true and uint(b.unitFlags) and math.floor(b.unitFlags/0x80000)%2==1 then return true end
+        if type(b)=="table" and decimal(b.guid) and b.entry==entry and not seen[b.guid] then
+            seen[b.guid]=true
+            if b.present==true and b.mapKnown==true and b.mapId==90 and b.aliveKnown==true and b.alive==true and
+               b.healthKnown==true and uint(b.health) and b.health>0 and b.unitFlagsKnown==true and uint(b.unitFlags) and
+               math.floor(b.unitFlags/0x80000)%2==1 then return true end
+        end
     end
     return false
 end
@@ -54,7 +60,8 @@ function M.decide(input)
        type(input.independent)~="boolean" or type(input.assisting)~="boolean" or type(input.observationsKnown)~="boolean" or
        type(input.candidates)~="table" or #input.candidates>6 or not point(input.clientPosition) then return invalid end
     local tuning=M.tuning
-    if type(tuning)~="table" or type(tuning.role_classes)~="table" or type(tuning.prefer_nearest)~="boolean" then return invalid end
+    if type(tuning)~="table" or type(tuning.role_classes)~="table" or type(tuning.prefer_nearest)~="boolean" or
+       not uint(tuning.boss_entry) or tuning.boss_entry==0 then return invalid end
     for _,key in ipairs({"scan_ms","retry_ms","confirm_ms"}) do if not uint(tuning[key]) or tuning[key]>60000 then return invalid end end
     local now=input.nowMs
     if memory.sessionId~=input.sessionId or memory.selfGuid~=input.selfGuid or memory.visitId~=input.visitId then
@@ -93,7 +100,7 @@ function M.decide(input)
     local self,owner=input.self,input.owner
     local active=type(self)=="table" and self.guid==input.selfGuid and self.present==true and self.mapKnown==true and self.mapId==90 and
         self.classKnown==true and tuning.role_classes[self.classId]==true and type(owner)=="table" and owner.present==true and
-        owner.mapKnown==true and owner.mapId==90 and input.independent==false and input.assisting==true and boss_active(input)
+        owner.mapKnown==true and owner.mapId==90 and input.independent==false and input.assisting==true and boss_active(input,tuning.boss_entry)
     if not active then return result(current_pair(c) and "clear" or "idle",memory,c) end
     if input.feedback~=nil and input.feedback~="" then
         if current_pair(c) then memory.retryAfter[c.faceGuid]=now+tuning.retry_ms end
