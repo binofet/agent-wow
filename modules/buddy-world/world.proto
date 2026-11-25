@@ -667,6 +667,10 @@ message SnapshotResponse {
   OwnMotionAuthority self_motion_authority = 50;
   SplineCompletionObservation spline_completion = 51;
   WorldTransferObservation world_transfer = 52;
+  // PRIVATE PLAYER_AMMO_ID, from this authenticated body's own update fields only.
+  bool self_ammo_known = 53;
+  uint32 self_ammo_entry = 54;
+  uint64 self_ammo_revision = 55;
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.

@@ -28,9 +28,10 @@ import (
 
 type gearInputPeer struct {
 	inventoryv1.UnimplementedBuddyInventoryServer
-	mu     sync.Mutex
-	state  *inventoryv1.State
-	writes []*inventoryv1.EquipGearRequest
+	mu         sync.Mutex
+	state      *inventoryv1.State
+	writes     []*inventoryv1.EquipGearRequest
+	ammoWrites []*inventoryv1.SelectAmmoRequest
 }
 
 func (p *gearInputPeer) GetState(context.Context, *emptypb.Empty) (*inventoryv1.State, error) {

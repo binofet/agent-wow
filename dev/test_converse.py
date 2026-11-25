@@ -3,6 +3,7 @@
 
 import copy
 import hashlib
+import io
 import subprocess
 import sys
 import importlib.machinery
@@ -21,6 +22,14 @@ loader = importlib.machinery.SourceFileLoader("converse", str(Path(__file__).wit
 spec = importlib.util.spec_from_loader(loader.name, loader)
 converse = importlib.util.module_from_spec(spec)
 loader.exec_module(converse)
+
+
+def setUpModule():
+    # The default loopback port can belong to a player who is currently online.
+    guard = patch("urllib.request.OpenerDirector.open",
+                  side_effect=AssertionError("Conversation tests must provide a fake RPC transport"))
+    guard.start()
+    unittest.addModuleCleanup(guard.stop)
 
 
 def real_temp_directory():
@@ -1760,7 +1769,8 @@ class PartyMaintenanceContextTests(unittest.TestCase):
         self.assertTrue(converse.harvest_snapshot(self.harvest_record(1),1)['configured'])
         self.assertNotIn('SKIN',converse.ACTIONS)
         with self.assertRaises(converse.ConversationError):
-            converse.RPC('http://127.0.0.1:8088/rpc').call('buddy-professions.attempt',{})
+            converse.validate_reply({'text': 'Checking the corpse', 'emote': 'NONE',
+                                     'action': 'buddy-professions.attempt'})
 
 
 class TradeIdleProofTests(unittest.TestCase):
@@ -1979,17 +1989,24 @@ class BoundaryTests(unittest.TestCase):
         self.assertIn('not the committed Lua phase',persona)
         self.assertIn('do not claim idle or refuse casting',persona)
 
-    def test_new_buff_and_profession_reads_pass_real_rpc_allowlist(self):
+    def test_reflected_rpc_calls_return_results_and_propagate_registry_errors(self):
         rpc = converse.RPC('http://127.0.0.1:8086/rpc')
-        import io
         methods = ('buddy-actions.buffs', 'buddy-actions.spell_toolkit', 'buddy-professions.state')
         for method in methods:
-            with patch.object(rpc.opener, 'open', return_value=io.BytesIO(json.dumps({
-                    'jsonrpc': '2.0', 'id': rpc.request_id+1, 'result': {}}).encode())) as transport:
-                rpc.call(method, {'enabled': True} if method.endswith('.buffs') else {})
-                self.assertEqual(json.loads(transport.call_args.args[0].data)['method'], method)
+            params = {'enabled': True} if method.endswith('.buffs') else {}
+            reply = {'jsonrpc': '2.0', 'id': rpc.request_id + 1, 'result': {'observed': True}}
+            with patch.object(rpc.opener, 'open', return_value=io.BytesIO(json.dumps(reply).encode())) as transport:
+                self.assertEqual(rpc.call(method, params), reply['result'])
+                request = json.loads(transport.call_args.args[0].data)
+                self.assertEqual((request['method'], request['params']), (method, params))
         for method in ('buddy-actions.cast', 'buddy-professions.attempt', 'session.logout'):
-            with self.assertRaises(converse.ConversationError): rpc.call(method, {})
+            reply = {'jsonrpc': '2.0', 'id': rpc.request_id + 1,
+                     'error': {'code': -32602, 'message': 'fixture rejection'}}
+            with patch.object(rpc.opener, 'open', return_value=io.BytesIO(json.dumps(reply).encode())) as transport:
+                with self.assertRaisesRegex(converse.ConversationError, 'Chat RPC rejected the request'):
+                    rpc.call(method, {})
+                self.assertEqual(json.loads(transport.call_args.args[0].data)['method'], method)
+                self.assertEqual(rpc.last_failure['code'], -32602)
 
     def test_spell_context_is_bound_and_buff_request_has_no_python_readiness_veto(self):
         raw = {'sessionId': 'aw-body', 'selfGuid': '4', 'spellbookKnown': True,

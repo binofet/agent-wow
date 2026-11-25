@@ -37,6 +37,8 @@ func clearInventoryContext(p *observed) {
 	}
 	p.bagSlotsKnown = false
 	p.bags = [4]uint64{}
+	p.ammoKnown = false
+	p.ammo = 0
 	p.equipmentKnown = false
 	p.equipment = [19]uint64{}
 	p.inventoryEpoch++
@@ -191,4 +193,12 @@ func (s *observations) protectedItem(guid uint64) bool {
 		}
 	}
 	return false
+}
+
+func (s *observations) ammoView() (bool, uint32) {
+	p := s.players[0]
+	if !p.isSelf || !p.present || !p.ammoKnown {
+		return false, 0
+	}
+	return true, p.ammo
 }
