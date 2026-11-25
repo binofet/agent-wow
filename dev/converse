@@ -2170,7 +2170,7 @@ def valid_gm_command(command):
             and command == command.rstrip() and "|" not in command)
 
 
-def literal_gm_request(text):
+def parse_literal_gm_request(text):
     """Only explicit full invocations; quoted examples alone are not commands."""
     direct=re.fullmatch(r'gm +(\..+)',text,re.IGNORECASE)
     if direct:return direct[1]
@@ -5183,7 +5183,7 @@ class Conversation:
                 return
         direct_literal=None
         if isinstance(self.brain,DirectBrain) and channel=='WHISPER' and not peer:
-            literal=literal_gm_request(request)
+            literal=parse_literal_gm_request(request)
             if literal is not None:
                 if (not allow_gm or resumed or continuation is not None or result.get('cursorLost',False)
                         or not self.owner_whisper_recipient(selected[-1])):

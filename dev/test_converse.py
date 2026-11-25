@@ -4974,11 +4974,11 @@ class LiteralOwnerGMTests(unittest.TestCase):
 
     def test_literal_parser_is_anchored_and_does_not_treat_quotes_as_execution(self):
         for text in ('gm .gps','Run this gm command: "gm .gps"','You need to run this gm command: “gm .gps”'):
-            self.assertEqual(converse.literal_gm_request(text),'.gps')
+            self.assertEqual(converse.parse_literal_gm_request(text),'.gps')
         for text in ('"gm .gps"','Explain "gm .gps"','Do not run this gm command: "gm .gps"',
                      'You need to run this gm command: "gm .gps" and then "gm .gps"',
                      'You need to run this gm command: “gm .gps"'):
-            self.assertIsNone(converse.literal_gm_request(text))
+            self.assertIsNone(converse.parse_literal_gm_request(text))
 
     def test_native_sender_receiver_field_still_uses_this_body_whisper(self):
         self.request('gm .gps',receiver='3')
