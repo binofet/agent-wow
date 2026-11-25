@@ -1165,7 +1165,7 @@ class DirectTools:
                     row=gm.task_store(candidate).load()
                     if not row or row.get('identity')!=dict(sessionId=self.session_id,guid='87',rpcUrl=self.rpc.url) or row.get('requestId')!=self.request_id:continue
                     previous=row.get('result') or {}
-                    intended=row.get('selectedGuid')
+                    intended=row.get('selectedGuid',previous.get('selectedGuid'))
                     prior_command=(row.get('commandIntent') or {}).get('command','').split(' ',1)[0].casefold()
                     targeted=bool(previous.get('targetAdmission')) or prior_command in ('.die','.damage')
                     if intended not in (None,'0') and targeted and previous.get('commandTransportWritten') is not True:
