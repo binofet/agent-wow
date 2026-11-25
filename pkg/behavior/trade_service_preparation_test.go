@@ -99,7 +99,13 @@ func TestTradeServicePreparationActualFactsAndRetainedAttempt(t *testing.T) {
 			// limit. Prove the full retained-attempt semantics separately;
 			// invoke the ordinary CLI once and classify only its strict typed
 			// empty-output resource refusal as NO decision, never a retry.
-			if tc.name == "cast_go_does_not_rearm" || tc.name == "queued_retry_stays_held" {
+			if tc.name == "accepted_awaiting_cast_go" {
+				// This exact frame measured chunk_initialize refusal. Preserve
+				// full retained-attempt semantics and the native default-budget
+				// callback's strict wait proof; this single standalone invocation
+				// may report only its exact empty-output initialization refusal.
+				tradeConsentSemanticAndProductionPhases(t, r, source, frame, tc.want, false, true)
+			} else if tc.name == "cast_go_does_not_rearm" || tc.name == "queued_retry_stays_held" {
 				tradeConsentResourceTurnResult(t, r, source, frame, tc.want)
 			} else {
 				tradeConsentResult(t, r, source, frame, tc.want)

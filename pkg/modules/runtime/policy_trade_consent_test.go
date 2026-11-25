@@ -138,6 +138,18 @@ return actual`
 	check(initial, "accept")
 	preparation := tradeServicePreparationHostInput(sid, "4")
 	checkInput(preparation, initial, "prepare")
+	// This actual native callback must return wait at its unchanged accepted
+	// Session budget; a standalone CLI resource refusal cannot satisfy it.
+	if host.vm.Options().ExecutionLimit != behavior.DefaultSessionExecutionLimit {
+		t.Fatal("native accepted-source execution budget changed", host.vm.Options())
+	}
+	accepted := tradeServicePreparationHostInput(sid, "4")
+	accepted["attempt"] = map[string]any{
+		"item":      map[string]any{"entry": float64(4632), "count": float64(1), "wrapped": false, "lockId": float64(5)},
+		"castCount": float64(9), "queued": true, "accepted": true, "castGo": false, "retry": false,
+		"deadlineKnown": true, "remainingMs": float64(7000),
+	}
+	checkInput(accepted, initial, "wait")
 	const preparationTuning = "local prepare_owner_trade_services = true"
 	servicesDisabled := strings.Replace(source, preparationTuning, "local prepare_owner_trade_services = false", 1)
 	if servicesDisabled == source {
