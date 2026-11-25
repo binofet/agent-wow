@@ -179,6 +179,86 @@ OBSERVED_UNIT_FIELDS = (
     "distanceToOwnerObserved", "activeCast", "trajectory")
 
 
+def _verified_development_whisper(state):
+    # These are host-verified current-request facts, not model tool arguments.
+    # This changes presentation only; existing tool/body authority is unchanged.
+    request, development = state.get("current_request"), state.get("development")
+    if not isinstance(request, dict) or not isinstance(development, dict):
+        return False
+    character = state.get("character")
+    if not isinstance(character, dict):
+        return False
+    controls = state.get("controls")
+    if isinstance(controls, dict) and any(key in controls and controls[key] != development.get(key)
+                                         for key in ("sessionId", "selfGuid")):
+        return False
+    return (request.get("source") == "party_agent" and request.get("verifiedPeer") is True
+        and request.get("developmentWhisper") is True and development.get("enabled") is True
+        and development.get("directDevelopment") is True
+        and isinstance(development.get("workspace"), str) and bool(development["workspace"])
+        and isinstance(development.get("sessionId"), str) and bool(development["sessionId"])
+        and development.get("selfGuid") == character.get("guid")
+        and bool(development.get("selfGuid")))
+
+
+def _development_context(source):
+    """Editing brief of the same immutable capture, never a safety/authority read.
+
+    Preserve request, body/control/policy records, goals and learned notes whole.
+    Defer known bulk factual sections once, not each creature's omitted fields.
+    """
+    result = copy.deepcopy(source)
+    omitted = []
+    metadata_fields = ("available", "known", "reason", "sessionId", "selfGuid", "revision",
+        "inventoryKnown", "inventoryRevision", "equipmentKnown", "equipmentRevision",
+        "active", "closing", "phase", "status")
+
+    def deferred(value, path):
+        view = _fields(value, metadata_fields)
+        view.update(contextPath=list(path), deferred=True, valueType=type(value).__name__)
+        if isinstance(value, (dict, list, str)):
+            view["capturedCount"] = len(value)
+        omitted.append(dict(path=list(path), type=type(value).__name__))
+        return view
+
+    for key in ("abilities", "spell_toolkit", "inventory", "professions", "quests",
+                "quest_execution", "loot", "trade", "reward_items", "workshop",
+                "equipment", "recent_events", "emote_catalog"):
+        if key in source:
+            result[key] = deferred(source[key], [key])
+    world = source.get("observations")
+    if isinstance(world, dict):
+        view = {key: copy.deepcopy(value) for key, value in world.items()
+                if not isinstance(value, (dict, list))}
+        for key, value in world.items():
+            if key in ("self", "owner"):
+                view[key] = _person(value)
+                if view[key] != value:
+                    # The complete person row is one discovery unit, even if
+                    # nested equipment contains hundreds of individual facts.
+                    view[key]["contextPath"] = ["observations", key]
+                    omitted.append(dict(path=["observations", key], type=type(value).__name__))
+            elif isinstance(value, (dict, list)):
+                view[key] = deferred(value, ["observations", key])
+        view["contextPath"] = ["observations"]
+        result["observations"] = view
+    custody = []
+    for row in _custody(source):
+        try:
+            if _at(result, row["path"]) == row["value"]:
+                continue
+        except (KeyError, IndexError, TypeError):
+            pass
+        custody.append(row)
+    result["contextProjection"] = dict(projected=True, mode="verified_development_whisper",
+        fullStateTool="context_read", fullStatePath=[], omittedPaths=omitted, byteLimit=None,
+        unresolvedCustody=custody,
+        note="Editing-task presentation of a captured snapshot, not a fresh safety read or permission. "
+             "Deferred facts are not absent: context_read returns their complete values and knownness at "
+             "each contextPath. Original request, goals, body/control records and unresolved custody remain intact.")
+    return result
+
+
 def ordinary_context(state):
     """Lossless-access ordinary briefing; no model/window cap or history edit.
 
@@ -187,9 +267,13 @@ def ordinary_context(state):
     Authority and tool admission continue to use the original captured state.
     """
     raw = encode(state)
+    source = json.loads(raw)
+    if _verified_development_whisper(source):
+        result = _development_context(source)
+        return result, dict(fullContextBytes=len(raw), contextBytes=len(encode(result)),
+            contextOmittedPaths=len(result["contextProjection"]["omittedPaths"]))
     if len(raw) <= CONTEXT_BYTES:
         return json.loads(raw), dict(fullContextBytes=len(raw), contextBytes=len(raw), contextOmittedPaths=0)
-    source = json.loads(raw)
     result, _ = project_context(source, max_bytes=None)
     # These useful current role/request/learning values are never clipped.
     for key in ("abilities", "controlFieldScopes", "model_selection", "agentContext",
