@@ -544,6 +544,27 @@ ranged_options=function(obs,row,target,options)
     end
     return copy
 end
+local function ranged_friendly_support(obs,action)
+    if not action or (action.capability~="heal" and action.capability~="cleanse" and action.capability~="buff") then return false end
+    local target=guid(action.targetGuid)
+    local self=(obs.players or {})[obs.selfGuid]
+    local patient=target and (obs.players or {})[target]
+    local spell=(obs.spells or {})[tostring(action.spellId)]
+    if not self or not patient or not spell or spell.metadataKnown~=true or spell.known~=true or
+       type(spell.maxRange)~="number" or spell.maxRange<=0 then return false end
+    local member=false
+    for _,row in ipairs(((obs.party or {}).group or {}).members or {}) do
+        if row.guid==target and row.online==true then member=true end
+    end
+    if not member then return false end
+    for _,unit in ipairs({self,patient}) do
+        if unit.present~=true or unit.aliveKnown~=true or unit.alive~=true or unit.mapKnown~=true or unit.mapId~=obs.mapId or
+           unit.positionKnown~=true or unit.positionInferred==true or unit.positionEstimated==true then return false end
+    end
+    local dx,dy,dz=(self.x or 0)-(patient.x or 0),(self.y or 0)-(patient.y or 0),(self.z or 0)-(patient.z or 0)
+    local d2=dx*dx+dy*dy+dz*dz
+    return d2>=(spell.minRange or 0)^2 and d2<=spell.maxRange^2
+end
 local function ranged_hold(obs,frame,out,row,status,wanted,stopTarget)
     local hold=state.rangedHold
     local owner=(obs.navigation or {}).movementOwner
@@ -627,6 +648,9 @@ local function ranged_filter(obs,frame,sequence,out,row,status)
     if ranged_hold(obs,frame,out,row,status,true,nearest) then return end
     if obs.hostTargetRangeBandSupported~=true then
         if action and (action.capability=="heal" or action.capability=="buff") and action.targetGuid==obs.selfGuid then return end
+        if status.stationaryObserved==true and ranged_friendly_support(obs,action) then
+            status.phase="stationary_friendly_support";status.positionReady=false;return
+        end
         -- A real stationary ranged cast needs no new movement ABI. This does
         -- not make an inside/unknown pose safe or claim autorepeat shooting.
         local target=action and (obs.targets or {})[action.targetGuid]
