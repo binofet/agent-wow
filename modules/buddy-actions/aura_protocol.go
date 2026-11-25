@@ -154,9 +154,7 @@ func (s *Service) applyBuffAurasLocked(guid uint64, updates []auraDelta, all boo
 				op.view.EffectObserved = true
 				if op.view.ServerCastGo {
 					op.view.Phase = "confirmed_aura"
-					if b != nil && s.starterSpells.uncertainStrike == op {
-						s.starterSpells.uncertainStrike = nil
-					}
+					s.confirmStarterSelfCastLocked(op)
 				}
 			}
 		}

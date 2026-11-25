@@ -279,12 +279,28 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		return true, nil
 	}
 	op := s.supportOp
-	if op == nil || !s.state.CastPending || s.pendingSpell != op.view.SpellId || s.castCount != op.count {
+	// A later support operation does not own an older named self-cast's GO.
+	// Route only its exact retained caster/count/spell back through this same
+	// complete event parser; never replace the newer operation or pending state.
+	if held := s.starterSpells.uncertainStrike; code == opcode.SMSGSpellGo && held != nil && held != op &&
+		held.view.Capability == string(spellcatalog.Stealth) && s.starterSelfCastBodyCurrentLocked(held) {
+		caster, count, spell, _, err := castEvent(p)
+		if err == nil && caster == s.selfGUID && count == held.count && spell == held.view.SpellId &&
+			(op == nil || op.count != held.count || op.view.SpellId != held.view.SpellId) {
+			op = held
+		}
+	}
+	if op == nil {
 		return false, nil
 	}
 	starterSelf := op.view.Capability == string(spellcatalog.Stealth) && s.starterSelfCastBodyCurrentLocked(op)
+	active := s.supportOp == op && s.state.CastPending && s.pendingSpell == op.view.SpellId && s.castCount == op.count
+	retainedGO := code == opcode.SMSGSpellGo && op == s.starterSpells.uncertainStrike && starterSelf
+	if !active && !retainedGO {
+		return false, nil
+	}
 	if op.view.Phase != "waiting_server" && op.view.Phase != "channeling" && op.view.Phase != "waiting_channel_observation" &&
-		!((starterSelf || op.genericSpell || op.view.Capability == selfCastCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && op.view.Phase == "transport_unconfirmed_no_retry") {
+		!retainedGO && !((starterSelf || op.genericSpell || op.view.Capability == selfCastCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && op.view.Phase == "transport_unconfirmed_no_retry") {
 		return false, nil
 	}
 	rejected := false
@@ -378,6 +394,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 				op.view.Phase = "confirmed_effect"
 			}
 		}
+		s.confirmStarterSelfCastLocked(op)
 	default:
 		return false, nil
 	}
@@ -397,9 +414,11 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			delete(s.controlBreakBindings, op.breakAuraSlot)
 		}
 	}
-	s.state.CastPending = false
-	s.pendingSpell = 0
-	s.pendingTarget = 0
+	if active {
+		s.state.CastPending = false
+		s.pendingSpell = 0
+		s.pendingTarget = 0
+	}
 	return true, nil
 }
 

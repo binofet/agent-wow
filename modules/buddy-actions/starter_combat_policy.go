@@ -296,6 +296,14 @@ func (s *Service) starterSelfCastBodyCurrentLocked(op *supportAttempt) bool {
 		b.visit == s.lastWorld.GetVisitRevision() && b.encounter == s.encounterVisit
 }
 
+func (s *Service) confirmStarterSelfCastLocked(op *supportAttempt) {
+	if op != nil && op == s.starterSpells.uncertainStrike && op.view.Capability == string(spellcatalog.Stealth) &&
+		op.view.ServerCastGo && op.view.EffectObserved && s.starterSelfCastBodyCurrentLocked(op) {
+		op.view.Phase = "confirmed_aura"
+		s.starterSpells.uncertainStrike = nil
+	}
+}
+
 // Execute the exact self-targeted rank selected by the same accepted weapon
 // policy. STOP and subsequent callbacks cannot retain an old task or choice.
 func (s *Service) castStarterSelfLocked(ctx context.Context, w *worldv1.SnapshotResponse, target uint64, chosen starterSpellDecision) bool {
