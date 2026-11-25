@@ -181,7 +181,7 @@ func (s *Service) starterRogueAssistLocked(ctx context.Context, w *worldv1.Snaps
 	gameRange := math.Max(5, float64(self.CombatReach+target.CombatReach)+4.0/3.0)
 	d := distance(s.pos, targetPosition)
 	if d > gameRange-0.5 {
-		if op := s.supportOp; op != nil && op.owner == target.Guid && op.view.Capability == string(spellcatalog.Stealth) &&
+		if op := s.supportOp; op != nil && op.owner != 0 && op.view.TargetGuid == s.selfGUID && op.view.Capability == string(spellcatalog.Stealth) &&
 			(op.view.Phase == "waiting_server" || s.now().Before(op.until) && op.view.ServerCastGo) {
 			return true
 		}

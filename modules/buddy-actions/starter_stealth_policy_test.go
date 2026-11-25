@@ -177,7 +177,7 @@ func TestStarterStealthLateAuraReconcilesOnlyItsExactCurrentGO(t *testing.T) {
 					t.Fatal("matching native confirmation could not settle exact old uncertainty", op.view)
 				}
 				if newer != nil {
-					if s.supportOp != newer || !proto.Equal(newerView, &newer.view) {
+					if s.supportOp != newer || !proto.Equal(newerView, &newer.view) || countPackets(f, opcode.CMSGCastSpell) != 1 {
 						t.Fatal("late evidence for the old Stealth altered a newer Heal", newerView, newer.view)
 					}
 					return
@@ -201,7 +201,7 @@ func TestStarterStealthLateAuraReconcilesOnlyItsExactCurrentGO(t *testing.T) {
 }
 
 func TestStarterStealthPendingAndUnknownCannotReplayAfterEditOrReceiptReplacement(t *testing.T) {
-	for _, mode := range []string{"pending", "lost reply", "timeout", "GO without effect"} {
+	for _, mode := range []string{"pending", "pending new target", "lost reply", "timeout", "GO without effect"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, target, source, advance := starterStealthRig(t)
 			if mode == "lost reply" {
@@ -212,7 +212,16 @@ func TestStarterStealthPendingAndUnknownCannotReplayAfterEditOrReceiptReplacemen
 			if countPackets(f, opcode.CMSGCastSpell) != 1 || lastCast(f) != 1785 || op == nil || op.owner != target.Guid {
 				t.Fatal("fixture did not enter actual selected Stealth", s.stateLocked(), f.packets)
 			}
-			if mode != "pending" {
+			if mode == "pending new target" {
+				emitPolymorph(s, opcode.SMSGSpellGo, starterWeaponObservedGo(s, s.selfGUID, s.castCount))
+				advance(2 * time.Second) // Still inside the original written-GO window.
+				for _, enabled := range []bool{false, true} {
+					if _, err := s.Practice(context.Background(), &actionsv1.ToggleRequest{Enabled: enabled}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				target.Guid++
+			} else if mode != "pending" {
 				if mode == "GO without effect" {
 					emitPolymorph(s, opcode.SMSGSpellGo, starterWeaponObservedGo(s, s.selfGUID, s.castCount))
 					if !op.view.ServerCastGo || op.view.EffectObserved {
@@ -243,7 +252,7 @@ func TestStarterStealthPendingAndUnknownCannotReplayAfterEditOrReceiptReplacemen
 				advance(200 * time.Millisecond)
 			}
 			if countPackets(f, opcode.CMSGCastSpell) != 1 || op.view.EffectObserved ||
-				mode != "pending" && (s.starterSpells.uncertainStrike != op || s.supportOp == op) {
+				mode != "pending" && mode != "pending new target" && (s.starterSpells.uncertainStrike != op || s.supportOp == op) {
 				t.Fatal("source/task/target/general receipt replacement replayed a self cast", op.view, s.stateLocked(), f.packets)
 			}
 		})
