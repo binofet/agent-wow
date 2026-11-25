@@ -53,6 +53,9 @@ func (s *Service) encounterSupportLocked(ctx context.Context, w *worldv1.Snapsho
 	}
 	team := observedPlayerTeam(self)
 	resCaster := team != 0 && s.resurrectionCasterAvailableLocked(w)
+	// Match ResurrectOnce: retain locally settled motion until a new World
+	// position revision supersedes it, rather than measuring an old echo.
+	resPositionCurrent := resCaster && s.refreshPositionLocked(w)
 	for _, rank := range s.candidatesLocked(spellcatalog.Resurrect) {
 		if !resCaster || !s.resurrectionRankAvailableLocked(rank, self) {
 			continue
@@ -65,10 +68,10 @@ func (s *Service) encounterSupportLocked(ctx context.Context, w *worldv1.Snapsho
 			if !ok {
 				continue
 			}
-			d := distance(playerPosition(self), pos)
+			d := distance(s.pos, pos)
 			out.Resurrections = append(out.Resurrections, &actionsv1.ResurrectionOption{
 				PatientGuid: owner, CastTargetGuid: target, SpellId: rank.ID, RangeYards: float32(rank.MaxFriendly),
-				CanApproach: true, Ready: d >= rank.MinFriendly && d <= rank.MaxFriendly &&
+				CanApproach: true, Ready: resPositionCurrent && d >= rank.MinFriendly && d <= rank.MaxFriendly &&
 					!s.state.Moving && self.MovementFlags&0xff == 0 && !s.state.AutoAttacking &&
 					!s.state.AutoAttackRequested && s.autoTarget == 0 && !s.autoStopping,
 			})
