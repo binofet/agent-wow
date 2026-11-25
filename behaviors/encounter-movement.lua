@@ -185,7 +185,7 @@ function M.adjust_cloud_points(frame,obs,sequence,out,points)
         if d>0 then ux,uy=dx/d,dy/d end
     end
     local length=2.8 -- entire200ms input at the existing native maximum14yd/s
-    local rx,ry,nearest,nx,ny=0,0,nil,nil,nil
+    local rx,ry,nearest,nx,ny,contributor=0,0,nil,nil,nil,nil
     local hit=false
     -- One linear pass, no all-or-nothing point-count cutoff. Cheap local
     -- filtering keeps dense20s emitter output useful, even a late underfoot
@@ -213,7 +213,10 @@ function M.adjust_cloud_points(frame,obs,sequence,out,points)
                 if d<.000001 then vx,vy=-uy,ux;d=1 end
                 local weight=1/math.max(d,.25)
                 rx,ry=rx+vx/d*weight,ry+vy/d*weight
-                if not nearest or d2<nearest then nearest,nx,ny=d2,vx/d,vy/d end
+                if not nearest or d2+dz*dz<nearest then
+                    nearest,nx,ny=d2+dz*dz,vx/d,vy/d
+                    contributor={x=p.x,y=p.y,z=p.z,radiusYards=5,expiresAtMs=p.expiresAtMs}
+                end
             end
         end
     end
@@ -233,7 +236,8 @@ function M.adjust_cloud_points(frame,obs,sequence,out,points)
     out.action={capability="move_body",sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,
         observationSequence=sequence,sequenceId=sequence,bearingRadians=bearing,durationMs=200,jump=false}
     out.followFormation=nil;out.portalCatchup=nil
-    out.cloudAdjustment={phase="local_point_repulsion",effectVerified=false,referencePoseEstimated=self.positionEstimated==true}
+    out.cloudAdjustment={phase="local_point_repulsion",effectVerified=false,referencePoseEstimated=self.positionEstimated==true,
+        point=contributor,distanceYards=math.sqrt(nearest),clearanceYards=math.sqrt(nearest)-5}
     return true
 end
 

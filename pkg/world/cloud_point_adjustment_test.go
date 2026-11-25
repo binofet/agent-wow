@@ -89,6 +89,13 @@ func TestCloudPointLocalAdjustmentInsideDenseAndOutside(t *testing.T) {
 				if kind == "inside" && math.Cos(a["bearingRadians"].(float64)) > -.99 {
 					t.Fatal("did not leave inside point", a)
 				}
+				if kind == "inside" {
+					status := d.Output["cloudAdjustment"].(map[string]any)
+					point := status["point"].(map[string]any)
+					if point["x"] != float64(2) || point["expiresAtMs"] != float64(120000) || status["distanceYards"] != float64(2) || status["clearanceYards"] != float64(-3) {
+						t.Fatal("incorrect contributing point evidence", status)
+					}
+				}
 			} else if d.Output["action"] != nil {
 				t.Fatal("points changed unrelated or protected movement", d.Output)
 			}
