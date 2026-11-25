@@ -2030,6 +2030,11 @@ def cancellation_reason(cancelled):
         "owned_body_changed", "chat_freshness_unavailable"} else "owner_input_waiting"
 
 
+def chat_freshness_failure(cancelled):
+    category = getattr(cancelled, "freshness_failure", None)
+    return category if category in {"read_timeout", "unavailable_or_invalid_response"} else None
+
+
 class OwnerInputPending(ConversationError):
     """A fresh owner message supersedes the current model turn."""
 
@@ -2715,6 +2720,8 @@ class AgentBrain:
                     'developer_binding_changed' if self._generation['stage']=='binding_check' else 'preparation_failed')
                 record=self.generation_record(development,reason,type(error).__name__)
                 record['childPhase']='not_started'
+                category=chat_freshness_failure(cancelled)
+                if category is not None:record['chatFreshnessFailure']=category
                 self.retain_failure(record)
             raise
         finally:self._generation=None
@@ -3082,6 +3089,8 @@ class DirectBrain(AgentBrain):
                 error.reason if isinstance(error, ModelError) else type(error).__name__)
             record.update(outcome="failed", reason=reason, errorType=type(error).__name__,
                           childPhase="literal.failed" if literal_command is not None else "api.failed", api=api_metadata())
+            category = chat_freshness_failure(cancelled)
+            if category is not None: record["chatFreshnessFailure"] = category
             self.retain_failure(record)
             publish()
             if self.stopped(): raise Stopped("Conversation stop requested") from error
@@ -4916,6 +4925,8 @@ class Conversation:
         # without advancing the chat cursor or undoing already-written code.
         next_poll = [0.0]
         freshness_retry_used = [False]
+        freshness_failure = [None]
+        interruption_latched = [False]
         interrupt_reason = ["owner_input_waiting"]
         bound_chat, bound_cursor, bound_guid = self.session_id, self.cursor, self.character_guid
         def check_freshness():
@@ -4955,14 +4966,18 @@ class Conversation:
                         interrupt_reason[0] = "owned_body_changed"
                         return True
                 return False
-            except ConversationError:
+            except ConversationError as error:
                 # Persistent/invalid freshness never authorizes a stale reply or write.
+                freshness_failure[0] = ("read_timeout" if isinstance(error, ChatPollTimeout)
+                    else "unavailable_or_invalid_response")
                 interrupt_reason[0] = "chat_freshness_unavailable"
                 return True
         def cancelled():
-            interrupted = check_freshness()
+            # A subsequent sample cannot forget an already observed interruption.
+            if not interruption_latched[0]: interruption_latched[0] = check_freshness()
             cancelled.interrupt_reason = interrupt_reason[0]
-            return interrupted
+            cancelled.freshness_failure = freshness_failure[0]
+            return interruption_latched[0]
         development=state.get('development',{}) if isinstance(state,dict) else {}
         sid=development.get('sessionId') if isinstance(development,dict) else None
         context=dict(sessionId=sid if isinstance(sid,str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid) else self.session_id,
@@ -5026,7 +5041,8 @@ class Conversation:
         except OwnerInputPending:
             self.publish_brain_failure(context,previous_request)
             self.status(phase="listening", generationPhase="yielded_to_owner" if interrupt_reason[0]=="owner_input_waiting" else "yielded_for_chat_refresh",
-                        generationInterruptReason=interrupt_reason[0], cursor=self.cursor)
+                        generationInterruptReason=interrupt_reason[0],
+                        **({"generationFreshnessFailure":freshness_failure[0]} if freshness_failure[0] else {}), cursor=self.cursor)
             raise
         except BaseException:
             self.publish_brain_failure(context,previous_request)

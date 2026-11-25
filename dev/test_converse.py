@@ -4343,6 +4343,8 @@ class OwnerPreemptionTests(unittest.TestCase):
                 self.assertIsNone(result);self.assertEqual(len(calls),2)
                 self.assertEqual(seen,[(True,reason)])
                 self.assertEqual(statuses[-1]['generationInterruptReason'],reason)
+                if reason=='chat_freshness_unavailable':
+                    self.assertEqual(statuses[-1]['generationFreshnessFailure'],'read_timeout')
                 if reason!='chat_body_changed':self.assertEqual(loop.cursor,41)
 
     def test_chat_no_retry_for_invalid_read_changed_binding_or_elapsed_budget(self):
@@ -4365,6 +4367,26 @@ class OwnerPreemptionTests(unittest.TestCase):
             poll(latest=41,sessionId='chat')],clock_times=[0,.5,.81])
         self.assertIsNone(result);self.assertEqual(len(calls),2)
         self.assertEqual(seen,[(True,'chat_freshness_unavailable')])
+
+    def test_later_sampling_cannot_drop_owner_or_failed_read_latch(self):
+        for outcome,category in [(poll([message(42,'Stop',channel='WHISPER')],sessionId='chat'),None),
+                (converse.ConversationError('invalid response'),'unavailable_or_invalid_response')]:
+            calls=[];seen=[]
+            class Brain(converse.CodexBrain):
+                def __init__(self):self.developer_workspace=None
+                def generate(self,history,control_state=None,cancelled=None):
+                    for _ in range(3):seen.append(cancelled())
+                    raise converse.OwnerInputPending('latched')
+            def call(method,params,timeout=None):
+                calls.append(method)
+                if isinstance(outcome,Exception):raise outcome
+                return outcome
+            statuses=[];loop=converse.Conversation(types.SimpleNamespace(call=call),Brain(),status=lambda **kw:statuses.append(kw))
+            loop.session_id='chat';loop.cursor=41
+            with self.assertRaises(converse.OwnerInputPending):loop.generate_reply([],{})
+            self.assertEqual(seen,[True,True,True]);self.assertEqual(calls,['buddy-chat.poll'])
+            self.assertEqual(loop.cursor,41)
+            if category:self.assertEqual(statuses[-1]['generationFreshnessFailure'],category)
 
     def test_rpc_only_classifies_chat_poll_timeout_as_retryable(self):
         rpc=converse.RPC('http://127.0.0.1:8086/rpc')
