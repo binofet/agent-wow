@@ -68,7 +68,7 @@ func TestAutomaticControlDropsUnengagedStaleBindingAndAllowsCurrentDamage(t *tes
 	o.Targets[fallbackGUID(fallbackNPC+2)].AttackObservation = &actionsv1.EncounterAttackObservation{VictimKnown: true, VictimGuid: fallbackSelf, AgeMs: 10}
 	out = p.decide(p.observe(o)).Output
 	a, _ := out["action"].(map[string]any)
-	if (a["capability"] != "approach_target" && a["capability"] != "polymorph") || a["targetGuid"] == fallbackGUID(fallbackNPC+1) || a["targetGuid"] == nil {
+	if (a["capability"] != "approach_target" && a["capability"] != "polymorph") || a["targetGuid"] != fallbackGUID(fallbackNPC+2) {
 		t.Fatal("automatic defense did not select a current eligible add", out)
 	}
 }
@@ -169,5 +169,58 @@ func TestExplicitControlStillApproachesOwnerNamedUnengagedTarget(t *testing.T) {
 	a, _ := out["action"].(map[string]any)
 	if a["capability"] != "approach_target" || a["targetGuid"] != fallbackGUID(fallbackNPC+1) {
 		t.Fatal("explicit owner control was treated as automatic", out)
+	}
+}
+
+func TestAutomaticSapRetainsUnverifiedStealthThenRechecksTarget(t *testing.T) {
+	p := newFallbackPolicyTest(t, "")
+	o := fallbackObservation()
+	self := o.Players[fallbackGUID(fallbackSelf)]
+	self.CombatKnown, self.PositionKnown = true, true
+	o.Spells = map[string]*actionsv1.EncounterSpell{
+		"6770": {Known: true, Ready: true, Capability: "sap", MaxRange: 5},
+		"1784": {Known: true, Ready: true, Capability: "stealth", SelfCastSupported: true},
+	}
+	addFallbackTarget(o, fallbackNPC, 0, 1000)
+	o.Targets[fallbackGUID(fallbackNPC)].UnitFlagsKnown = true
+	_, err := p.host.Enqueue(behavior.Event{Kind: "command", Value: map[string]any{
+		"task": "control", "id": "automatic-sap", "auto": true, "technique": "sap"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := p.decide(p.observe(o))
+	a, _ := d.Output["action"].(map[string]any)
+	if a["capability"] != "cast_self" || a["spellId"] != float64(1784) {
+		t.Fatal("no real automatic stealth preparation", d.Output)
+	}
+	id, err := p.host.ReserveAction(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{
+		SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionSettledUnverified,
+		Payload: map[string]any{"capability": "cast_self", "target_guid": fallbackGUID(fallbackSelf), "spell_id": 1784}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quietAutomaticControl(o)
+	for i := 0; i < 2; i++ {
+		out := p.decide(p.observe(o)).Output
+		status, _ := out["controlStatus"].(map[string]any)
+		if out["action"] != nil || status["phase"] != "waiting_for_stealth_aura" || status["targetGuid"] != fallbackGUID(fallbackNPC) {
+			t.Fatal("unverified stealth lost binding/custody or was retried", out)
+		}
+	}
+	// Only an actual observed aura resolves preparation. It cannot make the
+	// old distant target eligible or authorize an approach in that decision.
+	o.Spells["1784"].SelfAuraActive = true
+	out := p.decide(p.observe(o)).Output
+	if out["action"] != nil {
+		t.Fatal("observed stealth approached stale automatic target", out)
+	}
+	out = p.decide(p.observe(o)).Output
+	status, _ := out["controlStatus"].(map[string]any)
+	if out["action"] != nil || status["targetGuid"] != nil {
+		t.Fatal("resolved automatic preparation did not recheck target", out)
 	}
 }
