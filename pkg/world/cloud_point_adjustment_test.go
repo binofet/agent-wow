@@ -162,8 +162,17 @@ func TestCloudPointDefaultRouteAndFollowExpiry(t *testing.T) {
 }
 
 func TestCloudPointDenseInputKeepsLateUnderfootPoint(t *testing.T) {
-	p, o := cloudPointPolicy(t, "function()local p={} for i=1,960 do p[i]={x=100+i,y=0,z=0,radiusYards=5,expiresAtMs=120000} end p[961]={x=2,y=0,z=0,radiusYards=5,expiresAtMs=120000};return p end")
-	d := cloudPointStep(t, p, o, 100000)
+	// Real emitters retain their20s points; do not charge construction of
+	// every historical table to each decision. Grow64 points per callback,
+	// then exercise the complete cached961-point consumer under normal limits.
+	p, o := cloudPointPolicy(t, "(function()local p,n={},0;return function() if n==960 then p[961]=p[961] or {x=2,y=0,z=0,radiusYards=5,expiresAtMs=120000};return p end local stop=math.min(960,n+64);for i=n+1,stop do p[i]={x=100+i,y=0,z=0,radiusYards=5,expiresAtMs=120000} end n=stop;return p end end)()")
+	for i := 0; i < 15; i++ {
+		d := cloudPointStep(t, p, o, 100000+i)
+		if d.Output["action"] != nil {
+			t.Fatal("irrelevant retained points changed default action", d.Output)
+		}
+	}
+	d := cloudPointStep(t, p, o, 100016)
 	a, _ := d.Output["action"].(map[string]any)
 	if a["capability"] != "move_body" {
 		t.Fatal("dense emitter output disabled useful late point", d.Output)
