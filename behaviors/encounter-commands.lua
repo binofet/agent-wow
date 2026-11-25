@@ -85,7 +85,7 @@ local function on_event(event)
                     -- Falling/STOP-only outcomes are not horizontal progress.
                     ground.blocked[op.heading]=true
                     if p.phase=="body_settled_written" and p.transport_written==true then ground.observedSequence=op.sequence
-                    elseif p.phase~="local_physics_refused" then ground.refused=ground.key end
+                    elseif p.phase~="local_physics_refused" then ground.refused=ground.positionKey end
                 end
             end
         end
@@ -680,6 +680,7 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         status.phase="ground_pose_unavailable";return
     end
     local hazards,key={},row.id..":"..tostring(row.minRangeYards)..":"..tostring(row.maxRangeYards)..":"..tostring(row.clearanceYards)..":"..tostring(from.x)..":"..tostring(from.y)..":"..tostring(from.z)
+    local positionKey=key
     for _,id in ipairs(ids) do
         local target=obs.targets[id]
         local point=movement.current_pose(target)
@@ -694,7 +695,7 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         status.phase="ground_input_prior_scope_unsettled";return
     end
     if not ground or ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or ground.id~=row.id then
-        ground={sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,id=row.id,key=key,blocked={}}
+        ground={sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,id=row.id,key=key,positionKey=positionKey,blocked={}}
         state.rangedGround=ground
     end
     status.lastInputPhase,status.lastInputDetail=ground.lastPhase,ground.lastDetail
@@ -719,8 +720,12 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         -- Do not borrow an unrelated estimated pose as a starting point.
         if not ground.observedSequence or not matching_body_pose(nav.bodyMovement,ground.observedSequence) then status.phase="uncorrelated_estimated_pose";return end
     end
-    if ground.key~=key then ground.key,ground.blocked=key,{} end
-    if ground.refused==key then status.phase="ground_input_refused_at_observed_pose";return end
+    -- Collision/floor refusal is tied to OWN origin and direction. A moving
+    -- enemy does not make an unchanged refused physical ray worth retrying.
+    if not ground.positionKey then ground.positionKey=positionKey end
+    if ground.positionKey~=positionKey then ground.positionKey,ground.blocked=positionKey,{} end
+    ground.key=key
+    if ground.refused==positionKey then status.phase="ground_input_refused_at_observed_pose";return end
     local focus=out.focusGuid and obs.targets[out.focusGuid]
     local target=focus and focus.entry==row.creatureEntry and focus.present==true and focus.protected~=true and obs.targetProtectionOverflow~=true and focus.aliveKnown==true and focus.alive==true and focus or nil
     local targetId=target and out.focusGuid
@@ -769,7 +774,7 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
             local closest=(hx-vx*projection)^2+(hy-vy*projection)^2
             if initial<lower*lower then
                 -- Inside: never take a first step towards ANY hazard.
-                if hx*vx+hy*vy>=-0.001 then allowed=false end
+                if initial>0 and hx*vx+hy*vy>=-math.min(0.001,math.sqrt(initial)*0.01) then allowed=false end
                 score=score+((ex-p.x)^2+(ey-p.y)^2-initial)
             elseif initial<(lower+0.01)^2 then
                 -- Relative bearings are encoded as float32 by native. Keep a

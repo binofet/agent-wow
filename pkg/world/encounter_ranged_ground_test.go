@@ -95,7 +95,7 @@ func TestRangedLegacyGroundFarApproachAndFacing(t *testing.T) {
 	}
 }
 func TestRangedLegacyGroundAllHazardsAndNoMana(t *testing.T) {
-	for _, mode := range []string{"two_hazards", "oom", "rogue", "unrelated", "unknown", "estimated", "no_abi"} {
+	for _, mode := range []string{"two_hazards", "coincident", "oom", "rogue", "unrelated", "unknown", "estimated", "no_abi"} {
 		t.Run(mode, func(t *testing.T) {
 			p, o := legacyGround(t)
 			switch mode {
@@ -104,6 +104,8 @@ func TestRangedLegacyGroundAllHazardsAndNoMana(t *testing.T) {
 				h := o.Targets[fallbackGUID(fallbackNPC+1)]
 				h.Entry = 765432
 				h.X = -18
+			case "coincident":
+				o.Targets[fallbackGUID(fallbackNPC)].X = 0
 			case "oom":
 				o.Players[fallbackGUID(fallbackSelf)].Power = 0
 			case "rogue":
@@ -256,5 +258,31 @@ func TestRangedLegacyGroundRejectsMismatchedCompletedPose(t *testing.T) {
 	next, b := groundAction(t, p, o)
 	if b != nil || next.Output["rangedStance"].(map[string]any)["phase"] != "waiting_for_ground_input_observation" {
 		t.Fatal("borrowed unrelated estimated pose", next.Output)
+	}
+}
+
+func TestRangedLegacyGroundMovingEnemyCannotResetRefusedPhysicalRays(t *testing.T) {
+	p, o := legacyGround(t)
+	tried := map[float64]bool{}
+	exhausted := false
+	for n := 0; n < 40; n++ {
+		o.Targets[fallbackGUID(fallbackNPC)].X = 3 + float32(n)*0.001
+		d, a := groundAction(t, p, o)
+		if a == nil {
+			exhausted = true
+			continue
+		}
+		if exhausted || a["capability"] != "move_body" {
+			t.Fatal("blocked fallback did not remain held", d.Output)
+		}
+		heading := a["bearingRadians"].(float64)
+		if tried[heading] {
+			t.Fatal("moving hazard reset unchanged refused wall ray", a)
+		}
+		tried[heading] = true
+		groundReceipt(t, p, d, a, behavior.ActionNotDispatched, "local_physics_refused", false)
+	}
+	if !exhausted || len(tried) == 0 {
+		t.Fatal("refused physical rays did not terminate", len(tried))
 	}
 }
