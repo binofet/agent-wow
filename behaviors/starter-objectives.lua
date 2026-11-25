@@ -298,7 +298,8 @@ function M.fargodeep_lifecycle(input)
        type(m.pulled)~="boolean" or (m.engagerGuid~="1" and m.engagerGuid~="4" and m.engagerGuid~="5") or
        type(w.scene)~="table" or not uint(w.nearbyPlayerCount) or w.nearbyPlayerCount>64 or not array(w.scene.nearbyCreatures or {},32) or
        not array(w.scene.selfQuestLog or {},25) or type(w.selfSafe)~="boolean" then return stop("observations_unavailable") end
-    local scene,self,target=w.scene,w.scene.self,w.scene.requestedCreature
+    local scene,target=w.scene,w.scene.requestedCreature
+    local self=((input.observation or {}).players or {})[input.selfGuid]
     local classes={["1"]=5,["4"]=8,["5"]=4}
     if not classes[input.selfGuid] or type(self)~="table" or self.guid~=input.selfGuid or not w.selfSafe or
        self.mapKnown~=true or (self.mapId or 0)~=0 or self.classKnown~=true or self.classId~=classes[input.selfGuid] or
@@ -402,7 +403,7 @@ function M.fargodeep_lifecycle(input)
         if bit(target.unitFlags,0x80000) or (target.dynamicFlags or 0)~=0 or victim~="0" or
            target.targetKnown~=true or (target.targetGuid or "0")~="0" then return stop("initial_target_not_idle_unclaimed") end
         for _,other in ipairs(scene.nearbyCreatures or {}) do
-            local pos=motion_point(other)
+            local pos=other.motionPositionKnown==true and (other.motionPosition or other) or nil
             local near=pos and distance2(pos,p)<8*8
             if not pos and other.patrolKnown==true then
                 local motion=other.trajectory

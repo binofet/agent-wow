@@ -147,6 +147,9 @@ func (s *Service) fargodeepWorkflowFactsLocked(w *worldv1.SnapshotResponse, p *p
 		}
 		pos, known := fargodeepCreaturePosition(c)
 		row["motionPositionKnown"], row["motionPosition"], row["patrolKnown"] = known, point(pos), fargodeepPatrol(c)
+		if !known || pos.x == c.X && pos.y == c.Y && pos.z == c.Z {
+			delete(row, "motionPosition") // The complete actual header already carries these identical coordinates.
+		}
 		row["positionAgeMs"] = strconv.FormatUint(c.PositionAgeMs, 10)
 		if c.Trajectory != nil {
 			value, valid := starterJSON(c.Trajectory)
@@ -190,7 +193,7 @@ func (s *Service) fargodeepWorkflowFactsLocked(w *worldv1.SnapshotResponse, p *p
 	}
 	input["mission"].(map[string]any)["pulled"] = f.pulled
 	input["workflow"] = map[string]any{"stage": stage, "party": party, "safePlayers": safe, "nearbyPlayerCount": len(w.NearbyPlayers),
-		"scene": map[string]any{"self": players[strconv.FormatUint(s.selfGUID, 10)], "owner": map[string]any{"present": w.GetOwner().GetPresent()},
+		"scene": map[string]any{"owner": map[string]any{"present": w.GetOwner().GetPresent()},
 			"nearbyCreatures": nearby, "requestedCreature": creature(target), "selfQuestLogKnown": w.SelfQuestLogKnown,
 			"selfQuestLogRevision": strconv.FormatUint(w.SelfQuestLogRevision, 10), "selfQuestLog": quests},
 		"clientPosition": point(s.pos), "selfSafe": safeSelfCombat(w, s.selfGUID) == "", "targetPosition": point(targetPos),
