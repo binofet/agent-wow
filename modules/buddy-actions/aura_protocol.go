@@ -144,7 +144,11 @@ func (s *Service) applyBuffAurasLocked(guid uint64, updates []auraDelta, all boo
 		a.at = s.now()
 		a.revision = s.buffAuraRevision
 		set.slots[v.slot] = a
-		if op := s.supportOp; op != nil && op.view.Capability == "stealth" && op.view.TargetGuid == guid && op.view.SpellId == a.spell && a.caster == s.selfGUID && a.positive {
+		for i, op := range [2]*supportAttempt{s.supportOp, s.starterSpells.uncertainStrike} {
+			if op == nil || i == 1 && op == s.supportOp || op.view.Capability != "stealth" || op.view.TargetGuid != guid ||
+				op.view.SpellId != a.spell || a.caster != s.selfGUID || !a.positive {
+				continue
+			}
 			b := op.starterBinding
 			if b == nil || b.session == s.sessionID && b.self == s.selfGUID && b.self == guid &&
 				b.visit == s.lastWorld.GetVisitRevision() && b.encounter == s.encounterVisit {

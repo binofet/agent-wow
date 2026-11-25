@@ -12,6 +12,7 @@ import (
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -156,6 +157,8 @@ func TestStarterStealthLateAuraReconcilesOnlyItsExactCurrentGO(t *testing.T) {
 				t.Fatal("fixture did not retain expired uncertainty", op.view)
 			}
 			spell, caster := uint32(1785), s.selfGUID
+			var newer *supportAttempt
+			var newerView *actionsv1.SpellOperation
 			switch mode {
 			case "wrong spell":
 				spell = 1784
@@ -164,13 +167,20 @@ func TestStarterStealthLateAuraReconcilesOnlyItsExactCurrentGO(t *testing.T) {
 			case "newer operation":
 				heal, _ := s.spellData.Lookup(lesserHeal)
 				s.reserveHealReceiptLocked("", heal, s.selfGUID)
+				newer, newerView = s.supportOp, proto.Clone(&s.supportOp.view).(*actionsv1.SpellOperation)
 			case "replaced visit":
 				emitPolymorph(s, opcode.SMSGNewWorld, make([]byte, 20))
 			}
 			emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(s.selfGUID, caster, 2, spell, 0))
-			if mode == "confirm" {
+			if mode == "confirm" || mode == "newer operation" {
 				if s.starterSpells.uncertainStrike != nil || !op.view.ServerCastGo || !op.view.EffectObserved || op.view.Phase != "confirmed_aura" {
 					t.Fatal("matching native confirmation could not settle exact old uncertainty", op.view)
+				}
+				if newer != nil {
+					if s.supportOp != newer || !proto.Equal(newerView, &newer.view) || countPackets(f, opcode.CMSGCastSpell) != 1 {
+						t.Fatal("late evidence for the old Stealth altered a newer Heal", newerView, newer.view)
+					}
+					return
 				}
 				s.refreshPositionLocked(f.world)
 				target := f.world.NearbyCreatures[0]
@@ -191,7 +201,7 @@ func TestStarterStealthLateAuraReconcilesOnlyItsExactCurrentGO(t *testing.T) {
 }
 
 func TestStarterStealthPendingAndUnknownCannotReplayAfterEditOrReceiptReplacement(t *testing.T) {
-	for _, mode := range []string{"pending", "lost reply", "timeout", "GO without effect"} {
+	for _, mode := range []string{"pending", "pending new target", "lost reply", "timeout", "GO without effect"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, target, source, advance := starterStealthRig(t)
 			if mode == "lost reply" {
@@ -202,7 +212,16 @@ func TestStarterStealthPendingAndUnknownCannotReplayAfterEditOrReceiptReplacemen
 			if countPackets(f, opcode.CMSGCastSpell) != 1 || lastCast(f) != 1785 || op == nil || op.owner != target.Guid {
 				t.Fatal("fixture did not enter actual selected Stealth", s.stateLocked(), f.packets)
 			}
-			if mode != "pending" {
+			if mode == "pending new target" {
+				emitPolymorph(s, opcode.SMSGSpellGo, starterWeaponObservedGo(s, s.selfGUID, s.castCount))
+				advance(2 * time.Second) // Still inside the original written-GO window.
+				for _, enabled := range []bool{false, true} {
+					if _, err := s.Practice(context.Background(), &actionsv1.ToggleRequest{Enabled: enabled}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				target.Guid++
+			} else if mode != "pending" {
 				if mode == "GO without effect" {
 					emitPolymorph(s, opcode.SMSGSpellGo, starterWeaponObservedGo(s, s.selfGUID, s.castCount))
 					if !op.view.ServerCastGo || op.view.EffectObserved {
@@ -233,7 +252,7 @@ func TestStarterStealthPendingAndUnknownCannotReplayAfterEditOrReceiptReplacemen
 				advance(200 * time.Millisecond)
 			}
 			if countPackets(f, opcode.CMSGCastSpell) != 1 || op.view.EffectObserved ||
-				mode != "pending" && (s.starterSpells.uncertainStrike != op || s.supportOp == op) {
+				mode != "pending" && mode != "pending new target" && (s.starterSpells.uncertainStrike != op || s.supportOp == op) {
 				t.Fatal("source/task/target/general receipt replacement replayed a self cast", op.view, s.stateLocked(), f.packets)
 			}
 		})
