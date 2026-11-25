@@ -10,7 +10,7 @@ import (
 )
 
 func TestPassivePriorDoesNotStarveConfirmedOwnDrinkLease(t *testing.T) {
-	for _, kind := range []string{"observed", "native_estimated", "priest_estimated", "near", "fresh_attack", "combat", "motion_unknown", "moving", "changed_visit"} {
+	for _, kind := range []string{"observed", "native_estimated", "priest_estimated", "near", "fresh_attack", "combat", "motion_unknown", "moving", "changed_visit", "expired_lease", "foreign_owner", "acquire_unknown"} {
 		t.Run(kind, func(t *testing.T) {
 			raw, e := os.ReadFile("../../behaviors/consumables.lua")
 			if e != nil {
@@ -115,10 +115,40 @@ func TestPassivePriorDoesNotStarveConfirmedOwnDrinkLease(t *testing.T) {
 				self.Moving = true
 			case "changed_visit":
 				o.VisitId = 2
+			case "expired_lease", "acquire_unknown":
+				o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{}
+			case "foreign_owner":
+				o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: "different-task", RemainingMs: 2000}
 			}
 			d = step()
 			a, _ = d.Output["action"].(map[string]any)
-			if kind != "observed" && kind != "native_estimated" && kind != "priest_estimated" {
+			if kind == "expired_lease" || kind == "acquire_unknown" {
+				if a["capability"] != "movement_owner" || a["mode"] != "acquire" || a["owner"] != owner {
+					t.Fatal("expired own drink lease could not reacquire", d.Output)
+				}
+				id, e = h.ReserveAction(d)
+				if e != nil {
+					t.Fatal(e)
+				}
+				outcome := behavior.ActionConfirmed
+				if kind == "acquire_unknown" {
+					outcome = behavior.ActionUnknown
+				}
+				_, e = h.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: outcome, Payload: map[string]any{"capability": "movement_owner", "mode": "acquire", "owner": owner, "result": map[string]any{"token": "renewed-drink-token"}}}})
+				if e != nil {
+					t.Fatal(e)
+				}
+				o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: owner, RemainingMs: 2000}
+				d = step()
+				a, _ = d.Output["action"].(map[string]any)
+				if kind == "acquire_unknown" {
+					if d.Output["action"] != nil || h.Status().Pending != 1 {
+						t.Fatal("unknown reacquire replayed", d.Output, h.Status())
+					}
+					return
+				}
+			}
+			if kind != "observed" && kind != "native_estimated" && kind != "priest_estimated" && kind != "expired_lease" {
 				if a["capability"] == "consume" {
 					t.Fatal("danger or uncertain state admitted drink", d.Output)
 				}
