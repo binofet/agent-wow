@@ -53,7 +53,7 @@ func TestFargodeepReadinessDefaultCLI(t *testing.T) {
 			// The maintained helper verifies clean-source CLI provenance and invokes
 			// the ordinary executable once with the real 5ms/32KiB defaults.
 			out, err := evaluateDisposalProduction(t, test.source, frame)
-			want := map[string]any{"kind": test.want, "spellId": float64(0), "selection": "fargodeep_pull_readiness"}
+			want := map[string]any{"kind": test.want, "spellId": float64(0), "selection": "fargodeep_pull_readiness", "standYards": 3.5}
 			if err != nil || !reflect.DeepEqual(out, want) {
 				t.Fatal("ordinary CLI readiness result", out, want, err)
 			}
