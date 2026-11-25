@@ -152,7 +152,8 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		w = fresh
 		return true
 	}
-	write := func(code uint32, p position, elapsed time.Duration, falling, moving bool) bool {
+	var write func(uint32, position, time.Duration, bool, bool) bool
+	write = func(code uint32, p position, elapsed time.Duration, falling, moving bool) bool {
 		if ctx.Err() != nil {
 			view.Phase = "body_input_interrupted"
 			s.state.MotionUnconfirmed = s.state.MotionUnconfirmed || s.state.Moving
@@ -168,6 +169,18 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 			return false
 		}
 		if !valid() {
+			return false
+		}
+		if guard, ok := ctx.Value(movementPointsBodyGuardKey{}).(func(position, bool) bool); ok && !guard(p, moving) {
+			view.Phase = "movement_points_prewrite_changed"
+			s.state.MotionUnconfirmed = s.state.MotionUnconfirmed || s.state.Moving
+			// A revoked next leg never authorizes travel, but this exact input
+			// still owes STOP after its own START. Reuse all ordinary clock,
+			// body/visit/epoch checks; keep uncertainty even if STOP is written.
+			if moving && view.TransportWritten && s.state.Moving {
+				write(opcode.MSGMoveStop, s.pos, 0, false, false)
+				view.Phase = "movement_points_prewrite_changed"
+			}
 			return false
 		}
 		p.o = float32(math.Remainder(bearing, 2*math.Pi))

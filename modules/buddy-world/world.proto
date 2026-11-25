@@ -416,6 +416,23 @@ message DiscoveryAnchor {
   uint64 age_ms = 10;
 }
 
+// A visible area-spell DYNAMICOBJECT. Coordinates and radius come from its
+// own update fields; its spell or faction is not classified here.
+message SpellGroundEffect {
+  uint64 guid = 1;
+  uint64 caster_guid = 2;
+  uint32 spell_id = 3;
+  float radius_yards = 4;
+  float x = 5;
+  float y = 6;
+  float z = 7;
+  // First CREATE received in this continuous visibility interval.
+  uint64 first_observed_at_unix_ms = 8;
+  // Wrapping realm clock, not Unix time or a remaining duration.
+  optional uint32 server_cast_time_ms = 9;
+  uint64 position_revision = 10;
+}
+
 message GameObjectState {
   uint64 guid = 1;
   uint32 entry = 2;
@@ -681,6 +698,10 @@ message SnapshotResponse {
   uint32 self_next_level_xp = 59;
   // Advances only when own XP values or their knownness change.
   uint64 self_xp_revision = 60;
+  repeated SpellGroundEffect ground_effects = 61;
+  bool ground_effects_supported = 62;
+  // At least one area observation was omitted by the bounded cache this visit.
+  bool ground_effects_overflow = 63;
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.

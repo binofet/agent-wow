@@ -184,6 +184,8 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		state.nearbyPlayers = make(map[uint64]*observed)
 		state.creatures = make(map[uint64]*observed)
 		state.gameObjects = make(map[uint64]*observed)
+		state.groundEffects = nil
+		state.groundEffectsOverflow = false
 		state.corpses = make(map[uint64]*observed)
 		p.mapID, p.mapKnown, p.present = mapID, true, true
 		p.movementKnown = false
@@ -199,6 +201,8 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		state.nearbyPlayers = make(map[uint64]*observed)
 		state.creatures = make(map[uint64]*observed)
 		state.gameObjects = make(map[uint64]*observed)
+		state.groundEffects = nil
+		state.groundEffectsOverflow = false
 		state.corpses = make(map[uint64]*observed)
 		return true, nil
 	case opcode.SMSGUpdateObject:
@@ -482,9 +486,10 @@ func updates(c *cursor, state *observations, now time.Time) error {
 			guid := c.guid()
 			p := state.target(guid)
 			newCreature, newItem, newGameObject, newPlayer, newCorpse := false, false, false, false, false
+			newGroundEffect := false
 			if typ == 2 || typ == 3 {
 				objectType := c.u8()
-				if objectType > 7 || p != nil && p.publicPlayer && objectType != 4 || state.corpses[guid] != nil && objectType != 7 {
+				if objectType > 7 || p != nil && p.publicPlayer && objectType != 4 || state.corpses[guid] != nil && objectType != 7 || state.groundEffects[guid] != nil && objectType != 6 {
 					return errLayout
 				}
 				if player(players, guid) != nil {
@@ -557,6 +562,14 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					p.known[gameObjectCreatedBy] = true
 					p.known[gameObjectCreatedBy+1] = true
 					newGameObject = true
+				} else if objectType == 6 && guid>>48 == 0xf100 && uint32(guid) != 0 {
+					firstSeen, revision := now, uint64(0)
+					if p != nil {
+						firstSeen, revision = p.groundEffectFirstSeen, p.positionRevision
+					}
+					p = &observed{guid: guid, present: true, observedAt: now, groundEffectFirstSeen: firstSeen, positionRevision: revision}
+					setMap(p, players[0])
+					newGroundEffect = true
 				} else if objectType == 7 && corpseGUID(guid) {
 					revision := uint64(0)
 					if p != nil {
@@ -621,6 +634,9 @@ func updates(c *cursor, state *observations, now time.Time) error {
 			}
 			if newGameObject {
 				state.putGameObject(p)
+			}
+			if newGroundEffect {
+				state.putGroundEffect(p)
 			}
 			if newCorpse {
 				state.putCorpse(p)

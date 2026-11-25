@@ -39,6 +39,8 @@ const (
 	BuddyActions_MoveBody_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/MoveBody"
 	BuddyActions_InterruptCast_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/InterruptCast"
 	BuddyActions_BreakControl_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/BreakControl"
+	BuddyActions_StepMovementPoints_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/StepMovementPoints"
+	BuddyActions_SetMovementPoints_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/SetMovementPoints"
 	BuddyActions_SetFollowFormation_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/SetFollowFormation"
 	BuddyActions_SetPortalCatchup_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/SetPortalCatchup"
 	BuddyActions_Follow_FullMethodName                  = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
@@ -111,6 +113,8 @@ type BuddyActionsClient interface {
 	MoveBody(ctx context.Context, in *BodyMovementRequest, opts ...grpc.CallOption) (*State, error)
 	InterruptCast(ctx context.Context, in *InterruptCastRequest, opts ...grpc.CallOption) (*State, error)
 	BreakControl(ctx context.Context, in *BreakControlRequest, opts ...grpc.CallOption) (*State, error)
+	StepMovementPoints(ctx context.Context, in *MovementPointsStepRequest, opts ...grpc.CallOption) (*State, error)
+	SetMovementPoints(ctx context.Context, in *MovementPointsRequest, opts ...grpc.CallOption) (*State, error)
 	SetFollowFormation(ctx context.Context, in *FollowFormationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	SetPortalCatchup(ctx context.Context, in *PortalCatchupRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	Follow(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
@@ -345,6 +349,26 @@ func (c *buddyActionsClient) BreakControl(ctx context.Context, in *BreakControlR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyActions_BreakControl_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) StepMovementPoints(ctx context.Context, in *MovementPointsStepRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_StepMovementPoints_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) SetMovementPoints(ctx context.Context, in *MovementPointsRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_SetMovementPoints_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -853,6 +877,8 @@ type BuddyActionsServer interface {
 	MoveBody(context.Context, *BodyMovementRequest) (*State, error)
 	InterruptCast(context.Context, *InterruptCastRequest) (*State, error)
 	BreakControl(context.Context, *BreakControlRequest) (*State, error)
+	StepMovementPoints(context.Context, *MovementPointsStepRequest) (*State, error)
+	SetMovementPoints(context.Context, *MovementPointsRequest) (*State, error)
 	SetFollowFormation(context.Context, *FollowFormationRequest) (*emptypb.Empty, error)
 	SetPortalCatchup(context.Context, *PortalCatchupRequest) (*emptypb.Empty, error)
 	Follow(context.Context, *ToggleRequest) (*State, error)
@@ -966,6 +992,12 @@ func (UnimplementedBuddyActionsServer) InterruptCast(context.Context, *Interrupt
 }
 func (UnimplementedBuddyActionsServer) BreakControl(context.Context, *BreakControlRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BreakControl not implemented")
+}
+func (UnimplementedBuddyActionsServer) StepMovementPoints(context.Context, *MovementPointsStepRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StepMovementPoints not implemented")
+}
+func (UnimplementedBuddyActionsServer) SetMovementPoints(context.Context, *MovementPointsRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetMovementPoints not implemented")
 }
 func (UnimplementedBuddyActionsServer) SetFollowFormation(context.Context, *FollowFormationRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetFollowFormation not implemented")
@@ -1452,6 +1484,42 @@ func _BuddyActions_BreakControl_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).BreakControl(ctx, req.(*BreakControlRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_StepMovementPoints_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MovementPointsStepRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).StepMovementPoints(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_StepMovementPoints_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).StepMovementPoints(ctx, req.(*MovementPointsStepRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_SetMovementPoints_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MovementPointsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).SetMovementPoints(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_SetMovementPoints_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).SetMovementPoints(ctx, req.(*MovementPointsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2398,6 +2466,14 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BreakControl",
 			Handler:    _BuddyActions_BreakControl_Handler,
+		},
+		{
+			MethodName: "StepMovementPoints",
+			Handler:    _BuddyActions_StepMovementPoints_Handler,
+		},
+		{
+			MethodName: "SetMovementPoints",
+			Handler:    _BuddyActions_SetMovementPoints_Handler,
 		},
 		{
 			MethodName: "SetFollowFormation",
