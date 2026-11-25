@@ -761,6 +761,20 @@ local function quiet_for_mana(view, session_id, encounter)
         threat.attackingSelf == false and threat.attackingParty == false
 end
 
+-- A vote is stationary sideband intent: it does not move, cancel a spell,
+-- release a drink lease or establish gear superiority. Run after voluntary
+-- movement filters, and only when the existing action ledger is quiescent.
+local function propose_loot_roll(frame,out)
+    if loot_roll and not out.action and #frame.pending == 0 then
+        local expected = frame.input.kind == "loot_roll" and frame.input.observationSequence or
+            (frame.input.observationSequences or {}).loot_roll
+        local roll = loot_roll.decide({session_id=frame.session_id, cursor=frame.cursor, pending=frame.pending,clock=frame.clock,
+            input={kind="loot_roll", observationSequence=expected}},encounter_gear)
+        if roll.lootRoll then out.lootRoll=roll.lootRoll end
+        if roll.action then out.action=roll.action end
+    end
+end
+
 local function decide_policy(frame)
     local out = decide_encounter(frame)
     if out.encounterOwnership and movement and policy_observation and
@@ -779,13 +793,6 @@ local function decide_policy(frame)
         if resting.hold then out.followFormation=nil end
         if not out.action and #frame.pending==0 then out.action=resting.action end
         if resting.hold then return out end
-    end
-    if loot_roll and not out.action and #frame.pending == 0 then
-        local expected = frame.input.kind == "loot_roll" and frame.input.observationSequence or
-            (frame.input.observationSequences or {}).loot_roll
-        local roll = loot_roll.decide({session_id=frame.session_id, cursor=frame.cursor, pending=frame.pending,
-            input={kind="loot_roll", observationSequence=expected}},encounter_gear)
-        if roll.action then out.action=roll.action end
     end
     if auto_equipment and encounter_gear and (policy_observation or observation) then
         local equipment=auto_equipment.decide(frame,policy_observation or observation,
@@ -853,6 +860,15 @@ local function interaction_access(frame, obs, out)
 end
 
 local function decide(frame)
+    -- Fresh roll ingress may use this existing phase without making any
+    -- cached encounter/rest state into a new movement or spell request.
+    if (frame.input or {}).kind=="loot_roll" then
+        local out={}
+        propose_loot_roll(frame,out)
+        if loot_roll then loot_roll.commit(out.action) end
+        out.observationWakeKinds={loot_roll=true}
+        return out
+    end
     ranged_config,ranged_status=nil,nil
     prior_intent=nil
     prior_requested_spell=nil
@@ -908,12 +924,14 @@ local function decide(frame)
     if encounter_priors and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence then
         encounter_priors.filter(current,out,ranged_status,prior_intent and prior_intent.explicitPullGuid,prior_requested_spell==out.action and prior_requested_spell or nil)
     end
+    propose_loot_roll(frame,out)
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
     if spell_invocation then spell_invocation.commit(out.action) end
     if loot_roll then loot_roll.commit(out.action) end
     if warrior then warrior.commit(out.action) end
     if auto_equipment then auto_equipment.commit(out.action) end
+    out.observationWakeKinds={loot_roll=true}
     return out
 end
 

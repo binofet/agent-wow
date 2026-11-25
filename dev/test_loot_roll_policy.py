@@ -96,9 +96,7 @@ end}
             stackCount=1, metadataKnown=True, enhancementsKnown=True, durabilityKnown=True,
             durability=30, maxDurability=30)
 
-    def assert_wait_then_fallback(self, expected="disenchant"):
-        self.assertNotIn('action', self.tick())
-        self.view['offers'][0]['remainingMs'] = '1500'
+    def assert_immediate_fallback(self, expected="disenchant"):
         self.assertEqual(self.tick()['action']['choice'], expected)
 
     def test_current_full_bundle_preserves_roll_winner_checkpoint_and_pure_exports(self):
@@ -209,20 +207,48 @@ end}
                         self.assertEqual(action and action['choice'],expected)
                         if action:self.assertEqual(action['offeredMask'],mask)
 
-    def test_unknown_facts_wait_then_offered_role_choice_at_exact_deadline(self):
+    def test_unknown_facts_immediately_use_only_offered_role_choice(self):
         for actor in ('4','5','11'):
             for mask in range(16):
                 with self.subTest(actor=actor,mask=mask):
                     self.setUp();self.view['selfGuid']=self.view['player']['guid']=actor
                     self.view['metadata']=[]
-                    self.view['offers'][0].update(offeredMask=mask,remainingMs='1501')
-                    self.assertNotIn('action',self.tick())
-                    self.view['offers'][0]['remainingMs']='1500'
+                    self.view['offers'][0].update(offeredMask=mask,remainingMs='60000')
                     expected='disenchant' if actor=='4' and mask&8 else 'pass' if mask&1 else None
                     action=self.tick().get('action')
                     self.assertEqual(action and action['choice'],expected)
                     self.view['offers']=[self.offer(rollGuid=str(int(GUID)+1),offeredMask=mask,remainingMs='0')]
                     self.assertNotIn('action',self.tick())
+
+    def test_only_real_inflight_metadata_gets_short_window_then_need_or_explicit_fallback(self):
+        self.view['metadata']=[dict(itemId=5000,pending=True,reason='waiting_for_complete_server_item_query')]
+        first=self.tick(clock=dict(monotonicMs=0))
+        self.assertNotIn('action',first)
+        self.assertEqual(first['lootRoll']['phase'],'waiting_for_complete_metadata')
+        self.assertEqual(first['lootRoll']['retryAfterMs'],25)
+        self.view['metadata']=[armor()]
+        self.assertEqual(self.tick(clock=dict(monotonicMs=2))['action']['choice'],'need')
+        self.setUp()
+        self.view['metadata']=[dict(itemId=5000,pending=True,reason='waiting_for_complete_server_item_query')]
+        self.assertNotIn('action',self.tick(clock=dict(monotonicMs=0)))
+        self.assertNotIn('action',self.tick(clock=dict(monotonicMs=24)))
+        fallback=self.tick(clock=dict(monotonicMs=25))
+        self.assertEqual(fallback['action']['choice'],'disenchant')
+        self.assertTrue(fallback['lootRoll']['metadataWindowElapsed'])
+        self.assertEqual(self.view['offers'][0]['remainingMs'],'60000')
+        self.setUp()
+        self.view['metadata']=[dict(itemId=5000,pending=True,reason='item_query_rate_limited_or_busy')]
+        self.assertEqual(self.tick(clock=dict(monotonicMs=0))['action']['choice'],'disenchant')
+        self.setUp()
+        self.view['offers'][0]['randomProperty']=775
+        self.view['metadata']=[dict(itemId=5000,pending=True,reason='waiting_for_complete_server_item_query')]
+        self.assertEqual(self.tick(clock=dict(monotonicMs=0))['action']['choice'],'disenchant')
+
+    def test_cold_metadata_window_never_rebinds_to_another_body(self):
+        self.view['metadata']=[dict(itemId=5000,pending=True,reason='waiting_for_complete_server_item_query')]
+        self.assertNotIn('action',self.tick(clock=dict(monotonicMs=0)))
+        self.view['selfGuid']=self.view['player']['guid']='5'
+        self.assertNotIn('action',self.tick(clock=dict(monotonicMs=30)))
 
     def test_historical_greed_and_other_reserved_votes_survive_import_without_revote(self):
         for reserved in ('pass','need','disenchant','greed'):
@@ -262,7 +288,7 @@ return gear
 
     def test_missing_shared_preview_cannot_fall_back_to_local_comparison(self):
         self.source = self.compose('return {}')
-        self.assert_wait_then_fallback()
+        self.assert_immediate_fallback()
 
     def test_sparse_metadata_ids_use_same_bounded_policy(self):
         for entry in (99000, 2147483647):
@@ -291,7 +317,7 @@ return gear
         self.view['metadata'][0]['allowableClass'] = 1
         self.choice('disenchant')
 
-    def test_unknown_identity_proficiency_equipment_or_metadata_waits_then_role_fallback(self):
+    def test_unknown_identity_proficiency_equipment_or_metadata_immediately_falls_back(self):
         for fault in ('class', 'race', 'level', 'skills', 'incomplete_skills', 'equipment', 'missing', 'omitted', 'special'):
             with self.subTest(fault=fault):
                 self.setUp()
@@ -309,7 +335,7 @@ return gear
                     self.view.pop('metadata')
                 else:
                     self.view['metadata'][0]['armorComparisonKnown'] = False
-                self.assert_wait_then_fallback()
+                self.assert_immediate_fallback()
 
     def test_equipped_enhancements_and_random_offer_properties_are_unknown(self):
         for fault in ('enhanced', 'unknown_enhancements', 'suffix', 'property'):
@@ -323,7 +349,7 @@ return gear
                     self.view['equipment'][4]['enhancementsKnown'] = False
                 else:
                     self.view['offers'][0]['randomSuffix' if fault == 'suffix' else 'randomProperty'] = 1
-                self.assert_wait_then_fallback()
+                self.assert_immediate_fallback()
 
     def test_weapon_needs_only_full_comparison_current_proficiency_and_dps_upgrade(self):
         self.view['metadata'] = [weapon(), weapon(6001, damages=[dict(minimum=2, maximum=4)])]
@@ -334,7 +360,7 @@ return gear
         self.setUp()
         self.view['metadata'] = [weapon(weaponComparisonKnown=False)]
         self.view['offers'][0]['itemEntry'] = 6000
-        self.assert_wait_then_fallback()
+        self.assert_immediate_fallback()
 
     def test_weapon_never_invents_missing_actual_proficiency_or_generic_coverage(self):
         for fault in ('proficiency', 'coverage'):
@@ -345,20 +371,20 @@ return gear
                 if fault == 'coverage':
                     self.view['metadata'][0]['armorComparisonKnown'] = False
                     self.view['skills'].append(dict(skillId=173, value=50, maxValue=75))
-                self.assert_wait_then_fallback()
+                self.assert_immediate_fallback()
 
     def test_shared_scorer_refuses_zero_damage_weapon_even_for_empty_mainhand(self):
         self.view['metadata'] = [weapon(damages=[])]
         self.view['offers'][0]['itemEntry'] = 6000
         self.view['skills'].append(dict(skillId=173, value=50, maxValue=75))
-        self.assert_wait_then_fallback()
+        self.assert_immediate_fallback()
 
-    def test_staff_with_occupied_or_unknown_offhand_waits(self):
+    def test_staff_with_occupied_or_unknown_offhand_immediately_falls_back(self):
         self.view['metadata'] = [weapon(subclass=10, inventoryType=17)]
         self.view['offers'][0]['itemEntry'] = 6000
         self.view['skills'].append(dict(skillId=136, value=50, maxValue=75))
         self.equip(16, 6001)
-        self.assert_wait_then_fallback()
+        self.assert_immediate_fallback()
 
     def test_proto3_zero_damage_minimum_and_known_empty_head_slot_are_preserved(self):
         self.view['metadata'] = [weapon(damages=[dict(maximum=10)])]
@@ -370,7 +396,7 @@ return gear
         self.view['equipment'][0].pop('slot')
         self.choice('need')
 
-    def test_duplicate_unknown_stats_or_multiple_offered_items_wait(self):
+    def test_duplicate_unknown_stats_or_multiple_offered_items_immediately_fall_back(self):
         for fault in ('duplicate', 'unsupported', 'count'):
             with self.subTest(fault=fault):
                 self.setUp()
@@ -380,7 +406,7 @@ return gear
                     self.view['metadata'][0]['stats'][0]['type'] = 41
                 else:
                     self.view['offers'][0]['itemCount'] = 2
-                self.assert_wait_then_fallback()
+                self.assert_immediate_fallback()
 
     def test_order_uses_earliest_deadline_then_full_decimal_guid(self):
         smaller, later = str(int(GUID)-1), str(int(GUID)+1)
@@ -435,11 +461,9 @@ return gear
                 output = self.bridge.evaluate(self.source, frame)
                 self.assertNotIn('action', output['decision'])
 
-    def test_unknown_mira_disenchants_only_after_wait_and_pass_is_explicit(self):
+    def test_unknown_mira_immediately_disenchants_and_pass_is_explicit(self):
         self.view['metadata'] = []
         self.view['offers'][0]['offeredMask'] = 8
-        self.assertNotIn('action', self.tick())
-        self.view['offers'][0]['remainingMs'] = '1'
         self.assertEqual(self.tick()['action']['choice'],'disenchant')
         self.setUp()
         self.view['offers'][0]['offeredMask'] = 1

@@ -2,12 +2,12 @@
 -- immutable offer, current body/visit, deadline, one vote and server receipt.
 -- Joel's assigned disenchanter is the verified Mira body GUID4. This role is
 -- authored Lua intent; the observed self GUID still binds every offer/vote.
--- Keep the legacy deadline knob name for authored policies. It controls when
--- incomplete facts fall back to the assigned Mira DE / other Pass intent.
+-- Incomplete comparison facts immediately use the offered role fallback.
+-- No deadline wait or invented upgrade evidence is needed for DE / Pass.
 -- Never propose Greed; legacy Greed reservations remain importable below.
-local M = {tuning = {future_levels = 3, pass_below_ms = 1500, disenchanter_guid = "4"}}
+local M = {tuning = {future_levels = 3, metadata_wait_ms = 25, disenchanter_guid = "4"}}
 local observation, sequence, proposed
-local state = {reservations = {}}
+local state = {reservations = {}, metadataWait = {}}
 local UINT32 = 4294967295
 local armor_slots = {[1]=0,[3]=2,[5]=4,[20]=4,[6]=5,[7]=6,[8]=7,[9]=8,[10]=9,[16]=14}
 local armor_skills = {[1]=415,[2]=414,[3]=413,[4]=293}
@@ -82,10 +82,19 @@ local function skills(view)
     end
     return out
 end
+local function query_pending(item)
+    return type(item)=="table" and item.available~=true and item.pending==true and
+        item.reason=="waiting_for_complete_server_item_query"
+end
 local function classification(view,offer,templates,gear)
+    if offer.itemCount~=1 then return "unknown","multiple_offer_items_not_compared" end
+    if (offer.randomSuffix or 0)~=0 or (offer.randomProperty or 0)~=0 then
+        return "unknown","accepted_policy_offer_random_modifiers_unresolved"
+    end
     local item=templates[tostring(offer.itemEntry)]
+    if query_pending(item) then return "metadata_pending" end
     local next=profile(item)
-    if not next or offer.itemCount~=1 or (offer.randomSuffix or 0)~=0 or (offer.randomProperty or 0)~=0 then return "unknown" end
+    if not next then return "unknown" end
     local player=view.player
     if type(player)~="table" or player.guid~=view.selfGuid or player.present~=true or player.mapKnown~=true or
         (player.mapId or 0)~=(offer.mapId or 0) or player.classKnown~=true or player.raceKnown~=true or player.levelKnown~=true or
@@ -106,12 +115,16 @@ local function classification(view,offer,templates,gear)
         ranks[item.requiredSkill]<(item.requiredSkillRank or 0)) then return "unknown" end
     if next.twohand and (slots[16].itemGuid or "0")~="0" then return "unknown" end
     local equipped=slots[next.slot]
+    if (equipped.itemGuid or "0")~="0" and equipped.hasEnhancements==true then
+        return "unknown","accepted_policy_worn_modifiers_unresolved"
+    end
     if (equipped.itemGuid or "0")~="0" and
         (equipped.enhancementsKnown~=true or not absent_false(equipped.hasEnhancements) or equipped.durabilityKnown~=true or
         not uint(equipped.durability or 0,UINT32) or not uint(equipped.maxDurability or 0,UINT32) or
         (equipped.maxDurability or 0)>0 and ((equipped.durability or 0)==0 or equipped.durability>equipped.maxDurability)) then return "unknown" end
     local current=templates[tostring(equipped.entry)]
     if (equipped.itemGuid or "0")~="0" then
+        if query_pending(current) then return "metadata_pending" end
         local old=profile(current)
         if not old or old.kind~=next.kind or old.slot~=next.slot then return "unknown" end
     end
@@ -162,25 +175,44 @@ function M.decide(frame,gear)
         if type(item)~="table" or not uint(item.itemId,UINT32) or item.itemId==0 or templates[tostring(item.itemId)] then return {} end
         templates[tostring(item.itemId)]=item
     end
-    local ordered={}
+    local ordered,liveWait={},{}
     for _,o in ipairs(view.offers) do
         if not offer_valid(o,view.visitId) or seen[o.rollGuid] then return {} end
         seen[o.rollGuid]=true
         if o.available==true and o.phase=="pending" then
+            liveWait[key(o)]=state.metadataWait[key(o)]
             local at=#ordered+1
             while at>1 and earlier(o,ordered[at-1]) do ordered[at]=ordered[at-1];at=at-1 end
             ordered[at]=o
         end
     end
+    state.metadataWait=liveWait
     local count=0
     for _ in pairs(state.reservations) do count=count+1 end
     if count>=256 then return {} end
+    local waiting
     for _,o in ipairs(ordered) do
         if millis(o.remainingMs)>0 and not state.reservations[key(o)] then
-            local result=classification(view,o,templates,gear)
+            local result,comparisonReason=classification(view,o,templates,gear)
+            local timedOut=false
+            if result=="metadata_pending" then
+                local now=frame.clock and frame.clock.monotonicMs
+                local delay=M.tuning.metadata_wait_ms
+                local prior=state.metadataWait[key(o)]
+                if type(now)~="number" or now<0 or now-now~=0 or type(delay)~="number" or delay<=0 or delay-delay~=0 or
+                   prior and now<prior.at then result="unknown"
+                else
+                    prior=prior or {at=now};state.metadataWait[key(o)]=prior
+                    state.sessionId,state.selfGuid=view.sessionId,view.selfGuid
+                    local left=delay-(now-prior.at)
+                    if left>0 then waiting={phase="waiting_for_complete_metadata",classification=result,rollGuid=o.rollGuid,retryAfterMs=left}
+                    else result="unknown";timedOut=true end
+                end
+            end
             local choice
-            if result=="useful" and bit(o.offeredMask,1) then choice="need"
-            elseif result~="unknown" or millis(o.remainingMs)<=M.tuning.pass_below_ms then
+            if result=="metadata_pending" then -- Await only this already-in-flight static query, never the roll deadline.
+            elseif result=="useful" and bit(o.offeredMask,1) then choice="need"
+            else
                 if view.selfGuid==M.tuning.disenchanter_guid and bit(o.offeredMask,3) then choice="disenchant"
                 elseif bit(o.offeredMask,0) then choice="pass" end
             end
@@ -190,11 +222,11 @@ function M.decide(frame,gear)
                     mapId=o.mapId or 0,itemEntry=o.itemEntry,randomSuffix=o.randomSuffix or 0,
                     randomProperty=o.randomProperty or 0,count=o.itemCount,offeredMask=o.offeredMask}
                 proposed={action=action,key=key(o),choice=choice,sessionId=view.sessionId,selfGuid=view.selfGuid}
-                return {action=action}
+                return {action=action,lootRoll={classification=result,unclassifiedFallback=result=="unknown",metadataWindowElapsed=timedOut,comparisonReason=comparisonReason}}
             end
         end
     end
-    return {}
+    return waiting and {lootRoll=waiting} or {}
 end
 -- Only the final scheduler winner reserves a vote. A cancellation, loot
 -- close or interaction release can replace this proposal before transport.
@@ -202,6 +234,7 @@ function M.commit(action)
     if proposed and action==proposed.action then
         state.sessionId,state.selfGuid=proposed.sessionId,proposed.selfGuid
         state.reservations[proposed.key]=proposed.choice
+        state.metadataWait[proposed.key]=nil
     end
     proposed=nil
 end
@@ -218,7 +251,15 @@ function M.import_state(checkpoint)
         count=count+1
     end
     if count>256 or count>0 and not saved.sessionId then return false end
-    state=saved;observation,sequence=nil,nil
+    local waits=saved.metadataWait or {}
+    if type(waits)~="table" then return false end
+    count=0
+    for k,v in pairs(waits) do
+        if type(k)~="string" or #k<5 or #k>62 or type(v)~="table" or type(v.at)~="number" or v.at<0 or v.at-v.at~=0 then return false end
+        count=count+1
+    end
+    if count>16 or count>0 and not saved.sessionId then return false end
+    state=saved;state.metadataWait=waits;observation,sequence=nil,nil
     return true
 end
 return M
