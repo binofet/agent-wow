@@ -77,7 +77,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-яж
+╗и
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"г
 PlayerState
 guid (Rguid
@@ -580,7 +580,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"М
+permanent_bonus (RpermanentBonus"╪
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -641,7 +641,12 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 world_transfer4 (20.warcraftbuddy.world.v1.WorldTransferObservationRworldTransfer&
 self_ammo_known5 (RselfAmmoKnown&
 self_ammo_entry6 (RselfAmmoEntry,
-self_ammo_revision7 (RselfAmmoRevision"q
+self_ammo_revision7 (RselfAmmoRevision"
+self_xp_known8 (RselfXpKnown
+self_xp9 (RselfXp6
+self_next_level_xp_known: (RselfNextLevelXpKnown+
+self_next_level_xp; (RselfNextLevelXp(
+self_xp_revision< (RselfXpRevision"q
 CombatEventsRequest
 
 session_id (	R	sessionId%

@@ -671,6 +671,16 @@ message SnapshotResponse {
   bool self_ammo_known = 53;
   uint32 self_ammo_entry = 54;
   uint64 self_ammo_revision = 55;
+  // PRIVATE PLAYER_XP / PLAYER_NEXT_LEVEL_XP for this authenticated body only.
+  // Current-level counter and next-level threshold, not cumulative/remaining XP.
+  // CREATE establishes omitted zero values; login/visit loss is unknown until
+  // a new own CREATE or explicit field update. No XP table or gain is inferred.
+  bool self_xp_known = 56;
+  uint32 self_xp = 57;
+  bool self_next_level_xp_known = 58;
+  uint32 self_next_level_xp = 59;
+  // Advances only when own XP values or their knownness change.
+  uint64 self_xp_revision = 60;
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.
