@@ -64,11 +64,6 @@ func TestLearnedPriorReleasesForNativeFollowWithoutRally(t *testing.T) {
 	for _, stale := range []bool{false, true} {
 		t.Run(map[bool]string{false: "no_attack", true: "aged_attack"}[stale], func(t *testing.T) {
 			p, o, _ := nativeFollowPrior(t)
-			before := p.decide(observeRanged(t, p, o, false)).Output
-			status, _ := before["rangedStance"].(map[string]any)
-			if status["phase"] != "supported_ranged_option_unavailable" {
-				t.Fatal("fixture did not reproduce measured idle hold", before)
-			}
 			o.Navigation.Following = true
 			if stale {
 				o.Targets[fallbackGUID(fallbackNPC)].AttackObservation = &actionsv1.EncounterAttackObservation{VictimKnown: true, VictimGuid: 3, AgeMs: 6000}

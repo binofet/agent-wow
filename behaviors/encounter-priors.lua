@@ -46,6 +46,45 @@ local function admission(obs,id,explicitPull)
     end
     return false,"waiting_for_tank_attack_witness"
 end
+-- Pull admission is standing knowledge; positioning is needed only for an
+-- observed near hazard or an actual current party fight. Visibility alone is
+-- not a movement request. Unknown geometry remains conservative.
+local function positioning(obs,r)
+    r=r or rule(obs)
+    if not r then return false,"outside_prior" end
+    local self=(obs.players or {})[obs.selfGuid]
+    if not self or self.present~=true or self.aliveKnown~=true or self.alive~=true or
+       self.combatKnown~=true or self.inCombat==true or self.mapKnown~=true or
+       self.mapId~=obs.mapId or self.positionKnown~=true or self.positionInferred==true then
+        return true,"positioning_facts_unavailable"
+    end
+    local age=self.positionAgeKnown==true and tonumber(self.positionAgeMs or "0")
+    if self.positionEstimated~=true and self.positionAgeKnown==true and (not age or age<0 or age>r.attackWitnessMaxAgeMs) then return true,"stale_own_pose" end
+    for _,v in ipairs({self.x or 0,self.y or 0,self.z or 0}) do
+        if type(v)~="number" or v~=v or v==math.huge or v==-math.huge then return true,"positioning_facts_unavailable" end
+    end
+    local band=r.minRangeYards+r.clearanceYards
+    for id,npc in pairs(obs.targets or {}) do
+        if npc.entry==r.creatureEntry and npc.present==true and npc.alive~=false then
+            if npc.aliveKnown~=true or npc.mapKnown~=true or npc.mapId~=obs.mapId or npc.positionKnown~=true or
+               npc.positionInferred==true or npc.positionEstimated==true then return true,"positioning_facts_unavailable" end
+            for _,v in ipairs({npc.x or 0,npc.y or 0,npc.z or 0}) do
+                if type(v)~="number" or v~=v or v==math.huge or v==-math.huge then return true,"positioning_facts_unavailable" end
+            end
+            if type(npc.attackObservation)~="table" then return true,"attack_facts_unavailable" end
+            if npc.engaged==true or (obs.engagement or {})[id] then return true,"current_engagement" end
+            local admitted,why=admission(obs,id)
+            if admitted and why~="outside_prior" then return true,why end
+            local a=npc.attackObservation
+            local victim=a and a.victimGuid and (obs.players or {})[a.victimGuid]
+            if victim and victim.present==true and victim.mapKnown==true and victim.mapId==obs.mapId and
+               victim.combatKnown==true and victim.inCombat==true then return true,"current_victim_combat" end
+            local dx,dy,dz=(self.x or 0)-(npc.x or 0),(self.y or 0)-(npc.y or 0),(self.z or 0)-(npc.z or 0)
+            if dx*dx+dy*dy+dz*dz<=band*band then return true,"near_hazard" end
+        end
+    end
+    return false,"passive_distant"
+end
 local function filter(obs,out,status,explicitPull,requestedSpell)
     local r=rule(obs)
     if not r then return end
@@ -60,7 +99,7 @@ local function filter(obs,out,status,explicitPull,requestedSpell)
     end
     if not id and waiting then allowed,reason=false,"waiting_for_tank_attack_witness" end
     out.encounterPrior={id=r.id,tankGuid=r.tankGuid,role="backline",targetGuid=id,allowed=allowed,reason=reason}
-    if waiting then out.followFormation,out.portalCatchup=nil,nil end
+    if waiting and positioning(obs,r) then out.followFormation,out.portalCatchup=nil,nil end
     if allowed then return end
     local cap=action and action.capability
     local npc=id and (obs.targets or {})[id]
@@ -70,7 +109,10 @@ local function filter(obs,out,status,explicitPull,requestedSpell)
     if cap=="approach_target" and npc and npc.entry==r.creatureEntry and action.minRangeYards then
         local self=(obs.players or {})[obs.selfGuid]
         if self and self.positionKnown==true and npc.positionKnown==true and
-           self.positionInferred~=true and self.positionEstimated~=true and npc.positionInferred~=true and npc.positionEstimated~=true then
+           self.positionInferred~=true and (self.positionEstimated~=true or
+               obs.hostTargetRangeBandSupported==true and action.sessionId==obs.sessionId and action.selfGuid==obs.selfGuid and action.visitId==obs.visitId and
+               type(action.minRangeYards)=="number" and action.minRangeYards>=r.minRangeYards+r.clearanceYards and
+               type(action.clearanceYards)=="number" and action.clearanceYards>=r.minRangeYards+r.clearanceYards) and npc.positionInferred~=true and npc.positionEstimated~=true then
             local dx,dy,dz=(self.x or 0)-(npc.x or 0),(self.y or 0)-(npc.y or 0),(self.z or 0)-(npc.z or 0)
             withdrawal=dx*dx+dy*dy+dz*dz<(r.minRangeYards+r.clearanceYards)^2
         end
@@ -78,4 +120,4 @@ local function filter(obs,out,status,explicitPull,requestedSpell)
     local cleanup=cap=="movement_owner" or cap=="stop_movement" or cap=="melee_stop" or cap=="cancel_spell"
     if not cleanup and not withdrawal and (cap=="move_body" or npc and npc.entry==r.creatureEntry) then out.action=nil end
 end
-return {rules=rules,rule=rule,admission=admission,filter=filter}
+return {rules=rules,rule=rule,admission=admission,positioning=positioning,filter=filter}

@@ -587,7 +587,7 @@ local function ranged_stance(obs,frame)
     -- Committed/UNKNOWN ownership keeps its own horizon in rangedHold.
     row={id=prior.id,origin="learned_prior",sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId,
         creatureEntry=prior.creatureEntry,minRangeYards=prior.minRangeYards,maxRangeYards=prior.maxRangeYards,
-        clearanceYards=prior.clearanceYards,durationMs=prior.durationMs,
+        clearanceYards=prior.clearanceYards,durationMs=prior.durationMs,attackWitnessMaxAgeMs=prior.attackWitnessMaxAgeMs,
         expiresAt=capture.observedAt+prior.durationMs,expiresUnixMs=capture.observedUnixMs+prior.durationMs}
     if now>=row.expiresAt or unix>=row.expiresUnixMs then
         return nil,{id=row.id,origin="learned_prior",applied=true,active=false,phase="awaiting_fresh_prior_observation"}
@@ -880,6 +880,10 @@ local function ranged_travel_safe(obs,row,in_combat,attack_age_limit)
         local value=self[key] or 0
         if type(value)~="number" or value~=value or value==math.huge or value==-math.huge then return false end
     end
+    if self.positionEstimated~=true and self.positionAgeKnown==true and type(attack_age_limit)=="number" then
+        local age=tonumber(self.positionAgeMs or "0")
+        if not age or age<0 or age>attack_age_limit then return false end
+    end
     local ids,nearest,distance,complete=ranged_targets(obs,row)
     if not complete then return false end
     if #ids>0 and (not distance or distance<=row.minRangeYards+row.clearanceYards) then return false end
@@ -984,6 +988,27 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
        ground and (ground.operation or ground.uncertain)) then
         out.action,out.followFormation,out.portalCatchup=nil,nil,nil
         status.phase="waiting_for_native_follow_custody"
+        return
+    end
+    if row.origin=="learned_prior" and encounter_priors and encounter_priors.positioning and
+       not encounter_priors.positioning(obs,row) then
+        status.phase="passive_distant_prior";status.active=false;status.positionReady=false
+        if nav.motionUnconfirmed==true or hold and (hold.operation or hold.uncertain or
+           hold.sessionId~=obs.sessionId or hold.selfGuid~=obs.selfGuid or
+           hold.visitId~=nil and hold.visitId~=obs.visitId or hold.mapId~=nil and hold.mapId~=obs.mapId) or
+           ground and (ground.operation or ground.uncertain) then
+            out.action,out.followFormation,out.portalCatchup=nil,nil,nil
+            status.phase="waiting_for_passive_prior_custody";return
+        end
+        -- Never turn an initial estimated pose into proof for releasing a
+        -- previously held lease. A recorded interrupted native goal is distinct.
+        if hold and not hold.released and self.positionEstimated==true and not resumed_follow then
+            out.action=nil;status.phase="waiting_for_observed_prior_cleanup";return
+        end
+        if hold and type(nav.movementOwner)=="table" and nav.movementOwner.active==true and nav.movementOwner.owner~=hold.owner then
+            out.action=nil;status.phase="movement_owned_elsewhere";return
+        end
+        ranged_hold(obs,frame,out,row,status,false)
         return
     end
     if follow_safe or follow_continuing then
