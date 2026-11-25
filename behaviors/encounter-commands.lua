@@ -532,7 +532,7 @@ local function import_state(saved)
         end
     end
     local hold=saved.data.rangedHold
-    if hold~=nil and (type(hold)~="table" or type(hold.owner)~="string" or type(hold.sessionId)~="string" or not guid(hold.selfGuid) or type(hold.untilUnixMs)~="number" or hold.token~=nil and type(hold.token)~="string" or hold.followScope~=nil and (type(hold.followScope)~="string" or #hold.followScope==0 or #hold.followScope>512)) then return false end
+    if hold~=nil and (type(hold)~="table" or type(hold.owner)~="string" or type(hold.sessionId)~="string" or not guid(hold.selfGuid) or type(hold.untilUnixMs)~="number" or hold.token~=nil and type(hold.token)~="string" or hold.visitId~=nil and not guid(hold.visitId) or hold.mapId~=nil and (type(hold.mapId)~="number" or hold.mapId<0 or hold.mapId>4294967295 or hold.mapId%1~=0) or hold.followScope~=nil and (type(hold.followScope)~="string" or #hold.followScope==0 or #hold.followScope>512)) then return false end
     state = saved.data
     return true
 end
@@ -669,7 +669,7 @@ local function ranged_hold(obs,frame,out,row,status,wanted,stopTarget)
     if not hold and not wanted then return false end
     if #frame.pending~=0 then status.phase="waiting_for_native_custody";out.action=nil;return true end
     if not hold then
-        hold={owner="ranged:"..row.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,untilUnixMs=row.expiresUnixMs}
+        hold={owner="ranged:"..row.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,mapId=obs.mapId,untilUnixMs=row.expiresUnixMs}
         -- Record only a new protective lease that interrupted an unowned
         -- native follow goal; never infer this from an existing owner label.
         if row.origin=="learned_prior" and type(owner)=="table" and owner.active~=true then
@@ -954,6 +954,31 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
     if swinging and (active and active.entry==row.creatureEntry or distance and distance<row.minRangeYards+row.clearanceYards) then
         out.action={capability="melee_stop",sessionId=obs.sessionId,selfGuid=obs.selfGuid,targetGuid=swinging,visitId=obs.visitId,observationSequence=sequence}
         status.phase="stopping_melee";return
+    end
+    -- Reconcile only the existing finite ownership uncertainty, not an input
+    -- or ground UNKNOWN. This step performs cleanup only, never a replacement.
+    if prior and hold and hold.uncertain and not hold.operation and
+       hold.sessionId==obs.sessionId and hold.selfGuid==obs.selfGuid and
+       hold.visitId==obs.visitId and hold.mapId==obs.mapId and
+       type(nav.movementOwner)=="table" and nav.movementOwner.active~=true and
+       nav.motionUnconfirmed~=true and type(frame.clock.unixMs)=="number" and
+       frame.clock.unixMs>=hold.untilUnixMs and
+       not (ground and (ground.operation or ground.uncertain)) then
+        ranged_hold(obs,frame,out,row,status,false)
+        out.action=nil;status.phase="finite_movement_hold_reconciled"
+        return
+    end
+    -- A known stationary, owned lease can still permit the existing direct
+    -- friendly support while unrelated ground custody remains unresolved.
+    if prior and ground and (ground.operation or ground.uncertain) and
+       hold and not hold.operation and not hold.uncertain and hold.token and
+       hold.sessionId==obs.sessionId and hold.selfGuid==obs.selfGuid and
+       type(nav.movementOwner)=="table" and nav.movementOwner.active==true and
+       nav.movementOwner.owner==hold.owner and nav.motionUnconfirmed~=true and
+       self.movementKnown==true and self.moving~=true and ranged_friendly_support(obs,action) then
+        out.followFormation,out.portalCatchup=nil,nil
+        status.phase="stationary_friendly_support";status.positionReady=false
+        return
     end
     if prior and (nav.motionUnconfirmed==true or hold and (hold.operation or hold.uncertain) or
        ground and (ground.operation or ground.uncertain)) then

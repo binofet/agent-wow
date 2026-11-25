@@ -5,6 +5,8 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"google.golang.org/protobuf/proto"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -186,6 +188,87 @@ func TestNativeFollowProtectiveReleaseUnknownNeverReplays(t *testing.T) {
 		out := p.decide(observeRanged(t, p, o, false)).Output
 		if out["action"] != nil {
 			t.Fatal("unknown release replayed or replaced", out)
+		}
+	}
+}
+
+func TestNativeFollowFiniteUnknownOwnershipCleanup(t *testing.T) {
+	read := func(name string) string {
+		b, e := os.ReadFile(filepath.Join("..", "..", "behaviors", name))
+		if e != nil {
+			t.Fatal(e)
+		}
+		return string(b)
+	}
+	source := "local encounter_priors=(function()\n" + read("encounter-priors.lua") + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
+end)()
+return {on_event=function() end,export_state=function() return {version=1,data={}} end,import_state=function() return true end,decide=function(frame)
+ local function scenario(kind)
+  local obs={sessionId="fixture",selfGuid="4",visitId="1",mapId=349,navigation={following=true,ownerGuid="3",followRevision="1",movementOwner={active=false}},players={['4']={guid="4",present=true,aliveKnown=true,alive=true,combatKnown=true,mapKnown=true,mapId=349,positionKnown=true,movementKnown=true,moving=false},['3']={guid="3",present=true,aliveKnown=true,alive=true,combatKnown=true,mapKnown=true,mapId=349,positionKnown=true,x=5}},targets={['9']={guid="9",entry=12222,present=true,aliveKnown=true,alive=true,mapKnown=true,mapId=349,positionKnown=true,x=3}},party={group={members={{guid="3",online=true}}}},spells={['8']={known=true,metadataKnown=true,maxRange=40}}}
+  assert(commands.import_state({version=1,data={requests={}}}))
+  local seq=0
+  local function step(now,action)
+   seq=seq+1;commands.on_event({kind="encounter_observation",sequence=tostring(seq),value=obs})
+   local f={session_id=obs.sessionId,input={observationSequence=tostring(seq)},clock={monotonicMs=now,unixMs=now},pending={}}
+   local row,status=commands.ranged_stance(obs,f);local out={action=action}
+   commands.ranged_filter(obs,f,tostring(seq),out,row,status,nil);commands.ranged_finish(out.action)
+   return out,status
+  end
+  local first=step(0)
+  assert(first.action and first.action.mode=="acquire")
+  commands.on_event({receipt={action_id="1",outcome="settled_unverified",payload={capability="movement_owner",owner="ranged:maraudon_sludge_backline",mode="acquire"}}})
+  obs.targets['9'].x=170;obs.players['4'].positionEstimated=true
+  local early,earlyStatus=step(100)
+  local before=commands.export_state().data.rangedHold.uncertain
+  if kind=="active" then obs.navigation.movementOwner={active=true,owner="foreign"}
+  elseif kind=="body" then obs.sessionId="other"
+  elseif kind=="visit" then obs.visitId="2"
+  elseif kind=="motion" then obs.navigation.motionUnconfirmed=true
+  elseif kind=="ground" then commands.export_state().data.rangedGround={operation={kind="move_body"},uncertain=true}
+  end
+  local action
+  if kind=="friendly" then
+   local h=commands.export_state().data.rangedHold;h.uncertain=nil;h.token="known-token"
+   obs.navigation.movementOwner={active=true,owner=h.owner}
+   obs.players['4'].positionEstimated=false
+   commands.export_state().data.rangedGround={uncertain=true}
+   action={capability="heal",targetGuid="3",spellId=8}
+  end
+  local later,laterStatus=step(600001,action)
+  local remaining=commands.export_state().data.rangedHold
+  return {early=early.action,earlyPhase=earlyStatus.phase,before=before,later=later.action,laterPhase=laterStatus.phase,held=remaining~=nil}
+ end
+ local out={}
+ for _,kind in ipairs({'same','active','body','visit','motion','ground','friendly'}) do out[kind]=scenario(kind) end
+ return out
+end}`
+	h, e := behavior.NewSession(context.Background(), "finite-fixture", source)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer h.Close()
+	d, e := h.Decide(context.Background(), map[string]any{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, kind := range []string{"same", "active", "body", "visit", "motion", "ground", "friendly"} {
+		row, _ := d.Output[kind].(map[string]any)
+		if kind == "friendly" {
+			a, _ := row["later"].(map[string]any)
+			if a["capability"] != "heal" || row["laterPhase"] != "stationary_friendly_support" || row["held"] != true {
+				t.Fatal(kind, row)
+			}
+			continue
+		}
+		if row["early"] != nil || row["before"] != true || row["later"] != nil {
+			t.Fatal(kind, row)
+		}
+		if kind == "same" {
+			if row["held"] != false || row["laterPhase"] != "finite_movement_hold_reconciled" {
+				t.Fatal(kind, row)
+			}
+		} else if row["held"] != true {
+			t.Fatal(kind, row)
 		}
 	}
 }
