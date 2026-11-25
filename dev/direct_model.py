@@ -179,10 +179,16 @@ def _schema(value, schema, depth=0):
     if depth > 32 or not isinstance(schema, dict):
         raise ModelError("unsupported_json_schema")
     supported = {"type", "properties", "required", "additionalProperties", "items", "enum", "const",
-        "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems", "pattern",
+        "minimum", "maximum", "exclusiveMinimum", "minLength", "maxLength", "minItems", "maxItems", "pattern",
         "anyOf", "oneOf", "allOf", "description", "title", "default", "examples", "$schema"}
     if set(schema) - supported:
         raise ModelError("unsupported_json_schema")
+    if "exclusiveMinimum" in schema:
+        lower = schema["exclusiveMinimum"]
+        if type(lower) is not int and (type(lower) is not float or not math.isfinite(lower)):
+            raise ModelError("unsupported_json_schema")
+        if type(value) in (int, float) and value <= lower:
+            raise ModelError("json_schema_mismatch")
     for key in ("anyOf", "oneOf", "allOf"):
         if key not in schema:
             continue

@@ -189,3 +189,83 @@ class SelfEditTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class DurablePolicyTests(unittest.TestCase):
+    def fixture(self, folder):
+        root=Path(folder)/'retained'; source=Path(folder)/'profile.lua'
+        source.write_text('return {decide=function() return {} end}')
+        identity=dict(profile='mage',character='Mira',character_guid=4,rpc_port=8087)
+        release=dict(AGENT_WOW_POLICY_FILE=str(source),AGENT_WOW_POLICY_CONTEXT='encounter')
+        return root,source,identity,release
+
+    def rpc(self, source, sid='body-a', lost=False, crash_readback=False):
+        class SessionRPC:
+            def __init__(self):self.source=source;self.sid=sid;self.calls=[];self.entered=False
+            def call(self,method,params):
+                self.calls.append(method)
+                if method=='session.reload_policy':
+                    self.source=params.get('source',source);self.entered=True
+                    if lost:raise edit.c.ConversationError('Lost reply')
+                if self.entered and crash_readback:raise edit.c.ConversationError('Process crashed before readback')
+                return dict(characterGuid='4',sessionId=self.sid,revision=edit.digest(self.source),source=self.source)
+        return SessionRPC()
+
+    def test_confirmed_source_survives_two_sessions_without_runtime_checkpoint(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root,source,identity,release=self.fixture(folder)
+            launch=edit.policy_binding.prepare(root,4,identity,source,release)
+            edit.policy_binding.ready(root,4,launch,'body-a')
+            rpc=self.rpc(source.read_text()); learned=source.read_text()+'\n-- learned improvement'
+            result=edit.edit('apply',4,'body-a',rpc,learned,edit.digest(rpc.source),root)
+            self.assertTrue(result['startupBindingConfirmed'])
+            second=edit.policy_binding.prepare(root,4,identity,source,release)
+            self.assertEqual(Path(second['policyFile']).read_text(),learned)
+            edit.policy_binding.ready(root,4,second,'body-b')
+            # Only source was selected; no old checkpoint/action/token is transferred.
+            self.assertEqual(set(second),{'anchor','revision','policyFile'})
+            self.assertIsNone(edit.policy_binding.capture(root/'4','body-a',edit.digest(learned)))
+            new=self.rpc(learned,'body-b')
+            self.assertTrue(edit.edit('apply',4,'body-b',new,learned+'\n-- second',edit.digest(learned),root)['startupBindingConfirmed'])
+
+    def test_lost_reply_or_crash_before_confirmed_readback_never_promotes_candidate(self):
+        for lost,crash in ((True,False),(False,True)):
+            with self.subTest(lost=lost),tempfile.TemporaryDirectory() as folder:
+                root,source,identity,release=self.fixture(folder)
+                launch=edit.policy_binding.prepare(root,4,identity,source,release)
+                edit.policy_binding.ready(root,4,launch,'body-a')
+                rpc=self.rpc(source.read_text(),lost=lost,crash_readback=crash)
+                candidate=rpc.source+'\n-- uncertain'
+                with self.assertRaises(edit.c.ConversationError):
+                    edit.edit('apply',4,'body-a',rpc,candidate,edit.digest(rpc.source),root)
+                self.assertTrue((root/'4'/(edit.digest(candidate)+'.lua')).exists())
+                second=edit.policy_binding.prepare(root,4,identity,source,release)
+                self.assertEqual(second['policyFile'],str(source))
+                self.assertFalse((root/'4'/'accepted.json').exists())
+
+    def test_new_cohort_or_custom_source_wins_and_old_capture_cannot_promote(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root,source,identity,release=self.fixture(folder)
+            launch=edit.policy_binding.prepare(root,4,identity,source,release)
+            edit.policy_binding.ready(root,4,launch,'body-a')
+            rpc=self.rpc(source.read_text()); learned=rpc.source+'\n-- accepted'
+            edit.edit('apply',4,'body-a',rpc,learned,edit.digest(rpc.source),root)
+            captured=edit.policy_binding.capture(root/'4','body-a',edit.digest(learned))
+            changed=dict(release,AGENT_WOW_POLICY_CONTEXT='new cohort')
+            newer=edit.policy_binding.prepare(root,4,identity,source,changed)
+            self.assertEqual(newer['policyFile'],str(source))
+            self.assertFalse(edit.policy_binding.promote(root/'4',captured,edit.digest(learned),'body-a'))
+            source.write_text('return {decide=function() return {new=true} end}')
+            self.assertEqual(edit.policy_binding.prepare(root,4,identity,source,release)['policyFile'],str(source))
+
+    def test_missing_binding_stale_revision_and_corrupt_retained_content_fail_closed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root,source,identity,release=self.fixture(folder)
+            launch=edit.policy_binding.prepare(root,4,identity,source,release)
+            self.assertIsNone(edit.policy_binding.capture(root/'4','body-a',launch['revision']))
+            edit.policy_binding.ready(root,4,launch,'body-a')
+            self.assertIsNone(edit.policy_binding.capture(root/'4','body-a','0'*64))
+            rpc=self.rpc(source.read_text());learned=rpc.source+'\n-- accepted'
+            edit.edit('apply',4,'body-a',rpc,learned,edit.digest(rpc.source),root)
+            (root/'4'/(edit.digest(learned)+'.lua')).write_text('corrupt')
+            with self.assertRaisesRegex(ValueError,'source changed'):
+                edit.policy_binding.prepare(root,4,identity,source,release)
