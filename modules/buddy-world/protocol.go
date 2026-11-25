@@ -491,6 +491,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, offhandKnown: self, copperKnown: self, skillsKnown: self, freePrimaryKnown: self, bagSlotsKnown: self, equipmentKnown: self, inventoryEpoch: inventoryEpoch}
 					if self {
 						p.receivedOwnCreate = true
+						p.ammoKnown = true // Own CREATE omits the selected-ammo zero baseline.
 						p.receivedUnitFlags = true
 						p.questRevision++
 						p.backpackRevision++
@@ -785,6 +786,10 @@ func values(c *cursor, p *observed, now time.Time) error {
 				return errBounds
 			}
 			if p != nil && p.isSelf {
+				if field == playerAmmo {
+					p.ammoKnown = true
+					p.ammo = v
+				}
 				if field == unitFlags {
 					p.receivedUnitFlags = true
 				}
