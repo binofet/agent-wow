@@ -81,6 +81,17 @@ class Check(unittest.TestCase):
   self.assertEqual(marker['itemGuid'],ITEM);self.assertEqual(marker['modifiers']['armor'],8)
   source['enhancementDetails']['enchantments'][0]['id']=16
   self.assertEqual(self.check(exact=ITEM)['reason'],'owned_enhancement_snapshot_changed')
+ def test_enhanced_nondict_template_is_unknown_at_public_query_entry(self):
+  self.inv['items']=[];self.inv['equipment'][6]['hasEnhancements']=True
+  self.code('gear.tuning.allow_enhanced_comparison=true')
+  for malformed in ('invalid',True,42,[],None):
+   with self.subTest(template=malformed):
+    self.inv['gearContext']['templates']['101']=malformed
+    self.templates[101]=malformed
+    r=self.check()
+    self.assertEqual(r['status'],'unknown')
+    self.assertIn('observed_template_and_enhancement_coverage_required',r['reason'])
+    self.assertFalse(r['gameEffectClaimed'])
  def test_actual_normal_readonly_inspect_resolves_without_packet_or_policy_change(self):
   self.inv['items']=[];self.code('gear.tuning.allow_enhanced_comparison=true')
   self.inv['equipment'][6].update(hasEnhancements=True,enhancementDetails=dict(idKnownMask=4095,durationKnownMask=4095,chargesKnownMask=4095,propertySeedKnown=True,randomPropertyIdKnown=True,enchantments=[dict(id=15)]))

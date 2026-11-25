@@ -120,7 +120,7 @@ def _realized_preview(evaluate,frame,result,world):
         marker=dict(complete=failure is None,referenceOnly=True,sessionId=result.get('sessionId'),
                     characterGuid=result.get('characterGuid'),policyRevision=result.get('policyRevision'),
                     inventoryRevision=result.get('inventoryRevision'),equipmentRevision=result.get('equipmentRevision'),
-                    itemId=(template or {}).get('itemId'),itemGuid=facts.get('itemGuid'),indexSHA256=reference.INDEX_SHA256)
+                    itemId=template.get('itemId') if isinstance(template,dict) else None,itemGuid=facts.get('itemGuid'),indexSHA256=reference.INDEX_SHA256)
         if failure:
             marker['unknownReason']=failure;observations[template_key]=marker
             return dict(upgrade=False,reason='realized_enhancement_unknown:'+failure),observations
