@@ -610,7 +610,7 @@ class ActiveContextTests(unittest.TestCase):
 class LocalPromptBudgetTests(unittest.TestCase):
     def test_tool_aware_sdk_meter_uses_only_fake_websocket_and_bounded_subprocess(self):
         if shutil.which('node') is None:self.skipTest('Node is not installed; SDK mode requires Node22')
-        result=subprocess.run(['node',str(Path(__file__).with_name('test_local_prompt_meter.mjs'))],
+        result=subprocess.run(['node','--test-reporter=tap',str(Path(__file__).with_name('test_local_prompt_meter.mjs'))],
             capture_output=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stdout.decode()+result.stderr.decode())
         self.assertIn('# tests 3',result.stdout.decode())
