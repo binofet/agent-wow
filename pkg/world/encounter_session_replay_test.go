@@ -90,6 +90,7 @@ func readEncounterBundle(t *testing.T) string {
 		"local encounter_control_recovery = (function()\n" + read(filepath.Join(root, "control-recovery.lua")) + "\nend)()\n" +
 		"local encounter_support = (function()\n" + read(filepath.Join(root, "support.lua")) + "\nend)()\n" +
 		"local encounter_movement = (function()\n" + read(filepath.Join(root, "encounter-movement.lua")) + "\nend)()\n" +
+		"local encounter_priors = (function()\n" + read(filepath.Join(root, "encounter-priors.lua")) + "\nend)()\n" +
 		"local encounter_commands = (function()\n" + read(filepath.Join(root, "encounter-commands.lua")) + "\nend)()\n" +
 		"local encounter_tasks = (function()\n" + read(filepath.Join(root, "encounter-tasks.lua")) + "\nend)()\n" +
 		read(filepath.Join(root, "encounter-session.lua"))
