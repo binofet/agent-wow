@@ -219,6 +219,7 @@ func (s *Service) FargodeepEncounter(ctx context.Context, r *actionsv1.Fargodeep
 	if !s.state.Assisting || !s.now().Before(s.assistUntil) || s.state.InteractionOwner != "" || s.state.Traveling || s.state.Practicing || s.questApproaching || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.autoTarget != 0 {
 		return nil, status.Error(codes.FailedPrecondition, "encounter requires enabled assistance and confirmed idle ownership")
 	}
+	readStarted := s.now()
 	w, err := s.snapshot(ctx, r.TargetGuid)
 	if err != nil || w.GetSelf().GetGuid() != s.selfGUID || w.SelfQuestLogRevision != r.ExpectedQuestLogRevision ||
 		safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) {
@@ -230,6 +231,7 @@ func (s *Service) FargodeepEncounter(ctx context.Context, r *actionsv1.Fargodeep
 		phase: "admission_pending", until: s.now().Add(2 * time.Minute)}
 	s.fargodeep = candidate
 	ctx = s.fargodeepReadinessContextLocked(ctx)
+	ctx.Value(fargodeepReadinessKey{}).(*fargodeepReadinessScope).started = readStarted
 	refuse := func(reason string) (*actionsv1.State, error) {
 		// Never restore an earlier task over a callback's replacement owner.
 		if reflect.DeepEqual(s.fargodeep, candidate) {

@@ -330,7 +330,7 @@ func TestFargodeepReadinessLuaFinalWorldCannotExtendLeaseOrContext(t *testing.T)
 }
 
 func TestFargodeepReadinessLuaCurrentMalformedOrMissingPolicyNeverFallsBack(t *testing.T) {
-	for _, mode := range []string{"missing_selection", "foreign_selection", "nonzero_spell", "extra_field", "nil_output", "missing_export", "source_error", "wait", "missing_stand", "zero_stand", "negative_stand", "nonfinite_stand", "overbound_stand", "wrong_stand_type", "missing_phase", "overbound_phase", "missing_pulled", "wrong_pulled_type"} {
+	for _, mode := range []string{"missing_selection", "foreign_selection", "nonzero_spell", "extra_field", "nil_output", "missing_export", "source_error", "wait", "missing_stand", "zero_stand", "negative_stand", "nonfinite_stand", "overbound_stand", "wrong_stand_type", "missing_phase", "overbound_phase", "missing_pulled", "wrong_pulled_type", "missing_validity", "overbound_validity", "fractional_validity"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _, request, _ := fargodeepReadinessRig(t, 5)
 			armFargodeep(t, s, request)
@@ -342,7 +342,7 @@ func TestFargodeepReadinessLuaCurrentMalformedOrMissingPolicyNeverFallsBack(t *t
 					return true, runtime.Status().Revision, out, err
 				}
 				reads++
-				out := map[string]any{"kind": "approach", "phase": "approaching_designated_kobold_on_verified_route", "pulled": false, "selection": fargodeepReadinessTestSelection, "standYards": 3.5}
+				out := map[string]any{"kind": "approach", "phase": "approaching_designated_kobold_on_verified_route", "pulled": false, "selection": fargodeepReadinessTestSelection, "standYards": 3.5, "validForMs": 250}
 				switch mode {
 				case "missing_selection":
 					delete(out, "selection")
@@ -380,6 +380,12 @@ func TestFargodeepReadinessLuaCurrentMalformedOrMissingPolicyNeverFallsBack(t *t
 					delete(out, "pulled")
 				case "wrong_pulled_type":
 					out["pulled"] = "false"
+				case "missing_validity":
+					delete(out, "validForMs")
+				case "overbound_validity":
+					out["validForMs"] = 30001
+				case "fractional_validity":
+					out["validForMs"] = 1.5
 				}
 				return true, runtime.Status().Revision, out, nil
 			}
@@ -727,7 +733,11 @@ func TestFargodeepStanceCannotRebindAPullChangeInsideItsPolicyRead(t *testing.T)
 	if !changed || !s.fargodeepSeen[target.Guid] {
 		t.Fatal("fixture missed the actual policy read or erased mission custody", s.stateLocked())
 	}
-	requireNoFargodeepReadinessDispatch(t, s, f)
+	if countPackets(f, opcode.CMSGCastSpell) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 ||
+		countPackets(f, opcode.MSGMoveStartForward) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 ||
+		s.state.AssistAttempts != 0 || !s.fargodeep.pulled {
+		t.Fatal("the old decision wrote or overwrote the callback's changed phase", s.stateLocked(), f.packets)
+	}
 }
 
 func TestFargodeepStanceFactsCannotChangeAcrossAnEngagedCastWrite(t *testing.T) {
@@ -816,7 +826,7 @@ func TestFargodeepWorkflowReceivesAllThirtyTwoCreaturesAndCurrentQuestFacts(t *t
 			workflow := input["workflow"].(map[string]any)
 			scene := workflow["scene"].(map[string]any)
 			if len(scene["nearbyCreatures"].([]any)) != 32 || len(scene["selfQuestLog"].([]any)) != 25 ||
-				len(workflow["players"].(map[string]any)) != 3 || scene["requestedCreature"].(map[string]any)["guid"] != fmt.Sprint(target.Guid) {
+				len(input["observation"].(map[string]any)["players"].(map[string]any)) != 3 || scene["requestedCreature"].(map[string]any)["guid"] != fmt.Sprint(target.Guid) {
 				t.Fatal("workflow truncated native facts or lost full GUID precision", input)
 			}
 		}
@@ -846,4 +856,50 @@ func TestFargodeepWorkflowAdmissionRejectsAQuestRevisionChangeDuringLua(t *testi
 		t.Fatal("stale Lua activation acquired a mission or target reservation", err, s.stateLocked())
 	}
 	requireNoFargodeepReadinessDispatch(t, s, f)
+}
+
+func TestFargodeepWorkflowElapsedAgesKeepTheLuaFreshnessDeadline(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		before, after uint64
+		elapsed       time.Duration
+		combat, write bool
+	}{
+		{"elapsed_cached_attack", 1000, 1001, time.Millisecond, false, true},
+		{"recent_attack_boundary", 4999, 5001, 2 * time.Millisecond, false, false},
+		{"sustained_attack_boundary", 29999, 30001, 2 * time.Millisecond, true, false},
+		{"replacement_attack_age_reset", 1000, 0, time.Millisecond, false, false},
+		{"unexplained_age_jump", 1000, 2000, time.Millisecond, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, f, target, request, advance := fargodeepReadinessRig(t, 4)
+			target.X += 22
+			armFargodeep(t, s, request)
+			if test.combat {
+				f.world.Self.UnitFlags |= 0x80000
+			}
+			target.AttackVictimKnown, target.AttackVictimGuid, target.AttackAgeMs = true, s.selfGUID, test.before
+			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+			changed := false
+			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+				out, err := runtime.EvaluateContext(ctx, input)
+				if input["selection"] == fargodeepReadinessTestSelection && !changed {
+					changed = true
+					target.AttackAgeMs = test.after
+					advance(test.elapsed)
+				}
+				return true, runtime.Status().Revision, out, err
+			}
+			s.Tick(context.Background())
+			want := 0
+			if test.write {
+				want = 1
+			}
+			if !changed || countPackets(f, opcode.CMSGCastSpell) != want || countPackets(f, opcode.CMSGAttackswing) != 0 ||
+				countPackets(f, opcode.MSGMoveStartForward) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 ||
+				!s.fargodeepSeen[target.Guid] || s.state.ServerAssistGo != 0 || s.state.AssistDamageEvents != 0 {
+				t.Fatal("elapsed age reused an expired policy decision or prevented its unchanged current effect", test, s.stateLocked(), f.packets)
+			}
+		})
+	}
 }

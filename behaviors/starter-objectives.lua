@@ -1,7 +1,7 @@
 -- Starter mission objectives and practice lifecycle. The caller owns observed
 -- facts, exact native toggles, durable mutation reservations and receipt custody.
 local M = {}
-M.fargodeep_pull={minimum_health=95, minimum_mana=45, minimum_energy=90,stand_yards={[4]=3.5,[5]=28,[8]=33},quests={47,60}}
+M.fargodeep_pull={minimum_health=95, minimum_mana=45, minimum_energy=90,stand_yards={[4]=3.5,[5]=28,[8]=33},quests={47,60},recheck_ms=250}
 local function array(v,max)
     if type(v)~="table" or #v>max then return false end
     local n=0
@@ -276,9 +276,18 @@ end
 function M.fargodeep_lifecycle(input)
     local w=type(input)=="table" and input.workflow
     local m=type(input)=="table" and input.mission
-    local stand=0
+    local stand,budget=0,0
     local function out(kind,phase,pulled)
-        return {kind=kind,phase=phase,selection="fargodeep_pull_readiness",standYards=stand,pulled=pulled==true}
+        return {kind=kind,phase=phase,selection="fargodeep_pull_readiness",standYards=stand,pulled=pulled==true,validForMs=math.floor(budget)}
+    end
+    local function future(ms) if number(ms) and ms>=0 then budget=math.min(budget,ms) end end
+    local function motion_expiry(c)
+        local t=c.trajectory
+        if c.motionPositionKnown==true and type(t)=="table" and t.known==true and t.stopped~=true then
+            local age=tonumber(t.ageMs or "0")
+            if age<(t.durationMs or 0) then future(750-math.max(age,tonumber(c.positionAgeMs or "0")))
+            else future((t.durationMs or 0)+5000-age) end
+        end
     end
     local function stop(phase) return out("stop",phase,m and m.pulled) end
     local function area(p)
@@ -300,6 +309,8 @@ function M.fargodeep_lifecycle(input)
     local readiness=fargodeep_readiness(input)
     stand=readiness.standYards
     if not number(stand) or stand<=0 or stand>240 then return stop("readiness_policy_unavailable_or_changed") end
+    if not uint(M.fargodeep_pull.recheck_ms) or M.fargodeep_pull.recheck_ms>30000 then return stop("readiness_policy_unavailable_or_changed") end
+    budget=M.fargodeep_pull.recheck_ms
     local rows=quest_rows({questLogKnown=scene.selfQuestLogKnown,questLog=scene.selfQuestLog})
     local goals=ids(M.fargodeep_pull.quests,25)
     if not goals or not next(goals) then return stop("readiness_policy_unavailable_or_changed") end
@@ -335,6 +346,8 @@ function M.fargodeep_lifecycle(input)
             return stop("target_position_unavailable_or_outside_range")
         end
     end
+    motion_expiry(target)
+    for _,other in ipairs(scene.nearbyCreatures or {}) do motion_expiry(other) end
     local party=w.party
     local group=type(party)=="table" and party.group
     if type(group)~="table" or party.sessionId~=m.partySessionId or group.known~=true or group.inGroup~=true or
@@ -347,7 +360,7 @@ function M.fargodeep_lifecycle(input)
            (member.self==true)~=(member.guid==input.selfGuid) then return stop("current_party_unknown_or_changed") end
         members[member.guid]=member.online==true
     end
-    local full=w.players or {}
+    local full=(input.observation or {}).players or {}
     for guid,class in pairs(classes) do
         local v=full[guid]
         if members[guid]~=true or type(v)~="table" or w.safePlayers[guid]~=true or v.classKnown~=true or v.classId~=class or
@@ -371,6 +384,7 @@ function M.fargodeep_lifecycle(input)
     if w.targetPositionKnown~=true then return out("hold","waiting_for_fresh_patrol_position",m.pulled) end
     local age=tonumber(target.attackAgeMs or "0")
     local engaged=members[victim]==true and age and age<=30000 and full[victim] and (bit(full[victim].unitFlags,0x80000) or age<=5000)
+    if engaged then future((bit(full[victim].unitFlags,0x80000) and 30000 or 5000)-age) end
     local pulled=m.pulled or engaged
     if not engaged and m.engagerGuid~=input.selfGuid then return out("hold","waiting_for_actual_party_attack_start",pulled) end
     if not engaged and not pulled then
@@ -393,6 +407,9 @@ function M.fargodeep_lifecycle(input)
                 local age,duration=tonumber(motion.ageMs or "0"),motion.durationMs
                 local endpoint={x=motion.destinationX,y=motion.destinationY,z=motion.destinationZ}
                 near=math.sqrt(distance2(other,p))<8+7*age/1000 and math.sqrt(distance2(endpoint,p))<8+7*math.abs(duration-age)/1000
+                local start_reach=(math.sqrt(distance2(other,p))-8)*1000/7
+                local end_reach=(math.sqrt(distance2(endpoint,p))-8)*1000/7
+                future(start_reach-age);future(duration-end_reach-age);future(duration+end_reach-age)
             elseif not pos then near=other.positionKnown==true and point(other) and distance2(other,p)<8*8 end
             if other.guid~=m.targetGuid and other.present==true and other.aliveKnown==true and other.alive==true and
                (other.npcFlags or 0)==0 and near then return out("hold","waiting_for_isolated_kobold",pulled) end
