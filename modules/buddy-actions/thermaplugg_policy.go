@@ -51,23 +51,18 @@ func (b thermapluggBinding) current(s *Service, ctx context.Context, w *worldv1.
 		reflect.DeepEqual(b.worldFacts, thermapluggStableWorld(w))
 }
 
-func thermapluggBosses(w *worldv1.SnapshotResponse) []any {
-	out := []any{}
-	seen := map[uint64]bool{}
-	if w == nil {
-		return out
-	}
-	rows := append([]*worldv1.CreatureState{w.OwnerTarget}, w.NearbyCreatures...)
-	for _, c := range rows {
-		if c.GetGuid() == 0 || c.Entry != thermapluggEntry || seen[c.Guid] {
-			continue
-		}
-		if raw, ok := starterJSON(c); ok {
-			out = append(out, raw)
-			seen[c.Guid] = true
+// Project the same raw observation rows for input and freshness comparison.
+// Encounter identity and repeated-observation precedence belong to Lua.
+func thermapluggCreatures(w *worldv1.SnapshotResponse) []any {
+	creatures := []any{}
+	for _, creature := range append([]*worldv1.CreatureState{w.OwnerTarget}, w.NearbyCreatures...) {
+		if creature != nil {
+			if raw, ok := starterJSON(creature); ok {
+				creatures = append(creatures, raw)
+			}
 		}
 	}
-	return out
+	return creatures
 }
 
 // Observation ages advance while identical cached facts are read. They are
@@ -103,7 +98,7 @@ func thermapluggStableWorld(w *worldv1.SnapshotResponse) any {
 	if w.Owner != nil {
 		owner, _ = starterJSON(w.Owner)
 	}
-	return thermapluggStable(map[string]any{"self": self, "owner": owner, "bosses": thermapluggBosses(w)})
+	return thermapluggStable(map[string]any{"self": self, "owner": owner, "bosses": thermapluggCreatures(w)})
 }
 
 func thermapluggSameObject(a, b *worldv1.GameObjectState) bool {
@@ -182,7 +177,7 @@ func (s *Service) thermapluggInput(w *worldv1.SnapshotResponse, known bool, cand
 	}
 	return map[string]any{"selection": thermapluggSelection, "sessionId": s.sessionID, "selfGuid": strconv.FormatUint(s.selfGUID, 10),
 		"visitId": strconv.FormatUint(w.VisitRevision, 10), "nowMs": s.now().UnixMilli(), "independent": s.independent, "assisting": s.state.Assisting,
-		"self": self, "owner": owner, "bosses": thermapluggBosses(w), "observationsKnown": known, "candidates": candidates,
+		"self": self, "owner": owner, "bosses": thermapluggCreatures(w), "observationsKnown": known, "candidates": candidates,
 		"clientPosition": map[string]any{"x": s.pos.x, "y": s.pos.y, "z": s.pos.z},
 		"current": map[string]any{"faceGuid": strconv.FormatUint(r.face, 10), "buttonGuid": strconv.FormatUint(r.button, 10),
 			"faceEntry": r.faceEntry, "buttonEntry": r.buttonEntry, "approaching": len(r.path) != 0, "attempt": attempt}, "feedback": r.feedback, "memory": r.memory}
