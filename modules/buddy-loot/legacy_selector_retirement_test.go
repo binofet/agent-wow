@@ -134,3 +134,47 @@ func TestNamedSourceUnknownOpeningSurvivesEnableAndFreshRequestID(t *testing.T) 
 		})
 	}
 }
+
+func TestLuaWindowRejectsSameOwnerReplacementTokenForMoneySlotAndCleanup(t *testing.T) {
+	for _, mode := range []string{"money", "slot", "unsafe_cleanup"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, guid := namedLuaLootRig(t, 183, 708)
+			if got := tickCorpseLua(t, s); got != "loot_open" {
+				t.Fatal("fixture did not execute the actual Lua opening", got)
+			}
+			gold := uint32(0)
+			if mode == "money" {
+				gold = 17
+			}
+			emit(s, opcode.SMSGLootResponse, windowPacket(guid, gold, lootItem{slot: 2, id: 123, count: 1}))
+			f.leaseToken = "replacement-loot-token" // Same owner label, a different operation.
+			want := "loot_slot"
+			if mode == "money" {
+				want = "loot_money"
+			} else if mode == "unsafe_cleanup" {
+				f.world.Self.UnitFlags |= 0x80000
+				want = "loot_close"
+			}
+			if got := tickCorpseLua(t, s); got != want {
+				t.Fatal("test did not reach the intended actual Lua window action", got, want)
+			}
+			if len(f.packets) != 1 || f.leaseOwner != "loot" || f.leaseToken != "replacement-loot-token" || f.releases != 0 ||
+				current(t, s).ItemsStoredConfirmed != 0 || current(t, s).MoneyAwardedNotified != 0 || current(t, s).ReleasesObserved != 0 {
+				t.Fatal("stale window token wrote or cleared the replacement operation", current(t, s), f.packets, f.calls)
+			}
+			if mode != "unsafe_cleanup" {
+				f.world.Self.UnitFlags |= 0x80000
+				if got := tickCorpseLua(t, s); got != "loot_close" {
+					t.Fatal("actual Lua did not request cleanup after defense preemption", got)
+				}
+			}
+			for range 3 {
+				s.Tick(context.Background())
+			}
+			if s.token != "" || len(f.packets) != 1 || f.leaseOwner != "loot" || f.leaseToken != "replacement-loot-token" || f.releases != 0 ||
+				s.cleanup.source != guid || s.corpseReceiptLocked().ReleaseObserved {
+				t.Fatal("cleanup consumed foreign custody or invented a release", current(t, s), f.packets, f.calls)
+			}
+		})
+	}
+}

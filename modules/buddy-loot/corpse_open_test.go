@@ -271,8 +271,9 @@ func corpsePolicyPaused(t *testing.T, s *Service) bool {
 	return len(paused) > 0
 }
 
-func tickCorpseLua(t *testing.T, s *Service) {
+func tickCorpseLua(t *testing.T, s *Service) string {
 	t.Helper()
+	capability := ""
 	if (s.token == "" || s.policyWindow()) && s.cleanup.source == 0 && (!s.questGather || s.policyWindow()) {
 		o, err := s.ObserveCorpses(context.Background(), &emptypb.Empty{})
 		if err == nil {
@@ -285,7 +286,11 @@ func tickCorpseLua(t *testing.T, s *Service) {
 				t.Cleanup(func() { corpseTestVMs.Delete(s) })
 			}
 			out := corpsePolicyDecision(t, vm, o, true, false, s.now().UnixMilli())
-			if a, ok := out["action"].(map[string]any); ok && a["capability"] == "approach_target" {
+			a, ok := out["action"].(map[string]any)
+			if ok {
+				capability, _ = a["capability"].(string)
+			}
+			if ok && a["capability"] == "approach_target" {
 				delete(a, "capability")
 				delete(a, "observationSequence")
 				raw, _ := json.Marshal(a)
@@ -348,6 +353,7 @@ func tickCorpseLua(t *testing.T, s *Service) {
 		}
 	}
 	s.Tick(context.Background())
+	return capability
 }
 
 // Existing gather wire/settlement fixtures use the same actual Lua source for
