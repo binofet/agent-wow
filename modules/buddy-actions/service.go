@@ -881,6 +881,12 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	var w *worldv1.SnapshotResponse
 	var snapshotErr error
 	w, snapshotErr = s.snapshot(ctx)
+	if !moving && op == opcode.MSGMoveStop {
+		if cleanup, ok := ctx.Value(lootApproachCleanupKey{}).(*lootApproachCleanup); ok && !cleanup.current(s, w) {
+			s.state.Reason = "loot_approach_cleanup_owner_changed"
+			return false
+		}
+	}
 	// An owned corpse approach rechecks party and corpse authority after the
 	// clock callback. STOP remains available after that authority is revoked.
 	if moving && s.lootApproachGuard != nil {

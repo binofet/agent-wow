@@ -23,12 +23,15 @@ func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootReq
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	cleanup := &lootApproachCleanup{session: s.sessionID, self: s.selfGUID, token: r.Token,
+		visit: s.lastWorld.GetVisitRevision(), bound: s.state.Moving && s.lastWorld != nil}
+	ctx = context.WithValue(ctx, lootApproachCleanupKey{}, cleanup)
 	// An owned approach already in motion still owes a STOP when its caller
 	// cancels. Use fresh bounded transport only for this exact active token.
 	defer func() {
 		if ctx.Err() != nil && !s.closed && s.state.InteractionOwner == "loot" && subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) == 1 && s.state.Moving {
 			stop, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
-			s.stopLocked(stop)
+			s.stopLocked(context.WithValue(stop, lootApproachCleanupKey{}, cleanup))
 			cancel()
 			result = s.stateLocked()
 		}
@@ -37,6 +40,20 @@ func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootReq
 		return nil, status.FromContextError(e).Err()
 	}
 	return s.approachLootStepLocked(ctx, r, nil)
+}
+
+type lootApproachCleanupKey struct{}
+
+type lootApproachCleanup struct {
+	session, token string
+	self, visit    uint64
+	bound          bool
+}
+
+func (b *lootApproachCleanup) current(s *Service, w *worldv1.SnapshotResponse) bool {
+	return b.bound && !s.closed && s.sessionID == b.session && s.selfGUID == b.self &&
+		w.GetSelf().GetGuid() == b.self && w.GetVisitRevision() == b.visit &&
+		s.state.InteractionOwner == "loot" && subtle.ConstantTimeCompare([]byte(b.token), []byte(s.interactionToken)) == 1
 }
 
 type lootApproachNavigation struct {
@@ -71,6 +88,12 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 	}
 	if reason := safeQuestCharacter(w, s.selfGUID); reason != "" {
 		return pause("loot_approach_" + reason)
+	}
+	if cleanup, ok := ctx.Value(lootApproachCleanupKey{}).(*lootApproachCleanup); ok {
+		if cleanup.session != s.sessionID || cleanup.self != s.selfGUID || cleanup.bound && cleanup.visit != w.VisitRevision {
+			return pause("loot_approach_body_or_visit_changed")
+		}
+		cleanup.visit, cleanup.bound = w.VisitRevision, true
 	}
 	if !s.refreshPositionLocked(w) {
 		return pause("loot_approach_authoritative_position_changed")

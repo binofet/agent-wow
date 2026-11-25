@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -205,5 +206,58 @@ func TestCorpseApproachEnteredMovementLossRetainsUnknownWithoutReplay(t *testing
 				}
 			}
 		})
+	}
+}
+
+func TestLootApproachPlannerAndCancellationCleanupRetainOriginalLease(t *testing.T) {
+	for _, harvest := range []bool{false, true} {
+		for _, cancelled := range []bool{false, true} {
+			for _, replacement := range []string{"unchanged", "session", "visit", "same owner token", "different owner token"} {
+				t.Run(fmt.Sprint(harvest, "/", cancelled, "/", replacement), func(t *testing.T) {
+					rig := navLootRig
+					if harvest {
+						rig = harvestApproachRig
+					}
+					s, f, advance, request := rig(t)
+					out, err := s.ApproachLoot(context.Background(), request)
+					if err != nil || !out.Moving {
+						t.Fatal(out, err)
+					}
+					advance(200 * time.Millisecond)
+					replace := func() {
+						switch replacement {
+						case "session":
+							s.sessionID += "-replacement"
+						case "visit":
+							f.world.VisitRevision++
+						case "same owner token":
+							s.interactionToken = "replacement"
+						case "different owner token":
+							s.interactionToken, s.state.InteractionOwner = "replacement", "professions"
+						}
+					}
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					if cancelled {
+						cancel()
+						f.onClock = func() { f.onClock = nil; replace() }
+					} else {
+						s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+							replace()
+							return nil, errors.New("observed route unavailable")
+						}
+					}
+					_, err = s.ApproachLoot(ctx, request)
+					wantStops := 0
+					if replacement == "unchanged" {
+						wantStops = 1
+					}
+					if cancelled != (err != nil) || countPackets(f, opcode.MSGMoveStop) != wantStops ||
+						countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 || s.lootApproachGuard != nil {
+						t.Fatal("cleanup rebound to a replacement or lost its original owned STOP", err, f.packets)
+					}
+				})
+			}
+		}
 	}
 }
