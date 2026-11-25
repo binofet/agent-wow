@@ -2303,12 +2303,9 @@ func (x *SplineTransferAdoption) GetTransfer() *WorldTransferObservation {
 type ItemEnchantmentSlot struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Slot          uint32                 `protobuf:"varint,1,opt,name=slot,proto3" json:"slot,omitempty"`
-	IdKnown       bool                   `protobuf:"varint,2,opt,name=id_known,json=idKnown,proto3" json:"id_known,omitempty"`
-	Id            uint32                 `protobuf:"varint,3,opt,name=id,proto3" json:"id,omitempty"`
-	DurationKnown bool                   `protobuf:"varint,4,opt,name=duration_known,json=durationKnown,proto3" json:"duration_known,omitempty"`
-	DurationRaw   uint32                 `protobuf:"varint,5,opt,name=duration_raw,json=durationRaw,proto3" json:"duration_raw,omitempty"`
-	ChargesKnown  bool                   `protobuf:"varint,6,opt,name=charges_known,json=chargesKnown,proto3" json:"charges_known,omitempty"`
-	Charges       uint32                 `protobuf:"varint,7,opt,name=charges,proto3" json:"charges,omitempty"`
+	Id            uint32                 `protobuf:"varint,2,opt,name=id,proto3" json:"id,omitempty"`
+	DurationRaw   uint32                 `protobuf:"varint,3,opt,name=duration_raw,json=durationRaw,proto3" json:"duration_raw,omitempty"`
+	Charges       uint32                 `protobuf:"varint,4,opt,name=charges,proto3" json:"charges,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2350,13 +2347,6 @@ func (x *ItemEnchantmentSlot) GetSlot() uint32 {
 	return 0
 }
 
-func (x *ItemEnchantmentSlot) GetIdKnown() bool {
-	if x != nil {
-		return x.IdKnown
-	}
-	return false
-}
-
 func (x *ItemEnchantmentSlot) GetId() uint32 {
 	if x != nil {
 		return x.Id
@@ -2364,25 +2354,11 @@ func (x *ItemEnchantmentSlot) GetId() uint32 {
 	return 0
 }
 
-func (x *ItemEnchantmentSlot) GetDurationKnown() bool {
-	if x != nil {
-		return x.DurationKnown
-	}
-	return false
-}
-
 func (x *ItemEnchantmentSlot) GetDurationRaw() uint32 {
 	if x != nil {
 		return x.DurationRaw
 	}
 	return 0
-}
-
-func (x *ItemEnchantmentSlot) GetChargesKnown() bool {
-	if x != nil {
-		return x.ChargesKnown
-	}
-	return false
 }
 
 func (x *ItemEnchantmentSlot) GetCharges() uint32 {
@@ -2393,12 +2369,19 @@ func (x *ItemEnchantmentSlot) GetCharges() uint32 {
 }
 
 type ItemEnhancementState struct {
-	state                 protoimpl.MessageState `protogen:"open.v1"`
-	Enchantments          []*ItemEnchantmentSlot `protobuf:"bytes,1,rep,name=enchantments,proto3" json:"enchantments,omitempty"`
-	PropertySeedKnown     bool                   `protobuf:"varint,2,opt,name=property_seed_known,json=propertySeedKnown,proto3" json:"property_seed_known,omitempty"`
-	PropertySeed          uint32                 `protobuf:"varint,3,opt,name=property_seed,json=propertySeed,proto3" json:"property_seed,omitempty"`
-	RandomPropertyIdKnown bool                   `protobuf:"varint,4,opt,name=random_property_id_known,json=randomPropertyIdKnown,proto3" json:"random_property_id_known,omitempty"`
-	RandomPropertyId      int32                  `protobuf:"zigzag32,5,opt,name=random_property_id,json=randomPropertyId,proto3" json:"random_property_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Bit n covers native slot n (0..11) for this field. A set bit plus
+	// omitted sparse slot/value means KNOWN ZERO; an unset bit means UNKNOWN.
+	// Sparse rows contain only nonzero observed values; never infer coverage
+	// from their presence. Raw enchantment IDs are not gem item entries.
+	IdKnownMask           uint32                 `protobuf:"varint,1,opt,name=id_known_mask,json=idKnownMask,proto3" json:"id_known_mask,omitempty"`
+	DurationKnownMask     uint32                 `protobuf:"varint,2,opt,name=duration_known_mask,json=durationKnownMask,proto3" json:"duration_known_mask,omitempty"`
+	ChargesKnownMask      uint32                 `protobuf:"varint,3,opt,name=charges_known_mask,json=chargesKnownMask,proto3" json:"charges_known_mask,omitempty"`
+	Enchantments          []*ItemEnchantmentSlot `protobuf:"bytes,4,rep,name=enchantments,proto3" json:"enchantments,omitempty"`
+	PropertySeedKnown     bool                   `protobuf:"varint,5,opt,name=property_seed_known,json=propertySeedKnown,proto3" json:"property_seed_known,omitempty"`
+	PropertySeed          uint32                 `protobuf:"varint,6,opt,name=property_seed,json=propertySeed,proto3" json:"property_seed,omitempty"`
+	RandomPropertyIdKnown bool                   `protobuf:"varint,7,opt,name=random_property_id_known,json=randomPropertyIdKnown,proto3" json:"random_property_id_known,omitempty"`
+	RandomPropertyId      int32                  `protobuf:"zigzag32,8,opt,name=random_property_id,json=randomPropertyId,proto3" json:"random_property_id,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -2431,6 +2414,27 @@ func (x *ItemEnhancementState) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ItemEnhancementState.ProtoReflect.Descriptor instead.
 func (*ItemEnhancementState) Descriptor() ([]byte, []int) {
 	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ItemEnhancementState) GetIdKnownMask() uint32 {
+	if x != nil {
+		return x.IdKnownMask
+	}
+	return 0
+}
+
+func (x *ItemEnhancementState) GetDurationKnownMask() uint32 {
+	if x != nil {
+		return x.DurationKnownMask
+	}
+	return 0
+}
+
+func (x *ItemEnhancementState) GetChargesKnownMask() uint32 {
+	if x != nil {
+		return x.ChargesKnownMask
+	}
+	return 0
 }
 
 func (x *ItemEnhancementState) GetEnchantments() []*ItemEnchantmentSlot {
@@ -5555,21 +5559,21 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12.\n" +
 	"\x13from_visit_revision\x18\x03 \x01(\x04R\x11fromVisitRevision\x12*\n" +
 	"\x11to_visit_revision\x18\x04 \x01(\x04R\x0ftoVisitRevision\x12L\n" +
-	"\btransfer\x18\x05 \x01(\v20.warcraftbuddy.world.v1.WorldTransferObservationR\btransfer\"\xdd\x01\n" +
+	"\btransfer\x18\x05 \x01(\v20.warcraftbuddy.world.v1.WorldTransferObservationR\btransfer\"v\n" +
 	"\x13ItemEnchantmentSlot\x12\x12\n" +
-	"\x04slot\x18\x01 \x01(\rR\x04slot\x12\x19\n" +
-	"\bid_known\x18\x02 \x01(\bR\aidKnown\x12\x0e\n" +
-	"\x02id\x18\x03 \x01(\rR\x02id\x12%\n" +
-	"\x0eduration_known\x18\x04 \x01(\bR\rdurationKnown\x12!\n" +
-	"\fduration_raw\x18\x05 \x01(\rR\vdurationRaw\x12#\n" +
-	"\rcharges_known\x18\x06 \x01(\bR\fchargesKnown\x12\x18\n" +
-	"\acharges\x18\a \x01(\rR\acharges\"\xa3\x02\n" +
-	"\x14ItemEnhancementState\x12O\n" +
-	"\fenchantments\x18\x01 \x03(\v2+.warcraftbuddy.world.v1.ItemEnchantmentSlotR\fenchantments\x12.\n" +
-	"\x13property_seed_known\x18\x02 \x01(\bR\x11propertySeedKnown\x12#\n" +
-	"\rproperty_seed\x18\x03 \x01(\rR\fpropertySeed\x127\n" +
-	"\x18random_property_id_known\x18\x04 \x01(\bR\x15randomPropertyIdKnown\x12,\n" +
-	"\x12random_property_id\x18\x05 \x01(\x11R\x10randomPropertyId\"\xed\x03\n" +
+	"\x04slot\x18\x01 \x01(\rR\x04slot\x12\x0e\n" +
+	"\x02id\x18\x02 \x01(\rR\x02id\x12!\n" +
+	"\fduration_raw\x18\x03 \x01(\rR\vdurationRaw\x12\x18\n" +
+	"\acharges\x18\x04 \x01(\rR\acharges\"\xa5\x03\n" +
+	"\x14ItemEnhancementState\x12\"\n" +
+	"\rid_known_mask\x18\x01 \x01(\rR\vidKnownMask\x12.\n" +
+	"\x13duration_known_mask\x18\x02 \x01(\rR\x11durationKnownMask\x12,\n" +
+	"\x12charges_known_mask\x18\x03 \x01(\rR\x10chargesKnownMask\x12O\n" +
+	"\fenchantments\x18\x04 \x03(\v2+.warcraftbuddy.world.v1.ItemEnchantmentSlotR\fenchantments\x12.\n" +
+	"\x13property_seed_known\x18\x05 \x01(\bR\x11propertySeedKnown\x12#\n" +
+	"\rproperty_seed\x18\x06 \x01(\rR\fpropertySeed\x127\n" +
+	"\x18random_property_id_known\x18\a \x01(\bR\x15randomPropertyIdKnown\x12,\n" +
+	"\x12random_property_id\x18\b \x01(\x11R\x10randomPropertyId\"\xed\x03\n" +
 	"\x12EquipmentSlotState\x12\x12\n" +
 	"\x04slot\x18\x01 \x01(\rR\x04slot\x12\x1d\n" +
 	"\n" +

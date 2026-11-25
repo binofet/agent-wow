@@ -16,10 +16,10 @@ func TestEnhancementDetailsPartialKnownZeroAndSignedProperty(t *testing.T) {
 	p.known[0x3b] = true
 	p.fields[0x3b] = 0xfffffff9
 	v := observedEnhancementDetails(&p).message()
-	if len(v.Enchantments) != 12 || !v.Enchantments[0].IdKnown || v.Enchantments[0].Id != 0 || v.Enchantments[0].DurationKnown || v.Enchantments[1].IdKnown {
+	if len(v.Enchantments) != 1 || v.IdKnownMask != 5 || v.DurationKnownMask != 0 || v.ChargesKnownMask != 0 {
 		t.Fatal(v)
 	}
-	if v.Enchantments[2].Id != 3210 || !v.PropertySeedKnown || v.PropertySeed != 123456 || !v.RandomPropertyIdKnown || v.RandomPropertyId != -7 {
+	if v.Enchantments[0].Slot != 2 || v.Enchantments[0].Id != 3210 || !v.PropertySeedKnown || v.PropertySeed != 123456 || !v.RandomPropertyIdKnown || v.RandomPropertyId != -7 {
 		t.Fatal(v)
 	}
 	if known, _ := itemEnhancements(&p); known {
@@ -45,7 +45,7 @@ func TestEnhancementDetailsOwnedPacketUpdatesRemovalAndVisitIsolation(t *testing
 	if !r.SelfEquipment[6].EnhancementsKnown || !r.SelfEquipment[6].HasEnhancements || d.Enchantments[0].Id != 3210 || d.Enchantments[0].DurationRaw != 9000 || d.Enchantments[0].Charges != 3 || d.RandomPropertyId != -7 {
 		t.Fatal(d)
 	}
-	if r.Backpack[0].EnhancementDetails.Enchantments[2].Id != 3310 || r.InventoryBags[0].Slots[0].EnhancementDetails.Enchantments[2].Id != 3310 {
+	if r.Backpack[0].EnhancementDetails.Enchantments[0].Id != 3310 || r.InventoryBags[0].Slots[0].EnhancementDetails.Enchantments[0].Id != 3310 {
 		t.Fatal("carried projections disagree")
 	}
 	er, ir := r.SelfEquipmentRevision, r.InventoryRevision
@@ -54,16 +54,16 @@ func TestEnhancementDetailsOwnedPacketUpdatesRemovalAndVisitIsolation(t *testing
 		t.Fatal("changed nonzero ID hidden behind same boolean")
 	}
 	r = packet(t, s, opcode.SMSGUpdateObject, deltaFixture(armorItem+1, map[int]uint32{0x1c: 3311}))
-	if r.InventoryRevision != ir+1 || r.Backpack[0].EnhancementDetails.Enchantments[2].Id != 3311 {
+	if r.InventoryRevision != ir+1 || r.Backpack[0].EnhancementDetails.Enchantments[0].Id != 3311 {
 		t.Fatal("carried revision did not include exact change")
 	}
 	r = packet(t, s, opcode.SMSGUpdateObject, deltaFixture(armorItem+1, map[int]uint32{0x1c: 0}))
-	if r.Backpack[0].HasEnhancements || !r.Backpack[0].EnhancementDetails.Enchantments[2].IdKnown || r.Backpack[0].EnhancementDetails.Enchantments[2].Id != 0 {
+	if r.Backpack[0].HasEnhancements || r.Backpack[0].EnhancementDetails.IdKnownMask != 4095 || len(r.Backpack[0].EnhancementDetails.Enchantments) != 0 {
 		t.Fatal("known removal lost")
 	}
-	r.Backpack[0].EnhancementDetails.Enchantments[2].Id = 999
+	r.Backpack[0].EnhancementDetails.IdKnownMask = 999
 	r, _ = s.Snapshot(context.Background(), nil)
-	if r.Backpack[0].EnhancementDetails.Enchantments[2].Id != 0 {
+	if r.Backpack[0].EnhancementDetails.IdKnownMask != 4095 {
 		t.Fatal("snapshot alias")
 	}
 	r = packet(t, s, opcode.SMSGUpdateObject, deltaFixture(armorItem+1, map[int]uint32{6: 3}))

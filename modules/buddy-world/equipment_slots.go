@@ -103,7 +103,13 @@ func observedEnhancementDetails(p *observed) itemEnhancementView {
 	return v
 }
 func (v itemEnhancementView) message() *worldv1.ItemEnhancementState {
-	out := &worldv1.ItemEnhancementState{PropertySeedKnown: v.seedKnown, PropertySeed: v.seed, RandomPropertyIdKnown: v.randomKnown, RandomPropertyId: v.random}
+	out := &worldv1.ItemEnhancementState{PropertySeedKnown: v.seedKnown, RandomPropertyIdKnown: v.randomKnown}
+	if v.seedKnown {
+		out.PropertySeed = v.seed
+	}
+	if v.randomKnown {
+		out.RandomPropertyId = v.random
+	}
 	// No details means no current owned metadata, not a complete empty item.
 	any := v.seedKnown || v.randomKnown
 	for _, s := range v.slots {
@@ -113,7 +119,30 @@ func (v itemEnhancementView) message() *worldv1.ItemEnhancementState {
 		return nil
 	}
 	for i, s := range v.slots {
-		out.Enchantments = append(out.Enchantments, &worldv1.ItemEnchantmentSlot{Slot: uint32(i), IdKnown: s.idKnown, Id: s.id, DurationKnown: s.durationKnown, DurationRaw: s.duration, ChargesKnown: s.chargesKnown, Charges: s.charges})
+		bit := uint32(1) << uint(i)
+		if s.idKnown {
+			out.IdKnownMask |= bit
+		}
+		if s.durationKnown {
+			out.DurationKnownMask |= bit
+		}
+		if s.chargesKnown {
+			out.ChargesKnownMask |= bit
+		}
+		// Never serialize an unknown backing value as observed data.
+		row := &worldv1.ItemEnchantmentSlot{Slot: uint32(i)}
+		if s.idKnown {
+			row.Id = s.id
+		}
+		if s.durationKnown {
+			row.DurationRaw = s.duration
+		}
+		if s.chargesKnown {
+			row.Charges = s.charges
+		}
+		if row.Id != 0 || row.DurationRaw != 0 || row.Charges != 0 {
+			out.Enchantments = append(out.Enchantments, row)
+		}
 	}
 	return out
 }
