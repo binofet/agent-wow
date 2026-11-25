@@ -61,12 +61,13 @@ class SupplyTest(unittest.TestCase):
 
     def catalog(self,port):
         view=self.observations[port];guid=view['actions']['selfGuid']
-        fields=lambda values:[dict(name=name,kind=kind) for name,kind in values]
-        methods=[dict(name='buddy-actions.create_item',effect='mutation',inputType='CreateItem')]
+        fields=lambda values:[dict(name=name,kind=kind,repeated=False,map=False,optional=False,required=False) for name,kind in values]
+        methods=[dict(name='buddy-actions.create_item',effect='mutation',inputType='CreateItem'),
+            dict(name='buddy-trade.state',effect='read',outputType='TradeState')]
         methods.append(dict(name='buddy-trade.destroy_junk',effect='mutation',inputType='Junk'))
         if self.gift_available:methods.append(dict(name='buddy-trade.water_gift',effect='mutation',inputType='Gift'))
         return dict(sessionId=view['actions']['sessionId'],characterGuid=guid,revision='c'*64,methods=methods,
-            messages=dict(CreateItem=dict(fields=fields([('sessionId','string'),('selfGuid','uint64'),('spellId','uint32')])),
+            messages=dict(TradeState=dict(fields=fields([('sessionId','string'),('revision','uint64'),('phase','enum')])),CreateItem=dict(fields=fields([('sessionId','string'),('selfGuid','uint64'),('spellId','uint32')])),
                 Junk=dict(fields=fields([('sessionId','string'),('revision','uint64'),('backpackRevision','uint64'),
                     ('backpackSlot','uint32'),('expectedItemGuid','uint64'),('inventoryRevision','uint64'),('sourceBag','uint32'),('sourceSlot','uint32')])),
                 Gift=dict(fields=fields([('sessionId','string'),('revision','uint64'),('partnerGuid','uint64'),
@@ -87,7 +88,7 @@ class SupplyTest(unittest.TestCase):
         self.calls.append((port,method,copy.deepcopy(params)))
         if method==self.fail_method:raise OSError('Reply lost after possible native write')
         if method=='buddy-trade.water_gift':
-            view['trade'].update(waterGiftArmed=True,partnerGuid=params['partnerGuid'],revision=str(int(view['trade']['revision'])+1))
+            view['trade'].update(waterGiftArmed=True,partnerGuid=params['partnerGuid'],revision=str(int(view['trade'].get('revision','0'))+1))
             return copy.deepcopy(view['trade'])
         if method=='buddy-trade.destroy_junk':return copy.deepcopy(view['trade'])
         self.assertEqual(method,'buddy-actions.create_item')
@@ -113,6 +114,62 @@ class SupplyTest(unittest.TestCase):
         self.arlen['journal']=dict(sessionId='aw-1',questLogRevision='7',entries=[])
         self.arlen['trade'].update(backpackKnown=True,backpackRevision='5')
         return row
+
+    def test_omitted_proto3_zero_trade_revision_on_both_bodies(self):
+        carried(self.mira,2136,8)
+        self.mira['trade'].pop('revision');self.arlen['trade'].pop('revision')
+        original=copy.deepcopy(self.observations)
+        decision,_,_=supply._evaluate(self.rpc,self.observations,{},self.bridge,1000)
+        self.assertEqual(self.observations,original)
+        self.assertEqual(decision['action']['params']['revision'],'0')
+        self.gift()
+        self.assertEqual([(port,method,params['revision']) for port,method,params in self.calls],
+            [(8086,'buddy-trade.water_gift','0'),(8087,'buddy-trade.water_gift','0')])
+
+    def test_missing_state_schema_or_malformed_receiver_sends_nothing(self):
+        carried(self.mira,2136,8)
+        self.mira['trade'].pop('revision');self.arlen['trade'].pop('revision')
+        original_catalog=self.catalog
+        def missing(port):
+            result=original_catalog(port);result['messages'].pop('TradeState');return result
+        self.catalog=missing;state={}
+        self.assertEqual(self.turn(state),'water_supply_unavailable')
+        self.assertEqual(state['error'],'current_reflected_trade_state_revision_required')
+        self.assertEqual(self.calls,[])
+        self.catalog=original_catalog;self.arlen['trade']['revision']='bad';state={}
+        self.assertEqual(self.turn(state),'water_supply_unavailable')
+        self.assertEqual(state['error'],'installed_supply_field_type_required:revision')
+        self.assertEqual(self.calls,[])
+
+    def test_missing_zero_requires_current_state_and_singular_uint64_schema(self):
+        catalog=self.catalog(8087);identity=supply._identity(self.mira,4)
+        for fault in ('missing_schema','wrong_kind','repeated','map','optional','required','hasDefault','oneof','missing_presence','sid','state'):
+            view=copy.deepcopy(self.mira);view['trade'].pop('revision');schema=copy.deepcopy(catalog)
+            field=schema['messages']['TradeState']['fields'][1]
+            if fault=='missing_schema':schema['messages'].pop('TradeState')
+            elif fault=='wrong_kind':field['kind']='string'
+            elif fault in ('repeated','map','optional','required','hasDefault'):field[fault]=True
+            elif fault=='oneof':field['oneof']='selected'
+            elif fault=='missing_presence':field.pop('optional')
+            elif fault=='sid':view['trade']['sessionId']='other'
+            else:view.pop('trade')
+            before=copy.deepcopy(view)
+            with self.assertRaisesRegex(supply.runtime.Error,'current_reflected_trade_state_revision_required'):
+                supply._trade_state_revision(view,schema,identity)
+            self.assertEqual(view,before)
+        omitted_default=copy.deepcopy(self.mira);omitted_default['trade'].pop('revision')
+        normal=copy.deepcopy(catalog);normal['messages']['TradeState']['fields'][1].pop('hasDefault',None)
+        supply._trade_state_revision(omitted_default,normal,identity)
+        self.assertEqual(omitted_default['trade']['revision'],'0')
+        for value in ('','bad',None,0,'19'):
+            view=copy.deepcopy(self.mira);view['trade']['revision']=value
+            supply._trade_state_revision(view,catalog,identity)
+            self.assertEqual(view['trade']['revision'],value)
+            action=dict(id='test',method='buddy-trade.water_gift',params=dict(sessionId=identity['sessionId'],revision=value))
+            if value=='19':supply._validate_action(action,catalog,identity)
+            else:
+                with self.assertRaisesRegex(supply.runtime.Error,'installed_supply_field_type_required:revision'):
+                    supply._validate_action(action,catalog,identity)
 
     def test_carried_water_goes_to_empty_caster_through_two_correlated_lua_turns(self):
         carried(self.mira,2136,8);self.gift()
@@ -252,6 +309,39 @@ class SupplyTest(unittest.TestCase):
         self.assertEqual(self.turn(state),'awaiting_recipient_observations');self.assertEqual(len(self.calls),1)
         self.observations[8086]=saved
         self.assertEqual(self.turn(state),'recipient_reservation_unconfirmed');self.assertEqual(len(self.calls),1)
+
+    def anonymous_receiver_arm(self):
+        carried(self.mira,2136,8);self.arlen['trade']['revision']='0';state={}
+        self.assertEqual(self.turn(state),'recipient_water_reservation_requested')
+        for receipt in (state['last']['result'],self.arlen['trade']):
+            receipt.pop('partnerGuid',None);receipt.update(phase='IDLE',waterGiftArmed=True,reason='waiting_for_water_gift_invitation')
+        self.assertEqual(state['last']['result']['revision'],'1')
+        return state
+
+    def test_native_idle_anonymous_arm_then_offer_and_actual_completion(self):
+        state=self.anonymous_receiver_arm()
+        self.assertEqual(self.turn(state),'water_gift_offer_requested');self.assertEqual(len(self.calls),2)
+        self.assertNotIn('partnerGuid',self.arlen['trade'])
+        for view,partner in ((self.mira,'1'),(self.arlen,'4')):
+            view['trade'].update(phase='COMPLETE',partnerGuid=partner,lastServerStatus=8,completedTrades='1')
+        self.assertEqual(self.turn(state),'server_confirmed_peer_trade');self.assertNotIn('pending',state['memory'])
+
+    def test_native_idle_anonymous_arm_expired_without_donor_replay(self):
+        state=self.anonymous_receiver_arm();self.arlen['trade'].update(waterGiftArmed=False,revision='2')
+        self.assertEqual(self.turn(state),'recipient_reservation_ended_before_offer');self.assertEqual(len(self.calls),1);self.assertNotIn('pending',state['memory'])
+
+    def test_anonymous_arm_wrong_peer_changed_revision_unknown_or_body_blocks(self):
+        for fault in ('wrong_peer','changed_revision','unknown','receipt_reason','peer_reason','body','count','source_revision'):
+            self.setUp();state=self.anonymous_receiver_arm()
+            if fault=='wrong_peer':self.arlen['trade']['partnerGuid']='8'
+            elif fault=='changed_revision':self.arlen['trade']['revision']='2'
+            elif fault=='unknown':state['last']['outcome']='transport_unconfirmed'
+            elif fault=='receipt_reason':state['last']['result']['reason']='other'
+            elif fault=='peer_reason':self.arlen['trade']['reason']='other'
+            elif fault=='body':self.arlen['trade']['sessionId']='different'
+            elif fault=='count':self.mira['world']['backpack'][0]['stackCount']=7
+            else:self.mira['world']['backpackRevision']='6'
+            self.turn(state);self.assertEqual(len(self.calls),1,fault);self.assertIn('pending',state['memory'],fault)
 
     def test_receiver_reservation_requires_new_exact_partner_receipt_and_current_body_before_offer(self):
         carried(self.mira,2136,8);state={}
