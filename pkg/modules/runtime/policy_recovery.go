@@ -114,6 +114,17 @@ func (p *SessionPolicy) resolveDeathAction(action map[string]any, capability str
 
 func (m *Manager) invokePolicyRecovery(ctx context.Context, inst *instance, md moddisc.Method, req proto.Message, op *policySpell) (behavior.ActionOutcome, map[string]any) {
 	outcome, payload := m.invokePolicySpell(ctx, inst, md, req, op)
+	if op.capability == "enter_corpse_instance" && op.instanceEntry != nil {
+		m.policySpells.mu.Lock()
+		entry := op.instanceEntry
+		payload["entry_trigger_attempted"] = entry.triggerAttempted
+		payload["entry_trigger_written"] = entry.triggerWritten
+		payload["entry_trigger_unknown"] = entry.triggerUnknown
+		payload["entry_trigger_not_dispatched"] = !entry.triggerAttempted || entry.triggerNotDispatched
+		payload["entry_stop_written"] = entry.stopWritten
+		payload["entry_stop_unknown"] = entry.unknown && !entry.triggerUnknown
+		m.policySpells.mu.Unlock()
+	}
 	m.policySpells.mu.Lock()
 	delete(m.policySpells.active, op.token)
 	m.policySpells.mu.Unlock()

@@ -32,11 +32,12 @@ import (
 )
 
 type policyInstanceEntry struct {
-	self                                         uint64
-	trigger                                      uint32 // Zero denotes a packet-free read.
-	stopAttempted, stopWritten, triggerAttempted bool
-	unknown                                      bool
-	stopScope                                    *modv1.TransportScope
+	self                                                 uint64
+	trigger                                              uint32 // Zero denotes a packet-free read.
+	stopAttempted, stopWritten, triggerAttempted         bool
+	unknown                                              bool
+	stopScope                                            *modv1.TransportScope
+	triggerWritten, triggerUnknown, triggerNotDispatched bool
 }
 
 func instanceEntryUint64(value any, zero bool) (uint64, bool) {
@@ -354,6 +355,10 @@ func (m *Manager) writePolicyInstanceEntryScoped(ctx context.Context, token, ses
 	registry.mu.Lock()
 	if code == opcode.MSGMoveStop {
 		entry.stopWritten = err == nil
+	} else {
+		entry.triggerWritten = err == nil
+		entry.triggerNotDispatched = modcb.PacketWasNotDispatched(err)
+		entry.triggerUnknown = err != nil && !entry.triggerNotDispatched
 	}
 	entry.unknown = entry.unknown || err != nil && !modcb.PacketWasNotDispatched(err)
 	op.written = op.written || err == nil

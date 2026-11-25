@@ -21,11 +21,16 @@ function M.on_event(event)
             state.accept_resurrection=p.offer_revision
         end
     end
-    local irreversible=p.capability=='release_spirit' or p.capability=='query_corpse' or p.capability=='reclaim_corpse' or p.capability=='enter_corpse_instance'
+    local irreversible=p.capability=='release_spirit' or p.capability=='query_corpse' or p.capability=='reclaim_corpse' or p.capability=='enter_corpse_instance' and p.entry_trigger_not_dispatched~=true
     if state.session and p.self_guid==state.self and p.death_epoch==state.epoch and irreversible and receipt.outcome~='not_dispatched' then
         -- Only an actual reserved action receipt can create private custody.
         -- A wrapper/task may suppress a proposal before the host reserves it.
         state[p.capability]=true
+    end
+    if state.session and p.self_guid==state.self and p.death_epoch==state.epoch and p.capability=='enter_corpse_instance' and p.entry_trigger_not_dispatched==true then
+        -- A known STOP result is separate from a positively unentered trigger.
+        -- Fresh observed motion gates below still control any next proposal.
+        state.enter_corpse_instance=nil
     end
     if state.session and p.self_guid==state.self and p.death_epoch==state.epoch and receipt.outcome=='not_dispatched' then
         -- A known no-write may be reconsidered. Uncertain release/query/reclaim

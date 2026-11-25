@@ -457,3 +457,83 @@ func TestPolicyDeathDungeonEntryRealManagerRejectsUnscopedWrongOrUnstopped(t *te
 		})
 	}
 }
+
+func corpseEntryLuaObservation(motionUnknown bool) map[string]any {
+	return map[string]any{"sessionId": friendlyEncounterSession, "selfGuid": "22", "players": map[string]any{"22": map[string]any{"present": true, "aliveKnown": true, "alive": false, "healthKnown": true, "health": float64(1), "mapKnown": true, "mapId": float64(0), "positionKnown": true, "positionRevision": "7", "x": float64(0), "y": float64(0), "z": float64(0)}}, "navigation": map[string]any{"motionUnconfirmed": motionUnknown}, "recovery": map[string]any{"deathEpoch": "1", "ghostObserved": true, "ghostMovementSupported": true, "corpseQueryKnown": true, "corpseFound": true, "corpseMapId": float64(1), "corpseQueryRevision": "1", "corpseLocation": map[string]any{"known": true, "mapKnown": true, "mapId": float64(0)}, "corpseEntrances": []any{map[string]any{"triggerId": float64(123), "sourceMapId": float64(0), "destinationMapId": float64(1), "referenceOnly": true}}}}
+}
+func TestPolicyDeathDungeonEntryRealManagerLuaRetriesOnlyUnenteredTrigger(t *testing.T) {
+	for _, mode := range []string{"stop_only", "trigger_not_dispatched", "trigger_unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			x := newInstanceEntryFixture(t)
+			if _, err := x.p.vm.Reload(context.Background(), recoveryRuntimeSource(t), x.p.vm.Status().Revision); err != nil {
+				t.Fatal(err)
+			}
+			entered := 0
+			originalSend := x.m.session.SendScopedPacket
+			x.m.session.SendScopedPacket = func(ctx context.Context, code uint32, body []byte, scope *modv1.TransportScope) error {
+				if entered == 1 && code == opcode.CMSGAreatrigger {
+					if mode == "trigger_not_dispatched" {
+						return modcb.PacketNotDispatchedError("synthetic exact pre-write refusal")
+					}
+					if mode == "trigger_unknown" {
+						originalSend(ctx, code, body, scope)
+						return status.Error(codes.Unknown, "synthetic ambiguous trigger")
+					}
+				}
+				return originalSend(ctx, code, body, scope)
+			}
+			x.handle = func(ctx context.Context, method string, request, result proto.Message) error {
+				entered++
+				incoming := instanceEntryIncoming(ctx)
+				writer := x.m.moduleScopedPacketWriter(friendlyEncounterSession, actionsModule)
+				if err := writer(incoming, opcode.MSGMoveStop, policyMovementPacket(22), instanceEntryScope()); err != nil {
+					t.Fatal(err)
+				}
+				if entered == 1 && mode == "stop_only" {
+					return status.Error(codes.FailedPrecondition, "synthetic source refetch refused before trigger")
+				}
+				err := writer(incoming, opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, 123), instanceEntryScope())
+				if err != nil {
+					return err
+				}
+				proto.Merge(result, &actionsv1.State{Recovery: &actionsv1.RecoveryState{Phase: "corpse_entry_requested", CorpseEntryAttempted: true, CorpseEntryWritten: true}})
+				return nil
+			}
+			step := func(motion bool) *behavior.ActionReceipt {
+				t.Helper()
+				seq, err := x.p.Enqueue(behavior.Event{Kind: "encounter_observation", Value: corpseEntryLuaObservation(motion)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, receipt, err := x.p.Step(context.Background(), map[string]any{"observationSequence": strconv.FormatUint(seq, 10)}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return receipt
+			}
+			first := step(false)
+			if first == nil || first.Payload["entry_stop_written"] != true || first.Payload["effect_observed"] != false {
+				t.Fatal("STOP outcome lost", first)
+			}
+			if mode == "trigger_unknown" {
+				if first.Payload["entry_trigger_unknown"] != true || first.Payload["entry_trigger_not_dispatched"] != false {
+					t.Fatal("uncertain trigger became no-write", first)
+				}
+				if next := step(false); next != nil || entered != 1 {
+					t.Fatal("real Lua replayed ambiguous trigger", next, entered)
+				}
+			} else {
+				if first.Payload["entry_trigger_not_dispatched"] != true || first.Payload["entry_trigger_written"] != false {
+					t.Fatal("STOP-only became entered trigger", first)
+				}
+				if next := step(true); next != nil || entered != 1 {
+					t.Fatal("Lua retried before motion reconciled", next, entered)
+				}
+				next := step(false)
+				if next == nil || entered != 2 || next.Payload["entry_trigger_written"] != true {
+					t.Fatal("fresh safe Lua did not retry positively unentered trigger", next, entered)
+				}
+			}
+		})
+	}
+}
