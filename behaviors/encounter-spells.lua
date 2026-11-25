@@ -56,6 +56,7 @@ end
 
 local function eligible(spell, capability, options)
     return type(spell) == "table" and spell.known == true and spell.capability == capability and
+        (options.ranged_only~=true or spell.metadataKnown==true and spell.weaponStrike~=true and number(spell.maxRange) and number(spell.maxRange)>(options.minimum_max_range or 0)) and
         (options.require_metadata ~= true or spell.metadataKnown == true) and
         (options.power_type == nil or spell.powerType == options.power_type) and
         (spell.ready == true or options.require_ready == false and spell.available == true) and

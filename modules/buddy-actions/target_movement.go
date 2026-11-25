@@ -47,7 +47,7 @@ func (s *Service) targetMovementActiveLocked() bool {
 // deliberately preserved: closing on a runner must not cancel its attack.
 func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTargetRequest) (*actionsv1.State, error) {
 	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetTargetGuid() == 0 || r.GetVisitId() == 0 ||
-		math.IsNaN(float64(r.RangeYards)) || math.IsInf(float64(r.RangeYards), 0) || !r.Stop && r.RangeYards <= 0 {
+		!validTargetBandRequest(r) || math.IsNaN(float64(r.RangeYards)) || math.IsInf(float64(r.RangeYards), 0) || !r.Stop && r.RangeYards <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "current session, body, visit, exact target and finite positive range required")
 	}
 	token, supplied := modcb.IncomingPolicySpell(ctx)
@@ -74,11 +74,11 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 	s.targetMovementExecuting = true
 	defer func() { s.targetMovementExecuting = false }()
 	movement := &s.targetMovement
-	if movement.view.TargetGuid != r.TargetGuid || movement.view.VisitId != r.VisitId || movement.view.RangeYards != r.RangeYards || movement.view.Behind != r.Behind || movement.view.RequireLos != r.RequireLos ||
+	if movement.view.TargetGuid != r.TargetGuid || movement.view.VisitId != r.VisitId || movement.view.RangeYards != r.RangeYards || movement.view.Behind != r.Behind || movement.view.RequireLos != r.RequireLos || movement.view.MinRangeYards != r.MinRangeYards || movement.view.ClearanceYards != r.ClearanceYards || !sameClearanceTargets(movement.view.ClearanceTargetGuids, r.ClearanceTargetGuids) ||
 		movement.nav.selfRevision != s.positionRevision || movement.nav.mapID != s.posMap {
 		movement.nav.Reset()
 	}
-	movement.view = actionsv1.TargetMovementState{TargetGuid: r.TargetGuid, VisitId: r.VisitId, RangeYards: r.RangeYards, Behind: r.Behind, RequireLos: r.RequireLos}
+	movement.view = actionsv1.TargetMovementState{TargetGuid: r.TargetGuid, VisitId: r.VisitId, RangeYards: r.RangeYards, Behind: r.Behind, RequireLos: r.RequireLos, MinRangeYards: r.MinRangeYards, ClearanceYards: r.ClearanceYards, ClearanceTargetGuids: append([]uint64(nil), r.ClearanceTargetGuids...)}
 	movement.until = s.now().Add(encounterLeaseDuration)
 	if r.Stop {
 		movement.nav.Reset()
@@ -96,7 +96,13 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 		s.stopLocked(ctx)
 		return s.stateLocked(), nil
 	}
-	ready, los := distance(s.pos, target) <= float64(r.RangeYards), true
+	hazards, complete := targetClearancePositions(w, r.ClearanceTargetGuids, s.posMap)
+	if !complete {
+		movement.view.Phase = "clearance_target_unavailable"
+		s.stopLocked(ctx)
+		return s.stateLocked(), nil
+	}
+	ready, los := distance(s.pos, target) <= float64(r.RangeYards) && distance(s.pos, target) >= float64(r.MinRangeYards) && targetClearanceReady(s.pos, hazards, float64(r.ClearanceYards)), true
 	if r.RequireLos {
 		los = s.crowdControlLineOfSightLocked(ctx, s.pos, target)
 	}
@@ -122,9 +128,30 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 		return s.stateLocked(), nil
 	}
 	goal := targetMovementGoal(s.pos, target, float64(r.RangeYards), r.Behind, los)
+	constrained := r.MinRangeYards > 0 || len(hazards) > 0
+	if constrained {
+		remaining := append([]position{s.pos}, movement.nav.path[min(movement.nav.index, len(movement.nav.path)):]...)
+		valid := len(remaining) > 1 && distance(movement.constraintTarget, target) <= .05 &&
+			targetBandPathValid(remaining, s.pos, target, float64(r.MinRangeYards), float64(r.RangeYards), hazards, float64(r.ClearanceYards)) &&
+			(!r.RequireLos || s.crowdControlLineOfSightLocked(ctx, remaining[len(remaining)-1], target))
+		if !valid {
+			path := s.targetBandPathLocked(ctx, target, float64(r.MinRangeYards), float64(r.RangeYards), r.RequireLos, hazards, float64(r.ClearanceYards))
+			if len(path) < 2 {
+				movement.nav.Reset()
+				movement.view.Phase = "range_band_route_unavailable"
+				s.stopLocked(ctx)
+				return s.stateLocked(), nil
+			}
+			goal = path[len(path)-1]
+			movement.nav = followNavigation{path: path, target: goal, expected: s.pos, selfRevision: s.positionRevision, mapID: s.posMap, arrival: goal, arrivalStop: .25, arrivalKnown: true}
+			movement.constraintTarget = target
+		} else {
+			goal = movement.nav.target
+		}
+	}
 	// Solve the caller's geometric constraints using the existing physical
 	// route/LoS primitives. This chooses no target, spell or cast timing.
-	if r.Behind || r.RequireLos && !los {
+	if !constrained && (r.Behind || r.RequireLos && !los) {
 		path := movement.nav.path
 		valid := len(path) > 0 && movement.nav.selfRevision == s.positionRevision && movement.nav.mapID == s.posMap &&
 			distance(movement.constraintTarget, target) <= 1.5 &&
@@ -158,6 +185,26 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 				s.stopLocked(ctx)
 				return s.stateLocked(), nil
 			}
+		}
+	}
+	if constrained {
+		fresh, err := s.snapshot(ctx, r.TargetGuid)
+		freshTarget, known := targetMovementPosition(fresh, r.TargetGuid, s.posMap)
+		freshHazards, complete := targetClearancePositions(fresh, r.ClearanceTargetGuids, s.posMap)
+		unchanged := err == nil && known && complete && s.matchesCurrentEncounterVisitLocked(fresh) && fresh.Self.PositionRevision == w.Self.PositionRevision && distance(freshTarget, target) <= .05
+		if unchanged {
+			for i := range hazards {
+				if distance(hazards[i], freshHazards[i]) > .05 {
+					unchanged = false
+					break
+				}
+			}
+		}
+		if !unchanged {
+			movement.nav.Reset()
+			movement.view.Phase = "range_band_observation_changed"
+			s.stopLocked(ctx)
+			return s.stateLocked(), nil
 		}
 	}
 	// Use the same complete navmesh route and speed-limited movement transport

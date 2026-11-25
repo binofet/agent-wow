@@ -30,6 +30,7 @@ local observation
 local healing_input
 local policy_observation
 local task_view
+local ranged_config,ranged_status
 local task_support_action
 -- Existing interactions yield to observed needs chosen here, never a native
 -- emergency controller. Loot closes its actual window through corpse-loot.
@@ -205,6 +206,9 @@ local function damage_spell(obs, target, options)
     local burst = state.burstIntent
     if burst and target and tostring(target.guid) == burst.targetGuid then
         options.burst, options.burst_reason = true, burst.reason
+    end
+    if ranged_config and target and target.entry==ranged_config.creatureEntry then
+        options.ranged_only=true;options.minimum_max_range=ranged_config.minRangeYards+2*ranged_config.clearanceYards
     end
     return spells.damage_spell(obs, target, obs.damage or intent.damage, options)
 end
@@ -543,6 +547,11 @@ local function decide_encounter(frame)
         if not rank or rank.metadataKnown ~= true then return end
         options = options or {}
         if rank.requiresBehind == true then options.behind = true end
+        if ranged_config and commands.ranged_options then
+            if (obs.targets or {})[target] and obs.targets[target].entry==ranged_config.creatureEntry then options.rangeYards=rank.maxRange-ranged_config.clearanceYards end
+            options=commands.ranged_options(obs,ranged_config,target,options)
+            if not options then return end
+        end
         local result = movement.for_spell(obs, state.sequence, target, rank, options)
         return result.action
     end
@@ -815,6 +824,8 @@ local function interaction_access(frame, obs, out)
 end
 
 local function decide(frame)
+    ranged_config,ranged_status=nil,nil
+    if commands and commands.ranged_stance and observation then ranged_config,ranged_status=commands.ranged_stance(observation,frame) end
     if spell_invocation then spell_invocation.capture(frame) end
     local out=decide_policy(frame)
     local current=policy_observation or observation
@@ -858,6 +869,9 @@ local function decide(frame)
         local cancel,status=spell_invocation.cancel_action(frame,current,state.sequence)
         out.spellCancellation=status
         if cancel then out.action=cancel;out.followFormation=nil;out.portalCatchup=nil end
+    end
+    if commands and commands.ranged_filter and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence then
+        commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status)
     end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
     if spell_invocation then spell_invocation.commit(out.action) end
