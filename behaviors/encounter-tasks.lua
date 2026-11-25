@@ -158,7 +158,27 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act,pause_rally)
             task.released,task.granted,task.approached,task.stopIssued=nil,nil,nil,nil
         else pop(task);return {status=state.last} end
     end
-    if task.operation then return {status=status(task,"waiting_for_movement_ownership"),hold=true,task=task} end
+    task.observationSequence=sequence
+    if task.operation then
+        local op=task.operation
+        -- A lost/malformed custody receipt is not permission to replay it.
+        -- Only fresh observations of an empty native ledger and absent lease,
+        -- across the entire finite lease horizon, can retire this orphan.
+        local pending=frame.pending
+        local quiet=type(pending)=="table" and #pending==0 and owner.active~=true and
+            nav.motionUnconfirmed~=true and self and self.movementKnown==true and self.moving~=true
+        if not quiet or op.observationSequence==sequence or
+           op.orphanedAt and (not number(op.orphanedAt) or now<op.orphanedAt) then
+            op.orphanedAt,op.orphanedSequence=nil,nil
+        elseif not op.orphanedAt then
+            op.orphanedAt,op.orphanedSequence=now,sequence
+        elseif sequence~=op.orphanedSequence and now-op.orphanedAt>=
+               (number(op.leaseMs) and op.leaseMs>0 and op.leaseMs or M.tuning.lease_ms) then
+            task.operation,task.token,task.granted=nil,nil,nil
+            task.refusal="movement_lease_absence_observed_after_orphaned_receipt"
+        end
+        if task.operation then return {status=status(task,"waiting_for_movement_ownership"),hold=true,task=task} end
+    end
     if task.token and (owner.active~=true or owner.owner~="task:"..task.id) then
         task.token,task.granted=nil,nil
     end
@@ -268,7 +288,8 @@ function M.commit(view,chosen)
         instance_entry.commit(view.task,chosen);return
     end
     if view and view.task and chosen and chosen.capability=="movement_owner" then
-        view.task.operation={mode=chosen.mode,owner=chosen.owner}
+        view.task.operation={mode=chosen.mode,owner=chosen.owner,leaseMs=chosen.leaseMs,
+            observationSequence=view.task.observationSequence}
     end
 end
 
