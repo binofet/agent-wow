@@ -23,6 +23,7 @@ local function ids(v,max)
     return set
 end
 local function decimal(v)
+    if v=="0" then return true end
     if type(v)~="string" or #v==0 or #v>20 or #v>1 and byte_at(v,1)==48 or
        #v==20 and v>"18446744073709551615" then return false end
     for i=1,#v do local c=byte_at(v,i); if c<48 or c>57 then return false end end
@@ -583,15 +584,14 @@ end
 
 local function cave_guid_less(a,b) return #a<#b or #a==#b and a<b end
 local function cave_age(v)
-    if not decimal(v) then return end
-    -- All consumed patrol bounds are inside this 500-yard area. At larger
-    -- ages both conservative displacement spheres cover it, without rounding
-    -- or discarding the original uint64 string in the factual frame.
-    return #v>6 and 1000000 or tonumber(v)
+    -- All admitted coordinates have abs <40000, and duration <=120000.
+    -- At >=1e9ms both 7yd/s spheres exceed the entire coordinate cube;
+    -- the original exact uint64 string remains in the factual frame.
+    return #v>9 and 1000000000 or tonumber(v)
 end
 local function cave_movement(row)
-    for i=0,31 do if bit(row.movementFlags,2^i) and not bit(0x780001ff,2^i) then return false end end
-    return true
+    -- Exactly bits 0..8 and 27..30; the decoder already proves uint32.
+    return row.movementFlags<0x80000000 and row.movementFlags%0x08000000<512
 end
 local function cave_area(p) return p.x>=-10000 and p.x<=-9700 and p.y>=50 and p.y<=320 and p.z>=-10 and p.z<=65 end
 local function cave_patrol(row)
@@ -611,7 +611,7 @@ local function cave_point(row,patrol)
             if t.age>750 or row.positionAge>750 then return end
         end
     else
-        for i=0,27 do if bit(row.movementFlags,2^i) and bit(0x080000ff,2^i) then return end end
+        if row.movementFlags%256~=0 or bit(row.movementFlags,0x08000000) then return end
     end
     return row
 end
@@ -645,7 +645,6 @@ local function cave_scenes(input)
     local rows,scenes,players={},{},{}
     for i,row in ipairs(input.creatures) do
         rows[i]=cave_creature(row);if not rows[i] then return end
-        rows[i].patrol=cave_patrol(rows[i]);rows[i].current=cave_point(rows[i],rows[i].patrol)
     end
     local count=0
     for guid in pairs(input.actors) do if guid~="1" and guid~="4" and guid~="5" then return end;count=count+1 end
@@ -657,7 +656,7 @@ local function cave_scenes(input)
            not array(v.l,5) or #v.l~=5 or not array(v.o,6) or #v.o~=6 or not array(v.i,3) or #v.i~=3 or
            not array(v.q,25) or #v.q~=25 or not array(v.c,32) or not array(v.g,40) or #v.g<3 or type(v.t)~="boolean" then return end
         for i=2,5 do if not decimal(v.b[i]) then return end end
-        for _,r in ipairs({v.s}) do for _,n in ipairs(r) do if not uint(n) then return end end end
+        for _,n in ipairs(v.s) do if not uint(n) then return end end
         for i=1,2 do if not uint(v.p[i]) then return end end
         for i=3,5 do if not number(v.p[i]) or math.abs(v.p[i])>=40000 then return end end
         if not decimal(v.p[6]) or not uint(v.a[1]) or not decimal(v.a[3]) or not uint(v.a[4]) or
@@ -710,7 +709,7 @@ local function cave_admission(scenes,players,tuning,row,search,clock)
         if search then
             if v.o[6] or not p.movementFlagsKnown or p.extraMovementFlags~=0 or bit(a[1],512) or bit(a[1],1024) or s.farg.active then return false end
             for _,mask in ipairs({0x1,0x4,0x40000,0x100000,0x400000,0x800000,0x1000000,0x2000000,0x8000000}) do if bit(p.unitFlags,mask) then return false end end
-            for i=0,31 do if bit(p.movementFlags,2^i) and not bit(0x700001ff,2^i) then return false end end
+            if p.movementFlags>=0x80000000 or p.movementFlags%0x10000000>=512 then return false end
             if v.t and (a[2]~="exploration" or not bit(a[1],2048) or a[3]=="0") then return false end
             for _,c in ipairs(s.nearby) do if c.present and c.alive and c.attackVictimKnown and
                 (c.victimGuid=="1" or c.victimGuid=="3" or c.victimGuid=="4" or c.victimGuid=="5") and c.attackAge<=5000 then return false end end
@@ -723,6 +722,9 @@ local function cave_candidate(scenes,tuning,attempted)
     local seen,candidates={},{}
     for _,guid in ipairs({"1","4","5"}) do
         for _,c in ipairs(scenes[guid].nearby) do
+            if not c.currentComputed then
+                c.patrol=cave_patrol(c);c.current=cave_point(c,c.patrol);c.currentComputed=true
+            end
             seen[c.guid]=c
             local p=c.current
             local okay=p and not attempted[c.guid] and c.identityValid and tuning.entries[c.entry]==true and c.present and c.aliveKnown and c.alive and
@@ -937,6 +939,15 @@ function M.cave_cohort(input)
         if not task.controlsMatch or not cave_admission(scenes,players,tuning,nil,true) then return ready({kind="wait",phase="waiting_for_safe_idle_corridor_search"}) end
         local result=cave_search(scenes,task,tuning)
         return result and ready(result) or invalid()
+    end
+    if input.mode=="search_arrival" then
+        local saved=task.search
+        if not uint(saved.station) or not array(tuning.stations,64) or not tuning.stations[saved.station+1] or
+            saved.direction~=1 and saved.direction~=-1 then return invalid() end
+        local direction=saved.direction
+        if saved.cursor==#tuning.stations-1 and saved.station<saved.cursor then direction=-1
+        elseif saved.cursor==0 and saved.station>saved.cursor then direction=1 end
+        return ready({kind="arrival",direction=direction})
     end
     if input.mode=="arm" then
         if not row or not safe then return ready({kind="refuse",phase="party_changed_before_arming"}) end

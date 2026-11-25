@@ -360,18 +360,13 @@ class Catchup:
             self.done = True; raise Error('Cave actor endpoint changed')
         return rpc
 
-    def preflight(self, binding, rpcs=None):
-        """Fresh asynchronous body/source fence, never atomic native admission."""
+    def preflight(self, authorize, target=0, rpcs=None):
+        """Reauthorize complete latest facts; never atomic native admission."""
         try:
-            for guid in ROSTER:
-                rpc=rpcs[guid] if rpcs is not None else self.endpoint(guid)
-                party=rpc.call('buddy-party.state',{})
-                world=rpc.call('buddy-world.snapshot',{})
-                body=binding['bodies'][str(guid)]
-                if (party.get('sessionId')!=body['sessionId'] or number(world.get('self',{}).get('guid',0))!=guid
-                        or str(number(world.get('visitRevision',0)))!=body['visit']):
-                    raise ValueError('Cave actor body or visit changed before dispatch')
-            policy.verify_accepted(rpcs[1] if rpcs is not None else self.endpoint(1),binding)
+            fresh=self.read(target,timeout=.5,rpcs=rpcs)
+            if not authorize(fresh,rpcs[1] if rpcs is not None else None) or self.stopped() or self.now()>=self.deadline:
+                raise ValueError('Complete current cohort no longer authorizes this dispatch')
+            return fresh
         except (Error,ValueError,OSError) as error: raise NotDispatched(str(error)) from None
 
     def read(self, target=0, timeout=None, check=None, rpcs=None):
@@ -520,8 +515,8 @@ class Catchup:
         goal = leg['goal']
         if not all(distance(scene['position'], goal) <= leg['arrivalDistance']+1e-4
                 and number(scene['position'].get('revision', 0)) >= number(leg['after'][str(g)].get('revision', 0)) for g, scene in scenes.items()): return False
-        choice,_=self.decide(scenes,'search')
-        if choice.get('kind')!='search': return False
+        choice,_=self.decide(scenes,'search_arrival')
+        if set(choice)!={'kind','direction'} or choice['kind']!='arrival' or choice['direction'] not in (-1,1): return False
         direction=choice['direction']
         saved.update(cursor=leg['station'], direction=direction)
         leg.update(phase='arrived', arrivalObservation={'kind': 'actual_station_after_resolved_stop',
@@ -546,7 +541,7 @@ class Catchup:
                 fresh=observe()
                 if not guard(fresh,tokens) or self.stopped() or self.now()>=self.deadline:
                     raise NotDispatched('Current cohort no longer authorizes this acquisition')
-                self.preflight(leg['policyBinding'])
+                self.preflight(lambda fresh,rpc:guard(fresh,tokens,rpc),leg.get('targetGuid',0))
                 entered=True
                 lease = self.endpoint(guid).call('buddy-actions.acquire_interaction', {'owner': 'exploration', 'leaseMs': 30000, 'harvest': True}, timeout=.5)
                 token, a = lease.get('token'), lease.get('state') or {}
@@ -566,7 +561,7 @@ class Catchup:
                     fresh=self.read(leg.get('targetGuid',0),timeout=.5,rpcs=readers)
                     if not guard(fresh,tokens,readers[1]) or self.stopped() or self.now()>=self.deadline:
                         raise NotDispatched('Current cohort no longer authorizes this route')
-                    self.preflight(leg['policyBinding'],readers)
+                    self.preflight(lambda fresh,rpc:guard(fresh,tokens,rpc),leg.get('targetGuid',0),readers)
                 except (Error,OSError) as error: raise NotDispatched(str(error)) from None
                 return routes[guid].call('buddy-actions.travel_to',
                     dict(token=tokens[guid], mapId=0, arrivalDistance=leg['arrivalDistance'], **goal), timeout=35)
@@ -906,7 +901,10 @@ class Catchup:
                 except Error as error: raise NotDispatched(str(error)) from None
                 if current!=binding or confirmed!=step or self.controls(fresh)!=self.data.get('controls') or self.stopped() or self.now()>=self.deadline:
                     raise NotDispatched('Complete current cohort changed before this activation')
-                self.preflight(binding)
+                def authorize(observed,rpc):
+                    latest,current=self.decide(observed,'arm',row,rpc=rpc)
+                    return latest==step and current==binding and self.controls(observed)==self.data.get('controls')
+                fresh=self.preflight(authorize,row['target'])
                 answer = self.rpcs[guid].call('buddy-actions.fargodeep_encounter', {'enabled': True, 'sessionId': self.sessions[str(guid)],
                     'targetGuid': str(row['target']), 'engagerGuid': str(engager), 'expectedQuestLogRevision': str(fresh[guid]['questRevision'])})
                 row['requests'][str(guid)]['phase'] = 'sent'; self.persist()

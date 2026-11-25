@@ -380,7 +380,7 @@ class CatchupTests(unittest.TestCase):
                     result['nearbyCreatures'].append(other);return result
                 actor.world=with_patrol
             # Ignore the other NPC as a candidate to isolate neighbor behavior.
-            w.data['encounters'].append(dict(target=TARGET+1))
+            w.data['encounters'].append(dict(target=TARGET+1,phase='stopped'))
             candidate=w.candidate(w.read())
             self.assertEqual(candidate is None,near)
 
@@ -392,10 +392,26 @@ class CatchupTests(unittest.TestCase):
         def scene(params):
             value=Actor.world(p.rpcs[1],params);value['nearbyCreatures'].append(copy.deepcopy(row));return value
         p.rpcs[1].world=scene
-        w.data['encounters'].append(dict(target=TARGET+1))
+        w.data['encounters'].append(dict(target=TARGET+1,phase='stopped'))
         self.assertIsNone(w.candidate(w.read()))
         row['x']=-9750.;row['trajectory']['destinationX']=-9740.
         self.assertEqual(w.candidate(w.read())['guid'],str(TARGET))
+
+    def test_uint64_patrol_age_bound_covers_every_admitted_coordinate(self):
+        p=Party();w=p.worker()
+        for actor in p.rpcs.values():
+            actor.actions['position']['x']=actor.self['x']=-1000.
+            actor.target['x']=-990.
+            original=actor.world
+            def scene(params,original=original):
+                value=original(params);neighbor=copy.deepcopy(value['nearbyCreatures'][0])
+                neighbor.update(guid=str(TARGET+1),entry=1,x=-9820.,movementFlags=0x08000001,
+                    positionAgeMs='18446744073709551615')
+                neighbor['trajectory']=dict(known=True,durationMs=3000,ageMs='18446744073709551615',
+                    destinationKnown=True,destinationX=-9810.,destinationY=120.,destinationZ=8.)
+                value['nearbyCreatures'].append(neighbor);return value
+            actor.world=scene
+        self.assertIsNone(w.candidate(w.read()))
 
 
     def test_caster_priority_changes_only_after_own_collection_completion(self):
@@ -532,6 +548,29 @@ class CatchupTests(unittest.TestCase):
 
 
 class AcceptedCohortTests(unittest.TestCase):
+    def test_final_complete_preflight_cannot_discard_new_same_body_facts(self):
+        for mode in ('health','mana','combat','controls','group','visit','source'):
+            with self.subTest(mode=mode):
+                p=Party();w=p.worker();reads=[0]
+                def change(actor,method,params):
+                    rows=w.data['encounters']
+                    if actor.guid!=1 or method!='buddy-world.snapshot' or not rows or not rows[0]['requests']:return
+                    reads[0]+=1
+                    if reads[0]!=2:return
+                    if mode=='health':p.rpcs[4].self['health']=94
+                    elif mode=='mana':p.rpcs[4].self['power']=59
+                    elif mode=='combat':p.rpcs[4].self['unitFlags']|=0x80000
+                    elif mode=='controls':p.rpcs[4].actions['following']=True
+                    elif mode=='group':p.rpcs[4].group['groupGuid']='100'
+                    elif mode=='source':p.source+='\n-- changed after prior authorization\n';p.generation+=1
+                    else:
+                        original=p.rpcs[4].world
+                        p.rpcs[4].world=lambda params:dict(original(params),visitRevision='2')
+                p.hook=change;w.tick()
+                self.assertEqual(reads[0],2);self.assertEqual(p.events,[])
+                row=w.data['encounters'][0]
+                self.assertTrue(row['notDispatched']);self.assertEqual(row['requests']['1']['phase'],'not_dispatched')
+
     def test_same_session_accepted_source_controls_rank_engager_order_and_admission(self):
         p=Party();w=p.worker()
         for actor in p.rpcs.values():
@@ -691,7 +730,8 @@ class CorridorSearchTests(unittest.TestCase):
         self.assertEqual(w.data['search']['legs'][0]['phase'], 'arrived')
         self.assertTrue(w.data['search']['legs'][0]['cleanupResolved'])
         self.assertEqual([a.self for a in p.rpcs.values()], raw, 'raw server pose must not be overwritten')
-        self.assertTrue(all(a.forks == 1 for a in p.rpcs.values()))
+        # One blocking transport plus three independent bounded-read clients.
+        self.assertTrue(all(a.forks == 4 for a in p.rpcs.values()))
         self.assertTrue(all(not a.actions['interactionOwner'] for a in p.rpcs.values()))
         # Actual post-arrival observed target enters the ordinary candidate flow.
         for a in p.rpcs.values():
