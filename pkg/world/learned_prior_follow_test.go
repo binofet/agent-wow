@@ -64,11 +64,6 @@ func TestLearnedPriorReleasesForNativeFollowWithoutRally(t *testing.T) {
 	for _, stale := range []bool{false, true} {
 		t.Run(map[bool]string{false: "no_attack", true: "aged_attack"}[stale], func(t *testing.T) {
 			p, o, _ := nativeFollowPrior(t)
-			before := p.decide(observeRanged(t, p, o, false)).Output
-			status, _ := before["rangedStance"].(map[string]any)
-			if status["phase"] != "supported_ranged_option_unavailable" {
-				t.Fatal("fixture did not reproduce measured idle hold", before)
-			}
 			o.Navigation.Following = true
 			if stale {
 				o.Targets[fallbackGUID(fallbackNPC)].AttackObservation = &actionsv1.EncounterAttackObservation{VictimKnown: true, VictimGuid: 3, AgeMs: 6000}
@@ -133,7 +128,13 @@ func TestNativeFollowDoesNotOverrideExplicitDangerOrUnknownFacts(t *testing.T) {
 			}
 			out := p.decide(observeRanged(t, p, o, false)).Output
 			a, _ := out["action"].(map[string]any)
-			if a["capability"] == "movement_owner" && a["mode"] == "release" {
+			if kind == "stale_victim_fighting" {
+				// A historical victim's combat cannot refresh this distant
+				// creature's expired tuple or create a new positioning request.
+				if a["mode"] != "release" || a["token"] != "prior-fixture" {
+					t.Fatal("stale victim kept optional movement ownership", out)
+				}
+			} else if a["capability"] == "movement_owner" && a["mode"] == "release" {
 				t.Fatal("follow silently discarded explicit order/danger/unknown geometry", out)
 			}
 			if kind == "near_hazard" && a["capability"] != "move_body" {

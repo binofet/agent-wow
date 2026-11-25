@@ -30,7 +30,13 @@ func sludgePriorObservation() *actionsv1.EncounterObservationResponse {
 }
 func settlePriorLease(t *testing.T, p *fallbackPolicyTest, o *actionsv1.EncounterObservationResponse, modern bool) {
 	t.Helper()
+	// Establish the historical lease from an actual near hazard, then restore
+	// the caller's current geometry. A passive remote sighting no longer leases.
+	npc, self := o.Targets[fallbackGUID(fallbackNPC)], o.Players["4"]
+	x, y, z := npc.X, npc.Y, npc.Z
+	npc.X, npc.Y, npc.Z = self.X+3, self.Y, self.Z
 	d := p.decide(observeRanged(t, p, o, modern))
+	npc.X, npc.Y, npc.Z = x, y, z
 	a, _ := d.Output["action"].(map[string]any)
 	if a["capability"] != "movement_owner" {
 		t.Fatal("prior must establish real movement custody", d.Output)
