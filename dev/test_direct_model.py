@@ -774,5 +774,19 @@ class LocalPromptBudgetTests(unittest.TestCase):
         self.assertEqual(caught.exception.reason,'local_prompt_budget_requires_durable_transcript')
         self.assertEqual(client.sent,[])
 
+    def test_completed_receipts_inside_old_reconciliation_reads_are_not_archived(self):
+        client=self.Transport([],local_prompt_budget_bytes=1000)
+        client.last_receipt={}
+        for evidence in (dict(lastSpellOperation=dict(phase='effect_observed',spellId=9474)),
+                         dict(receipt=dict(operationId='exact-settled',outcome='completed')),
+                         dict(commandWritten=False,knownNotDispatched=True)):
+            rows=[]
+            for identity in ('old','recent1','recent2'):
+                rows += [chat((identity,'observe',dict(key=identity)))['choices'][0]['message'],
+                    dict(role='tool',tool_call_id=identity,content=json.dumps(dict(facts='x'*1500,**evidence)))]
+            with self.assertRaises(ModelError):
+                client._local_prompt('System',rows,[],{'observe'},{},None,canonical=rows)
+            self.assertEqual(client.last_receipt['promptBudget']['archivedReadResults'],[])
+
 
 if __name__=="__main__":unittest.main()

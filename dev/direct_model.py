@@ -599,6 +599,19 @@ class DirectModel:
         def fits(size, tokens):
             return ((self.local_prompt_budget_bytes is None or size <= self.local_prompt_budget_bytes)
                     and (self.local_prompt_token_limit is None or tokens <= self.local_prompt_token_limit))
+        def receipt_evidence(value):
+            # Reconciliation reads can carry COMPLETED action evidence too.
+            # Keep those exact structures, not merely unresolved/UNKNOWN ones.
+            if isinstance(value, list): return any(receipt_evidence(row) for row in value)
+            if not isinstance(value, dict): return False
+            for key, item in value.items():
+                name = key.lower() if isinstance(key, str) else ""
+                if (name in {"commandwritten", "transportwritten", "outcome", "operationid", "operationrevision",
+                        "knownnotdispatched", "outcomeunknown", "replayallowed"} or
+                        item and ("receipt" in name or name.endswith("operation") or "failure" in name)):
+                    return True
+                if receipt_evidence(item): return True
+            return False
         before_bytes, before_tokens = measure()
         size, tokens = before_bytes, before_tokens
         changed = []
@@ -635,7 +648,7 @@ class DirectModel:
                         fingerprint = hashlib.sha256(_packed([name, args], self.max_request_bytes)).hexdigest()
                         full = canonical[index]["content"]
                         result = _decode(full)
-                        if fingerprint in unknown or _read_custody(result): continue
+                        if fingerprint in unknown or _read_custody(result) or receipt_evidence(result): continue
                     except (KeyError, TypeError, ValueError, RecursionError, UnicodeError): continue
                     raw = full.encode()
                     reference = dict(transcriptMessage=index, toolCallId=call_id,
