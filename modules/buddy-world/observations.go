@@ -32,28 +32,30 @@ const (
 // Maps are shallow-cloned per packet. target copies each touched object once,
 // so malformed packet rollback never mutates previously committed observations.
 type observations struct {
-	players             [2]observed
-	visitRevision       uint64
-	nearbyPlayers       map[uint64]*observed
-	creatures           map[uint64]*observed
-	items               map[uint64]*observed
-	gameObjects         map[uint64]*observed
-	corpses             map[uint64]*observed
-	edited              map[uint64]bool
-	itemRevision        uint64
-	copperRevision      uint64
-	xpRevision          uint64
-	ammoRevision        uint64
-	skillsRevision      uint64
-	freePrimaryRevision uint64
-	offhandRevision     uint64
-	inventoryRevision   uint64
-	equipmentRevision   uint64
-	discovery           clientDiscoveryAnchor
-	discoverySequence   uint64
-	castRevision        uint64
-	ownMovement         ownMovementObservation
-	ownSpline           ownSplineObservation
+	players               [2]observed
+	visitRevision         uint64
+	nearbyPlayers         map[uint64]*observed
+	creatures             map[uint64]*observed
+	items                 map[uint64]*observed
+	gameObjects           map[uint64]*observed
+	groundEffects         map[uint64]*observed
+	groundEffectsOverflow bool
+	corpses               map[uint64]*observed
+	edited                map[uint64]bool
+	itemRevision          uint64
+	copperRevision        uint64
+	xpRevision            uint64
+	ammoRevision          uint64
+	skillsRevision        uint64
+	freePrimaryRevision   uint64
+	offhandRevision       uint64
+	inventoryRevision     uint64
+	equipmentRevision     uint64
+	discovery             clientDiscoveryAnchor
+	discoverySequence     uint64
+	castRevision          uint64
+	ownMovement           ownMovementObservation
+	ownSpline             ownSplineObservation
 }
 
 func (s observations) clone() observations {
@@ -72,6 +74,7 @@ func (s observations) clone() observations {
 	s.nearbyPlayers = maps.Clone(s.nearbyPlayers)
 	s.items = maps.Clone(s.items)
 	s.gameObjects = maps.Clone(s.gameObjects)
+	s.groundEffects = maps.Clone(s.groundEffects)
 	s.corpses = maps.Clone(s.corpses)
 	s.edited = make(map[uint64]bool)
 	return s
@@ -93,6 +96,9 @@ func (s *observations) target(guid uint64) *observed {
 	if objects[guid] == nil {
 		objects = s.corpses
 	}
+	if objects[guid] == nil {
+		objects = s.groundEffects
+	}
 	p := objects[guid]
 	if p == nil {
 		return nil
@@ -112,9 +118,12 @@ func (s *observations) remove(guid uint64, now time.Time) {
 	delete(s.nearbyPlayers, guid)
 	delete(s.creatures, guid)
 	delete(s.gameObjects, guid)
+	delete(s.groundEffects, guid)
 	delete(s.corpses, guid)
 	if guid == s.players[0].guid {
 		s.corpses = make(map[uint64]*observed)
+		s.groundEffects = nil
+		s.groundEffectsOverflow = false
 	}
 	if s.items[guid] != nil {
 		delete(s.items, guid)
@@ -280,6 +289,7 @@ func sortCreatures(items []*worldv1.CreatureState) {
 }
 func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time) {
 	s.appendGameObjects(r, now)
+	s.appendGroundEffects(r)
 	s.appendNearbyPlayers(r, now)
 	r.OwnCorpse = s.ownCorpseSnapshot(now)
 	owner := s.players[1]

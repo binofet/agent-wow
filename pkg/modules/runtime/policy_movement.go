@@ -151,8 +151,14 @@ func (m *Manager) invokePolicyMovement(ctx context.Context, inst *instance, md m
 	outcome, payload := m.invokePolicySpell(ctx, inst, md, req, op)
 	m.policySpells.mu.Lock()
 	delete(m.policySpells.active, op.token)
-	if (op.movement.idleBound || op.capability == "release_interaction") && op.movement.unknown {
+	if op.capability == "movement_points_step" && outcome == behavior.ActionUnknown {
+		op.movement.unknown = true
+	}
+	if (op.movement.idleBound || op.capability == "release_interaction" || op.capability == "movement_points_step") && op.movement.unknown {
 		payload["reconciliationRequired"] = true
+		if op.capability == "movement_points_step" {
+			payload["motion_unconfirmed"] = true
+		}
 	}
 	m.policySpells.mu.Unlock()
 	if outcome == behavior.ActionTransportAccepted || outcome == behavior.ActionUnknown {
