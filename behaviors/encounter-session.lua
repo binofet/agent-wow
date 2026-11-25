@@ -722,7 +722,8 @@ local function decide_encounter(frame)
     end
     local buff = not out.action and not out.focusGuid and buffs and buffs.choose(obs,frame)
     if buff then
-        if buff.targetGuid ~= obs.selfGuid and (buff.needsApproach or movement and movement.needs_position(buff.targetGuid)) then
+        if buff.targetGuid ~= obs.selfGuid and (buff.needsApproach or
+           (obs.navigation or {}).following~=true and movement and movement.needs_position(buff.targetGuid)) then
             out.action=position_for(buff.targetGuid,buff.spellId)
         else
             buff.observationSequence=state.sequence
