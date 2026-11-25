@@ -144,22 +144,25 @@ func TestStandaloneCLIRejectsMalformedOrOverbudgetInputBeforeInitializingLua(t *
 }
 
 func TestStandaloneCLIValueAndConfiguredSourceByteBoundariesRemainExact(t *testing.T) {
+	// This is a value/source-boundary proof, using the existing healthy semantic
+	// execution allowance to reach each bound. Default/runaway budget proofs
+	// remain separate; a resource error cannot prove a value/source boundary.
 	path := standalonePolicyFile(t, `return {decide=function(input)return input end}`)
 	input := `{"text":"` + strings.Repeat("x", behavior.MaxJSONBytes-len(`{"text":""}`)) + `"}`
 	if len(input) != 32*1024 {
 		t.Fatal("value fixture did not hit the actual default byte boundary", len(input))
 	}
 	var stdout bytes.Buffer
-	if err := run([]string{"--source", path}, strings.NewReader(input), &stdout); err != nil || stdout.String() != input+"\n" {
+	if err := run([]string{"--source", path, "--execution-ms", "1000"}, strings.NewReader(input), &stdout); err != nil || stdout.String() != input+"\n" {
 		t.Fatal("default exact JSON boundary or single framing newline changed", err, stdout.Len())
 	}
 	stdout.Reset()
 	tooLarge := strings.Replace(input, `"}`, `x"}`, 1)
-	if err := run([]string{"--source", path}, strings.NewReader(tooLarge), &stdout); err == nil || !strings.Contains(err.Error(), "bounded JSON input") || stdout.Len() != 0 {
+	if err := run([]string{"--source", path, "--execution-ms", "1000"}, strings.NewReader(tooLarge), &stdout); err == nil || !strings.Contains(err.Error(), "bounded JSON input") || stdout.Len() != 0 {
 		t.Fatal("one excess input byte escaped admission", err, stdout.Len())
 	}
 	outputPath := standalonePolicyFile(t, `return {decide=function(input)return {text="`+strings.Repeat("x", behavior.MaxJSONBytes)+`"}end}`)
-	if err := run([]string{"--source", outputPath}, strings.NewReader(`{}`), &stdout); err == nil || errors.Is(err, behavior.ErrExecutionBudget) || !strings.Contains(err.Error(), "bound") || stdout.Len() != 0 {
+	if err := run([]string{"--source", outputPath, "--execution-ms", "1000"}, strings.NewReader(`{}`), &stdout); err == nil || errors.Is(err, behavior.ErrExecutionBudget) || !strings.Contains(err.Error(), "bound") || stdout.Len() != 0 {
 		t.Fatal("oversized output produced a result or evaded the value limit", err, stdout.Len())
 	}
 	const limit = 256
@@ -169,14 +172,14 @@ func TestStandaloneCLIValueAndConfiguredSourceByteBoundariesRemainExact(t *testi
 		t.Fatal("source fixture did not hit its configured boundary")
 	}
 	sourcePath := standalonePolicyFile(t, code)
-	if err := run([]string{"--source", sourcePath, "--source-bytes", "256"}, strings.NewReader(`{}`), &stdout); err != nil {
+	if err := run([]string{"--source", sourcePath, "--source-bytes", "256", "--execution-ms", "1000"}, strings.NewReader(`{}`), &stdout); err != nil {
 		t.Fatal("configured exact source boundary was rejected", err)
 	}
 	if err := os.WriteFile(sourcePath, []byte(code+"x"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	stdout.Reset()
-	if err := run([]string{"--source", sourcePath, "--source-bytes", "256"}, strings.NewReader(`{}`), &stdout); err == nil || !strings.Contains(err.Error(), "configured limit 256 bytes") || stdout.Len() != 0 {
+	if err := run([]string{"--source", sourcePath, "--source-bytes", "256", "--execution-ms", "1000"}, strings.NewReader(`{}`), &stdout); err == nil || !strings.Contains(err.Error(), "configured limit 256 bytes") || stdout.Len() != 0 {
 		t.Fatal("CLI read beyond its configured source limit", err, stdout.String())
 	}
 }
