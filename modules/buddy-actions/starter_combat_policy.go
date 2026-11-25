@@ -180,10 +180,19 @@ func (s *Service) starterRogueAssistLocked(ctx context.Context, w *worldv1.Snaps
 	}
 	gameRange := math.Max(5, float64(self.CombatReach+target.CombatReach)+4.0/3.0)
 	d := distance(s.pos, targetPosition)
-	if d > gameRange-0.5 && s.starterStealthApproachLocked(ctx, w, target.Guid) {
-		return true
-	}
 	if d > gameRange-0.5 {
+		if op := s.supportOp; op != nil && op.owner != 0 && op.view.TargetGuid == s.selfGUID && op.view.Capability == string(spellcatalog.Stealth) &&
+			(op.view.Phase == "waiting_server" || s.now().Before(op.until) && op.view.ServerCastGo) {
+			return true
+		}
+		decision := s.starterWeaponDecisionLocked(ctx, w, target, targetPosition)
+		if !decision.valid || decision.kind == "wait" {
+			s.state.Reason = s.starterSpells.failure()
+			return true
+		}
+		if decision.kind == "cast_self" {
+			return s.castStarterSelfLocked(ctx, w, target.Guid, decision)
+		}
 		if !s.stopAutoAttackLocked(ctx) {
 			return true
 		}
@@ -273,22 +282,67 @@ func (s *Service) starterApproachMeleeLocked(ctx context.Context, w *worldv1.Sna
 	}
 }
 
-func (s *Service) starterStealthApproachLocked(ctx context.Context, w *worldv1.SnapshotResponse, target uint64) bool {
-	if w.Self.UnitFlags&0x80000 != 0 || s.autoTarget != 0 || s.state.CastPending || s.state.AutoAttackUnconfirmed || s.stealthedLocked() {
+func (s *Service) starterSelfSpellAvailableLocked(w *worldv1.SnapshotResponse) bool {
+	self := w.GetSelf()
+	return s.starterSpells.uncertainStrike == nil && s.state.Practicing && !s.fargodeep.active &&
+		safeSelfCombat(w, s.selfGUID) == "" && self.ClassKnown && self.ClassId == 4 && self.UnitFlagsKnown &&
+		self.UnitFlags&0x80000 == 0 && s.autoTarget == 0 && !s.state.CastPending &&
+		!s.state.AutoAttackUnconfirmed && !s.stealthedLocked()
+}
+
+func (s *Service) starterSelfCastBodyCurrentLocked(op *supportAttempt) bool {
+	b := op.starterBinding
+	return b != nil && b.session == s.sessionID && b.self == s.selfGUID && op.view.TargetGuid == b.self &&
+		b.visit == s.lastWorld.GetVisitRevision() && b.encounter == s.encounterVisit
+}
+
+func (s *Service) confirmStarterSelfCastLocked(op *supportAttempt) {
+	if op != nil && op == s.starterSpells.uncertainStrike && op.view.Capability == string(spellcatalog.Stealth) &&
+		op.view.ServerCastGo && op.view.EffectObserved && s.starterSelfCastBodyCurrentLocked(op) {
+		op.view.Phase = "confirmed_aura"
+		s.starterSpells.uncertainStrike = nil
+	}
+}
+
+// Execute the exact self-targeted rank selected by the same accepted weapon
+// policy. STOP and subsequent callbacks cannot retain an old task or choice.
+func (s *Service) castStarterSelfLocked(ctx context.Context, w *worldv1.SnapshotResponse, target uint64, chosen starterSpellDecision) bool {
+	binding, source := s.practiceLifecycleBindingLocked(w), s.starterSpells.revision
+	before, err := s.snapshot(ctx, target)
+	creature := practiceTargetObservation(before, target)
+	point, known, _ := creaturePosition(creature)
+	if err != nil || !known || !binding.current(s, ctx, before) || !s.practiceLifecycleSourceCurrentLocked(source) ||
+		!s.starterSpellFactsMatchLocked(chosen, before, creature, point) {
 		return false
 	}
-	if op := s.supportOp; op != nil && op.view.Capability == string(spellcatalog.Stealth) && op.owner == target {
-		return op.view.Phase == "waiting_server" || s.now().Before(op.until) && op.view.ServerCastGo
+	revision := binding.clientRevision
+	if s.state.Moving {
+		revision++
 	}
-	for _, r := range s.candidatesLocked(spellcatalog.Stealth) {
-		if s.now().Before(s.spellReady[r.ID]) || !s.stopLocked(ctx) {
-			continue
-		}
-		fresh, err := s.snapshot(ctx)
-		if err != nil || safeSelfCombat(fresh, s.selfGUID) != "" || fresh.Self.UnitFlags&0x80000 != 0 || !s.casterRequirementsLocked(r) {
-			return false
-		}
-		return s.castSupportLocked(ctx, r, s.selfGUID, target)
+	if !s.stopLocked(ctx) || !binding.sameTask(s, ctx) || s.pos != binding.position ||
+		s.positionRevision != binding.positionRevision || s.posRevision != revision {
+		return false
 	}
-	return false
+	binding.clientRevision = revision
+	fresh, creature, point, valid := s.practiceWeaponAuthorityLocked(ctx, target)
+	if !valid || !binding.current(s, ctx, fresh) {
+		return false
+	}
+	selected := s.starterWeaponDecisionLocked(ctx, fresh, creature, point)
+	if !selected.valid || selected.kind != "cast_self" || selected.spell.ID != chosen.spell.ID || s.starterSpells.revision != source {
+		return false
+	}
+	fresh, creature, point, valid = s.practiceWeaponAuthorityLocked(ctx, target)
+	if !valid || !binding.current(s, ctx, fresh) || !s.practiceLifecycleSourceCurrentLocked(source) ||
+		!s.starterSpellFactsMatchLocked(selected, fresh, creature, point) || !s.starterSelfSpellAvailableLocked(fresh) ||
+		!s.encounterRankResourcesAvailable(selected.spell, fresh.Self) || fresh.Self.MovementFlags&0xff != 0 {
+		return false
+	}
+	s.castSupportLocked(ctx, selected.spell, s.selfGUID, target)
+	s.supportOp.starterBinding = &binding
+	s.supportOp.view.VisitId = binding.visit
+	if !s.supportOp.view.TransportWritten {
+		s.starterSpells.uncertainStrike = s.supportOp
+	}
+	return true
 }

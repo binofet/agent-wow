@@ -8,6 +8,7 @@ local encounter_button_policy = encounter_buttons
 local M = {}
 M.coldridge_pull = {health_percent=95, base_mana_percent=60}
 M.starter_combat = {max_level_above_self=3}
+M.stealth_approach = {enabled=true, rank_order="level_rank"}
 
 local function decimal(value)
     if type(value) ~= "string" or #value == 0 or #value > 20 or #value>1 and byte_at(value, 1) == 48 or
@@ -100,6 +101,17 @@ end
 
 local function weapon_choice(obs, target, self, override)
     local wait={kind="wait",spellId=0}
+    if obs.meleeInRange==false then
+        local tuning=M.stealth_approach
+        if self.classId==4 and self.inCombat==false and obs.activeMeleeTargetGuid=="0" and
+           obs.castPending==false and obs.autoAttackUnconfirmed==false and obs.stealthed==false and
+           type(tuning)=="table" and tuning.enabled==true then
+            local id=spells.highest_rank(obs,"stealth",nil,
+                {rank_order=tuning.rank_order,require_metadata=true})
+            if id then return {kind="cast_self",spellId=id} end
+        end
+        return {kind="melee",spellId=0}
+    end
     if self.classId~=4 or self.powerType~=3 or not offense_mechanics(obs,3) or
        not orientation(self) or not orientation(target) or not boolean(self.comboKnown) then return wait end
     if self.comboKnown==true then
