@@ -123,6 +123,10 @@ func (s *Service) explicitCastPacketLocked(code uint32, p []byte) (bool, error) 
 		}
 		source, _, _ := readGUID(p)
 		if caster != s.selfGUID || source != s.selfGUID || count != op.count || spell != op.view.SpellId {
+			if held := s.starterSpells.uncertainStrike; code == opcode.SMSGSpellGo && held != nil && caster == s.selfGUID && source == s.selfGUID &&
+				held.view.Capability == string(spellcatalog.Stealth) && count == held.count && spell == held.view.SpellId && s.starterSelfCastBodyCurrentLocked(held) {
+				return s.supportPacketLocked(code, p)
+			}
 			return true, nil
 		}
 		goEvent := code == opcode.SMSGSpellGo
