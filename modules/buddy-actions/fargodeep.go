@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"context"
 	"math"
+	"reflect"
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
@@ -79,22 +80,6 @@ func fargodeepCreaturePosition(c *worldv1.CreatureState) (position, bool) {
 	return p, known
 }
 
-// Unknown in-flight neighbors cannot be treated as absent. The maximum normal
-// ground displacement from the actual header bounds their possible proximity;
-// no point along the unobserved patrol is fabricated.
-func fargodeepNeighborNear(c *worldv1.CreatureState, target position) bool {
-	if p, known := fargodeepCreaturePosition(c); known {
-		return distance(p, target) < 8
-	}
-	if fargodeepPatrol(c) {
-		start := position{c.X, c.Y, c.Z, c.Orientation}
-		age, duration := float64(c.Trajectory.AgeMs), float64(c.Trajectory.DurationMs)
-		end := position{c.Trajectory.DestinationX, c.Trajectory.DestinationY, c.Trajectory.DestinationZ, c.Orientation}
-		return distance(start, target) < 8+7*age/1000 && distance(end, target) < 8+7*math.Abs(duration-age)/1000
-	}
-	return c != nil && c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}) && distance(position{c.X, c.Y, c.Z, c.Orientation}, target) < 8
-}
-
 func (f *fargodeepEncounter) snapshot(now time.Time) *actionsv1.FargodeepEncounterState {
 	out := &actionsv1.FargodeepEncounterState{Active: f.active, TargetGuid: f.target, EngagerGuid: f.engager, Phase: f.phase}
 	if f.active && now.Before(f.until) {
@@ -125,9 +110,6 @@ func ownFargodeepQuests(w *worldv1.SnapshotResponse) (active, incomplete bool) {
 	}
 	return
 }
-func eligibleFargodeepKobold(c *worldv1.CreatureState, level uint32) bool {
-	return c != nil && c.Guid>>48 == 0xf130 && uint32(c.Guid>>24)&0xffffff == c.Entry && (c.Entry == 40 || c.Entry == 475) && c.Present && c.MapKnown && c.MapId == 0 && c.LevelKnown && c.Level >= 5 && c.Level <= 7 && uint64(c.Level) <= uint64(level)+1 && c.AliveKnown && c.Alive && c.HealthKnown && c.Health > 0 && c.MaxHealth >= c.Health && c.NpcFlags == 0 && c.UnitFlagsKnown && c.DynamicFlagsKnown && c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) == 0 && c.UnitFlags_2&1 == 0 && c.DynamicFlags&0x20 == 0
-}
 func fargodeepCharacter(w *worldv1.SnapshotResponse, self uint64) bool {
 	p := w.GetSelf()
 	return (self == 1 || self == 4 || self == 5) && safeSelfCombat(w, self) == "" && p.MapId == 0 && p.LevelKnown && p.Level >= 4 && p.Level <= 10 && p.ClassKnown && map[uint64]uint32{1: 5, 4: 8, 5: 4}[self] == p.ClassId && p.MaxHealth > 0 && p.Health <= p.MaxHealth && p.SpeedsKnown && math.Abs(float64(p.RunSpeed)-7) <= .01
@@ -148,9 +130,6 @@ func (s *Service) readFargodeepPartyLocked(ctx context.Context) *partyv1.StateRe
 func (s *Service) fargodeepPartyLocked(ctx context.Context, w *worldv1.SnapshotResponse, session string, ready bool, target position) (map[uint64]bool, string) {
 	p := s.readFargodeepPartyLocked(ctx)
 	members, reason := s.fargodeepPartyObservationLocked(w, p, session, ready, target)
-	if reason == "" && ready {
-		reason = s.fargodeepPartyReadyLocked(ctx, w, p, session, target)
-	}
 	return members, reason
 }
 
@@ -225,7 +204,7 @@ func (s *Service) FargodeepEncounter(ctx context.Context, r *actionsv1.Fargodeep
 		s.stopFargodeepLocked(ctx, "disabled")
 		return s.stateLocked(), nil
 	}
-	if r.TargetGuid == 0 || (r.EngagerGuid != 1 && r.EngagerGuid != 4 && r.EngagerGuid != 5) || r.ExpectedQuestLogRevision == 0 {
+	if r.TargetGuid == 0 || r.EngagerGuid == 0 || r.EngagerGuid>>48 != 0 || r.ExpectedQuestLogRevision == 0 {
 		return nil, status.Error(codes.InvalidArgument, "target, designated engager and own log revision are required")
 	}
 	if s.fargodeep.active {
@@ -241,35 +220,40 @@ func (s *Service) FargodeepEncounter(ctx context.Context, r *actionsv1.Fargodeep
 		return nil, status.Error(codes.FailedPrecondition, "encounter requires enabled assistance and confirmed idle ownership")
 	}
 	w, err := s.snapshot(ctx, r.TargetGuid)
-	active, incomplete := ownFargodeepQuests(w)
-	if err != nil || !active || r.EngagerGuid == s.selfGUID && !incomplete || w.SelfQuestLogRevision != r.ExpectedQuestLogRevision || !fargodeepCharacter(w, s.selfGUID) || !s.refreshPositionLocked(w) {
+	if err != nil || w.GetSelf().GetGuid() != s.selfGUID || w.SelfQuestLogRevision != r.ExpectedQuestLogRevision ||
+		safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) {
 		return nil, status.Error(codes.FailedPrecondition, "own quest/body observations changed")
 	}
-	target := practiceTargetObservation(w, r.TargetGuid)
-	p, known := fargodeepCreaturePosition(target)
-	if !known && fargodeepPatrol(target) {
-		// Arming has no movement/attack authority. Wait for a usable fresh pose
-		// rather than losing support-before-engager arming to a patrol update.
-		p = position{target.X, target.Y, target.Z, target.Orientation}
-		end := position{target.Trajectory.DestinationX, target.Trajectory.DestinationY, target.Trajectory.DestinationZ, target.Orientation}
-		known = distance(s.pos, end) <= 35
-	}
-	if !eligibleFargodeepKobold(target, w.Self.Level) || !known || !fargodeepArea(p) || !fargodeepArea(s.pos) || distance(s.pos, p) > 35 || s.failedAssistTarget == r.TargetGuid {
-		return nil, status.Error(codes.FailedPrecondition, "actual eligible kobold unavailable")
-	}
-	if _, reason := s.fargodeepPartyLocked(ctx, w, r.SessionId, false, p); reason != "" {
+	previous := s.fargodeep
+	candidate := fargodeepEncounter{active: true, target: r.TargetGuid, engager: r.EngagerGuid, session: r.SessionId,
+		bodySession: s.sessionID, self: s.selfGUID, visit: w.VisitRevision,
+		phase: "admission_pending", until: s.now().Add(2 * time.Minute)}
+	s.fargodeep = candidate
+	ctx = s.fargodeepReadinessContextLocked(ctx)
+	refuse := func(reason string) (*actionsv1.State, error) {
+		// Never restore an earlier task over a callback's replacement owner.
+		if reflect.DeepEqual(s.fargodeep, candidate) {
+			s.fargodeep = previous
+		}
 		return nil, status.Error(codes.FailedPrecondition, reason)
 	}
+	decision, _, valid := s.fargodeepPolicySnapshotLocked(ctx, w, s.readFargodeepPartyLocked(ctx), "arm")
+	if !valid || decision.kind != "arm" {
+		return refuse("accepted Fargodeep policy refused current observations")
+	}
 	if !s.stopLocked(ctx) {
-		return nil, status.Error(codes.FailedPrecondition, "movement stop is unconfirmed")
+		return refuse("movement stop is unconfirmed")
+	}
+	party := s.readFargodeepPartyLocked(ctx)
+	fresh, err := s.snapshot(ctx, r.TargetGuid)
+	if err != nil || !s.fargodeepReadinessMatchesLocked(ctx, decision, fresh, party, false) {
+		return refuse("Fargodeep admission source or observations changed")
 	}
 	if s.fargodeepSeen == nil {
 		s.fargodeepSeen = map[uint64]bool{}
 	}
 	s.fargodeepSeen[r.TargetGuid] = true // Reserve before any future pull; never replay an uncertain target.
-	s.fargodeep = fargodeepEncounter{active: true, target: r.TargetGuid, engager: r.EngagerGuid, session: r.SessionId,
-		bodySession: s.sessionID, self: s.selfGUID, visit: w.VisitRevision,
-		phase: "armed_waiting_for_designated_engager", until: s.now().Add(2 * time.Minute)}
+	s.fargodeep.phase = decision.phase
 	s.lastStep = s.now()
 	return s.stateLocked(), nil
 }
@@ -282,246 +266,121 @@ func (s *Service) fargodeepTickLocked(ctx context.Context, w *worldv1.SnapshotRe
 	f := &s.fargodeep
 	if f.bodySession != s.sessionID || f.self != s.selfGUID || w == nil || w.VisitRevision != f.visit {
 		f.active, f.route, f.phase = false, nil, "body_or_visit_changed"
-		return true // No STOP or cleanup write against a replacement body/visit.
+		return true
 	}
-	fail := func(reason string) bool { s.stopFargodeepLocked(ctx, reason); return true }
-	if !s.now().Before(f.until) || !s.state.Assisting || !s.now().Before(s.assistUntil) {
-		return fail("authorization_expired")
+	if s.state.MotionUnconfirmed || safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) {
+		s.stopFargodeepLocked(ctx, "own_state_unknown_or_unsafe")
+		return true
 	}
-	if s.state.MotionUnconfirmed || !fargodeepCharacter(w, s.selfGUID) || !s.refreshPositionLocked(w) {
-		return fail("own_state_unknown_or_unsafe")
-	}
-	// Snapshot the exact bound GUID even when it falls outside the nearest32 view.
 	fresh, err := s.snapshot(ctx, f.target)
-	if err != nil || !fargodeepCharacter(fresh, s.selfGUID) || !s.refreshPositionLocked(fresh) {
-		return fail("observations_unavailable")
-	}
-	w = fresh
-	target := practiceTargetObservation(w, f.target)
-	if target != nil && target.AliveKnown && !target.Alive && target.HealthKnown && target.Health == 0 {
-		return fail("target_death_observed")
-	}
-	active, incomplete := ownFargodeepQuests(w)
-	if !active || !f.pulled && f.engager == s.selfGUID && !incomplete {
-		return fail("own_quest_goal_complete_or_unknown")
-	}
-	if !eligibleFargodeepKobold(target, w.Self.Level) || s.failedAssistTarget == f.target {
-		return fail("target_unsafe_or_cast_failed")
-	}
-	p, known := fargodeepCreaturePosition(target)
-	waitingPatrol := !known && fargodeepPatrol(target)
-	if waitingPatrol {
-		p = position{target.X, target.Y, target.Z, target.Orientation}
-	}
-	if !known && !waitingPatrol || !fargodeepArea(p) || !fargodeepArea(s.pos) || distance(s.pos, p) > 35 {
-		return fail("target_position_unavailable_or_outside_range")
-	}
-	members, reason := s.fargodeepPartyLocked(ctx, w, f.session, false, p)
-	if reason != "" {
-		return fail(reason)
-	}
-	if len(w.NearbyCreatures) > 32 {
-		return fail("creature_observations_overbound")
-	}
-	// An add attacking this body takes existing self-defense priority. No new
-	// enemy is selected or pulled by this finite encounter.
-	for _, c := range w.NearbyCreatures {
-		if c != nil && c.Guid != f.target && c.Present && c.AliveKnown && c.Alive && c.AttackVictimKnown && members[c.AttackVictimGuid] && c.AttackAgeMs <= 30000 {
-			s.stopFargodeepLocked(ctx, "additional_attacker_observed")
-			return false
-		}
-	}
-	engaged := target.AttackVictimKnown && members[target.AttackVictimGuid] && target.AttackAgeMs <= 30000
-	if engaged {
-		victim := observedHealingPlayer(w, target.AttackVictimGuid)
-		engaged = victim != nil && (victim.UnitFlags&0x80000 != 0 || target.AttackAgeMs <= 5000)
-	}
-	if target.AttackVictimKnown && target.AttackVictimGuid != 0 && !members[target.AttackVictimGuid] || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 {
-		return fail("target_claimed_or_attacking_foreign_player")
-	}
-	if waitingPatrol {
-		if !s.stopLocked(ctx) {
-			return fail("movement_stop_unconfirmed")
-		}
-		s.stopAutoAttackLocked(ctx)
-		f.route = nil
-		f.phase = "waiting_for_fresh_patrol_position"
+	if err != nil || !s.refreshPositionLocked(fresh) {
+		s.stopFargodeepLocked(ctx, "observations_unavailable")
 		return true
 	}
-	if engaged && !f.pulled {
-		// A kobold can aggro during the verified approach. Actual ATTACKSTART
-		// changes this to defense; it must not demand out-of-combat pull gates.
-		f.pulled, f.route = true, nil
-	}
-	if !engaged && f.engager != s.selfGUID {
-		s.stopLocked(ctx)
-		f.phase = "waiting_for_actual_party_attack_start"
-		return true
-	}
-	if !engaged && !f.pulled {
-		if _, reason = s.fargodeepPartyLocked(ctx, w, f.session, true, p); reason != "" {
-			if !s.fargodeepCleanupCurrentLocked(ctx) {
-				return true
-			}
+	decision, current, valid := s.fargodeepPolicySnapshotLocked(ctx, fresh, s.readFargodeepPartyLocked(ctx), "tick")
+	if !valid {
+		if s.fargodeepCleanupCurrentLocked(ctx) {
 			s.stopLocked(ctx)
-			if !s.fargodeepAttemptCurrentLocked(ctx) {
-				return true
-			}
-			f.phase = reason
-			return true
+			f.phase = "readiness_policy_unavailable_or_changed"
 		}
-		if target.UnitFlags&0x80000 != 0 || target.DynamicFlags != 0 || target.AttackVictimKnown && target.AttackVictimGuid != 0 || !target.TargetKnown || target.TargetGuid != 0 {
-			return fail("initial_target_not_idle_unclaimed")
-		}
-		for _, c := range w.NearbyCreatures {
-			if c != nil && c.Guid != f.target && c.Present && c.AliveKnown && c.Alive && c.NpcFlags == 0 {
-				if fargodeepNeighborNear(c, p) {
-					s.stopLocked(ctx)
-					f.phase = "waiting_for_isolated_kobold"
-					return true
-				}
-			}
-		}
+		return true
 	}
-	if w.Self.ClassId == 5 && (!s.hasLearnedHealingLocked()) {
-		return fail("priest_healing_intent_required")
-	}
-	if s.state.CastPending {
+	f.pulled, f.phase = decision.pulled, decision.phase
+	ctx.Value(fargodeepReadinessKey{}).(*fargodeepReadinessScope).pulled = f.pulled
+	switch decision.kind {
+	case "stop":
+		s.stopFargodeepLocked(ctx, decision.phase)
+	case "hold":
 		s.stopLocked(ctx)
-		f.phase = "waiting_for_actual_cast_result"
-		return true
-	}
-	if s.state.AutoAttackUnconfirmed {
-		s.stopLocked(ctx)
-		f.phase = "waiting_for_server_attack_stop"
-		return true
-	}
-	scope := ctx.Value(fargodeepReadinessKey{}).(*fargodeepReadinessScope)
-	if scope.stance == nil {
-		if _, valid := s.fargodeepReadinessDecisionLocked(ctx, w, s.readFargodeepPartyLocked(ctx)); !valid {
-			if s.fargodeepCleanupCurrentLocked(ctx) {
-				s.stopLocked(ctx)
-				f.phase = "readiness_policy_unavailable_or_changed"
-			}
+		if s.fargodeepAttemptCurrentLocked(ctx) {
+			s.stopAutoAttackLocked(ctx)
+		}
+	case "approach":
+		s.fargodeepRouteStepLocked(ctx, current)
+	case "attack":
+		if !s.stopLocked(ctx) {
+			s.stopFargodeepLocked(ctx, "movement_stop_unconfirmed")
 			return true
 		}
-	}
-	stand := scope.stance.standYards
-	// A fresh in-range unit-target spell needs no walking authority. The server
-	// validates spell LOS/range; a rejected spell is never damage confirmation.
-	// Every actual approach still requires the complete verified ground route.
-	if f.engager == s.selfGUID && (w.Self.ClassId == 4 && !f.pulled || distance(s.pos, p) > stand) {
-		if f.route != nil && (f.routeRevision != s.positionRevision || distance(f.routeExpected, s.pos) > .05) {
-			f.route = nil
-		}
-		if f.route == nil || distance(f.routeTarget, p) > 1.5 || !f.pulled && distance(f.routeTarget, p) > .25 {
-			if !s.stopLocked(ctx) {
-				return fail("movement_stop_unconfirmed")
-			}
-			if f.replans >= 12 {
-				return fail("route_replan_limit")
-			}
-			f.replans++ // Count every attempted fresh route, including moving-target races.
-			path, err := s.mapNavigationPath(ctx, s.navDataDir, 0, s.pos, p)
-			if err != nil || routeRemaining(s.pos, path, 0) > 60 {
-				s.state.NavAvailable = false
-				s.state.NavReason = "mission_route_exceeds_60yd"
-				if err != nil {
-					s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
-				}
-				return fail("navigation_unavailable")
-			}
-			// A plan is no authority to reuse older body, party, quest or target views.
-			after, err := s.snapshot(ctx, f.target)
-			if err != nil || !fargodeepCharacter(after, s.selfGUID) || !s.refreshPositionLocked(after) || distance(s.pos, path[0]) > 2 {
-				return fail("observations_changed_during_plan")
-			}
-			current := practiceTargetObservation(after, f.target)
-			cp, ok := fargodeepCreaturePosition(current)
-			if !eligibleFargodeepKobold(current, after.Self.Level) {
-				return fail("target_changed_during_plan")
-			}
-			if !ok && fargodeepPatrol(current) || ok && (distance(cp, p) > .25 || current.PositionRevision != target.PositionRevision) {
-				f.route = nil
-				f.phase = "waiting_to_replan_current_patrol_position"
-				return true
-			}
-			if !ok {
-				return fail("target_changed_during_plan")
-			}
-			if _, why := s.fargodeepPartyLocked(ctx, after, f.session, !f.pulled, p); why != "" {
-				if s.fargodeepCleanupCurrentLocked(ctx) {
-					s.stopLocked(ctx)
-					if !s.fargodeepAttemptCurrentLocked(ctx) {
-						return true
-					}
-					f.phase = why
-				}
-				return true
-			}
-			if a, i := ownFargodeepQuests(after); !a || !f.pulled && !i {
-				return fail("quest_changed_during_plan")
-			}
-			w, target = after, current
-			f.route, f.routeIndex, f.routeTarget = path, 0, p
-			f.routeRevision, f.routeExpected = s.positionRevision, s.pos
-			s.state.NavAvailable, s.state.NavReason = true, "client_navmesh_route_verified"
-			f.phase = "verified_route_waiting_fresh_frame"
+		attempts := s.state.AssistAttempts
+		s.starterAssistObservedTargetLocked(ctx, current, practiceTargetObservation(current, f.target))
+		if !s.fargodeepAttemptCurrentLocked(ctx) {
 			return true
 		}
-		if distance(s.pos, p) > stand || routeRemaining(s.pos, f.route, f.routeIndex) > stand || !directRemainingRoute(s.pos, p, f.route, f.routeIndex) {
-			if !s.stopAutoAttackLocked(ctx) {
-				return true
+		if s.state.AssistAttempts > attempts || s.autoTarget == f.target {
+			f.pulled, f.route = true, nil
+			if !decision.pulled {
+				f.phase = "initial_attack_written_waiting_for_attack_start"
 			}
-			moved := s.mapNavigationStepLocked(ctx, f.route, &f.routeIndex)
-			if !s.fargodeepCleanupCurrentLocked(ctx) {
-				return true
-			}
-			if !moved {
-				return fail("navigation_step_failed")
-			}
-			f.routeRevision, f.routeExpected = s.positionRevision, s.pos
-			f.phase = "approaching_designated_kobold_on_verified_route"
-			return true
-		}
-	}
-	if !engaged && f.pulled {
-		s.stopLocked(ctx)
-		f.phase = "waiting_for_actual_party_attack_start"
-		return true
-	}
-	if !s.stopLocked(ctx) {
-		return fail("movement_stop_unconfirmed")
-	}
-	if engaged {
-		f.pulled = true
-		f.route = nil
-	}
-	// This verified encounter is its own target authority. Shared class gates
-	// still enforce known ranks, health/level, mana reserves, actual melee reach,
-	// spell failures and server cast/attack receipts. Supports never chase.
-	if w.Self.ClassId == 4 && f.engager != s.selfGUID && (!w.Self.CombatReachKnown || !target.CombatReachKnown || distance(s.pos, p) > math.Max(5, float64(w.Self.CombatReach+target.CombatReach)+4.0/3.0)-.5) {
-		f.phase = "support_target_outside_melee_range"
-		return true
-	}
-	attempts := s.state.AssistAttempts
-	s.starterAssistObservedTargetLocked(ctx, w, target)
-	if !s.fargodeepAttemptCurrentLocked(ctx) {
-		return true
-	}
-	if s.state.AssistAttempts > attempts || s.autoTarget == f.target {
-		f.pulled = true
-		f.route = nil
-	}
-	if f.active {
-		f.phase = "waiting_for_class_gate"
-		if engaged {
-			f.phase = "fighting_actual_bound_kobold"
-		} else if f.pulled {
-			f.phase = "initial_attack_written_waiting_for_attack_start"
 		}
 	}
 	return true
+}
+
+// Lua requests an approach; this cache solves and writes one physical step.
+// A route never authorizes an enemy, a role, a pull or the next gameplay step.
+func (s *Service) fargodeepRouteStepLocked(ctx context.Context, w *worldv1.SnapshotResponse) {
+	f := &s.fargodeep
+	target := practiceTargetObservation(w, f.target)
+	p, known := fargodeepCreaturePosition(target)
+	if !known {
+		return
+	}
+	if f.route != nil && (f.routeRevision != s.positionRevision || distance(f.routeExpected, s.pos) > .05) {
+		f.route = nil
+	}
+	if f.route == nil || distance(f.routeTarget, p) > .25 {
+		if !s.stopLocked(ctx) {
+			s.stopFargodeepLocked(ctx, "movement_stop_unconfirmed")
+			return
+		}
+		if f.replans >= 12 {
+			s.stopFargodeepLocked(ctx, "route_replan_limit")
+			return
+		}
+		f.replans++
+		path, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, p)
+		if err != nil || routeRemaining(s.pos, path, 0) > 60 {
+			s.state.NavAvailable, s.state.NavReason = false, "mission_route_exceeds_60yd"
+			if err != nil {
+				s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
+			}
+			s.stopFargodeepLocked(ctx, "navigation_unavailable")
+			return
+		}
+		fresh, err := s.snapshot(ctx, f.target)
+		if err != nil || !s.refreshPositionLocked(fresh) || len(path) == 0 || distance(s.pos, path[0]) > 2 {
+			s.stopFargodeepLocked(ctx, "observations_changed_during_plan")
+			return
+		}
+		current := practiceTargetObservation(fresh, f.target)
+		cp, valid := fargodeepCreaturePosition(current)
+		if !valid || distance(cp, p) > .25 || current.PositionRevision != target.PositionRevision {
+			f.route, f.phase = nil, "waiting_to_replan_current_patrol_position"
+			return
+		}
+		decision, _, valid := s.fargodeepPolicySnapshotLocked(ctx, fresh, s.readFargodeepPartyLocked(ctx), "tick")
+		if !valid || decision.kind != "approach" {
+			return
+		}
+		f.route, f.routeIndex, f.routeTarget = path, 0, p
+		f.routeRevision, f.routeExpected = s.positionRevision, s.pos
+		s.state.NavAvailable, s.state.NavReason = true, "client_navmesh_route_verified"
+		f.phase = "verified_route_waiting_fresh_frame"
+		return
+	}
+	if !s.stopAutoAttackLocked(ctx) {
+		return
+	}
+	moved := s.mapNavigationStepLocked(ctx, f.route, &f.routeIndex)
+	if !s.fargodeepCleanupCurrentLocked(ctx) {
+		return
+	}
+	if !moved {
+		s.stopFargodeepLocked(ctx, "navigation_step_failed")
+		return
+	}
+	f.routeRevision, f.routeExpected = s.positionRevision, s.pos
 }
 
 // STOP and facing callbacks can change observations. Rebind the actual hostile
@@ -543,109 +402,59 @@ func (s *Service) fargodeepActionAllowedLocked(ctx context.Context, targetGUID u
 // readiness/spell decisions bound the passes and prevent recursive evaluation.
 func (s *Service) fargodeepObservedActionAllowedLocked(ctx context.Context, targetGUID uint64, spell uint32, movement bool, selected *starterSpellDecision, readiness *fargodeepReadinessDecision) bool {
 	f := &s.fargodeep
-	refuse := func() bool {
-		f.active = false
-		f.phase = "prewrite_observations_changed"
-		s.state.Reason = "fargodeep_prewrite_observations_changed"
-		return false
-	}
-	policyRefused := func() bool {
-		return false
-	}
-	until := f.until
 	current := func() bool {
-		return ctx.Err() == nil && f.active && f.until == until && s.now().Before(until) && targetGUID == f.target &&
-			s.state.Assisting && s.now().Before(s.assistUntil) && s.state.InteractionOwner == "" && !s.state.MotionUnconfirmed
+		return ctx.Err() == nil && s.fargodeepAttemptCurrentLocked(ctx) && s.fargodeepReadinessCurrentLocked(ctx) &&
+			f.active && targetGUID == f.target && s.now().Before(f.until) && s.state.Assisting && s.now().Before(s.assistUntil) &&
+			s.state.InteractionOwner == "" && !s.state.MotionUnconfirmed
+	}
+	refuse := func() bool {
+		if s.fargodeepAttemptCurrentLocked(ctx) {
+			f.active, f.phase = false, "prewrite_observations_changed"
+			s.state.Reason = "fargodeep_prewrite_observations_changed"
+		}
+		return false
 	}
 	if !current() {
-		if !s.fargodeepAttemptCurrentLocked(ctx) {
-			return false
-		}
-		return refuse()
-	}
-	if !s.fargodeepReadinessCurrentLocked(ctx) {
-		return policyRefused()
+		return false
 	}
 	party := s.readFargodeepPartyLocked(ctx)
 	before, revision, mapID := s.pos, s.positionRevision, s.posMap
 	w, err := s.snapshot(ctx, f.target)
-	if !s.fargodeepAttemptCurrentLocked(ctx) {
+	if !current() {
 		return false
 	}
 	if w != nil && (f.bodySession != s.sessionID || f.self != s.selfGUID || w.VisitRevision != f.visit) {
 		f.active, f.route, f.phase = false, nil, "body_or_visit_changed"
 		return false
 	}
-	if !s.fargodeepReadinessCurrentLocked(ctx) {
-		return policyRefused()
-	}
-	if err != nil || !fargodeepCharacter(w, s.selfGUID) || !s.refreshPositionLocked(w) || s.positionRevision != revision || s.posMap != mapID || distance(before, s.pos) > .05 {
+	if err != nil || safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) || s.positionRevision != revision || s.posMap != mapID || distance(before, s.pos) > .05 {
 		return refuse()
 	}
-	active, incomplete := ownFargodeepQuests(w)
 	c := practiceTargetObservation(w, f.target)
 	p, known := fargodeepCreaturePosition(c)
-	if !active || !f.pulled && f.engager == s.selfGUID && !incomplete || !eligibleFargodeepKobold(c, w.Self.Level) || !known || !fargodeepArea(p) || !fargodeepArea(s.pos) || s.failedAssistTarget == f.target {
+	if !known {
 		return refuse()
 	}
-	members, reason := s.fargodeepPartyObservationLocked(w, party, f.session, false, p)
-	if reason != "" || c.DynamicFlags&4 != 0 && c.DynamicFlags&8 == 0 {
-		return refuse()
+	wanted, stage := "attack", "offense"
+	if movement {
+		wanted, stage = "approach", "movement"
 	}
-	scope := ctx.Value(fargodeepReadinessKey{}).(*fargodeepReadinessScope)
-	if scope.stance == nil || !s.fargodeepReadinessMatchesLocked(ctx, *scope.stance, w, party, false) {
-		return policyRefused()
+	if readiness == nil {
+		decision, valid := s.fargodeepReadinessDecisionLocked(ctx, w, party, stage)
+		if !valid || decision.kind != wanted {
+			return false
+		}
+		return s.fargodeepObservedActionAllowedLocked(ctx, targetGUID, spell, movement, selected, &decision)
 	}
-	engaged := c.AttackVictimKnown && members[c.AttackVictimGuid] && c.AttackAgeMs <= 30000
-	if engaged {
-		victim := observedHealingPlayer(w, c.AttackVictimGuid)
-		engaged = victim != nil && (victim.UnitFlags&0x80000 != 0 || c.AttackAgeMs <= 5000)
-	}
-	if !engaged {
-		if f.engager != s.selfGUID || f.pulled || c.UnitFlags&0x80000 != 0 || c.DynamicFlags != 0 || c.AttackVictimKnown && c.AttackVictimGuid != 0 || !c.TargetKnown || c.TargetGuid != 0 {
-			return refuse()
-		}
-		// Ground-route authority is needed for movement and melee, never for
-		// an otherwise valid in-range unit-target spell cast from this pose.
-		if (movement || w.Self.ClassId == 4) && (f.route == nil || f.routeRevision != s.positionRevision || distance(f.routeExpected, s.pos) > .05 || distance(f.routeTarget, p) > .25 || !movement && !directRemainingRoute(s.pos, p, f.route, f.routeIndex)) {
-			return refuse()
-		}
-		if _, reason = s.fargodeepPartyObservationLocked(w, party, f.session, true, p); reason != "" {
-			return refuse()
-		}
-		if readiness == nil {
-			decision, valid := s.fargodeepReadinessDecisionLocked(ctx, w, party)
-			if !valid || decision.kind != "ready" {
-				return policyRefused()
-			}
-			// The policy callback is another I/O boundary. Re-run the complete
-			// native guard on fresh views; this pass only compares its facts.
-			return s.fargodeepObservedActionAllowedLocked(ctx, targetGUID, spell, movement, selected, &decision)
-		}
-		if !s.fargodeepReadinessMatchesLocked(ctx, *readiness, w, party, true) {
-			return policyRefused()
-		}
-		if len(w.NearbyCreatures) > 32 {
-			return refuse()
-		}
-		for _, other := range w.NearbyCreatures {
-			if other != nil && other.Guid != f.target && other.Present && other.AliveKnown && other.Alive && other.NpcFlags == 0 {
-				if fargodeepNeighborNear(other, p) {
-					return refuse()
-				}
-			}
-		}
+	if readiness.kind != wanted || !s.fargodeepReadinessMatchesLocked(ctx, *readiness, w, party, false) {
+		return false
 	}
 	if !current() {
-		return refuse()
+		return false
 	}
 	if movement {
-		// Only the designated body may walk its already verified current route.
-		// This replaces the normal owner-presence gate, not the map/pose guard.
-		if f.engager != s.selfGUID || f.route == nil || f.routeRevision != s.positionRevision || distance(f.routeExpected, s.pos) > .05 || distance(s.pos, p) > 35 || distance(f.routeTarget, p) > 1.5 {
-			return refuse()
-		}
-		return true
+		return f.route != nil && f.routeRevision == s.positionRevision && distance(f.routeExpected, s.pos) <= .05 &&
+			distance(f.routeTarget, p) <= 1.5
 	}
 	self := w.Self
 	if self.ClassId == 4 {
