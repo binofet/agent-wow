@@ -6,6 +6,9 @@ Usage: dev/converse run [--rpc-url http://127.0.0.1:8086/rpc]
        dev/converse stop
 
 Uses the existing Codex tool runner with its selected model transport.
+For Lotharen, the simplest owner-only literal whisper is: gm .<native command>
+It executes through normal GM guards without a model call; quoting a command
+alone does not request execution.
 """
 
 import argparse
@@ -2165,6 +2168,17 @@ def validate_reply(value, emotes=None, allow_silent=False, allow_gm=False, natur
 def valid_gm_command(command):
     return (isinstance(command, str) and re.fullmatch(r"\.[A-Za-z][ -~]{0,253}", command) is not None
             and command == command.rstrip() and "|" not in command)
+
+
+def literal_gm_request(text):
+    """Only explicit full invocations; quoted examples alone are not commands."""
+    direct=re.fullmatch(r'gm +(\..+)',text,re.IGNORECASE)
+    if direct:return direct[1]
+    for opening,closing in (('"','"'),('“','”')):
+        wrapper=re.fullmatch(r'(?:you need to run this gm command|run this gm command): *'+
+            re.escape(opening)+r'gm +(\.[^"“”]+)'+re.escape(closing),text,re.IGNORECASE)
+        if wrapper:return wrapper[1]
+    return None
 
 
 def literal_gm_feedback(command, result):
@@ -5169,16 +5183,16 @@ class Conversation:
                 return
         direct_literal=None
         if isinstance(self.brain,DirectBrain) and channel=='WHISPER' and not peer:
-            literal=re.fullmatch(r'gm\s+(\..+)',request,re.IGNORECASE)
-            if literal:
+            literal=literal_gm_request(request)
+            if literal is not None:
                 if (not allow_gm or resumed or continuation is not None or result.get('cursorLost',False)
                         or not self.owner_whisper_recipient(selected[-1])):
                     self.send_reply(dict(text='Literal GM commands require a fresh owner whisper to Lotharen in a complete current chat window; I did not execute this input.',emote='NONE'),channel,target_guid=sender,history_key=history_key)
                     return
-                if not valid_gm_command(literal[1]):
+                if not valid_gm_command(literal):
                     self.send_reply(dict(text='Give me one exact native GM dot command.',emote='NONE'),channel,target_guid=sender,history_key=history_key)
                     return
-                direct_literal=literal[1]
+                direct_literal=literal
         control_request = None if isinstance(self.brain, DirectBrain) else parse_lua_control_request(request)
         if not peer and isinstance(self.controls, BuddyControls) and control_request:
             expected_class = "rogue" if control_request["technique"] == "sap" else "mage"

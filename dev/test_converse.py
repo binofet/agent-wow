@@ -4961,6 +4961,25 @@ class LiteralOwnerGMTests(unittest.TestCase):
         self.assertTrue(self.forwarded[-1]['request_id'].startswith('literal-'))
         self.assertEqual(self.forwarded[-1]['rpcUrl'],self.rig.rpc.url)
 
+    def test_affirmative_exact_wrapper_runs_once_and_keeps_original_owner_text(self):
+        text='You need to run this gm command: "gm .appear Joel"'
+        self.request(text)
+        self.assertEqual(self.rig.rpc.commands,['.appear Joel'])
+        self.assertFalse(self.model_calls)
+        self.assertEqual(self.loop.history['WHISPER'][0]['text'],text)
+        count=len(self.rig.rpc.packets)
+        reply=self.loop.generate_reply([],self.state(),literal_gm='.appear Joel')
+        self.assertIn('Existing receipt only',reply['text'])
+        self.assertEqual(len(self.rig.rpc.packets),count)
+
+    def test_literal_parser_is_anchored_and_does_not_treat_quotes_as_execution(self):
+        for text in ('gm .gps','Run this gm command: "gm .gps"','You need to run this gm command: “gm .gps”'):
+            self.assertEqual(converse.literal_gm_request(text),'.gps')
+        for text in ('"gm .gps"','Explain "gm .gps"','Do not run this gm command: "gm .gps"',
+                     'You need to run this gm command: "gm .gps" and then "gm .gps"',
+                     'You need to run this gm command: “gm .gps"'):
+            self.assertIsNone(converse.literal_gm_request(text))
+
     def test_native_sender_receiver_field_still_uses_this_body_whisper(self):
         self.request('gm .gps',receiver='3')
         self.assertEqual(self.rig.rpc.commands,['.gps'])
@@ -5052,10 +5071,11 @@ class LiteralOwnerGMTests(unittest.TestCase):
         self.assertFalse(self.model_calls)
 
     def test_party_or_quoted_text_keeps_ordinary_model_path_and_no_literal_write(self):
-        for text,channel in [('gm .appear Joel','PARTY'),('Please explain gm .appear Joel','WHISPER')]:
+        for text,channel in [('gm .appear Joel','PARTY'),('Please explain gm .appear Joel','WHISPER'),
+                             ('"gm .appear Joel"','WHISPER'),('The command was "gm .appear Joel", right?','WHISPER')]:
             self.rig.rpc.messages=self.rig.rpc.messages[:108]
             self.request(text,channel=channel)
-        self.assertEqual(len(self.model_calls),2)
+        self.assertEqual(len(self.model_calls),4)
         self.assertFalse(self.rig.rpc.packets)
 
 
