@@ -128,6 +128,185 @@ class GMCommandEvidenceTests(unittest.TestCase):
         if selected is not None:args['select_guid']=selected
         return self.tools.dispatch('gm_execute',args,operation_id=operation)
 
+    def die_world(self, *, owner_target='17379391167073878318', selected=None):
+        self.die_old='17379391167073878318';self.die_new='17379391167073878321'
+        self.rpc.owner_selected=owner_target
+        self.rpc.selected=selected or self.die_old
+        self.die_creatures={guid:dict(guid=guid,entry=12222,present=True,mapKnown=True,mapId=349,
+            aliveKnown=True,alive=True,healthKnown=True,health=100,maxHealth=100,observationAgeMs='9000')
+            for guid in (self.die_old,self.die_new)}
+        self.die_visit='1'
+        def read(method,value):
+            if method!='buddy-world.snapshot':return
+            value['visitRevision']=self.die_visit
+            value['owner'].update(guid='3',present=True,mapKnown=True,mapId=349,targetKnown=True,targetGuid=self.rpc.owner_selected)
+            value['ownerTarget']=copy.deepcopy(self.die_creatures.get(self.rpc.owner_selected,{}))
+            value['nearbyCreatures']=copy.deepcopy(list(self.die_creatures.values()))
+        self.rpc.on_read=read
+        self.tools.context=dict(current_request=dict(source='owner',senderGuid='3',messages=[dict(text='Kill MY current target with .die command')]))
+
+    def test_die_rejects_self_zero_unknown_player_unobserved_dead_and_ambiguous_alias(self):
+        for selected in ('87','0','3','99',None):
+            self.die_world(selected=selected or '0')
+            self.tools.context=None # Ordinary deliberate GM selection semantics.
+            result=self.execute('.die',operation='invalid-'+str(selected))
+            self.assertFalse(result['result']['commandTransportWritten'],result)
+            self.assertFalse(result['result']['targetAdmission']['allowed'])
+        self.die_world();self.die_creatures[self.die_old]['alive']=False
+        self.assertFalse(self.execute('.die',operation='dead')['result']['commandTransportWritten'])
+        self.die_world();self.die_creatures[self.die_old]['aliveKnown']=False
+        self.assertFalse(self.execute('.die',operation='unknown-life')['result']['commandTransportWritten'])
+        for command in ('.d','.DI','.die extra'):
+            self.assertFalse(self.execute(command,operation='alias-'+command.replace(' ',':'))['result']['commandTransportWritten'])
+        self.assertFalse(self.rpc.packets)
+
+    def test_selected_lethal_pair_uses_same_owner_target_guard_and_no_fallback(self):
+        for index,command in enumerate(('.die','.damage 6000')):
+            self.die_world(owner_target='17379391167073878321',selected=self.die_old if hasattr(self,'die_old') else '87')
+            self.tools.context['current_request']['messages'][-1]['text']=('Kill MY current target with .die command' if index==0 else 'Can you use the .damage command to kill my target? 6000 damage should kill it')
+            result=self.execute(command,selected=self.die_old,operation='pair-stale-'+str(index))
+            self.assertFalse(result['result']['commandTransportWritten'])
+            self.assertEqual(result['result']['targetAdmission']['ownerTargetGuid'],self.die_new)
+            self.assertEqual(result['result']['targetAdmission']['ownerTargetEntry'],12222)
+            self.assertFalse(self.rpc.packets)
+            self.die_world(selected='87');self.rpc.settle_selection=False
+            result=self.execute(command,selected=self.die_old,operation='pair-pending-'+str(index))
+            self.assertTrue(result['result']['selectionTransportWritten'])
+            self.assertFalse(result['result']['commandTransportWritten'])
+            count=len(self.rpc.packets)
+            bare=self.execute(command,operation='pair-omitted-'+str(index))
+            self.assertFalse(bare['result']['commandTransportWritten'])
+            self.assertEqual(len(self.rpc.packets),count)
+            self.rpc.packets.clear();self.rpc.commands.clear();self.rpc.settle_selection=True
+            self.die_world()
+            good=self.execute(command,selected=self.die_old,operation='pair-good-'+str(index))
+            self.assertTrue(good['result']['commandTransportWritten'],good)
+            self.assertFalse(good['result']['targetAdmission']['hostilityKnown'])
+            self.assertFalse(good['result']['gameEffectClaimed'])
+            self.rpc.packets.clear();self.rpc.commands.clear()
+
+    def test_die_current_owner_spawn_rejects_stale_same_entry_before_selection(self):
+        self.die_world(owner_target='17379391167073878321')
+        result=self.execute('.die',selected=self.die_old,operation='stale-owner-spawn')
+        row=result['result'];self.assertFalse(row['commandTransportWritten']);self.assertFalse(row['selectionTransportWritten'])
+        self.assertEqual(row['targetAdmission']['ownerGuid'],'3')
+        self.assertEqual(row['targetAdmission']['ownerTargetGuid'],self.die_new)
+        self.assertEqual(row['targetAdmission']['ownerTargetEntry'],12222)
+        self.assertEqual(row['targetAdmission']['requestedTargetGuid'],self.die_old)
+        self.assertFalse(self.rpc.packets)
+
+    def test_die_selection_pending_then_omitted_target_never_falls_back_to_self(self):
+        self.die_world(selected='87');self.rpc.settle_selection=False
+        first=self.execute('.die',selected=self.die_old,operation='pending-target')
+        self.assertEqual(first['result']['completion'],'selection_written_not_observed; no command was sent or queued')
+        self.assertTrue(first['result']['selectionTransportWritten']);self.assertFalse(first['result']['commandTransportWritten'])
+        self.assertEqual([code for code,_ in self.rpc.packets],[0x13d])
+        before={p:p.read_bytes() for p in (self.host/'data/converse/lotharen/gm-commands').glob('*/state.json')}
+        second=self.execute('.die',operation='omitted-target')
+        self.assertFalse(second['result']['commandTransportWritten'])
+        self.assertEqual(second['result']['targetAdmission']['requiredTargetGuid'],self.die_old)
+        self.assertEqual([code for code,_ in self.rpc.packets],[0x13d])
+        for path,raw in before.items():self.assertEqual(path.read_bytes(),raw)
+
+    def test_unsettled_explicit_spawn_cannot_become_other_visible_spawn_on_bare_call(self):
+        for index,command in enumerate(('.die','.damage 6000')):
+            with self.subTest(command=command):
+                self.die_world(selected='87');self.rpc.settle_selection=False
+                self.tools.context=None
+                self.assertIsNone(self.tools.context)
+                first=self.execute(command,selected=self.die_old,operation='explicit-'+str(index))
+                self.assertFalse(first['result']['commandTransportWritten'])
+                before={p:p.read_bytes() for p in (self.host/'data/converse/lotharen/gm-commands').glob('*/state.json')}
+                self.rpc.selected=self.die_new
+                self.assertIsNone(self.tools.context)
+                second=self.execute(command,operation='bare-'+str(index))
+                self.assertFalse(second['result']['commandTransportWritten'])
+                self.assertEqual(second['result']['targetAdmission']['requiredTargetGuid'],self.die_old)
+                self.assertFalse(self.rpc.commands)
+                for path,raw in before.items():self.assertEqual(path.read_bytes(),raw)
+
+    def test_unsettled_reserved_target_row_remains_unmodified_on_bare_call(self):
+        self.die_world(selected='87');self.tools.context=None;self.rpc.settle_selection=False
+        self.execute('.damage 6000',selected=self.die_old,operation='reserved-original')
+        path=next((self.host/'data/converse/lotharen/gm-commands').glob('*/state.json'))
+        row=json.loads(path.read_text())
+        row.pop('result');row['selectedGuid']=self.die_old
+        row['commandIntent']=dict(command='.damage 6000',family='raw',subject={})
+        path.write_text(json.dumps(row))
+        original=path.read_bytes()
+        self.rpc.selected=self.die_new
+        result=self.execute('.die',operation='bare-after-reserved')
+        self.assertFalse(result['result']['commandTransportWritten'])
+        self.assertEqual(result['result']['targetAdmission']['requiredTargetGuid'],self.die_old)
+        self.assertEqual(path.read_bytes(),original)
+        self.assertFalse(self.rpc.commands)
+
+    def test_die_bounded_selection_observation_uses_one_selection_then_exact_creature(self):
+        self.die_world(selected='87');self.rpc.settle_selection=False
+        self.on_wait=lambda:setattr(self.rpc,'selected',self.die_old)
+        result=self.execute('.DiE',selected=self.die_old,operation='settled-on-read')
+        self.assertTrue(result['result']['commandTransportWritten'],result)
+        self.assertEqual([code for code,_ in self.rpc.packets],[0x13d,0x95])
+        self.assertEqual(self.rpc.commands,['.DiE'])
+        self.assertEqual(result['result']['targetAdmission']['target']['guid'],self.die_old)
+        self.assertFalse(result['result']['targetAdmission']['hostilityKnown'])
+        self.assertIs(result['result']['targetEffect']['observedDead'],False)
+        self.assertFalse(result['result']['gameEffectClaimed'])
+
+    def test_die_final_boundary_rechecks_owner_selection_body_visit_and_life(self):
+        for change in ('owner','selection','body','visit','missing','dead'):
+            self.die_world()
+            def final():
+                if change=='owner':self.rpc.owner_selected=self.die_new
+                elif change=='selection':self.rpc.selected='87'
+                elif change=='body':self.rpc.sid='aw-999'
+                elif change=='visit':self.die_visit='2'
+                elif change=='missing':self.die_creatures.clear()
+                else:self.die_creatures[self.die_old]['alive']=False
+            row=self.gm.execute_command(self.rpc,{},'.die',self.host,expected_session='aw-123',
+                target_owner_guid='3',final_authorise=final)
+            self.assertFalse(row['commandTransportWritten'],(change,row))
+            self.assertFalse(row['targetAdmission']['allowed'])
+            self.assertFalse(self.rpc.packets)
+            self.rpc.sid='aw-123'
+
+    def test_die_requires_actual_death_observation_not_ack_or_disappearance(self):
+        for effect in ('dead','absent','read_error'):
+            self.die_world()
+            original=self.rpc.send
+            def send(*args,**kwargs):
+                result=original(*args,**kwargs)
+                if self.rpc.commands:
+                    if effect=='dead':self.die_creatures[self.die_old].pop('alive') # Known proto3 false.
+                    elif effect=='absent':self.die_creatures.clear()
+                    else:self.rpc.on_read=lambda method,value: (_ for _ in ()).throw(TimeoutError()) if method=='buddy-world.snapshot' else None
+                return result
+            with mock.patch.object(self.gm.subprocess,'run',side_effect=send):
+                row=self.gm.execute_command(self.rpc,{},'.die',self.host,expected_session='aw-123',target_owner_guid='3')
+            self.assertTrue(row['commandTransportWritten'])
+            self.assertEqual(row['targetEffect']['known'],effect=='dead')
+            self.assertEqual(row['targetEffect']['observedDead'],True if effect=='dead' else None)
+            self.assertFalse(row['targetEffect']['commandCausalityKnown'])
+
+    def test_die_low_level_and_single_command_share_fallback_guard(self):
+        self.die_world(selected='87')
+        with self.assertRaises(self.gm.TargetNotDispatched):self.gm.SessionTransport(self.rpc,{}).gm('.die','aw-123')
+        with self.assertRaises(self.gm.TargetNotDispatched):self.gm.single_command(self.rpc,{},'.die',self.host)
+        self.assertFalse(self.rpc.packets)
+        self.die_world()
+        result=self.gm.SessionTransport(self.rpc,{}).gm('.die','aw-123')
+        self.assertTrue(result['transportWritten'])
+        self.assertEqual(result['targetAdmission']['target']['guid'],self.die_old)
+
+    def test_die_owner_context_cannot_be_replaced_by_notes_or_tool_args(self):
+        self.die_world(owner_target='17379391167073878321')
+        self.tools.context['agent_notes']=dict(ownerTargetGuid=self.die_old)
+        row=self.tools._gm('gm_execute',
+            dict(command='.die',select_guid=self.die_old,target_owner_guid=None),operation_id='no-relaxation')
+        self.assertFalse(row['commandTransportWritten'])
+        self.assertEqual(row['targetAdmission']['ownerTargetGuid'],self.die_new)
+        self.assertFalse(self.rpc.packets)
+
     def test_named_location_guide_matches_pinned_catalog_without_changing_full_reference(self):
         reference=(fixtures.ROOT/'dev/lotharen-gm-commands.txt').read_text()
         guide=reference.split('END GENERAL GUIDE',1)[0]
