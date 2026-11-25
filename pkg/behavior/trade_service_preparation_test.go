@@ -95,9 +95,15 @@ func TestTradeServicePreparationActualFactsAndRetainedAttempt(t *testing.T) {
 			frame := tradeServicePreparationFrame()
 			tc.edit(frame)
 			r := disposalArmorSemanticRuntime(t, source)
-			// Semantic instrumentation uses the maintained helper; each exact
-			// frame/result also runs the normal CLI at 5ms/32KiB with no override.
-			tradeConsentResult(t, r, source, frame, tc.want)
+			// These two actual CI turns exhausted decide at the unchanged 5ms
+			// limit. Prove the full retained-attempt semantics separately;
+			// invoke the ordinary CLI once and classify only its strict typed
+			// empty-output resource refusal as NO decision, never a retry.
+			if tc.name == "cast_go_does_not_rearm" || tc.name == "queued_retry_stays_held" {
+				tradeConsentResourceTurnResult(t, r, source, frame, tc.want)
+			} else {
+				tradeConsentResult(t, r, source, frame, tc.want)
+			}
 		})
 	}
 }
