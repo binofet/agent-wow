@@ -34,7 +34,71 @@ class Check(unittest.TestCase):
   self.code('gear.class_profiles[4]={statWeights={[4]=10,[7]=0},armorWeight=0}');self.assertEqual(self.check()['status'],'upgrade')
  def test_worn_enhancements_remain_actual_and_policy_tuning_preserved(self):
   self.inv['items']=[];worn=self.inv['equipment'][6];worn.pop('enhancementsKnown');self.assertEqual(self.check()['reason'],'enhancement_context_pending')
-  worn.update(enhancementsKnown=True,hasEnhancements=True);self.assertEqual(self.check()['status'],'unknown');self.code('gear.tuning.allow_enhanced_comparison=true');self.assertEqual(self.check()['status'],'upgrade')
+  worn.update(enhancementsKnown=True,hasEnhancements=True);self.assertEqual(self.check()['status'],'unknown');self.code('gear.tuning.allow_enhanced_comparison=true');self.assertEqual(self.check()['status'],'unknown')
+ def test_realized_reference_preview_preserves_raw_boolean_and_actor_policy(self):
+  self.inv['items']=[];worn=self.inv['equipment'][6]
+  worn.update(hasEnhancements=True,enhancementDetails=dict(idKnownMask=4095,durationKnownMask=4095,chargesKnownMask=4095,propertySeedKnown=True,randomPropertyIdKnown=True,enchantments=[dict(id=15)]))
+  before=copy.deepcopy(self.inv)
+  r=self.check();self.assertEqual(r['status'],'unknown') # old default Lua still abstains.
+  proof=r['realizedEnhancementReferences'][0]['references']['current']
+  self.assertTrue(proof['complete']);self.assertEqual(proof['modifiers']['armor'],8)
+  self.assertEqual((proof['sessionId'],proof['characterGuid'],proof['itemGuid'],proof['policyRevision']),(SID,GUID,OLD,self.rev))
+  self.assertEqual(self.inv,before)
+  self.code('gear.tuning.allow_enhanced_comparison=true')
+  r=self.check();self.assertEqual(r['status'],'not_upgrade') # 10 candidate armor < 5+8 worn armor.
+  self.assertTrue(self.inv['equipment'][6]['hasEnhancements'])
+ def test_realized_missing_invalid_forged_or_mismatched_facts_stay_unknown(self):
+  self.inv['items']=[];worn=self.inv['equipment'][6];worn['hasEnhancements']=True
+  self.code('gear.tuning.allow_enhanced_comparison=true')
+  base=dict(idKnownMask=4095,durationKnownMask=4095,chargesKnownMask=4095,propertySeedKnown=True,randomPropertyIdKnown=True,enchantments=[dict(id=15)])
+  for fault in ('missing','partial','forged','item','body','boolean','index'):
+   with self.subTest(fault=fault):
+    previous=copy.deepcopy(worn);old_world=copy.deepcopy(self.world)
+    worn['enhancementDetails']=copy.deepcopy(base)
+    if fault=='missing':worn.pop('enhancementDetails')
+    elif fault=='partial':worn['enhancementDetails']['idKnownMask']=4095.0
+    elif fault=='forged':worn['enhancementResolution']=dict(complete=True,indexSHA256='invented')
+    elif fault=='item':worn['entry']=999
+    elif fault=='body':self.world['self']['guid']='99'
+    elif fault=='boolean':worn['hasEnhancements']=False
+    if fault=='index':
+     import enchantment_reference
+     original_resolve=enchantment_reference.resolve
+     def mismatched(*args,**kwargs):
+      value=original_resolve(*args,**kwargs);value['indexSHA256']='bad';return value
+     with patch.object(enchantment_reference,'resolve',side_effect=mismatched):r=self.check()
+    else:r=self.check()
+    self.assertEqual(r['status'],'unknown',r)
+    worn.clear();worn.update(previous);self.world=old_world
+ def test_realized_supported_owned_source_uses_actual_snapshot_and_no_effect_write(self):
+  self.code('gear.tuning.allow_enhanced_comparison=true')
+  d=dict(idKnownMask=4095,durationKnownMask=4095,chargesKnownMask=4095,propertySeedKnown=True,randomPropertyIdKnown=True,enchantments=[dict(id=15)])
+  source=self.inv['inventoryBags'][0]['slots'][0];source.update(enhancementsKnown=True,hasEnhancements=True,enhancementDetails=d)
+  self.inv['items'][0]['gearFacts'].update(hasEnhancements=True,enhancementDetails=copy.deepcopy(d))
+  before=copy.deepcopy(self.inv);r=self.check(exact=ITEM)
+  self.assertEqual(r['status'],'upgrade');self.assertEqual(self.inv,before)
+  marker=r['realizedEnhancementReferences'][0]['references']['candidate']
+  self.assertEqual(marker['itemGuid'],ITEM);self.assertEqual(marker['modifiers']['armor'],8)
+  source['enhancementDetails']['enchantments'][0]['id']=16
+  self.assertEqual(self.check(exact=ITEM)['reason'],'owned_enhancement_snapshot_changed')
+ def test_actual_normal_readonly_inspect_resolves_without_packet_or_policy_change(self):
+  self.inv['items']=[];self.code('gear.tuning.allow_enhanced_comparison=true')
+  self.inv['equipment'][6].update(hasEnhancements=True,enhancementDetails=dict(idKnownMask=4095,durationKnownMask=4095,chargesKnownMask=4095,propertySeedKnown=True,randomPropertyIdKnown=True,enchantments=[dict(id=15)]))
+  test=self;calls=[]
+  class RPC:
+   def call(self,name,params):
+    calls.append(name)
+    if name=='session.describe':return dict(sessionId=SID,characterGuid=GUID)
+    if name=='session.policy_source':return dict(sessionId=SID,characterGuid=GUID,source=test.source,revision=test.rev)
+    if name=='buddy-inventory.state':return copy.deepcopy(test.inv)
+    if name=='buddy-world.snapshot':return copy.deepcopy(test.world)
+    raise AssertionError('No mutation/query expansion: '+name)
+  before=copy.deepcopy(self.inv)
+  r=g.inspect(RPC(),session_id=SID,character_guid=GUID,item_entry=100,lookup=self.templates.get,bridge=self.bridge)
+  self.assertEqual(r['status'],'not_upgrade');self.assertFalse(r['gameEffectClaimed'])
+  self.assertEqual(r['realizedEnhancementReferences'][0]['references']['current']['modifiers']['armor'],8)
+  self.assertEqual(self.inv,before);self.assertEqual(calls.count('session.policy_source'),2)
+  self.assertEqual(set(calls),{'session.describe','session.policy_source','buddy-inventory.state','buddy-world.snapshot'})
  def test_ring_slots_and_unique_equipped(self):
   self.inv['items']=[];c=template(300);c.update(subclass=0,inventoryType=11,stats=[dict(type=7,value=4)]);self.templates[300]=c
   for slot,entry,value in ((10,301,3),(11,302,6)):

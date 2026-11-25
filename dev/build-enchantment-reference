@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Generate a compact reference from verified public build-12340 DBC members."""
+import argparse,gzip,hashlib,io,json,struct
+from pathlib import Path
+PINS={
+ 'SpellItemEnchantment.dbc':('6c8e8c7d6bc2030500a0687a2975e7f81eb1dc2a1da6939f7ddc64e55ce964de',38,152),
+ 'ItemRandomSuffix.dbc':('1a1c061c5b27970dc6e1680d6e448d51e89bfbc99f5ef88056eca93d44e9ba5e',29,116),
+ 'ItemRandomProperties.dbc':('1fbe2fe7de694bc0fac4d2f3687c38fb3a1b7b175a3d59fec9f00e15ecdebeca',24,96),
+ 'GemProperties.dbc':('f8ec92e43ad7dacea5f94f1b19acca67f1c803d727da17099c10e66f04f19e3f',5,20),
+ 'SpellItemEnchantmentCondition.dbc':('5907c2dc8c590a9d7a5e0ba124575201cd254a75c944d10494372386fd6310e4',31,64),
+}
+CORE='49bdb66ce2fe00771c9e27a9859afd344b7b1344'
+ARCHIVE='https://github.com/wowgaming/client-data/releases/download/v20.0/Data.zip'
+
+def table(path,pin,fields,size):
+ raw=path.read_bytes()
+ if hashlib.sha256(raw).hexdigest()!=pin:raise ValueError('Pinned DBC checksum mismatch: '+path.name)
+ magic,count,width,record,string_bytes=struct.unpack_from('<4s4I',raw)
+ if magic!=b'WDBC' or (width,record)!=(fields,size) or len(raw)!=20+count*size+string_bytes:raise ValueError('DBC layout mismatch')
+ strings=raw[20+count*size:]
+ def text(offset):
+  if not 0<=offset<len(strings):raise ValueError('DBC string offset out of range')
+  end=strings.find(b'\0',offset)
+  if end<0:raise ValueError('DBC string unterminated')
+  return strings[offset:end].decode('utf-8')
+ rows={}
+ for n in range(count):
+  data=raw[20+n*size:20+(n+1)*size];ident=struct.unpack_from('<I',data)[0]
+  if ident in rows:raise ValueError('Duplicate DBC identity')
+  rows[ident]=data
+ return rows,text,len(raw)
+
+def build(directory):
+ tables={};sources={}
+ for name,(pin,fields,size) in PINS.items():
+  rows,text,byte_count=table(directory/name,pin,fields,size);sources[name]=dict(sha256=pin,bytes=byte_count,rows=len(rows),zipMember='dbc/'+name)
+  result={}
+  for ident,data in rows.items():
+   if name=='SpellItemEnchantmentCondition.dbc':
+    # Mixed byte/uint32 layout: retained inert bytes; conditional evaluation unsupported.
+    row=dict(id=ident,rawHex=data.hex())
+   else:
+    w=struct.unpack('<'+'I'*(len(data)//4),data)
+    if name=='SpellItemEnchantment.dbc':row=dict(id=ident,name=text(w[14]),charges=w[1],effects=[dict(type=w[2+i],amount=w[5+i],maximum=w[8+i],argument=w[11+i]) for i in range(3)],visualId=w[31],flags=w[32],gemItemId=w[33],conditionId=w[34],requiredSkill=w[35],requiredSkillRank=w[36],requiredLevel=w[37])
+    elif name=='ItemRandomSuffix.dbc':row=dict(id=ident,name=text(w[1]),enchantmentIds=list(w[19:24]),allocationPct=list(w[24:29]))
+    elif name=='ItemRandomProperties.dbc':row=dict(id=ident,name=text(w[7]),enchantmentIds=list(w[2:7]))
+    else:row=dict(id=ident,enchantmentId=w[1],maxCountInventory=w[2],maxCountItem=w[3],color=w[4])
+   result[str(ident)]=row
+  tables[name[:-4]]=result
+ return dict(schemaVersion=1,build=12340,scope='PUBLIC_BASE_REFERENCE_NOT_CURRENT_REALM_OR_ACTIVE_EFFECT_PROOF',
+  provenance=dict(archiveURL=ARCHIVE,archiveExpectedSHA256='a3d4df635ae6c2c8f08052c32a79e0f806955150ad36b014a823dd08a32a4610',
+   wholeArchiveHashVerified=False,acquisition='Named ZIP member ranges; local/central path, size, deflate and CRC verified. Same archive Map.dbc matches existing project SHA pin.',
+   associationMapSHA256='261bd7c2c9dbdba1f2966ca21106673ed722c2e3681d227f1eed261b6ce870d5',sources=sources,
+   coreCommit=CORE,coreSourcePrefix='https://raw.githubusercontent.com/azerothcore/azerothcore-wotlk/'+CORE+'/',
+   arithmeticSources=['src/server/game/Entities/Player/PlayerStorage.cpp:4414-4760','src/server/game/Entities/Player/Player.cpp:5179-5214','src/server/game/Entities/Item/Item.cpp:669-704','src/server/game/Entities/Item/Item.h:167-185','src/server/shared/DataStores/DBCStructure.h:1245-1262,1876-1908','src/server/shared/DataStores/DBCEnums.h:364-374'],
+   generatorSHA256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()),tables=tables)
+
+def encoded(value):
+ raw=(json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False)+'\n').encode();out=io.BytesIO()
+ with gzip.GzipFile(filename='',mode='wb',fileobj=out,mtime=0,compresslevel=9) as stream:stream.write(raw)
+ return out.getvalue()
+if __name__=='__main__':
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--input-directory',type=Path,required=True);p.add_argument('--output',type=Path,default=Path(__file__).resolve().parents[1]/'pkg/gamecatalog/enchantment-reference.json.gz');a=p.parse_args();data=encoded(build(a.input_directory));a.output.write_bytes(data);print(json.dumps(dict(bytes=len(data),sha256=hashlib.sha256(data).hexdigest())))

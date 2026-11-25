@@ -79,6 +79,80 @@ def _preview(evaluate, frame):
         # Read-only policy failure is missing comparison evidence, not a vote.
         return dict(upgrade=False, reason='gear_policy_evaluation_failed')
 
+def _realized_preview(evaluate,frame,result,world):
+    """Resolve modifiers only on detached read-only previews, never packet facts.
+
+    Raw enhancement booleans and actor options remain unchanged. The accepted
+    policy may still abstain; computed reference metadata grants no authority.
+    """
+    import enchantment_reference as reference
+    prepared=copy.deepcopy(frame);observations={}
+    for template_key,facts_key in (('candidate','candidateFacts'),('current','currentFacts')):
+        facts=prepared.get(facts_key) or {};template=prepared.get(template_key)
+        if not (facts.get('hasEnhancements') is True or 'enhancementDetails' in facts or 'enhancementResolution' in facts):continue
+        failure=None
+        if 'enhancementResolution' in facts:failure='caller_resolution_marker_not_authority'
+        player=(world or {}).get('self',{})
+        if (not result.get('sessionId') or str(player.get('guid'))!=result.get('characterGuid') or player.get('present') is not True
+                or not re.fullmatch('[a-f0-9]{64}',str(result.get('policyRevision','')))):
+            failure='connected_body_and_policy_binding_required'
+        if (not isinstance(template,dict) or template.get('available') is not True
+                or facts.get('enhancementsKnown') is not True):failure=failure or 'observed_template_and_enhancement_coverage_required'
+        if failure is None:
+            try:
+                if not _uint(facts.get('itemGuid',0)) or facts.get('metadataKnown') is not True or _uint(facts.get('entry',0),2**32-1)!=template.get('itemId'):
+                    failure='native_item_instance_binding_required'
+                if not _uint(result.get('inventoryRevision',0)) or not _uint(result.get('equipmentRevision',0)):
+                    failure='current_inventory_equipment_revision_required'
+            except ValueError:failure='current_inventory_equipment_revision_required'
+        resolution=None
+        if failure is None:
+            try:
+                recipient=dict(level=player.get('level') if player.get('levelKnown') is True else None,skills=_skills(world))
+                resolution=reference.resolve(facts.get('enhancementDetails'),recipient=recipient,template=template)
+            except (ValueError,KeyError,TypeError,OSError):failure='static_enhancement_reference_unavailable'
+            if resolution is not None and (not resolution.get('complete') or resolution.get('indexSHA256')!=reference.INDEX_SHA256):
+                failure=';'.join(resolution.get('unknownReasons',[])) or 'enhancement_reference_identity_mismatch'
+        if failure is None:
+            details=facts['enhancementDetails']
+            nonzero=any(any(row.get(key,0)!=0 for key in ('id','durationRaw','charges')) for row in details.get('enchantments',[])) or details.get('propertySeed',0)!=0 or details.get('randomPropertyId',0)!=0
+            if (facts.get('hasEnhancements') is True)!=nonzero:failure='native_enhancement_boolean_mismatch'
+        marker=dict(complete=failure is None,referenceOnly=True,sessionId=result.get('sessionId'),
+                    characterGuid=result.get('characterGuid'),policyRevision=result.get('policyRevision'),
+                    inventoryRevision=result.get('inventoryRevision'),equipmentRevision=result.get('equipmentRevision'),
+                    itemId=(template or {}).get('itemId'),itemGuid=facts.get('itemGuid'),indexSHA256=reference.INDEX_SHA256)
+        if failure:
+            marker['unknownReason']=failure;observations[template_key]=marker
+            return dict(upgrade=False,reason='realized_enhancement_unknown:'+failure),observations
+        delta=resolution['modifiers'];marker['modifiers']=copy.deepcopy(delta)
+        stats={}
+        for row in template.get('stats',[]):
+            key=row.get('type');value=row.get('value')
+            if type(key) is not int or type(value) not in (int,float) or not math.isfinite(value):
+                return dict(upgrade=False,reason='realized_enhancement_base_stats_unknown'),observations
+            stats[key]=stats.get(key,0)+value
+        for row in delta['stats']:stats[row['type']]=stats.get(row['type'],0)+row['value']
+        template['stats']=[dict(type=key,value=value) for key,value in sorted(stats.items())]
+        if type(template.get('armor')) not in (int,float) or not math.isfinite(template['armor']):
+            return dict(upgrade=False,reason='realized_enhancement_base_armor_unknown'),observations
+        template['armor']+=delta['armor']
+        resistances=template.get('resistances')
+        if not isinstance(resistances,list) or len(resistances)!=6 or any(type(v) not in (int,float) or not math.isfinite(v) for v in resistances):
+            return dict(upgrade=False,reason='realized_enhancement_base_resistances_unknown'),observations
+        template['resistances']=[v+d for v,d in zip(resistances,delta['resistances'])]
+        if delta['weaponDamageFlat']:
+            damage=template.get('damages')
+            if template.get('itemClass')!=2 or not isinstance(damage,list) or len(damage)!=1 or damage[0].get('school',0)!=0:
+                return dict(upgrade=False,reason='realized_enhancement_base_weapon_damage_unknown'),observations
+            for key in ('minimum','maximum'):
+                if type(damage[0].get(key)) not in (int,float) or not math.isfinite(damage[0][key]):
+                    return dict(upgrade=False,reason='realized_enhancement_base_weapon_damage_unknown'),observations
+                damage[0][key]+=delta['weaponDamageFlat']
+        facts['enhancementResolution']=copy.deepcopy(marker)
+        # Crucially keep hasEnhancements=true. Old conservative Lua can abstain.
+        observations[template_key]=marker
+    return _preview(evaluate,prepared),observations
+
 def _occupied(row):
     return _uint(row.get('itemGuid',0))>0 or _uint(row.get('entry',0),2**32-1)>0
 
@@ -215,7 +289,14 @@ def check_inventory(inventory, *, session_id, character_guid, item_entry, item_g
                     decision=dict(upgrade=chosen and row.get('conservativeUpgrade') is True,reason=row.get('gearBlockedReason','') if chosen else 'accepted_gear_preview_required')
                 else:
                     templates=context.get('templates',{})
-                    decision=_preview(evaluate,dict(mode='preview',candidate=copy.deepcopy(templates.get(str(entry))),candidateFacts=copy.deepcopy(row.get('gearFacts',{})),current=copy.deepcopy(templates.get(str(worn.get('entry',0)))),currentFacts=copy.deepcopy(worn),context=dict(classId=context.get('classId'))))
+                    candidate_facts=copy.deepcopy(row.get('gearFacts',{}))
+                    for key in ('itemGuid','entry','metadataKnown'):candidate_facts[key]=copy.deepcopy(observed_source.get(key))
+                    if 'enhancementDetails' in observed_source:
+                        if 'enhancementDetails' in candidate_facts and candidate_facts['enhancementDetails']!=observed_source['enhancementDetails']:
+                            return _unknown(result,'owned_enhancement_snapshot_changed')
+                        candidate_facts['enhancementDetails']=copy.deepcopy(observed_source['enhancementDetails'])
+                    decision,enhancement_refs=_realized_preview(evaluate,dict(mode='preview',candidate=copy.deepcopy(templates.get(str(entry))),candidateFacts=candidate_facts,current=copy.deepcopy(templates.get(str(worn.get('entry',0)))),currentFacts=copy.deepcopy(worn),context=dict(classId=context.get('classId'))),result,world)
+                    if enhancement_refs:result.setdefault('realizedEnhancementReferences',[]).append(dict(equipmentSlot=slot,references=enhancement_refs))
                 if not isinstance(decision,dict) or type(decision.get('upgrade')) is not bool or not isinstance(decision.get('reason'),str):
                     return _unknown(result,'accepted_gear_preview_result_invalid')
                 reason=decision['reason']
@@ -254,10 +335,11 @@ def _prospective(result,context,equipment,player,world,entry,lookup,evaluate):
         # This is an explicitly hypothetical unmodified BASE template,
         # never an observation about an unowned physical instance. Worn
         # instance facts and all actor options/weights remain unchanged.
-        decision=_preview(evaluate,dict(mode='preview',candidate=copy.deepcopy(candidate),
+        decision,enhancement_refs=_realized_preview(evaluate,dict(mode='preview',candidate=copy.deepcopy(candidate),
             candidateFacts=dict(enhancementsKnown=True,hasEnhancements=False),
             current=copy.deepcopy(current),currentFacts=copy.deepcopy(worn),
-            context=dict(classId=player['classId'])))
+            context=dict(classId=player['classId'])),result,world)
+        if enhancement_refs:result.setdefault('realizedEnhancementReferences',[]).append(dict(equipmentSlot=slot,references=enhancement_refs))
         if not isinstance(decision,dict) or type(decision.get('upgrade')) is not bool or not isinstance(decision.get('reason'),str):
             return _unknown(result,'accepted_gear_preview_result_invalid')
         reason=decision['reason']
