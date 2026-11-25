@@ -1213,11 +1213,21 @@ def owner_message_scope(text, names):
     """Grammatical audience hints only; never gameplay intent or authority."""
     names=sorted({name.casefold() for name in names},key=lambda name:(-len(name),name))
     pattern='|'.join(re.escape(name) for name in names)
+    roles=r'casters?|healers?|tanks?|melee|ranged|mages?|priests?|warlocks?|rogues?|warriors?|paladins?|hunters?|druids?|shamans?|death knights?'
+    # Sentence delimiters exclude decimal points. A new explicit vocative,
+    # party address or role after a conjunction/comma starts its own scope.
+    audience=r'(?:everyone|everybody|team|party|all|both|'+roles+r')(?!\w)'
+    if pattern:audience+=r'|(?:'+pattern+r')(?=\s*[,:])'
+    boundary=r'[!?;\n]|(?<!\d)\.|\.(?!\d)|(?:,\s*(?:(?:and|also)\s+)?|\s+(?:and|also)\s+)(?=(?:'+audience+r'))'
+    spans=[];previous=0
+    for split in re.finditer(boundary,text,re.IGNORECASE):
+        spans.append((previous,split.start()));previous=split.end()
+    spans.append((previous,len(text)))
     clauses=[]
-    for match in re.finditer(r'[^.!?;\n]+',text):
-        clause=match.group().strip()
+    for left,right in spans:
+        raw=text[left:right];clause=raw.strip()
         if not clause:continue
-        start=match.start()+len(match.group())-len(match.group().lstrip())
+        start=left+len(raw)-len(raw.lstrip())
         row=dict(start=start,end=start+len(clause),audience='party')
         prefix=re.match(r'\s*(?:hey\s+)?',clause,re.IGNORECASE).end()
         named=re.match(r'(?:'+pattern+r')(?=[\s,:]|$)',clause[prefix:],re.IGNORECASE) if pattern else None
@@ -1229,7 +1239,7 @@ def owner_message_scope(text, names):
                 addressed.append(join.group(1).casefold());end+=join.end()
             row.update(audience='named',names=addressed)
         else:
-            role=re.match(r'(?:hey\s+)?(casters?|healers?|tanks?|melee|ranged|mages?|priests?|warlocks?|rogues?|warriors?|paladins?|hunters?|druids?|shamans?|death knights?)(?=[\s,:])',clause,re.IGNORECASE)
+            role=re.match(r'(?:hey\s+)?('+roles+r')(?=[\s,:]|$)',clause,re.IGNORECASE)
             if role:row.update(audience='role',role=role.group(1).casefold())
         clauses.append(row)
     return dict(clauses=clauses,broadcast=any(row['audience']!='named' for row in clauses),

@@ -26,6 +26,20 @@ class ClauseScopeTests(unittest.TestCase):
         scope=converse.owner_message_scope('Healers, conserve mana.',ROSTER.values())
         self.assertEqual(scope['clauses'][0]['role'],'healers')
 
+    def test_conjoined_shared_clauses_and_decimal_in_strict_named_order(self):
+        for text,kind in [('Rook, no melee, and everyone use ranged attacks','party'),
+                          ('Rook, interrupt and casters stay at range','role'),
+                          ('Rook, interrupt; healers, conserve mana','role')]:
+            scope=converse.owner_message_scope(text,ROSTER.values())
+            self.assertTrue(scope['broadcast'])
+            self.assertEqual(scope['clauses'][-1]['audience'],kind)
+            self.assertEqual(converse.addressed_names(text,ROSTER.values()),set())
+        text='Rook, hold for 2.5 seconds.'
+        scope=converse.owner_message_scope(text,ROSTER.values())
+        self.assertEqual(len(scope['clauses']),1)
+        self.assertEqual(converse.addressed_names(text,ROSTER.values()),{'rook'})
+        self.assertEqual(converse.addressed_names('Mira, follow Arlen and Rook.',ROSTER.values()),{'mira'})
+
     def test_strict_named_orders_remain_exclusive_and_mentions_are_not_addresses(self):
         for text,names in [('Rook, no melee!',{'rook'}),('Arlen and Mira, follow',{'arlen','mira'}),
                            ('Arlen, heal Joel. Mira, attack.',{'arlen','mira'}),
