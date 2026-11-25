@@ -2369,3 +2369,20 @@ return {decide=function(f) return {output={value=tuning.threshold}} end}'''
                 self.assertIn('ambiguous_tuning_table',result['error']['error'])
                 self.assertEqual(self.rpc.source,before)
                 self.assertFalse(self.rpc.writes)
+
+    def test_current_bundle_named_prior_minimum_is_one_number_edit(self):
+        self.rpc.source = subprocess.check_output([sys.executable, str(ROOT/'dev/encounter-bundle')], text=True)
+        before = self.rpc.source
+        view = self.discover('maraudon_sludge_backline', tuning_field='minRangeYards')['result']
+        self.assertEqual(view['matchedTables'], 1)
+        self.assertEqual(view['total'], 1)
+        args = copy.deepcopy(view['examples']['policy_patch'])
+        self.assertEqual(args['numeric_tuning']['old_literal'], '14')
+        args['numeric_tuning']['new_value'] = 18
+        result = self.tools.dispatch('policy_patch', dict(args, apply=True))
+        self.assertTrue(result['ok'], result)
+        self.assertTrue(result['result']['applied'], result)
+        point = result['result']['numericTuningPreview']['sourceOffset']
+        self.assertEqual(self.rpc.source, before[:point]+'18'+before[point+2:])
+        self.assertEqual(self.rpc.pending, ['issued-before-edit'])
+        self.assertEqual(result['result']['testCoverage']['kind'], 'idle')
