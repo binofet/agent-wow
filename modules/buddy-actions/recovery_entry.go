@@ -16,6 +16,7 @@ import (
 // One explicit death/query-bound normal entrance notification. Living exploration
 // admission is unchanged. A written/unknown trigger is never resent in this death.
 func (s *Service) enterCorpseInstanceLocked(ctx context.Context, q *actionsv1.CorpseApproachRequest, w *worldv1.SnapshotResponse, volume areatriggerreference.Trigger) (*actionsv1.State, error) {
+	ctx = modcb.ForwardPolicySpell(ctx)
 	r := &s.recovery
 	if r.state.CorpseEntryAttempted {
 		return s.stateLocked(), nil

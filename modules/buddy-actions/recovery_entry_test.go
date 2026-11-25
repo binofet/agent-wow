@@ -5,8 +5,13 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/areatriggerreference"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"strings"
 	"testing"
 	"time"
 )
@@ -239,5 +244,35 @@ func TestRecoveryInvalidEntranceLeavesPhysicalOwnershipUnchanged(t *testing.T) {
 				t.Fatal("invalid request acquired physical ownership", err, s.stateLocked(), f.packets)
 			}
 		})
+	}
+}
+
+type corpsePolicyTokenSession struct {
+	*fakeSession
+	token   string
+	checked int
+}
+
+func (f *corpsePolicyTokenSession) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	if r.Opcode == opcode.MSGMoveStop || r.Opcode == opcode.CMSGAreatrigger {
+		md, _ := metadata.FromOutgoingContext(ctx)
+		token, ok := modcb.IncomingPolicySpell(metadata.NewIncomingContext(context.Background(), md))
+		if !ok || token != f.token {
+			return nil, modcb.PacketNotDispatchedError("native scoped write lost exact incoming policy token")
+		}
+		f.checked++
+	}
+	return f.fakeSession.SendPacket(ctx, r, opts...)
+}
+func TestRecoveryDungeonNativeForwardsPolicyTokenOnScopedStopAndTrigger(t *testing.T) {
+	s, f, v := corpseEntranceRig(t)
+	guarded := &corpsePolicyTokenSession{fakeSession: f, token: strings.Repeat("a", 64)}
+	s.session = guarded
+	outgoing := modcb.WithPolicySpell(context.Background(), guarded.token)
+	md, _ := metadata.FromOutgoingContext(outgoing)
+	incoming := metadata.NewIncomingContext(context.Background(), md)
+	got, err := s.ApproachCorpse(incoming, corpseEntranceRequest(s, f, v))
+	if err != nil || guarded.checked != 2 || countOpcode(f, opcode.CMSGAreatrigger) != 1 || !got.Recovery.CorpseEntryWritten {
+		t.Fatal("native incoming RPC did not preserve scoped policy custody", guarded.checked, got, err)
 	}
 }
