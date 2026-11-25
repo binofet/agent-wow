@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStarterQuestRouteActualSourceCASChangesAllowedIDsInSameRuntime(t *testing.T) {
@@ -93,7 +94,13 @@ func TestStarterQuestRouteProjectionKeepsCompleteFramesAndExistingValidation(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := New()
+	// Keep complete validation under race instrumentation separate from the
+	// identical ordinary Runtime CLI proof below. The original CAS test above
+	// still exercises the same Runtime instance with its unchanged defaults.
+	r, err := NewWithOptions(SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := r.Reload(string(source), ""); err != nil {
 		t.Fatal(err)
 	}
@@ -143,9 +150,16 @@ func TestStarterQuestRouteProjectionKeepsCompleteFramesAndExistingValidation(t *
 			if strings.HasSuffix(mode, "invalid") {
 				want = map[string]any{"status": "invalid"}
 			}
+			// Every full frame must first return the complete expected decision
+			// through Reload+Evaluate in the ordinary exact-head CLI at the real
+			// 5ms/32KiB defaults. Errors, including resource exhaustion, fail.
+			ordinary, err := evaluateDisposalProductionMode(t, string(source), frame, false, "evaluate-runtime")
+			if err != nil || !reflect.DeepEqual(ordinary, want) {
+				t.Fatal("full-frame/default ordinary Runtime contract changed", ordinary, want, err)
+			}
 			out, err := r.Evaluate(frame)
-			if err != nil || !reflect.DeepEqual(out, want) {
-				t.Fatal("full-frame/default route contract changed", out, want, err, r.Status())
+			if err != nil || !reflect.DeepEqual(out, want) || !reflect.DeepEqual(out, ordinary) {
+				t.Fatal("full-frame semantic route contract changed", out, want, ordinary, err, r.Status())
 			}
 			after, err := json.Marshal(frame)
 			if err != nil || string(before) != string(after) {
