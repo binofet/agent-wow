@@ -306,6 +306,23 @@ message SplineTransferAdoption {
   WorldTransferObservation transfer = 5;
 }
 
+// Raw observed build-12340 item fields, not resolved enchant/gem bonuses.
+// Enchantment slots include permanent/temporary/socket/other native slots;
+// an ID is an enchantment reference, not necessarily a gem item entry.
+message ItemEnchantmentSlot {
+  uint32 slot = 1; uint32 id = 2; uint32 duration_raw = 3; uint32 charges = 4;
+}
+message ItemEnhancementState {
+  // Bit n covers native slot n (0..11) for this field. A set bit plus
+  // omitted sparse slot/value means KNOWN ZERO; an unset bit means UNKNOWN.
+  // Sparse rows contain only nonzero observed values; never infer coverage
+  // from their presence. Raw enchantment IDs are not gem item entries.
+  uint32 id_known_mask = 1; uint32 duration_known_mask = 2; uint32 charges_known_mask = 3;
+  repeated ItemEnchantmentSlot enchantments = 4;
+  bool property_seed_known = 5; uint32 property_seed = 6;
+  bool random_property_id_known = 7; sint32 random_property_id = 8;
+}
+
 // Private own equipment slots0..18; bags and bank slots are excluded.
 message EquipmentSlotState {
   uint32 slot = 1;
@@ -319,6 +336,7 @@ message EquipmentSlotState {
   uint32 max_durability = 9;
   bool enhancements_known = 10;
   bool has_enhancements = 11;
+  ItemEnhancementState enhancement_details = 12;
 }
 
 // Actual observed own non-bones CORPSE object, not a guessed death location.
@@ -529,6 +547,7 @@ message BackpackSlot {
   uint32 max_durability = 9;
   bool enhancements_known = 10;
   bool has_enhancements = 11;
+  ItemEnhancementState enhancement_details = 12;
 }
 
 // Only private own carried inventory: built-in backpack plus four equipped bags.
