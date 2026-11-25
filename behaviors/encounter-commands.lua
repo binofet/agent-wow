@@ -1000,6 +1000,23 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
             out.action,out.followFormation,out.portalCatchup=nil,nil,nil
             status.phase="waiting_for_passive_prior_custody";return
         end
+        -- A tokenless rejected prior proposal owns no native movement. Do
+        -- not let that bookkeeping starve the consumables policy's already
+        -- confirmed, exact own lease. This retires no acquired/entered/unknown
+        -- custody and performs no release; only the admitted stationary drink
+        -- can pass. Near hazards/fresh attacks never enter this passive branch.
+        local resting=out.consumable
+        local owner=nav.movementOwner
+        if hold and not hold.token and not hold.operation and not hold.uncertain and
+           type(owner)=="table" and owner.active==true and owner.owner~=hold.owner and
+           self.combatKnown==true and self.inCombat~=true and
+           self.movementKnown==true and self.moving~=true and nav.motionUnconfirmed~=true and
+           type(resting)=="table" and resting.hold==true and resting.phase=="using_selected_item" and
+           resting.action==action and action and action.capability=="consume" and action.kind=="drink" and
+           action.sessionId==obs.sessionId and action.selfGuid==obs.selfGuid and
+           type(action.requestId)=="string" and owner.owner=="consumable:"..action.requestId then
+            state.rangedHold=nil;hold=nil
+        end
         -- Never turn an initial estimated pose into proof for releasing a
         -- previously held lease. A recorded interrupted native goal is distinct.
         if hold and not hold.released and self.positionEstimated==true and not resumed_follow then
