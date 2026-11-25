@@ -186,6 +186,10 @@ def _gm_inspect_view(observed, *, actor_guid, session_id, rpc_url):
             ownerLocallyObserved=owner.get("present",False) if str(owner.get("guid")) == "3" else None,
             distanceKnown=False, observedDistance3D=None, rawPath=path,
             comparisonScope="one_observer_world_snapshot_only", gameEffectClaimed=False)
+        if not bound:
+            # Raw visibility from an unverified/stale body is not a headline
+            # observation by this bound actor, even when its coordinates match.
+            result["actorLocallyObserved"] = result["ownerLocallyObserved"] = None
         for key,person,source in (("actorPose",actor,actor_path),("ownerPose",owner,owner_path)):
             known = person.get("positionKnown") is True
             result[key] = dict(rawPath=source,positionKnown=known,

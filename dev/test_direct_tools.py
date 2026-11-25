@@ -848,9 +848,15 @@ class DirectToolTests(unittest.TestCase):
             bad=copy.deepcopy(row);bad['observations']['world']['self'][field]=value
             self.assertFalse(view(bad)['distanceKnown'])
         for key,value in [('identityMatches',False),('errors',[dict(method='world',error='read failed')])]:
-            bad=copy.deepcopy(row);bad[key]=value;self.assertFalse(view(bad)['distanceKnown'])
+            bad=copy.deepcopy(row);bad[key]=value
+            result=view(bad)
+            self.assertFalse(result['distanceKnown'])
+            self.assertIsNone(result['actorLocallyObserved']);self.assertIsNone(result['ownerLocallyObserved'])
         bad=copy.deepcopy(row);bad['observations']['actions']['sessionId']='other-body'
-        self.assertFalse(view(bad)['distanceKnown'])
+        bad['observations']['party']['sessionId']='other-body'
+        result=view(bad)
+        self.assertFalse(result['distanceKnown'])
+        self.assertIsNone(result['actorLocallyObserved']);self.assertIsNone(result['ownerLocallyObserved'])
         bad=copy.deepcopy(row);bad['observations']['world']['self']['guid']='4'
         self.assertFalse(view(bad)['distanceKnown'])
         bad=copy.deepcopy(row);bad['observations']['world']['owner']['guid']='4'
@@ -860,6 +866,8 @@ class DirectToolTests(unittest.TestCase):
         self.assertIsNone(view(bad)['observedDistance3D'])
         ambiguous=_gm_inspect_view(dict(clients=[row,copy.deepcopy(row)]),actor_guid='87',session_id='aw-gm',rpc_url=row['rpcUrl'])
         self.assertFalse(ambiguous['actorOwnerObservation']['distanceKnown'])
+        self.assertIsNone(ambiguous['actorOwnerObservation']['actorLocallyObserved'])
+        self.assertIsNone(ambiguous['actorOwnerObservation']['ownerLocallyObserved'])
 
     def test_large_gm_inspection_default_keeps_all_client_and_player_facts_readable(self):
         tools=self.gm_tools(mock.Mock())
