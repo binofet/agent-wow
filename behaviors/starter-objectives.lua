@@ -1,7 +1,7 @@
 -- Starter mission objectives and practice lifecycle. The caller owns observed
 -- facts, exact native toggles, durable mutation reservations and receipt custody.
 local M = {}
-M.fargodeep_pull={minimum_health=95, minimum_mana=45, minimum_energy=90}
+M.fargodeep_pull={minimum_health=95, minimum_mana=45, minimum_energy=90,stand_yards={[4]=3.5,[5]=28,[8]=33},quests={47,60},recheck_ms=250}
 local function array(v,max)
     if type(v)~="table" or #v>max then return false end
     local n=0
@@ -152,7 +152,36 @@ function M.practice_lifecycle(input)
 end
 
 M.coldridge_practice={priority={179,170,183,182},max_range=120,lease_ms=600000,
-    objectives={[179]={{entry=705,count=0}},[170]={{entry=707,count=6},{entry=724,count=6}},[183]={{entry=708,count=12}},[182]={{entry=706,count=10}}}}
+    objectives={[179]={{entry=705,count=0}},[170]={{entry=707,count=6},{entry=724,count=6}},[183]={{entry=708,count=12}},[182]={{entry=706,count=10}}},
+    profiles={[179]={{entry=705,level=1}},[170]={{entry=707,level=2,maxHealth=55,faction=36},{entry=724,level=2,maxHealth=55,faction=36}},
+        [183]={{entry=708,level=3,maxHealth=71,faction=189}},[182]={{entry=706,level=3,maxHealth=71,faction=190},{entry=706,level=4,maxHealth=86,faction=190}}}}
+-- Defaults retain the recorded public creature tuples. They describe this
+-- scenario's filter, never alter the actual native creature/quest observations.
+-- Quest182 proof SHA256:84e76d3570162b8fabc05a98bd3cf8d7991293d3d433fb6d18a740cd628821bb.
+-- Quest170 tuples SHA256:f63a45043ec5a13631fefb6a57a6f7ad8d1e3cdf2d44d7730c1533da3e64dcad;
+-- quest183 tuple SHA256:e6cc24cbbe8df941fecc0e65d76a1dc86fab2e3907980d2803d1197437432409.
+function M.coldridge_supports_entry(id,entry)
+    local profiles=type(M.coldridge_practice)=="table" and type(M.coldridge_practice.profiles)=="table" and M.coldridge_practice.profiles[id]
+    if not array(profiles,4) then return false end
+    for _,profile in ipairs(profiles) do if type(profile)=="table" and profile.entry==entry and uint(entry) and entry>0 then return true end end
+    return false
+end
+function M.coldridge_profile(c,id)
+    if type(c)~="table" or c.mapKnown~=true or (c.mapId or 0)~=0 or c.levelKnown~=true or not uint(c.level) then return false end
+    local profiles=type(M.coldridge_practice)=="table" and type(M.coldridge_practice.profiles)=="table" and M.coldridge_practice.profiles[id]
+    if not array(profiles,4) then return false end
+    for _,profile in ipairs(profiles) do
+        if type(profile)~="table" or not uint(profile.entry) or profile.entry==0 or not uint(profile.level) or profile.level==0 or
+           profile.maxHealth~=nil and (not uint(profile.maxHealth) or profile.maxHealth==0) or profile.faction~=nil and not uint(profile.faction) then return false end
+        if c.entry==profile.entry and c.level==profile.level and (profile.maxHealth==nil or c.maxHealth==profile.maxHealth) and
+           (profile.faction==nil or c.factionTemplate==profile.faction) then return true end
+    end
+    return false
+end
+function M.coldridge_eligible(c,self,id)
+    return type(c)=="table" and c.physicalAvailable==true and M.coldridge_profile(c,id) and
+        (id==179 or type(self)=="table" and self.mapKnown==true and (self.mapId or 0)==0 and self.levelKnown==true and self.level>=c.level)
+end
 function M.coldridge_lifecycle(input)
     local g=type(input)=="table" and type(input.goal)=="table" and input.goal or {}
     local function out(kind,phase,quest,counts,active,needed,entries,target,finishing,lease,valid)
@@ -187,7 +216,7 @@ function M.coldridge_lifecycle(input)
         local objectives=tuning.objectives[id]
         if not array(objectives,2) or #objectives==0 then return end
         for i,o in ipairs(objectives) do
-            if type(o)~="table" or not uint(o.entry) or not uint(o.count) then return end
+            if type(o)~="table" or not uint(o.entry) or not uint(o.count) or not M.coldridge_supports_entry(id,o.entry) then return end
             if needed and (id==179 or counts[i]<o.count) then entries[#entries+1]=o.entry end
         end
         return counts,#entries>0,entries
@@ -210,10 +239,13 @@ function M.coldridge_lifecycle(input)
     local targetNeeded=false
     for _,entry in ipairs(entries) do if type(target)=="table" and target.entry==entry then targetNeeded=true end end
     local finishing=(not needed or not targetNeeded) and input.pullStarted==true and bit(input.self.unitFlags,0x80000) and type(target)=="table" and
-        target.eligible==true and target.attackVictimKnown==true and target.attackVictimGuid==input.selfGuid and recent_age(target.attackAgeMs or 0)
+        M.coldridge_eligible(target,input.self,id) and target.attackVictimKnown==true and target.attackVictimGuid==input.selfGuid and recent_age(target.attackAgeMs or 0)
     if not needed and not finishing then return out("stop",id==179 and "quest_179_complete_absent_or_level_limit" or "quest_"..tostring(id).."_complete_absent_or_invalid",id,counts,true,false,entries) end
     if needed and not targetNeeded and input.pullStarted==true and not finishing then return out("stop","selected_quest_objective_complete_without_owned_fight",id,counts,true,needed,entries) end
     if type(target)=="table" and target.healthKnown==true and (target.health or 0)==0 and target.aliveKnown==true and target.alive~=true then return out("target_dead","target_death_observed",id,counts,true,needed,entries) end
+    if type(target)=="table" and not M.coldridge_eligible(target,input.self,id) then
+        return out("stop","coldridge_target_claimed_unsafe_or_cast_failed",id,counts,true,needed,entries)
+    end
     if type(target)=="table" and input.pullStarted~=true and not targetNeeded then return out("clear_target","selected_quest_objective_already_satisfied",id,counts,true,needed,entries) end
     if input.stage=="tick" then return out("continue",finishing and "finishing_current_fight_to_goal" or "",id,counts,true,needed,entries,input.targetGuid,finishing) end
     if input.stage~="targets" then return bad end
@@ -222,7 +254,7 @@ function M.coldridge_lifecycle(input)
         local neededEntry=false
         for _,entry in ipairs(entries) do if type(c)=="table" and c.entry==entry then neededEntry=true end end
         local p=type(c)=="table" and motion_point(c)
-        if neededEntry and c.eligible==true and c.positionWithin==true and c.unclaimed==true and p then
+        if neededEntry and M.coldridge_eligible(c,input.self,id) and c.positionWithin==true and c.unclaimed==true and p then
             local d=distance2(input.clientPosition,p)
             if d<best then selected,best=c,d end
         end
@@ -235,7 +267,7 @@ local function ready(choice) return {status="ready",choice=choice} end
 local function invalid() return {status="invalid"} end
 local function fargodeep_readiness(input)
     local selection="fargodeep_pull_readiness"
-    local hold={kind="wait",spellId=0,selection=selection}
+    local hold={kind="wait",spellId=0,selection=selection,standYards=0}
     local function uint(value)
         return type(value)=="number" and value>=0 and value<=4294967295 and value%1==0
     end
@@ -251,7 +283,12 @@ local function fargodeep_readiness(input)
        (mission.engagerGuid~="1" and mission.engagerGuid~="4" and mission.engagerGuid~="5") then return hold end
     local tuning=M.fargodeep_pull
     if type(tuning)~="table" or not uint(tuning.minimum_health) or tuning.minimum_health>100 or
-       not uint(tuning.minimum_mana) or tuning.minimum_mana>100 or not uint(tuning.minimum_energy) then return hold end
+       not uint(tuning.minimum_mana) or tuning.minimum_mana>100 or not uint(tuning.minimum_energy) or
+       type(tuning.stand_yards)~="table" then return hold end
+    local self=obs.players[input.selfGuid]
+    local stand=type(self)=="table" and self.classKnown==true and tuning.stand_yards[self.classId]
+    if not number(stand) or stand<=0 or stand>240 then return hold end
+    hold.standYards=stand
     for _,member in ipairs({{guid="1",class=5},{guid="4",class=8},{guid="5",class=4}}) do
         local player=obs.players[member.guid]
         if type(player)~="table" or player.guid~=member.guid or player.classKnown~=true or player.classId~=member.class or
@@ -270,7 +307,169 @@ local function fargodeep_readiness(input)
             if player.power<budget then return hold end
         end
     end
-    return {kind="ready",spellId=0,selection=selection}
+    return {kind="ready",spellId=0,selection=selection,standYards=stand}
+end
+
+-- The accepted policy owns the whole explicit encounter's goal, roles and
+-- lifecycle. The native caller supplies actual views and executes only the
+-- returned physical step; a new observation is required across every callback.
+function M.fargodeep_lifecycle(input)
+    local w=type(input)=="table" and input.workflow
+    local m=type(input)=="table" and input.mission
+    local stand,budget=0,0
+    local function out(kind,phase,pulled)
+        return {kind=kind,phase=phase,selection="fargodeep_pull_readiness",standYards=stand,pulled=pulled==true,validForMs=math.floor(budget)}
+    end
+    local function future(ms) if number(ms) and ms>=0 then budget=math.min(budget,ms) end end
+    local function motion_expiry(c)
+        local t=c.trajectory
+        if c.motionPositionKnown==true and type(t)=="table" and t.known==true and t.stopped~=true then
+            local age=tonumber(t.ageMs or "0")
+            if age<(t.durationMs or 0) then future(750-math.max(age,tonumber(c.positionAgeMs or "0")))
+            else future((t.durationMs or 0)+5000-age) end
+        end
+    end
+    local function stop(phase) return out("stop",phase,m and m.pulled) end
+    local function area(p)
+        return point(p) and (p.x or 0)>=-10000 and (p.x or 0)<=-9700 and (p.y or 0)>=50 and
+            (p.y or 0)<=320 and (p.z or 0)>=-10 and (p.z or 0)<=65
+    end
+    if type(w)~="table" or type(m)~="table" or not decimal(m.targetGuid) or m.targetGuid=="0" or
+       type(m.pulled)~="boolean" or (m.engagerGuid~="1" and m.engagerGuid~="4" and m.engagerGuid~="5") or
+       type(w.scene)~="table" or not uint(w.nearbyPlayerCount) or w.nearbyPlayerCount>64 or not array(w.scene.nearbyCreatures or {},32) or
+       not array(w.scene.selfQuestLog or {},25) or type(w.selfSafe)~="boolean" then return stop("observations_unavailable") end
+    local scene,target=w.scene,w.scene.requestedCreature
+    local self=((input.observation or {}).players or {})[input.selfGuid]
+    local classes={["1"]=5,["4"]=8,["5"]=4}
+    if not classes[input.selfGuid] or type(self)~="table" or self.guid~=input.selfGuid or not w.selfSafe or
+       self.mapKnown~=true or (self.mapId or 0)~=0 or self.classKnown~=true or self.classId~=classes[input.selfGuid] or
+       self.levelKnown~=true or not uint(self.level) or self.level<4 or self.level>10 or
+       not uint(self.health) or not uint(self.maxHealth) or self.maxHealth==0 or self.health>self.maxHealth or
+       self.speedsKnown~=true or not number(self.runSpeed) or math.abs(self.runSpeed-7)>.01 or
+       not area(w.clientPosition) then return stop("own_state_unknown_or_unsafe") end
+    local readiness=fargodeep_readiness(input)
+    stand=readiness.standYards
+    if not number(stand) or stand<=0 or stand>240 then return stop("readiness_policy_unavailable_or_changed") end
+    if not uint(M.fargodeep_pull.recheck_ms) or M.fargodeep_pull.recheck_ms>30000 then return stop("readiness_policy_unavailable_or_changed") end
+    budget=M.fargodeep_pull.recheck_ms
+    local rows=quest_rows({questLogKnown=scene.selfQuestLogKnown,questLog=scene.selfQuestLog})
+    local goals=ids(M.fargodeep_pull.quests,25)
+    if not goals or not next(goals) then return stop("readiness_policy_unavailable_or_changed") end
+    local active,needed=false,false
+    if rows then for q in pairs(goals) do
+        active=active or active_quest(rows[tonumber(q)])
+        needed=needed or incomplete(rows[tonumber(q)])
+    end end
+    if type(target)~="table" or target.guid~=m.targetGuid then return stop("target_unsafe_or_cast_failed") end
+    if target.aliveKnown==true and target.alive~=true and target.healthKnown==true and (target.health or 0)==0 and w.stage~="arm" then
+        return stop("target_death_observed")
+    end
+    if not active or not m.pulled and m.engagerGuid==input.selfGuid and not needed then return stop("own_quest_goal_complete_or_unknown") end
+    if w.targetGuidType~=0xf130 or w.targetGuidEntry~=target.entry or (target.entry~=40 and target.entry~=475) or
+       target.present~=true or target.mapKnown~=true or (target.mapId or 0)~=0 or target.levelKnown~=true or
+       not uint(target.level) or target.level<5 or target.level>7 or target.level>self.level+1 or
+       target.aliveKnown~=true or target.alive~=true or target.healthKnown~=true or not uint(target.health) or
+       not uint(target.maxHealth) or target.health==0 or target.health>target.maxHealth or (target.npcFlags or 0)~=0 or
+       target.unitFlagsKnown~=true or target.dynamicFlagsKnown~=true or bit(target.unitFlags2,1) or bit(target.dynamicFlags,0x20) or
+       w.failedTarget==true then return stop("target_unsafe_or_cast_failed") end
+    for _,mask in ipairs({2,0x80,0x100,0x10000,0x2000000,0x80000000}) do
+        if bit(target.unitFlags,mask) then return stop("target_unsafe_or_cast_failed") end
+    end
+    local p=w.targetPosition
+    if not area(p) or distance2(w.clientPosition,p)>35*35 or
+       w.targetPositionKnown~=true and w.targetPatrol~=true then
+        return stop("target_position_unavailable_or_outside_range")
+    end
+    if w.stage=="arm" and w.targetPositionKnown~=true then
+        local t=target.trajectory or {}
+        local endpoint={x=t.destinationX,y=t.destinationY,z=t.destinationZ}
+        if w.targetPatrol~=true or not point(endpoint) or distance2(w.clientPosition,endpoint)>35*35 then
+            return stop("target_position_unavailable_or_outside_range")
+        end
+    end
+    motion_expiry(target)
+    for _,other in ipairs(scene.nearbyCreatures or {}) do motion_expiry(other) end
+    local party=w.party
+    local group=type(party)=="table" and party.group
+    if type(group)~="table" or party.sessionId~=m.partySessionId or group.known~=true or group.inGroup~=true or
+       not array(group.members,40) or #group.members<3 then return stop("current_party_unknown_or_changed") end
+    if scene.owner and scene.owner.present==true then return stop("owner_returned") end
+    local members={}
+    for _,member in ipairs(group.members) do
+        if type(member)~="table" or not decimal(member.guid) or member.guid=="0" or #member.guid>15 or
+           #member.guid==15 and member.guid>"281474976710655" or members[member.guid]~=nil or
+           (member.self==true)~=(member.guid==input.selfGuid) then return stop("current_party_unknown_or_changed") end
+        members[member.guid]=member.online==true
+    end
+    local full=(input.observation or {}).players or {}
+    for guid,class in pairs(classes) do
+        local v=full[guid]
+        if members[guid]~=true or type(v)~="table" or w.safePlayers[guid]~=true or v.classKnown~=true or v.classId~=class or
+           v.levelKnown~=true or not uint(v.level) or v.level<4 or v.level>10 or not uint(v.maxHealth) or v.maxHealth==0 or
+           not uint(v.health) or v.health>v.maxHealth or bit(v.playerFlags,2) then return stop("companion_observation_unknown_or_unsafe") end
+        local pos=guid==input.selfGuid and w.clientPosition or v
+        if distance2(w.clientPosition,pos)>35*35 then return stop("companions_outside_support_range") end
+    end
+    -- Extra actual group members do not acquire a role in this explicit task.
+    members={["1"]=true,["4"]=true,["5"]=true}
+    if w.stage=="arm" then return out("arm","armed_waiting_for_designated_engager",false) end
+    if w.authorized~=true then return stop("authorization_expired") end
+    local victim=target.attackVictimKnown==true and target.attackVictimGuid or "0"
+    if victim~="0" and not members[victim] or bit(target.dynamicFlags,4) and not bit(target.dynamicFlags,8) then
+        return stop("target_claimed_or_attacking_foreign_player")
+    end
+    for _,other in ipairs(scene.nearbyCreatures or {}) do
+        if other.guid~=m.targetGuid and other.present==true and other.aliveKnown==true and other.alive==true and
+           other.attackVictimKnown==true and members[other.attackVictimGuid] and recent_age(other.attackAgeMs or "0") then
+            return stop("additional_attacker_observed")
+        end
+    end
+    if w.targetPositionKnown~=true then return out("hold","waiting_for_fresh_patrol_position",m.pulled) end
+    local age=tonumber(target.attackAgeMs or "0")
+    local engaged=members[victim]==true and age and age<=30000 and full[victim] and (bit(full[victim].unitFlags,0x80000) or age<=5000)
+    if engaged then future((bit(full[victim].unitFlags,0x80000) and 30000 or 5000)-age) end
+    local pulled=m.pulled or engaged
+    if not engaged and m.engagerGuid~=input.selfGuid then return out("hold","waiting_for_actual_party_attack_start",pulled) end
+    if not engaged and not pulled then
+        for guid,class in pairs(classes) do
+            local v=full[guid]
+            local pos=guid==input.selfGuid and w.clientPosition or v
+            if distance2(pos,p)>28*28 then return out("hold","companions_outside_support_range",pulled) end
+            if v.healthKnown~=true or (v.health or 0)==0 or bit(v.unitFlags,0x80000) or v.powerKnown~=true or
+               (class==4 and v.powerType~=3 or class~=4 and (v.powerType or 0)~=0) then
+                return out("hold","companions_recovering_before_pull",pulled)
+            end
+        end
+        if bit(target.unitFlags,0x80000) or (target.dynamicFlags or 0)~=0 or victim~="0" or
+           target.targetKnown~=true or (target.targetGuid or "0")~="0" then return stop("initial_target_not_idle_unclaimed") end
+        for _,other in ipairs(scene.nearbyCreatures or {}) do
+            local pos=other.motionPositionKnown==true and (other.motionPosition or other) or nil
+            local near=pos and distance2(pos,p)<8*8
+            if not pos and other.patrolKnown==true then
+                local motion=other.trajectory
+                local age,duration=tonumber(motion.ageMs or "0"),motion.durationMs
+                local endpoint={x=motion.destinationX,y=motion.destinationY,z=motion.destinationZ}
+                near=math.sqrt(distance2(other,p))<8+7*age/1000 and math.sqrt(distance2(endpoint,p))<8+7*math.abs(duration-age)/1000
+                local start_reach=(math.sqrt(distance2(other,p))-8)*1000/7
+                local end_reach=(math.sqrt(distance2(endpoint,p))-8)*1000/7
+                future(start_reach-age);future(duration-end_reach-age);future(duration+end_reach-age)
+            elseif not pos then near=other.positionKnown==true and point(other) and distance2(other,p)<8*8 end
+            if other.guid~=m.targetGuid and other.present==true and other.aliveKnown==true and other.alive==true and
+               (other.npcFlags or 0)==0 and near then return out("hold","waiting_for_isolated_kobold",pulled) end
+        end
+        if readiness.kind~="ready" then return out("hold","companions_recovering_before_pull",pulled) end
+    end
+    if self.classId==5 and w.learnedHealing~=true then return stop("priest_healing_intent_required") end
+    if w.stage=="tick" and w.castPending==true then return out("hold","waiting_for_actual_cast_result",pulled) end
+    if w.stage=="tick" and w.autoAttackUnconfirmed==true then return out("hold","waiting_for_server_attack_stop",pulled) end
+    if m.engagerGuid==input.selfGuid and (self.classId==4 and not pulled or distance2(w.clientPosition,p)>stand*stand) then
+        if w.routeKnown~=true or not pulled and w.routeTargetDrift>.25 then return out("plan","waiting_for_verified_route",pulled) end
+        if distance2(w.clientPosition,p)>stand*stand or w.routeRemaining>stand or w.routeDirect~=true then
+            return out("approach","approaching_designated_kobold_on_verified_route",pulled)
+        end
+    end
+    if not engaged and pulled then return out("hold","waiting_for_actual_party_attack_start",pulled) end
+    return out("attack",engaged and "fighting_actual_bound_kobold" or "waiting_for_class_gate",pulled)
 end
 local function practice(input,active)
     local a=input.actions or {}
@@ -289,26 +488,36 @@ local function quest_route(input,active,missing,confirmed,known,level,complete)
     local r=input.questRoute
     if type(r)~="table" or type(r.sessionId)~="string" or #r.sessionId<1 or #r.sessionId>128 or
        type(r.introProbeCurrent)~="boolean" or type(r.eaganProbeCurrent)~="boolean" or
-       type(r.wolfProbeCurrent)~="boolean" or not array(r.givers,128) or type(r.offer)~="table" then return invalid() end
-    local giver={}
-    for _,row in ipairs(r.givers) do
-        if type(row)~="table" or not decimal(row.guid) or row.guid=="0" or
+       type(r.wolfProbeCurrent)~="boolean" or type(r.givers)~="table" or #r.givers>128 or type(r.offer)~="table" then return invalid() end
+    local o,giver,giverIndex,giverCount=r.offer,nil,0,0
+    for index,row in pairs(r.givers) do
+        if type(index)~="number" or index<1 or index>128 or index%1~=0 or
+           type(row)~="table" or not decimal(row.guid) or row.guid=="0" or
            type(row.entry)~="number" or row.entry%1~=0 or row.entry<1 or row.entry>4294967295 then return invalid() end
-        giver[row.guid]=row.entry
+        giverCount=giverCount+1
+        if index>giverIndex and row.guid==o.npcGuid then giver,giverIndex=row.entry,index end
     end
-    local o=r.offer
+    if giverCount~=#r.givers then return invalid() end
     if type(o.objectKnown)~="boolean" or type(o.questsKnown)~="boolean" or type(o.introQuestsKnown)~="boolean" or
-       not decimal(o.npcGuid) or not decimal(o.expiresInMs) or not array(o.quests,32) then return invalid() end
-    local offered={}
-    for _,row in ipairs(o.quests) do
-        if type(row)~="table" or type(row.questId)~="number" or row.questId%1~=0 or
+       not decimal(o.npcGuid) or not decimal(o.expiresInMs) or type(o.quests)~="table" or #o.quests>32 then return invalid() end
+    local intro,eagan,wolves,rest,offerCount=false,false,false,false,0
+    for index,row in pairs(o.quests) do
+        if type(index)~="number" or index<1 or index>32 or index%1~=0 or
+           type(row)~="table" or type(row.questId)~="number" or row.questId%1~=0 or
            row.questId<0 or row.questId>4294967295 or type(row.available)~="boolean" then return invalid() end
-        if row.available then offered[tostring(row.questId)]=true end
+        offerCount=offerCount+1
+        if row.available then
+            if row.questId==783 then intro=true
+            elseif row.questId==5261 then eagan=true
+            elseif row.questId==33 then wolves=true
+            elseif row.questId==3903 then rest=true end
+        end
     end
+    if offerCount~=#o.quests then return invalid() end
     local reward=0
-    for _,q in ipairs({783,5261,33}) do
-        if active[tostring(q)] and (q~=33 or complete) then reward=q;break end
-    end
+    if active["783"] then reward=783
+    elseif active["5261"] then reward=5261
+    elseif active["33"] and complete then reward=33 end
     local needed=823
     if reward~=0 then needed=reward==783 and 197 or 196
     elseif missing["7"] then needed=confirmed["783"] and 197 or 823
@@ -317,21 +526,21 @@ local function quest_route(input,active,missing,confirmed,known,level,complete)
     local probes={}
     local fresh=o.objectKnown and o.expiresInMs~="0"
     if missing["7"] and not active["783"] then
-        if fresh and giver[o.npcGuid]==823 and o.introQuestsKnown and not offered["783"] then
+        if fresh and giver==823 and o.introQuestsKnown and not intro then
             probes.intro=true
         end
         if r.introProbeCurrent or probes.intro then needed=197 end
     end
     if active["7"] and missing["3903"] and not confirmed["5261"] and not confirmed["33"] and
-       not active["5261"] and not active["33"] and fresh and giver[o.npcGuid]==823 and
-       o.questsKnown and not offered["5261"] and not offered["3903"] then
+       not active["5261"] and not active["33"] and fresh and giver==823 and
+       o.questsKnown and not eagan and not rest then
         probes.eagan,probes.wolf=true,false
         needed=196
     end
     -- An empty fresh Eagan menu permits another Willem query. It never
     -- manufactures reward confirmation or permission to accept an absent row.
     if reward==0 and missing["3903"] and not active["5261"] and not active["33"] and
-       fresh and giver[o.npcGuid]==196 and o.questsKnown and not offered["33"] then
+       fresh and giver==196 and o.questsKnown and not wolves then
         probes.wolf=true
         needed=823
     end
@@ -340,7 +549,8 @@ local function quest_route(input,active,missing,confirmed,known,level,complete)
     elseif needed==823 then
         if missing["7"] then allowed[#allowed+1]=783 end
         if known and level>=2 then
-            for _,q in ipairs({18,3903}) do if missing[tostring(q)] then allowed[#allowed+1]=q end end
+            if missing["18"] then allowed[#allowed+1]=18 end
+            if missing["3903"] then allowed[#allowed+1]=3903 end
         end
         if missing["3903"] and not confirmed["5261"] and not confirmed["33"] then allowed[#allowed+1]=5261 end
     elseif needed==196 and missing["3903"] and not confirmed["33"] then allowed={33} end
@@ -350,25 +560,30 @@ function M.decide(input)
     if type(input)~="table" then return invalid() end
     if input.selection=="practice_lifecycle" then return M.practice_lifecycle(input) end
     if input.selection=="coldridge_lifecycle" then return M.coldridge_lifecycle(input) end
-    if input.selection=="fargodeep_pull_readiness" then return fargodeep_readiness(input) end
+    if input.selection=="fargodeep_pull_readiness" then
+        if input.workflow then return M.fargodeep_lifecycle(input) end
+        return fargodeep_readiness(input)
+    end
     local active,desired,confirmed=ids(input.activeQuestIds,25),ids(input.desiredQuestIds,25),ids(input.confirmedQuestIds,3)
     if not active or not desired or not confirmed or not decimal(input.selfGuid) or type(input.autonomous)~="boolean" then return invalid() end
     local missing,exact={},true
     for q in pairs(desired) do if not active[q] then missing[q]=true; exact=false end end
-    for q in pairs(active) do if not desired[q] then exact=false end end
-    local complete,failed=input.wolfComplete==true,input.wolfFailed==true
-    local wolves=active["33"] and not complete and not failed
+    local complete=input.wolfComplete==true
     local known,level=input.levelKnown==true,input.level
     if known and (type(level)~="number" or level<1 or level>80 or level%1~=0) then return invalid() end
-    local xp=known and level==1 and (input.selfGuid=="4" or input.selfGuid=="5") and missing["18"] and (active["3903"] or confirmed["33"])
-    local needed=wolves and known and level>=1 and level<=5 or xp
     local routine,a=input.routine,input.actions
-    if routine==nil then routine={} end
-    if a==nil then a={} end
-    if type(routine)~="table" or type(a)~="table" then return invalid() end
+    if routine~=nil and type(routine)~="table" or a~=nil and type(a)~="table" then return invalid() end
     if input.stage=="quest_route" then
         return quest_route(input,active,missing,confirmed,known,level,complete)
-    elseif input.stage=="classify" then
+    end
+    for q in pairs(active) do if not desired[q] then exact=false end end
+    local failed=input.wolfFailed==true
+    local wolves=active["33"] and not complete and not failed
+    local xp=known and level==1 and (input.selfGuid=="4" or input.selfGuid=="5") and missing["18"] and (active["3903"] or confirmed["33"])
+    local needed=wolves and known and level>=1 and level<=5 or xp
+    if routine==nil then routine={} end
+    if a==nil then a={} end
+    if input.stage=="classify" then
         if exact and not (input.autonomous and routine.practiceOwned==true) then
             return ready(wait("matched_requested_active_quest_ids"))
         end

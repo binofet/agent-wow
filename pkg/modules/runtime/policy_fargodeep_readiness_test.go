@@ -64,8 +64,8 @@ func TestPolicyFargodeepReadinessRealBundleUsesCurrentAcceptedObjectives(t *test
 			t.Fatal(err)
 		}
 		available, actual, decision, err := host.starterSpellDecision(ctx, input)
-		if err != nil || !available || actual != revision || len(decision) != 3 ||
-			decision["kind"] != kind || decision["spellId"] != float64(0) || decision["selection"] != selection {
+		if err != nil || !available || actual != revision || len(decision) != 4 ||
+			decision["kind"] != kind || decision["spellId"] != float64(0) || decision["selection"] != selection || decision["standYards"] != float64(33) {
 			t.Fatal("real bundled export lost the current shared readiness decision", available, actual, decision, err)
 		}
 		assertFollowFallbackState(t, host, before)

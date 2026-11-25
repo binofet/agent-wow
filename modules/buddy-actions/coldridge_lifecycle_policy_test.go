@@ -2,7 +2,9 @@ package buddyactions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -283,13 +285,16 @@ func TestColdridgeLifecycleInvalidQuestRetirementFencesReplacement(t *testing.T)
 }
 
 func TestColdridgeLifecycleAll32CandidatesAndCompleteQuestLogFitUnchangedLimits(t *testing.T) {
-	s, f, _ := coldridgeRig(t)
+	s, f, _ := coldThreatRig(t, 707, 0, 0)
+	f.world.NearbyCreatures[0].X = -6210
 	for i := 1; i < 32; i++ {
 		c := proto.Clone(f.world.NearbyCreatures[0]).(*worldv1.CreatureState)
-		c.Guid = (coldridgeWolfGUID & ^uint64(0xffffff)) | uint64(1000+i)
+		c.Guid = (c.Guid & ^uint64(0xffffff)) | uint64(1000+i)
 		c.X += float32(i)
 		f.world.NearbyCreatures = append(f.world.NearbyCreatures, c)
 	}
+	last := f.world.NearbyCreatures[31]
+	last.Entry, last.Guid, last.X = 724, coldThreatGUID(724), -6238
 	input, valid := s.coldridgeLifecycleFacts(f.world, "targets")
 	if !valid || len(input["nearby"].([]any)) != 32 || len(input["questLog"].([]any)) != 25 {
 		t.Fatal("factual projection omitted candidates or own slots", input)
@@ -298,11 +303,22 @@ func TestColdridgeLifecycleAll32CandidatesAndCompleteQuestLogFitUnchangedLimits(
 	if err != nil || proto.Size(packed) > modcb.StarterSpellPolicyMaxBytes {
 		t.Fatal("complete supported frame exceeds existing callback limit", proto.Size(packed), err)
 	}
+	raw, err := json.Marshal(input)
+	if err != nil || len(raw) > behavior.MaxJSONBytes {
+		t.Fatal("complete Coldridge frame exceeds unchanged JSON limit", len(raw), err)
+	}
 	out, err := s.starterSpells.runtime.EvaluateContext(context.Background(), input)
 	selected, valid := decodeColdridgeLifecycle(out)
-	if err != nil || !valid || selected.Kind != "select" {
+	after, marshalErr := json.Marshal(input)
+	if err != nil || !valid || selected.Kind != "select" || selected.TargetGUID != strconv.FormatUint(last.Guid, 10) ||
+		marshalErr != nil || string(raw) != string(after) || len(f.packets) != 0 {
 		t.Fatal("complete supported frame failed default value/node limits", selected, err)
 	}
+	// The semantic evaluator above checks the full current native projection.
+	// The SAME full frame/output then runs through the normal exact-head CLI's
+	// Reload+Evaluate with unchanged 5ms/32KiB defaults and no candidate clipping.
+	starterDefaultRuntimeCLIParity(t, behaviors.StarterSpellSource, 11)(raw, out)
+	t.Logf("complete Coldridge frame: %d bytes, 32 candidates, selected final GUID %s", len(raw), selected.TargetGUID)
 }
 
 func TestColdridgeLifecycleTargetFree182FrameKeepsNilAndReachesItsPlanner(t *testing.T) {
