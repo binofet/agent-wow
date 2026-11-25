@@ -2774,7 +2774,11 @@ class DirectBrain(AgentBrain):
             "party clauses apply to all, role clauses only to their applicable roles, named clauses only to those names. "
             "A named clause never cancels another clause's party scope. A private whisper remains addressed to its recipient. "
             "A tactical promise does not change Lua: invoke the supported gameplay_command, then distinguish queued delivery "
-            "from policy_state.latestDecision applied status; report unsupported or unknown honestly. "
+            "from matching policy_state.latestDecision.output acknowledgement. If a requested behavior has no handler but your advertised "
+            "owned-workspace tools and existing mechanics support it, inspect your accepted Lua, edit and test it, "
+            "apply with its same-body revision, then verify the result. A missing handler is not itself a missing mechanic. "
+            "If required primitives or editing authority are absent, report that exact limitation. If you only acknowledge, "
+            "say no behavior change was applied; if verification is incomplete, say what remains unverified. Banter and questions need no edits. "
             "For wand requests, verify your actual equipped ranged item (World.selfEquipment slot 17, zero-based) "
             "and learned spell facts: Shoot 5019 is wand-specific with 30-yard range, not universal class support. "
             "A cast GO is not proof of continuing wand fire; do not repeat uncertain casts/toggles.")

@@ -214,7 +214,7 @@ end
 local function action(obs,sequence,target,options,stop)
     return {capability=stop and "stop_movement" or "approach_target",sessionId=obs.sessionId,
         selfGuid=obs.selfGuid,targetGuid=target,visitId=obs.visitId,observationSequence=sequence,
-        rangeYards=options.rangeYards,requireLos=options.requireLos == true,behind=options.behind == true}
+        rangeYards=options.rangeYards,minRangeYards=options.minRangeYards,clearanceTargetGuids=options.clearanceTargetGuids,clearanceYards=options.clearanceYards,requireLos=options.requireLos == true,behind=options.behind == true}
 end
 function M.decide(obs,sequence,target,options)
     options = options or {}
@@ -228,19 +228,22 @@ function M.decide(obs,sequence,target,options)
     local geometric = false
     if from and to and (unit.mapKnown ~= true or unit.mapId == obs.mapId) then
         local dx,dy,dz=from.x-to.x,from.y-to.y,from.z-to.z
-        geometric = dx*dx+dy*dy+dz*dz <= radius*radius
+        geometric = dx*dx+dy*dy+dz*dz <= radius*radius and dx*dx+dy*dy+dz*dz >= (options.minRangeYards or 0)^2
         if options.behind then geometric = geometric and dx*math.cos(to.o)+dy*math.sin(to.o) < 0 end
     end
     local view = obs.targetMovement or {}
     local validated = (invalid_target ~= target or checked_target == target) and view.targetGuid == target and view.visitId == obs.visitId and view.ready == true and
-        view.rangeYards == radius and (view.requireLos == true) == (options.requireLos == true) and
+        math.abs((view.rangeYards or 0)-radius)<=.00001*math.max(1,radius) and math.abs((view.minRangeYards or 0)-(options.minRangeYards or 0))<=.00001*math.max(1,radius) and
+        math.abs((view.clearanceYards or 0)-(options.clearanceYards or 0))<=.00001*math.max(1,radius) and (view.requireLos == true) == (options.requireLos == true) and
         (view.behind == true) == (options.behind == true)
+    local expected,actual=options.clearanceTargetGuids or {},view.clearanceTargetGuids or {}
+    if #expected~=#actual then validated=false else for i,id in ipairs(expected) do if actual[i]~=id then validated=false end end end
     if validated and (geometric or not unit) and (not self or self.moving ~= true) then
         recovery=nil
         if invalid_target == target then invalid_target, checked_target = nil, nil end
         return {ready=true,phase="in_position"}
     end
-    if to and view.targetGuid == target and view.visitId == obs.visitId then
+    if not options.minRangeYards and not options.clearanceTargetGuids and to and view.targetGuid == target and view.visitId == obs.visitId then
         local probe = recovery_probe(obs,sequence,target,view.phase,to)
         if probe then return {ready=false,phase="probing_route_recovery",action=probe} end
     end
@@ -254,7 +257,10 @@ function M.for_spell(obs,sequence,target,spell,options)
     options = options or {}
     local range = spell and spell.maxRange
     if not number(range) or range <= 0 then return {ready=false,phase="spell_range_unknown"} end
-    return M.decide(obs,sequence,target,{rangeYards=range,requireLos=true,behind=options.behind == true,target=options.target})
+    local copied={}
+    for key,value in pairs(options) do copied[key]=value end
+    copied.rangeYards=math.min(options.rangeYards or range,range);copied.requireLos=true
+    return M.decide(obs,sequence,target,copied)
 end
 
 -- Named Practice uses its verified native route rather than the ordinary

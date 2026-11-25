@@ -782,7 +782,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-‹”
+™–
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1903,7 +1903,7 @@ family_set" (R	familySet!
 misc (Rmisc"^
 EncounterPeriodicDamage&
 damage_per_tick (RdamagePerTick
-	period_ms (RperiodMs"ý
+	period_ms (RperiodMs"„
 ApproachTargetRequest
 
 session_id (	R	sessionId
@@ -1916,7 +1916,11 @@ rangeYards
 stop (Rstop
 require_los (R
 requireLos
-behind (Rbehind"×
+behind (Rbehind&
+min_range_yards	 (RminRangeYards4
+clearance_target_guids
+ (RclearanceTargetGuids'
+clearance_yards (RclearanceYards"Þ
 TargetMovementState
 target_guid (R
 targetGuid
@@ -1927,7 +1931,11 @@ rangeYards
 requireLos
 behind (Rbehind
 phase (	Rphase
-ready (Rready"Ì
+ready (Rready&
+min_range_yards (RminRangeYards4
+clearance_target_guids	 (RclearanceTargetGuids'
+clearance_yards
+ (RclearanceYards"Ì
 EncounterSupport(
 caster_in_combat (RcasterInCombatR
 resurrections (2,.warcraftbuddy.actions.v1.ResurrectionOptionRresurrectionsI
