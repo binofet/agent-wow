@@ -345,6 +345,142 @@ class _PolicyRPC:
         return self.tools.rpc.call(method, params, **kwargs)
 
 
+_LUA_LONG_LITERAL = re.compile(r"\[(=*)\[")
+_LUA_TUNING_TOKEN = re.compile(r"[A-Za-z_][A-Za-z_0-9]*|0[xX][0-9a-fA-F]+|(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[^\s]", re.ASCII)
+
+
+def _lua_tuning_tokens(source):
+    """Literal discovery only. Skip Lua comments/strings without evaluating Lua."""
+    tokens, offset = [], 0
+    while offset < len(source):
+        if source[offset].isspace():
+            offset += 1
+            continue
+        comment = source.startswith('--', offset)
+        start = offset + (2 if comment else 0)
+        long = _LUA_LONG_LITERAL.match(source, start) if source[start:start+1] == '[' else None
+        if long:
+            close = ']' + long[1] + ']'
+            end = source.find(close, start + len(long[0]))
+            require(end >= 0, 'attached_lua_unterminated_long_literal')
+            end += len(close)
+            if not comment:
+                tokens.append(('opaque', source[offset:end], offset, end))
+            offset = end
+            continue
+        if comment:
+            end = source.find('\n', offset)
+            offset = len(source) if end < 0 else end + 1
+            continue
+        if source[offset] in ('"', "'"):
+            quote, end, escaped = source[offset], offset + 1, False
+            while end < len(source) and source[end] != quote:
+                if source[end] == '\\':
+                    escaped = True
+                    end += 1
+                end += 1
+            require(end < len(source), 'attached_lua_unterminated_quoted_literal')
+            tokens.append(('opaque' if escaped else 'string', source[offset+1:end], offset, end+1))
+            offset = end + 1
+            continue
+        match = _LUA_TUNING_TOKEN.match(source, offset)
+        require(match is not None, 'attached_lua_literal_scan_failed')
+        text = match[0]
+        kind = 'name' if re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', text, re.ASCII) else 'token'
+        tokens.append((kind, text, offset, match.end()))
+        offset = match.end()
+    return tokens
+
+
+def _lua_numeric_tuning(source, selector):
+    """Find direct numeric literal fields; expressions/function tables fail closed."""
+    require(isinstance(selector, str) and len(selector) <= 256, 'bounded_tuning_table_name_required')
+    tokens = _lua_tuning_tokens(source)
+    stack, tables, parens, brackets = [], [], 0, 0
+
+    def field(table, end):
+        begin = table['segment']
+        width = end - begin
+        if width >= 3 and tokens[begin][0] == 'name' and tokens[begin+1][1] == '=':
+            key, value_start = tokens[begin][1], begin+2
+        elif width >= 5 and tokens[begin][1] == '[' and tokens[begin+1][0] == 'string' and tokens[begin+2][1] == ']' and tokens[begin+3][1] == '=':
+            key, value_start = tokens[begin+1][1], begin+4
+        else:
+            if width and tokens[begin][1] == '[':
+                table['ambiguous'] = True
+            return
+        if key in table['keys']:
+            table['ambiguous'] = True
+        table['keys'].add(key)
+        # Count every direct key BEFORE excluding nonliteral values. Otherwise
+        # a later expression could silently shadow the numeric field or id.
+        if width > 6:
+            return
+        value = tokens[value_start:end]
+        if key in ('id', 'name') and len(value) == 1 and value[0][0] == 'string':
+            table['names'].append(value[0][1])
+        start = value[0][2] if value else 0
+        literal = ''.join(token[1] for token in value)
+        if not re.fullmatch(r'-?(?:0[xX][0-9a-fA-F]+|(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)', literal):
+            return
+        if len(value) != (2 if literal.startswith('-') else 1):
+            return
+        if source[start:value[-1][3]] != literal:
+            return
+        try:
+            number = int(literal, 16) if 'x' in literal.lower() else float(literal)
+            if not math.isfinite(float(number)):
+                return
+        except (ValueError, OverflowError):
+            return
+        table['fields'].append(dict(field=key, old_literal=source[start:value[-1][3]],
+                                    value=number, sourceOffset=start, sourceEnd=value[-1][3]))
+
+    for index, token in enumerate(tokens):
+        kind, text, start, end = token
+        if kind in ('string', 'opaque'):
+            continue
+        if text == 'function' and stack:
+            stack[-1]['function'] = True
+        if text == '{':
+            names = []
+            if index >= 2 and tokens[index-1][1] == '=' and tokens[index-2][0] == 'name':
+                name, before = tokens[index-2][1], index-3
+                while before >= 1 and tokens[before][1] == '.' and tokens[before-1][0] == 'name':
+                    name, before = tokens[before-1][1] + '.' + name, before-2
+                names.append(name)
+            stack.append(dict(names=names, fields=[], sourceOffset=start, segment=index+1,
+                              parens=parens, brackets=brackets, function=False, keys=set(), ambiguous=False))
+        elif text == '}' and stack:
+            table = stack.pop()
+            field(table, index)
+            table['sourceEnd'] = end
+            if not table['function'] and table['names']:
+                tables.append(table)
+        elif text in (',', ';') and stack and parens == stack[-1]['parens'] and brackets == stack[-1]['brackets']:
+            field(stack[-1], index)
+            stack[-1]['segment'] = index+1
+        elif text == '(':
+            parens += 1
+        elif text == ')':
+            parens -= 1
+        elif text == '[':
+            brackets += 1
+        elif text == ']':
+            brackets -= 1
+    rows = []
+    matches = [table for table in tables if not selector or selector in table['names']]
+    rejected = [table['sourceOffset'] for table in matches if table['ambiguous']]
+    for table in sorted(matches, key=lambda table: table['sourceOffset']):
+        if table['ambiguous']:
+            continue
+        for value in table['fields']:
+            rows.append(dict(table=selector or table['names'][0], tableNames=list(dict.fromkeys(table['names'])),
+                             table_offset=table['sourceOffset'], **value))
+    return rows, len(matches), rejected
+
+
+
 class DirectTools:
     def __init__(self, rpc, session_id, self_guid, workspace, root, *,
                  allowed=lambda: False, cancelled=lambda: False, request_id=None,
@@ -660,9 +796,42 @@ class DirectTools:
         raise ToolOutcomeUnknown(receipt) from error
 
     def _policy_show(self, args):
+        require("tuning_field" not in args or args.get("tuning") is not None,
+                "tuning_field_requires_policy_show_tuning_table_name")
         helper = self._helper("self-edit")
         result = helper.edit("show", int(self.self_guid), self.session_id, _PolicyRPC(self))
         self._catalog()
+        if args.get("tuning") is not None:
+            require(not {"find", "path", "save_as", "expected_sha256"} & set(args),
+                    "tuning_discovery_is_read_only_use_tuning_and_optional_offset_limit_only")
+            require(result.get("sourceKnown") is True and isinstance(result.get("source"), str),
+                    "attached_source_unavailable")
+            require(self.self_guid != "87", "ordinary_attached_numeric_tuning_only")
+            source = result["source"]
+            rows, count, rejected = _lua_numeric_tuning(source, args["tuning"])
+            if "tuning_field" in args:
+                require(isinstance(args["tuning_field"], str) and 0 < len(args["tuning_field"]) <= 256,
+                        "exact_numeric_tuning_field_required")
+                rows = [row for row in rows if row["field"] == args["tuning_field"]]
+            examples = {}
+            offset = args.get("offset", 0)
+            if count == 1 and not rejected and type(offset) is int and 0 <= offset < len(rows):
+                first = rows[offset]
+                examples["policy_patch"] = dict(expected_revision=sha(source.encode()),
+                    numeric_tuning=dict(table=first["table"], table_offset=first["table_offset"],
+                        field=first["field"], old_literal=first["old_literal"], new_value=first["value"]),
+                    test=dict(kind="idle"), apply=False)
+            metadata = dict(resultType="attached_numeric_tuning", sessionId=self.session_id, characterGuid=self.self_guid,
+                revision=sha(source.encode()), matchedTables=count, ambiguousTables=len(rejected),
+                examples=examples, pureTestContract=self._policy_test_contract(), gameplayDispatched=False,
+                tuningSemantics="Direct finite numeric literals in data-only tables, selected by exact plain quoted id/name or table variable name. "
+                    "Empty tuning lists discoverable fields. Duplicate/unsupported keys, expressions and function-valued tables are not editable. "
+                    "Offsets are source characters tied to this revision, not runtime values. "
+                    "Replace example new_value with your requested value. Use test OR frame, never both; idle is initialization only. "
+                    "No match is not proof of absent runtime tuning. Preview/test first; apply=true uses existing body-bound CAS, preserving pending/UNKNOWN. "
+                    "Retained state may keep active-order values; a source edit is not a game-effect claim.")
+            return _page(rows, offset=args.get("offset", 0), limit=args.get("limit", 20),
+                         metadata=metadata)
         if args.get("find") is not None:
             text = args["find"]
             require(isinstance(text, str) and 0 < len(text) <= 1024, "bounded_attached_literal_find_required")
@@ -737,8 +906,11 @@ class DirectTools:
         require(isinstance(expected, str) and re.fullmatch(r"[a-f0-9]{64}", expected),
                 "current_attached_revision_required: read policy_show metadata first")
         require(type(args.get("apply", False)) is bool, "policy_patch_apply_boolean_required")
+        numeric = args.get("numeric_tuning")
+        require(("edits" in args) != ("numeric_tuning" in args), "choose_literal_edits_OR_numeric_tuning")
         edits = args.get("edits")
-        require(isinstance(edits, list) and 0 < len(edits) <= 64, "bounded_literal_edits_required")
+        if numeric is None:
+            require(isinstance(edits, list) and 0 < len(edits) <= 64, "bounded_literal_edits_required")
         helper = self._helper("self-edit")
         current = helper.edit("show", int(self.self_guid), self.session_id, _PolicyRPC(self))
         self._catalog()
@@ -747,13 +919,46 @@ class DirectTools:
         source = current["source"]
         require(sha(source.encode()) == expected and current.get("status", {}).get("revision") == expected,
                 "attached_policy_changed: refresh policy_show and the exact old text; no edits applied")
-        for edit in edits:
-            require(isinstance(edit, dict) and set(edit) == {"old", "new"}
-                    and isinstance(edit["old"], str) and bool(edit["old"])
-                    and isinstance(edit["new"], str), "literal_old_new_edits_required")
-            require(source.count(edit["old"]) == 1,
-                    "unique_attached_literal_required: old text must occur exactly once; read a narrower policy_show source page")
-            source = source.replace(edit["old"], edit["new"], 1)
+        preview = None
+        if numeric is not None:
+            require(isinstance(numeric, dict) and set(numeric) <= {"table", "table_offset", "field", "old_literal", "new_value"}
+                    and {"table", "field", "old_literal", "new_value"} <= set(numeric), "named_numeric_tuning_required")
+            require(isinstance(numeric["table"], str) and bool(numeric["table"])
+                    and isinstance(numeric["field"], str) and bool(numeric["field"])
+                    and isinstance(numeric["old_literal"], str), "exact_tuning_table_field_and_old_literal_required")
+            value = numeric["new_value"]
+            try:
+                finite = type(value) in (int, float) and math.isfinite(float(value))
+            except OverflowError:
+                finite = False
+            require(finite, "finite_numeric_new_value_required_not_Lua_code")
+            offset = numeric.get("table_offset")
+            require(offset is None or type(offset) is int and offset >= 0, "tuning_table_offset_must_be_source_character_offset")
+            rows, count, rejected = _lua_numeric_tuning(source, numeric["table"])
+            require(not any(offset is None or offset == rejected_offset for rejected_offset in rejected),
+                    "ambiguous_tuning_table_duplicate_or_unsupported_keys_no_edits_applied")
+            require(offset is not None or count == 1, "unique_named_tuning_table_required_use_policy_show_tuning")
+            candidates = [row for row in rows if row["field"] == numeric["field"]
+                          and (offset is None or row["table_offset"] == offset)]
+            require(len(candidates) == 1, "unique_direct_numeric_field_required_use_policy_show_tuning")
+            chosen = candidates[0]
+            require(chosen["old_literal"] == numeric["old_literal"],
+                    "tuning_literal_changed_refresh_policy_show_no_edits_applied")
+            literal = json.dumps(value, allow_nan=False, separators=(",", ":"))
+            preview = dict(table=numeric["table"], table_offset=chosen["table_offset"], field=chosen["field"],
+                sourceOffset=chosen["sourceOffset"], old_literal=chosen["old_literal"], new_literal=literal,
+                old_value=chosen["value"], new_value=value)
+            source = source[:chosen["sourceOffset"]] + literal + source[chosen["sourceEnd"]:]
+            edit_count = 1
+        else:
+            for edit in edits:
+                require(isinstance(edit, dict) and set(edit) == {"old", "new"}
+                        and isinstance(edit["old"], str) and bool(edit["old"])
+                        and isinstance(edit["new"], str), "literal_old_new_edits_required")
+                require(source.count(edit["old"]) == 1,
+                        "unique_attached_literal_required: old text must occur exactly once; read a narrower policy_show source page")
+                source = source.replace(edit["old"], edit["new"], 1)
+            edit_count = len(edits)
         require(0 < len(source.encode()) <= self.max_bytes, "patched_source_size_bound")
         require(("frame" in args) != ("test" in args),
                 "choose_exact_frame_OR_test: example test={kind:idle}; frame={} is not a session frame")
@@ -764,10 +969,12 @@ class DirectTools:
         else:
             tested, coverage = self._policy_fixture(source.encode(), args["test"])
         result = dict(expectedRevision=expected, targetRevision=sha(source.encode()),
-                      edits=len(edits), sourceBytes=len(source.encode()),
+                      edits=edit_count, sourceBytes=len(source.encode()),
                       tested=self._project(tested, {}), testCoverage=coverage,
                       pureTestContract=self._policy_test_contract(),
                       applied=False, gameEffectClaimed=False)
+        if preview is not None:
+            result["numericTuningPreview"] = preview
         if tested.get("valid") is not True or args.get("apply", False) is False:
             return result
         self._authorise()
@@ -1756,7 +1963,7 @@ end}
               "path": paging["path"], "offset": paging["offset"], "page_limit": paging["limit"]}, []),
             ("session_catalog", "Default: bounded method index. method selects its exact contract/dependencies; message selects any exact message type. JSON path/offset/limit expand/page large schemas; row.key appends to path.", {"method": string, "message": string, **paging}, []),
             ("read_observation", "Read only an installed effect=read RPC on this exact actor. Optional JSON path/offset/limit project and page its result, never a new endpoint. Large results return explicit expandable summaries.", {"method": string, "params": obj, **paging}, ["method", "params"]),
-            ("policy_show", "Default: accepted-source metadata, not the full bundle. save_as snapshots into owned workspace; use workspace_read to inspect it. Or path=['source'] with character offset/limit reads exact source pages. Empty expected_sha256 requires a new file. find searches an exact case-sensitive literal starting at offset (default 0); path may be omitted, [] or ['source']. Example: {path:['source'],find:'function',offset:0,limit:4096}. Returns bounded excerpt, whole-source and remaining match counts, nextSearchOffset, exact revision and valid follow-up examples. Misses include discovered textual module/function names; generic spell logic may use IDs rather than spell names. limit bounds excerpt characters. Search is read-only and cannot combine with save_as.", {"save_as": string, "expected_sha256": string, "find":string, **paging}, []),
+            ("policy_show", "Default: accepted-source metadata, not the full bundle. For a named numeric rule/table use tuning:'exact id or variable name' with optional tuning_field:'exact numeric field' (tuning:'' discovers fields): returns exact revision/literals and a minimal numeric_tuning policy_patch example, not a function replacement. save_as snapshots into owned workspace; use workspace_read to inspect it. Or path=['source'] with character offset/limit reads exact source pages. Empty expected_sha256 requires a new file. find searches an exact case-sensitive literal starting at offset (default 0); path may be omitted, [] or ['source']. Example: {path:['source'],find:'function',offset:0,limit:4096}. Returns bounded excerpt, whole-source and remaining match counts, nextSearchOffset, exact revision and valid follow-up examples. Misses include discovered textual module/function names; generic spell logic may use IDs rather than spell names. limit bounds excerpt characters. Search is read-only and cannot combine with save_as.", {"save_as": string, "expected_sha256": string, "find":string, "tuning":string, "tuning_field":string, **paging}, []),
             ("spell_inspect", "Exact spell_id returns complete raw learned mechanics. spell_id=0 lists the book with bounded JSON path/offset/limit paging; classification is not cast availability.", {"spell_id": {"type": "integer", "minimum": 0}, **paging}, []),
             ("workspace_read", "Read owned Lua/JSON text and full SHA256; literal find/start_line locates a section. Large windows page content by character offset/limit; nextOffset continues without losing a long source line.", {"path": string, "start_line": {"type": "integer", "minimum": 1}, "max_lines": {"type": "integer", "minimum": 1, "maximum": 1000}, "find": string, "offset": paging["offset"], "limit": paging["limit"]}, ["path"]),
         ]
@@ -1836,10 +2043,10 @@ end}
                 ("policy_input", "Deliver one structured command to an already-present Lua handler. Delivery is not game success; no arbitrary receipt/event injection.", {"value": obj}, ["value"]),
             ]
             if self.self_guid != "87":
-                specs.append(("policy_patch", "Patch your CURRENT attached complete Lua bundle without filesystem paths or copying it. Read policy_show for expected_revision, unique literal old text and pureTestContract. Supply edits=[{old,new}] and EXACTLY ONE of frame or test. frame is passed unchanged to one pure decide(frame); {} is not a valid session frame for the encounter bundle. Easy initialization/idle check: test={kind:'idle'} uses the binding-correct idleFrame shown by policy_show; this does NOT exercise requested behavior. For real synthetic callback coverage use test={kind:'sequence',steps:[{events:[{kind:'encounter_observation',sequence:'1',value:<your full synthetic observation>}],frame:{input:{kind:'encounter',observationSequence:'1'}}}]}; subsequent steps replay events/decisions in the same fresh VM. Override pending/cursor/clock explicitly when needed. No actual Session reservations, transport or game effects are tested. Default apply=false previews/tests; apply=true tests then uses the SAME body-bound safe CAS reload preserving pending state. Failed tests never apply; UNKNOWN must be reconciled, never replayed.",
-                    {"expected_revision": string, "edits": {"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","properties":{"old":string,"new":string},"required":["old","new"],"additionalProperties":False}}, "frame":obj,
+                specs.append(("policy_patch", "Patch your CURRENT attached complete Lua bundle without filesystem paths or copying it. Read policy_show for expected_revision, unique literal old text and pureTestContract. Supply EITHER edits=[{old,new}] OR numeric_tuning={table,field,old_literal,new_value,table_offset?} discovered by policy_show(tuning:'name'). Numeric tuning changes ONLY that exact literal, not a whole function; new_value is a finite number, never Lua code. Supply EXACTLY ONE of frame or test. frame is passed unchanged to one pure decide(frame); {} is not a valid session frame for the encounter bundle. Easy initialization/idle check: test={kind:'idle'} uses the binding-correct idleFrame shown by policy_show; this does NOT exercise requested behavior. For real synthetic callback coverage use test={kind:'sequence',steps:[{events:[{kind:'encounter_observation',sequence:'1',value:<your full synthetic observation>}],frame:{input:{kind:'encounter',observationSequence:'1'}}}]}; subsequent steps replay events/decisions in the same fresh VM. Override pending/cursor/clock explicitly when needed. No actual Session reservations, transport or game effects are tested. Default apply=false previews/tests; apply=true tests then uses the SAME body-bound safe CAS reload preserving pending state. Failed tests never apply; UNKNOWN must be reconciled, never replayed.",
+                    {"expected_revision": string, "numeric_tuning":{"type":"object","properties":{"table":string,"field":string,"old_literal":string,"new_value":{"type":"number"},"table_offset":{"type":"integer","minimum":0}},"required":["table","field","old_literal","new_value"],"additionalProperties":False}, "edits": {"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","properties":{"old":string,"new":string},"required":["old","new"],"additionalProperties":False}}, "frame":obj,
                      "test":{"type":"object","properties":{"kind":{"type":"string","enum":["idle","sequence"]},"steps":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"events":{"type":"array","maxItems":64,"items":obj},"frame":obj},"additionalProperties":False}}},"required":["kind"],"additionalProperties":False},
-                     "apply":{"type":"boolean"}}, ["expected_revision","edits"]))
+                     "apply":{"type":"boolean"}}, ["expected_revision"]))
             if self.self_guid == "87" and self.request_id and self.gm_allowed() is True:
                 specs += [("gm_task_start", "Optional ordered Lua recovery/regroup task, not a prerequisite for gm_execute. Goal uses current observed original roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": {"type":"object", "description":"Recovery goal: members=[{guid,name,rpcUrl?}] for the currently observed original party, plus destination={mapId,x,y,z,tolerance?} OR player={guid,name,tolerance?}. Companion rpcUrl must match current bindings. The shared Lua initializer validates admission before any hold or child starts."}}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),

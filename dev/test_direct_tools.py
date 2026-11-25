@@ -2170,3 +2170,219 @@ return {on_event=function(e) count=count+2;return true end,
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NumericPolicyTuningTests(unittest.TestCase):
+    setUp = AttachedPolicyPatchTests.setUp
+
+    def tuning_source(self, prefix=''):
+        self.rpc.source = prefix + '''local rules = {
+ {id="actor_backline", minRangeYards=14, maxRangeYards=36},
+ {id="other_actor_rule", minRangeYards=14},
+}
+return {decide=function(f) return {output={value=rules[1].minRangeYards}} end}
+'''
+        self.revision = checksum(self.rpc.source)
+
+    def discover(self, name='actor_backline', **kwargs):
+        return self.tools.dispatch('policy_show', dict(tuning=name, **kwargs))
+
+    def numeric_args(self):
+        shown = self.discover()
+        self.assertTrue(shown['ok'], shown)
+        args = copy.deepcopy(shown['result']['examples']['policy_patch'])
+        args['numeric_tuning']['new_value'] = 18
+        return args
+
+    def test_named_table_discovery_minimal_numeric_preview_then_apply(self):
+        self.tuning_source()
+        original = self.rpc.source
+        shown = self.discover()
+        self.assertTrue(shown['ok'], shown)
+        result = shown['result']
+        self.assertEqual(result['revision'], self.revision)
+        fields = [row['value'] for row in result['rows']]
+        self.assertEqual([row['field'] for row in fields], ['minRangeYards', 'maxRangeYards'])
+        self.assertEqual(fields[0]['old_literal'], '14')
+        args = self.numeric_args()
+        schema = next(row['function']['parameters'] for row in self.tools.tool_schemas()
+                      if row['function']['name'] == 'policy_patch')
+        _schema(args, schema)
+        preview = self.tools.dispatch('policy_patch', args)
+        self.assertTrue(preview['ok'], preview)
+        self.assertFalse(preview['result']['applied'])
+        self.assertEqual(preview['result']['tested']['decision']['output']['value'], 18)
+        self.assertEqual(preview['result']['numericTuningPreview']['old_literal'], '14')
+        self.assertEqual(preview['result']['numericTuningPreview']['new_literal'], '18')
+        self.assertEqual(self.rpc.source, original)
+        self.assertFalse(self.rpc.writes)
+        args['apply'] = True
+        applied = self.tools.dispatch('policy_patch', args)
+        self.assertTrue(applied['ok'], applied)
+        self.assertTrue(applied['result']['applied'])
+        self.assertEqual(self.rpc.source, original.replace('minRangeYards=14', 'minRangeYards=18', 1))
+        self.assertIn('id="other_actor_rule", minRangeYards=14', self.rpc.source)
+        self.assertEqual(self.rpc.pending, ['issued-before-edit'])
+        self.assertEqual(len(self.rpc.writes), 1)
+        self.assertFalse(list(self.rig.workspace.iterdir()))
+
+    def test_literal_discovery_skips_comments_strings_functions_and_expressions(self):
+        self.tuning_source('''-- fake = {id="actor_backline", minRangeYards=999}
+local text=[==[{id="actor_backline", minRangeYards=888}]==]
+local function_table={id="callback", minRangeYards=777, callback=function() local x=1; return x end}
+local computed={id="calculated", minRangeYards=7+7}
+''')
+        shown = self.discover()['result']
+        self.assertEqual(shown['matchedTables'], 1)
+        self.assertEqual(shown['rows'][0]['value']['value'], 14)
+        self.assertEqual(self.discover('callback')['result']['matchedTables'], 0)
+        calculated = self.discover('calculated')['result']
+        self.assertEqual(calculated['matchedTables'], 1)
+        self.assertEqual(calculated['rows'], [])
+        self.assertEqual(self.discover('not_present')['result']['matchedTables'], 0)
+        self.assertFalse(self.rpc.writes)
+
+    def test_duplicate_names_need_offset_duplicate_fields_never_choose_first(self):
+        self.tuning_source()
+        self.rpc.source = self.rpc.source.replace('other_actor_rule', 'actor_backline')
+        shown = self.discover()['result']
+        self.assertEqual(shown['matchedTables'], 2)
+        first = shown['rows'][0]['value']
+        args = dict(expected_revision=shown['revision'], numeric_tuning=dict(table='actor_backline',
+            field=first['field'], old_literal=first['old_literal'], new_value=18), test=dict(kind='idle'))
+        self.assertFalse(self.tools.dispatch('policy_patch', args)['ok'])
+        args['numeric_tuning']['table_offset'] = shown['rows'][0]['value']['table_offset']
+        self.assertTrue(self.tools.dispatch('policy_patch', args)['ok'])
+        self.tuning_source()
+        self.rpc.source = self.rpc.source.replace('maxRangeYards=36', 'minRangeYards=16')
+        self.assertEqual(self.discover()['result']['examples'], {})
+        args = dict(expected_revision=checksum(self.rpc.source), numeric_tuning=dict(table='actor_backline',
+            field='minRangeYards',old_literal='14',new_value=18),test=dict(kind='idle'))
+        self.assertFalse(self.tools.dispatch('policy_patch', args)['ok'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_invalid_value_old_literal_modes_and_test_never_apply(self):
+        self.tuning_source()
+        args = self.numeric_args()
+        cases = []
+        for value in (True, None, '18; error("not numeric")', float('inf'), float('nan')):
+            bad = copy.deepcopy(args)
+            bad['numeric_tuning']['new_value'] = value
+            cases.append(bad)
+        bad = copy.deepcopy(args); bad['numeric_tuning']['old_literal'] = '13'; cases.append(bad)
+        bad = copy.deepcopy(args); bad['numeric_tuning']['table_offset'] += 1; cases.append(bad)
+        bad = copy.deepcopy(args); bad['edits'] = [dict(old='14', new='18')]; cases.append(bad)
+        bad = copy.deepcopy(args); bad['frame'] = {}; cases.append(bad)
+        for bad in cases:
+            bad['apply'] = True
+            result = self.tools.dispatch('policy_patch', bad)
+            self.assertFalse(result['ok'], result)
+            self.assertFalse(self.rpc.writes)
+        self.assertEqual(checksum(self.rpc.source), self.revision)
+
+    def test_apply_cas_and_unknown_barrier_are_the_existing_shared_path(self):
+        self.tuning_source()
+        args = self.numeric_args()
+        run = self.tools.runner
+        def racing_runner(*a, **k):
+            result = run(*a, **k)
+            self.rpc.source += '-- changed during pure test\n'
+            return result
+        self.tools.runner = racing_runner
+        self.assertFalse(self.tools.dispatch('policy_patch', dict(args, apply=True))['ok'])
+        self.assertFalse(self.rpc.writes)
+        self.tools.runner = run
+        self.tuning_source()
+        args = self.numeric_args()
+        self.rpc.fail_mutation = True
+        with self.assertRaises(ToolOutcomeUnknown):
+            self.tools.dispatch('policy_patch', dict(args, apply=True))
+        before = copy.deepcopy(self.rpc.writes)
+        receipt = copy.deepcopy(self.tools.unknown_receipt)
+        self.assertFalse(self.tools.dispatch('policy_patch', dict(args, apply=True))['ok'])
+        self.assertEqual(self.rpc.writes, before)
+        self.assertEqual(self.tools.unknown_receipt, receipt)
+
+    def test_discovery_paging_bounds_and_large_blank_prefix(self):
+        self.tuning_source('\n'*200000)
+        shown = self.discover(limit=1)['result']
+        self.assertEqual(shown['total'], 2)
+        self.assertEqual(len(shown['rows']), 1)
+        self.assertTrue(shown['truncated'])
+        self.assertLessEqual(len(packed(dict(ok=True, result=shown))), READ_PAGE_BYTES)
+        next_page = self.discover(offset=shown['nextOffset'], limit=1)['result']
+        self.assertEqual(next_page['rows'][0]['value']['field'], 'maxRangeYards')
+        self.assertEqual(next_page['examples']['policy_patch']['numeric_tuning']['field'], 'maxRangeYards')
+        exact = self.discover(tuning_field='maxRangeYards')['result']
+        self.assertEqual(exact['total'], 1)
+        self.assertEqual(exact['examples']['policy_patch']['numeric_tuning']['old_literal'], '36')
+        for extra in (dict(find='minRangeYards'), dict(path=['source']), dict(save_as='copy.lua')):
+            self.assertFalse(self.discover(**extra)['ok'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_generic_variable_tables_negative_hex_and_quoted_field(self):
+        self.rpc.source = '''local tuning={ ["threshold"]=-0.5, amount=0x10, ratio=1e-2 }
+return {decide=function(f) return {output={value=tuning.threshold}} end}'''
+        shown = self.discover('tuning')['result']
+        values = {row['value']['field']: row['value']['old_literal'] for row in shown['rows']}
+        self.assertEqual(values, dict(threshold='-0.5', amount='0x10', ratio='1e-2'))
+        self.assertGreater(self.discover('')['result']['matchedTables'], 0)
+        self.tools.self_guid = '87'
+        self.assertFalse(self.discover('tuning')['ok'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_large_actor_bundle_changes_only_selected_literal_and_preserves_pending(self):
+        bundle = subprocess.check_output([sys.executable, str(ROOT/'dev/encounter-bundle')], text=True)
+        self.rpc.source = 'local actor_rule={id="actor_backline",minRangeYards=14,maxRangeYards=36}\n' + bundle
+        self.revision = checksum(self.rpc.source)
+        before = self.rpc.source
+        args = self.numeric_args()
+        result = self.tools.dispatch('policy_patch', dict(args, apply=True))
+        self.assertTrue(result['ok'], result)
+        self.assertTrue(result['result']['applied'], result)
+        preview = result['result']['numericTuningPreview']
+        start = preview['sourceOffset']
+        self.assertEqual(self.rpc.source, before[:start] + '18' + before[start+len('14'):])
+        self.assertEqual(self.rpc.pending, ['issued-before-edit'])
+        self.assertGreater(len(before), 100000)
+        self.assertEqual(result['result']['testCoverage']['kind'], 'idle')
+
+    def test_shadowed_id_numeric_expression_and_dynamic_keys_never_preview_or_apply(self):
+        for fields in (
+            "id='actor_backline',minRangeYards=14,id='other'",
+            "id='actor_backline',minRangeYards=14,minRangeYards=math.max(20,30)",
+            "id='actor_backline',minRangeYards=14,['minRangeYards']=30",
+            "id='actor_backline',minRangeYards=14,[string.char(109,105,110,82,97,110,103,101,89,97,114,100,115)]=30",
+            r"id='actor_backline',minRangeYards=14,['\109inRangeYards']=30",
+        ):
+            with self.subTest(fields=fields):
+                self.rpc.source = 'local tuning={' + fields + '}\nreturn {decide=function(f) return {output={value=tuning.minRangeYards}} end}'
+                before = self.rpc.source
+                shown = self.discover()['result']
+                self.assertEqual(shown['ambiguousTables'], 1)
+                self.assertEqual(shown['rows'], [])
+                self.assertEqual(shown['examples'], {})
+                args = dict(expected_revision=checksum(before), numeric_tuning=dict(table='actor_backline',
+                    field='minRangeYards',old_literal='14',new_value=18),test=dict(kind='idle'),apply=True)
+                result = self.tools.dispatch('policy_patch',args)
+                self.assertFalse(result['ok'],result)
+                self.assertIn('ambiguous_tuning_table',result['error']['error'])
+                self.assertEqual(self.rpc.source,before)
+                self.assertFalse(self.rpc.writes)
+
+    def test_current_bundle_named_prior_minimum_is_one_number_edit(self):
+        self.rpc.source = subprocess.check_output([sys.executable, str(ROOT/'dev/encounter-bundle')], text=True)
+        before = self.rpc.source
+        view = self.discover('maraudon_sludge_backline', tuning_field='minRangeYards')['result']
+        self.assertEqual(view['matchedTables'], 1)
+        self.assertEqual(view['total'], 1)
+        args = copy.deepcopy(view['examples']['policy_patch'])
+        self.assertEqual(args['numeric_tuning']['old_literal'], '14')
+        args['numeric_tuning']['new_value'] = 18
+        result = self.tools.dispatch('policy_patch', dict(args, apply=True))
+        self.assertTrue(result['ok'], result)
+        self.assertTrue(result['result']['applied'], result)
+        point = result['result']['numericTuningPreview']['sourceOffset']
+        self.assertEqual(self.rpc.source, before[:point]+'18'+before[point+2:])
+        self.assertEqual(self.rpc.pending, ['issued-before-edit'])
+        self.assertEqual(result['result']['testCoverage']['kind'], 'idle')
