@@ -9,6 +9,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/areatriggerreference"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
@@ -45,6 +46,7 @@ type deathRecovery struct {
 	mapID                        uint32
 	revision                     uint64
 	expected                     position
+	pathTarget                   position
 	token                        string
 	releasePositionRevision      uint64
 	releaseMap                   uint32
@@ -64,6 +66,13 @@ func (r *deathRecovery) snapshot(now time.Time) *actionsv1.RecoveryState {
 func (s *Service) recoveryStateLocked() *actionsv1.RecoveryState {
 	now := s.now()
 	out := s.recovery.snapshot(now)
+	if out.CorpseQueryKnown && out.CorpseFound && out.CorpseLocation.GetKnown() && out.CorpseLocation.GetMapKnown() && out.CorpseLocation.MapId != out.CorpseMapId {
+		for _, row := range areatriggerreference.All() {
+			if row.SourceMap == out.CorpseLocation.MapId && row.DestinationMap == out.CorpseMapId {
+				out.CorpseEntrances = append(out.CorpseEntrances, &actionsv1.AreaTriggerVolume{TriggerId: row.ID, SourceMapId: row.SourceMap, DestinationMapId: row.DestinationMap, X: row.X, Y: row.Y, Z: row.Z, Radius: row.Radius, Length: row.Length, Width: row.Width, Height: row.Height, Orientation: row.Orientation, ReferenceOnly: true})
+			}
+		}
+	}
 	if offer := s.resurrectionOffer; offer != nil {
 		age := now.Sub(offer.observedAt).Milliseconds()
 		if age < 0 {

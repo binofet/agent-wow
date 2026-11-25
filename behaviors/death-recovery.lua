@@ -21,7 +21,7 @@ function M.on_event(event)
             state.accept_resurrection=p.offer_revision
         end
     end
-    local irreversible=p.capability=='release_spirit' or p.capability=='query_corpse' or p.capability=='reclaim_corpse'
+    local irreversible=p.capability=='release_spirit' or p.capability=='query_corpse' or p.capability=='reclaim_corpse' or p.capability=='enter_corpse_instance'
     if state.session and p.self_guid==state.self and p.death_epoch==state.epoch and irreversible and receipt.outcome~='not_dispatched' then
         -- Only an actual reserved action receipt can create private custody.
         -- A wrapper/task may suppress a proposal before the host reserves it.
@@ -30,7 +30,7 @@ function M.on_event(event)
     if state.session and p.self_guid==state.self and p.death_epoch==state.epoch and receipt.outcome=='not_dispatched' then
         -- A known no-write may be reconsidered. Uncertain release/query/reclaim
         -- reservations survive reload until actual observations settle them.
-        if p.capability=='release_spirit' or p.capability=='query_corpse' or p.capability=='reclaim_corpse' then state[p.capability]=nil end
+        if p.capability=='release_spirit' or p.capability=='query_corpse' or p.capability=='reclaim_corpse' or p.capability=='enter_corpse_instance' then state[p.capability]=nil end
         if p.capability=='approach_corpse' then state.retryAt=(state.now or 0)+M.tuning.route_retry_ms end
     end
     return true
@@ -108,7 +108,28 @@ function M.decide(frame,obs,sequence)
     local nav=obs.navigation or {}
     if nav.motionUnconfirmed==true then return {phase='waiting_for_actual_motion_reconciliation'} end
     local location=r.corpseLocation
-    if location.known~=true or location.mapKnown~=true or location.mapId~=self.mapId or r.corpseMapId~=self.mapId then return {phase='corpse_requires_map_transition'} end
+    if r.corpseEntryAttempted==true or state.enter_corpse_instance then
+        return {phase='waiting_for_actual_life_or_dungeon_entry'}
+    end
+    if location.known~=true or location.mapKnown~=true or location.mapId~=self.mapId then return {phase='corpse_marker_not_on_current_map'} end
+    if r.corpseMapId~=self.mapId then
+        -- The server exterior marker is not the corpse. Select only a public
+        -- entrance from this marker's map to the exact queried corpse map.
+        local chosen,nearest
+        for _,v in ipairs(r.corpseEntrances or {}) do
+            if v.referenceOnly==true and (v.sourceMapId or 0)==self.mapId and (v.destinationMapId or 0)==r.corpseMapId and
+               type(v.triggerId)=='number' and v.triggerId>0 then
+                local d=distance(location,v)
+                if not nearest or d<nearest then chosen,nearest=v,d end
+            end
+        end
+        if not chosen then return {phase='corpse_dungeon_entrance_reference_unavailable'} end
+        if not valid_id(r.corpseQueryRevision) then return {phase='waiting_for_query_revision'} end
+        if state.retryAt and (not now or now<state.retryAt) then return {phase='route_retry_delay'} end
+        local a=action('approach_corpse');a.corpseQueryRevision=r.corpseQueryRevision;a.rangeYards=.25;a.triggerId=chosen.triggerId
+        if distance(self,chosen)<=.25 then a.capability='enter_corpse_instance' end
+        return {phase=a.capability=='enter_corpse_instance' and 'entering_queried_corpse_dungeon' or 'approaching_queried_dungeon_entrance',action=a}
+    end
     local d=distance(self,location)
     if d>M.tuning.reclaim_range then
         if state.retryAt and (not now or now<state.retryAt) then return {phase='route_retry_delay'} end

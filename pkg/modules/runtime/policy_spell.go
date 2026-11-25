@@ -86,7 +86,7 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	if capability == "loot_gather" {
 		return p.resolveGatherLoot(action)
 	}
-	if capability == "release_spirit" || capability == "query_corpse" || capability == "approach_corpse" || capability == "stop_corpse" || capability == "reclaim_corpse" || capability == "accept_resurrection" {
+	if capability == "release_spirit" || capability == "query_corpse" || capability == "approach_corpse" || capability == "enter_corpse_instance" || capability == "stop_corpse" || capability == "reclaim_corpse" || capability == "accept_resurrection" {
 		return p.resolveDeathAction(action, capability)
 	}
 	if capability == "loot_open" || capability == "loot_close" || capability == "loot_money" || capability == "loot_slot" {

@@ -17,6 +17,7 @@ import (
 
 type policyRecovery struct {
 	self, epoch uint64
+	trigger     uint32
 	query       bool
 	corpse      uint64
 	caster      uint64
@@ -51,7 +52,7 @@ func (p *SessionPolicy) resolveDeathAction(action map[string]any, capability str
 		values["caster_guid"] = protoreflect.ValueOfUint64(casterID)
 		values["expected_offer_revision"] = protoreflect.ValueOfUint64(offerID)
 	}
-	if capability == "approach_corpse" || capability == "stop_corpse" || capability == "reclaim_corpse" {
+	if capability == "approach_corpse" || capability == "enter_corpse_instance" || capability == "stop_corpse" || capability == "reclaim_corpse" {
 		revision, _ := action["expectedPositionRevision"].(string)
 		pose, err := strconv.ParseUint(revision, 10, 64)
 		if err != nil || pose == 0 || revision != strconv.FormatUint(pose, 10) {
@@ -83,6 +84,20 @@ func (p *SessionPolicy) resolveDeathAction(action map[string]any, capability str
 				}
 				values["corpse_query_revision"] = protoreflect.ValueOfUint64(qr)
 				values["range_yards"] = protoreflect.ValueOfFloat32(float32(radius))
+				if raw, exists := action["triggerId"]; exists {
+					trigger, ok := raw.(float64)
+					if !ok || trigger < 1 || trigger > math.MaxUint32 || trigger != math.Trunc(trigger) {
+						return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact positive entrance trigger ID required")
+					}
+					op.recovery.trigger = uint32(trigger)
+					values["trigger_id"] = protoreflect.ValueOfUint32(uint32(trigger))
+				}
+				if capability == "enter_corpse_instance" {
+					if op.recovery.trigger == 0 {
+						return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact entrance trigger ID required")
+					}
+					values["enter_instance"] = protoreflect.ValueOfBool(true)
+				}
 			}
 		}
 	}
@@ -110,7 +125,10 @@ func (op *policySpell) matchesRecoveryPacket(code uint32, payload []byte) bool {
 	if op.capability == "accept_resurrection" {
 		return code == opcode.CMSGResurrectResponse && len(payload) == 9 && binary.LittleEndian.Uint64(payload) == op.recovery.caster && payload[8] == 1
 	}
-	if op.capability == "approach_corpse" || op.capability == "stop_corpse" {
+	if op.capability == "enter_corpse_instance" && code == opcode.CMSGAreatrigger {
+		return len(payload) == 4 && binary.LittleEndian.Uint32(payload) == op.recovery.trigger
+	}
+	if op.capability == "approach_corpse" || op.capability == "enter_corpse_instance" || op.capability == "stop_corpse" {
 		return op.matchesMovementPacket(code, payload)
 	}
 	if op.capability == "reclaim_corpse" {

@@ -333,3 +333,29 @@ func TestPolicyGhostApproachAndStopRouteToActualNativeDescriptor(t *testing.T) {
 		t.Fatal("stop mode did not route through exact native method", r, cb.writes)
 	}
 }
+
+func TestPolicyDeathDungeonEntryUsesExistingTypedRouteAndExactPacketFence(t *testing.T) {
+	m, _, cb := friendlyEncounterManager(t)
+	p, err := m.StartPolicy(context.Background(), `return {decide=function()return {}end,on_event=function()return true end,export_state=function()return {version=1,data={}}end,import_state=function()return true end}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+	action := map[string]any{"sessionId": friendlyEncounterSession, "selfGuid": "22", "deathEpoch": "1", "expectedPositionRevision": "1", "corpseQueryRevision": "1", "rangeYards": .25, "triggerId": float64(123)}
+	d, err := p.resolveDeathAction(action, "enter_corpse_instance")
+	if err != nil || d.Send == nil {
+		t.Fatal(d, err)
+	}
+	d.Send(context.Background()) // The actual live-body native guard refuses this synthetic living actor.
+	if len(cb.writes) != 0 {
+		t.Fatal("typed resolution bypassed native ghost guard", cb.writes)
+	}
+	delete(action, "triggerId")
+	if _, err = p.resolveDeathAction(action, "enter_corpse_instance"); err == nil {
+		t.Fatal("missing entrance accepted")
+	}
+	op := &policySpell{capability: "enter_corpse_instance", recovery: &policyRecovery{self: 22, epoch: 1, trigger: 123}, movement: &policyMovement{self: 22}}
+	if !op.matchesActionPacket(opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, 123)) || op.matchesActionPacket(opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, 124)) || op.matchesActionPacket(opcode.CMSGReclaimCorpse, make([]byte, 8)) {
+		t.Fatal("exact dungeon trigger fence lost")
+	}
+}

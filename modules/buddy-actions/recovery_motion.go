@@ -18,7 +18,7 @@ import (
 // exact server-queried corpse location. Lua chooses range, continuation, retry,
 // stopping and whether to reclaim; this method never runs a recovery loop.
 func (s *Service) ApproachCorpse(ctx context.Context, q *actionsv1.CorpseApproachRequest) (out *actionsv1.State, resultErr error) {
-	if q == nil || q.SessionId == "" || q.SelfGuid == 0 || q.DeathEpoch == 0 || q.ExpectedPositionRevision == 0 ||
+	if q == nil || q.Stop && (q.TriggerId != 0 || q.EnterInstance) || q.SessionId == "" || q.SelfGuid == 0 || q.DeathEpoch == 0 || q.ExpectedPositionRevision == 0 ||
 		!q.Stop && (q.CorpseQueryRevision == 0 || math.IsNaN(float64(q.RangeYards)) || math.IsInf(float64(q.RangeYards), 0) || q.RangeYards <= 0) {
 		return nil, status.Error(codes.InvalidArgument, "current body/death/pose and exact query/range required")
 	}
@@ -49,8 +49,8 @@ func (s *Service) ApproachCorpse(ctx context.Context, q *actionsv1.CorpseApproac
 		return nil, status.Error(codes.FailedPrecondition, "actual fresh stopped pose required after unknown movement")
 	}
 	if !q.Stop && (!r.state.GhostMovementSupported || !ghostSelf(w, s.selfGUID) || !r.state.CorpseQueryKnown || !r.state.CorpseFound ||
-		q.CorpseQueryRevision != r.state.CorpseQueryRevision || r.state.CorpseLocation == nil || w.Self.MapId != r.state.CorpseLocation.MapId || w.Self.MapId != r.state.CorpseMapId) {
-		return nil, status.Error(codes.FailedPrecondition, "same-map actual ghost and exact current corpse query required")
+		q.CorpseQueryRevision != r.state.CorpseQueryRevision || r.state.CorpseLocation == nil || w.Self.MapId != r.state.CorpseLocation.MapId) {
+		return nil, status.Error(codes.FailedPrecondition, "actual ghost on the server query marker map and exact current query required")
 	}
 	if r.token == "" {
 		r.token = fmt.Sprintf("death-motion-%d", q.DeathEpoch)
@@ -67,11 +67,21 @@ func (s *Service) ApproachCorpse(ctx context.Context, q *actionsv1.CorpseApproac
 		return s.stateLocked(), nil
 	}
 	to := position{x: r.state.CorpseLocation.X, y: r.state.CorpseLocation.Y, z: r.state.CorpseLocation.Z}
+	if q.TriggerId != 0 || q.EnterInstance {
+		volume, found := areaTriggerReference(q.TriggerId)
+		if !found || volume.SourceMap != w.Self.MapId || volume.DestinationMap != r.state.CorpseMapId || volume.DestinationMap == volume.SourceMap {
+			return nil, status.Error(codes.FailedPrecondition, "exact public entrance for the queried corpse dungeon required")
+		}
+		to = position{x: float32(volume.X), y: float32(volume.Y), z: float32(volume.Z)}
+		if q.EnterInstance {
+			return s.enterCorpseInstanceLocked(ctx, q, w, volume)
+		}
+	}
 	if distance(s.pos, to) <= float64(q.RangeYards) {
 		s.finishRecoveryMotionLocked(call, "within_requested_range", "observed_pose_within_requested_range")
 		return s.stateLocked(), nil
 	}
-	if r.path != nil && (w.Self.MapId != r.mapID || w.Self.PositionRevision != r.revision || distance(s.pos, r.expected) > .05) {
+	if r.path != nil && (r.pathTarget != to || w.Self.MapId != r.mapID || w.Self.PositionRevision != r.revision || distance(s.pos, r.expected) > .05) {
 		if !s.stopLocked(call) {
 			r.state.Reason = "route_pose_changed_waiting_for_stop"
 			return s.stateLocked(), nil
@@ -101,9 +111,10 @@ func (s *Service) ApproachCorpse(ctx context.Context, q *actionsv1.CorpseApproac
 			return s.stateLocked(), status.Error(codes.FailedPrecondition, "ghost/query changed during route planning")
 		}
 		r.path, r.index, r.mapID, r.revision, r.expected = path, 0, w.Self.MapId, revision, from
+		r.pathTarget = to
 		r.state.VerifiedLegs++
 	}
-	if routeRemaining(s.pos, r.path, r.index) <= .75 {
+	if routeRemaining(s.pos, r.path, r.index) <= math.Min(.75, float64(q.RangeYards)) {
 		s.finishRecoveryMotionLocked(call, "route_leg_complete", "measured_verified_leg_endpoint")
 		return s.stateLocked(), nil
 	}
