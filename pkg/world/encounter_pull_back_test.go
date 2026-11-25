@@ -220,6 +220,14 @@ func TestPullBackExplicitTaskYieldsOnlyExistingPriorLease(t *testing.T) {
 			if a["capability"] != "movement_owner" || a["owner"] != "task:back" || a["mode"] != "acquire" {
 				t.Fatal("task failed normal lease acquisition", d.Output)
 			}
+			settleWaitOwnership(t, p, d, behavior.ActionConfirmed, "acquire", "task:back", "own-task")
+			obs.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: "task:back", RemainingMs: 3000}
+			d = p.decide(observeRanged(t, p, obs, modern))
+			a, _ = d.Output["action"].(map[string]any)
+			if a["capability"] != "approach_target" || d.Output["task"].(map[string]any)["phase"] == "complete" {
+				t.Fatal("foreign hold release retired task", d.Output)
+			}
+
 		})
 	}
 }

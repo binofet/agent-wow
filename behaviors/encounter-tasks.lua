@@ -386,7 +386,7 @@ function M.commit(view,chosen)
     if view and view.task and view.task.kind=="enter_instance" and instance_entry then
         instance_entry.commit(view.task,chosen);return
     end
-    if view and view.task and chosen and chosen.capability=="movement_owner" then
+    if view and view.task and chosen and chosen.capability=="movement_owner" and chosen.owner=="task:"..view.task.id then
         view.task.operation={mode=chosen.mode,owner=chosen.owner,handoff=view.releaseForCast==true}
     end
 end
