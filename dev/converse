@@ -2925,7 +2925,10 @@ class DirectBrain(AgentBrain):
                 gm_allowed=gm_authorised, chat_session_id=self._generation.get("chatSessionId"),
                 chat_cursor=str(self._generation["cursor"]) if self._generation.get("cursor") is not None else None,
                 owner_allowed=owner_authorised, receipt_root=self.state_dir,
-                follow_prepare=private_context.get('followPrepare'))
+                follow_prepare=private_context.get('followPrepare'),
+                gm_owner_request=(dict(request=json.loads(encode(state['current_request'])),
+                    continuationReport=json.loads(encode(private_context.get('continuationReport'))))
+                    if gm_authorised() else None))
         if tools is not None and gm_authorised() and literal_command is None:
             read_started = int(time.time()*1000)
             observed = tools.dispatch("gm_inspect", {})

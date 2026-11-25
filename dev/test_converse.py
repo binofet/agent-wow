@@ -5116,6 +5116,7 @@ class LiteralOwnerGMTests(unittest.TestCase):
 
 
 from test_companions import LauncherTests
+from test_owned_gm_lua import OwnedGMLuaTests
 
 
 if __name__ == "__main__":
