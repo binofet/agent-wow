@@ -766,7 +766,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-À“
+‹”
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1021,7 +1021,7 @@ pointCount!
 token (	Rtoken"_
 InteractionLease
 token (	Rtoken5
-state (2.warcraftbuddy.actions.v1.StateRstate"‡
+state (2.warcraftbuddy.actions.v1.StateRstate"Ò
 RecoveryState
 enabled (Renabled
 active (Ractive
@@ -1058,7 +1058,8 @@ own_corpse (2(.warcraftbuddy.actions.v1.RecoveryCorpseR	ownCorpse8
 corpse_entrances (2+.warcraftbuddy.actions.v1.AreaTriggerVolumeRcorpseEntrances4
 corpse_entry_attempted (RcorpseEntryAttempted0
 corpse_entry_written (RcorpseEntryWritten0
-corpse_entry_unknown  (RcorpseEntryUnknown"„
+corpse_entry_unknown  (RcorpseEntryUnknownI
+!corpse_entry_destination_observed! (RcorpseEntryDestinationObserved"„
 ResurrectionOffer
 caster_guid (R
 casterGuid

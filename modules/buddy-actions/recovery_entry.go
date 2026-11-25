@@ -41,16 +41,20 @@ func (s *Service) enterCorpseInstanceLocked(ctx context.Context, q *actionsv1.Co
 		r.state.CorpseEntryAttempted = false
 		return s.stateLocked(), status.Error(codes.FailedPrecondition, "ghost entrance not sent: "+err.Error())
 	}
+	r.entryOperation = &actionsv1.AreaTriggerOperation{SessionId: s.sessionID, SelfGuid: s.selfGUID, VisitId: p.visit, TriggerId: q.TriggerId, DestinationMapId: volume.DestinationMap, Pending: true, SourceScope: clonePortalScope(report.TransportScope)}
 	r.path = nil
 	r.state.Phase = "corpse_entry_requested"
 	err = s.sendPacketLocked(modcb.ForwardPolicySpell(ctx), opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, q.TriggerId), report.TransportScope)
 	if modcb.PacketWasNotDispatched(err) {
 		r.state.CorpseEntryAttempted = false
+		r.entryOperation = nil
 		r.state.Phase = "corpse_entry_not_dispatched"
 		return s.stateLocked(), err
 	}
 	r.state.CorpseEntryWritten = err == nil
 	r.state.CorpseEntryUnknown = err != nil
+	r.entryOperation.TransportWritten = err == nil
+	r.entryOperation.TransportUnknown = err != nil
 	r.state.Reason = "waiting_for_actual_life_or_world_entry_no_replay"
 	return s.stateLocked(), err
 }

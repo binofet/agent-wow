@@ -308,6 +308,8 @@ message RecoveryState {
   bool corpse_entry_attempted = 30;
   bool corpse_entry_written = 31;
   bool corpse_entry_unknown = 32;
+  // Adjacent scoped World transfer observed, not resurrection/corpse/party-copy proof.
+  bool corpse_entry_destination_observed = 33;
 }
 // A genuine SMSG_RESURRECT_REQUEST, not a chosen recovery action. Age is a
 // local elapsed observation; an optional server timer is reclaim delay, not

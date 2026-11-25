@@ -98,6 +98,11 @@ function M.decide(frame,obs,sequence)
     end
     state.ghostAt=state.ghostAt or now
     if r.ghostMovementSupported==true and r.motionPending==true and r.active~=true and (obs.navigation or {}).motionUnconfirmed~=true then return stop('graveyard_stationary_baseline_stop') end
+    if r.corpseEntryDestinationObserved==true and r.corpseMapId==self.mapId and not state.entryInterior then
+        -- Only native scoped adjacent-entry evidence can release the exterior
+        -- query reservation. Entry itself remains consumed for this death.
+        state.entryInterior=true;state.query_corpse=nil
+    end
     if r.corpseQueryKnown~=true then
         if r.corpseQueryPending==true or state.query_corpse then return {phase='waiting_for_actual_corpse_response'} end
         return {phase='query_corpse',action=action('query_corpse')}
@@ -108,7 +113,7 @@ function M.decide(frame,obs,sequence)
     local nav=obs.navigation or {}
     if nav.motionUnconfirmed==true then return {phase='waiting_for_actual_motion_reconciliation'} end
     local location=r.corpseLocation
-    if r.corpseEntryAttempted==true or state.enter_corpse_instance then
+    if (r.corpseEntryAttempted==true or state.enter_corpse_instance) and not (r.corpseEntryDestinationObserved==true and r.corpseMapId==self.mapId) then
         return {phase='waiting_for_actual_life_or_dungeon_entry'}
     end
     if location.known~=true or location.mapKnown~=true or location.mapId~=self.mapId then return {phase='corpse_marker_not_on_current_map'} end

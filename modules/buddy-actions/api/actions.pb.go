@@ -2807,8 +2807,10 @@ type RecoveryState struct {
 	CorpseEntryAttempted bool                 `protobuf:"varint,30,opt,name=corpse_entry_attempted,json=corpseEntryAttempted,proto3" json:"corpse_entry_attempted,omitempty"`
 	CorpseEntryWritten   bool                 `protobuf:"varint,31,opt,name=corpse_entry_written,json=corpseEntryWritten,proto3" json:"corpse_entry_written,omitempty"`
 	CorpseEntryUnknown   bool                 `protobuf:"varint,32,opt,name=corpse_entry_unknown,json=corpseEntryUnknown,proto3" json:"corpse_entry_unknown,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Adjacent scoped World transfer observed, not resurrection/corpse/party-copy proof.
+	CorpseEntryDestinationObserved bool `protobuf:"varint,33,opt,name=corpse_entry_destination_observed,json=corpseEntryDestinationObserved,proto3" json:"corpse_entry_destination_observed,omitempty"`
+	unknownFields                  protoimpl.UnknownFields
+	sizeCache                      protoimpl.SizeCache
 }
 
 func (x *RecoveryState) Reset() {
@@ -3061,6 +3063,13 @@ func (x *RecoveryState) GetCorpseEntryWritten() bool {
 func (x *RecoveryState) GetCorpseEntryUnknown() bool {
 	if x != nil {
 		return x.CorpseEntryUnknown
+	}
+	return false
+}
+
+func (x *RecoveryState) GetCorpseEntryDestinationObserved() bool {
+	if x != nil {
+		return x.CorpseEntryDestinationObserved
 	}
 	return false
 }
@@ -13485,7 +13494,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x05token\x18\x01 \x01(\tR\x05token\"_\n" +
 	"\x10InteractionLease\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x125\n" +
-	"\x05state\x18\x02 \x01(\v2\x1f.warcraftbuddy.actions.v1.StateR\x05state\"\x87\f\n" +
+	"\x05state\x18\x02 \x01(\v2\x1f.warcraftbuddy.actions.v1.StateR\x05state\"\xd2\f\n" +
 	"\rRecoveryState\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x16\n" +
 	"\x06active\x18\x02 \x01(\bR\x06active\x12\x14\n" +
@@ -13522,7 +13531,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x10corpse_entrances\x18\x1d \x03(\v2+.warcraftbuddy.actions.v1.AreaTriggerVolumeR\x0fcorpseEntrances\x124\n" +
 	"\x16corpse_entry_attempted\x18\x1e \x01(\bR\x14corpseEntryAttempted\x120\n" +
 	"\x14corpse_entry_written\x18\x1f \x01(\bR\x12corpseEntryWritten\x120\n" +
-	"\x14corpse_entry_unknown\x18  \x01(\bR\x12corpseEntryUnknown\"\x84\x03\n" +
+	"\x14corpse_entry_unknown\x18  \x01(\bR\x12corpseEntryUnknown\x12I\n" +
+	"!corpse_entry_destination_observed\x18! \x01(\bR\x1ecorpseEntryDestinationObserved\"\x84\x03\n" +
 	"\x11ResurrectionOffer\x12\x1f\n" +
 	"\vcaster_guid\x18\x01 \x01(\x04R\n" +
 	"casterGuid\x12\x1a\n" +

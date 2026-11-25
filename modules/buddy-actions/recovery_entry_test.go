@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"context"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/areatriggerreference"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -189,5 +190,54 @@ func TestRecoveryDungeonSharedLuaWalksEntranceBeforeOneTrigger(t *testing.T) {
 	}
 	if countOpcode(f, opcode.MSGMoveHeartbeat) == 0 || countOpcode(f, opcode.CMSGAreatrigger) != 1 || countOpcode(f, opcode.CMSGReclaimCorpse) != 0 {
 		t.Fatal("shared Lua failed normal ghost walk/entry", s.pos, s.stateLocked(), f.packets)
+	}
+}
+
+func TestRecoveryDungeonGhostInteriorFreshVisitRequeriesThenReclaimsWithoutEntryReplay(t *testing.T) {
+	s, f, v := corpseEntranceRig(t)
+	tickDeathLua(t, s)
+	if s.recovery.entryOperation == nil {
+		t.Fatal("missing entry scope")
+	}
+	setAreaTriggerDestinationFacts(t, s, f, s.recovery.entryOperation)
+	tickDeathLua(t, s)
+	if !s.recovery.state.CorpseEntryDestinationObserved || countOpcode(f, opcode.MSGCorpseQuery) != 1 || countOpcode(f, opcode.CMSGAreatrigger) != 1 {
+		t.Fatal("interior ghost did not query actual corpse", s.stateLocked(), f.packets)
+	}
+	f.world.OwnCorpse = &worldv1.CorpseState{Guid: ownCorpseGUID, OwnerGuid: s.selfGUID, Present: true, MapKnown: true, MapId: v.DestinationMap, PositionKnown: true, X: 10, Y: 20, Z: 30, PositionRevision: 1, FlagsKnown: true}
+	recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(v.DestinationMap, v.DestinationMap, position{x: 10, y: 20, z: 30}))
+	s.recovery.state.ReclaimDelayKnown = true
+	for i := 0; i < 4 && countOpcode(f, opcode.CMSGReclaimCorpse) == 0; i++ {
+		tickDeathLua(t, s)
+	}
+	if countOpcode(f, opcode.CMSGReclaimCorpse) != 1 || countOpcode(f, opcode.CMSGAreatrigger) != 1 || countOpcode(f, opcode.MSGCorpseQuery) != 1 {
+		t.Fatal("interior continuation/replay failed", s.stateLocked(), f.packets)
+	}
+}
+func TestRecoveryDungeonMapOnlyDoesNotReopenQueryOrEntry(t *testing.T) {
+	s, f, v := corpseEntranceRig(t)
+	tickDeathLua(t, s)
+	portalFixtureArrive(t, s, f, v.DestinationMap) // No scoped transfer/ACK evidence.
+	tickDeathLua(t, s)
+	if s.recovery.state.CorpseEntryDestinationObserved || countOpcode(f, opcode.MSGCorpseQuery) != 0 || countOpcode(f, opcode.CMSGAreatrigger) != 1 {
+		t.Fatal("map-only state promoted to entry", s.stateLocked(), f.packets)
+	}
+}
+func TestRecoveryInvalidEntranceLeavesPhysicalOwnershipUnchanged(t *testing.T) {
+	for _, mode := range []string{"unknown_trigger", "no_trigger"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, v := corpseEntranceRig(t)
+			q := corpseEntranceRequest(s, f, v)
+			if mode == "unknown_trigger" {
+				q.TriggerId = ^uint32(0)
+			} else {
+				q.TriggerId = 0
+				q.EnterInstance = false
+			}
+			_, err := s.ApproachCorpse(context.Background(), q)
+			if err == nil || s.recovery.token != "" || s.interactionToken != "" || s.state.InteractionOwner != "" || s.recovery.state.Active || len(f.packets) != 0 {
+				t.Fatal("invalid request acquired physical ownership", err, s.stateLocked(), f.packets)
+			}
+		})
 	}
 }

@@ -52,6 +52,19 @@ func (s *Service) ApproachCorpse(ctx context.Context, q *actionsv1.CorpseApproac
 		q.CorpseQueryRevision != r.state.CorpseQueryRevision || r.state.CorpseLocation == nil || w.Self.MapId != r.state.CorpseLocation.MapId) {
 		return nil, status.Error(codes.FailedPrecondition, "actual ghost on the server query marker map and exact current query required")
 	}
+	var to position
+	if !q.Stop {
+		to = position{x: r.state.CorpseLocation.X, y: r.state.CorpseLocation.Y, z: r.state.CorpseLocation.Z}
+		if q.TriggerId != 0 || q.EnterInstance {
+			volume, found := areaTriggerReference(q.TriggerId)
+			if !found || volume.SourceMap != w.Self.MapId || volume.DestinationMap != r.state.CorpseMapId || volume.DestinationMap == volume.SourceMap {
+				return nil, status.Error(codes.FailedPrecondition, "exact public entrance for the queried corpse dungeon required")
+			}
+			to = position{x: float32(volume.X), y: float32(volume.Y), z: float32(volume.Z)}
+		} else if w.Self.MapId != r.state.CorpseMapId {
+			return nil, status.Error(codes.FailedPrecondition, "cross-map corpse navigation requires an explicit qualified entrance")
+		}
+	}
 	if r.token == "" {
 		r.token = fmt.Sprintf("death-motion-%d", q.DeathEpoch)
 		s.interactionToken = r.token
@@ -66,16 +79,9 @@ func (s *Service) ApproachCorpse(ctx context.Context, q *actionsv1.CorpseApproac
 		s.finishRecoveryMotionLocked(call, "stopped", "explicit_Lua_corpse_route_stop")
 		return s.stateLocked(), nil
 	}
-	to := position{x: r.state.CorpseLocation.X, y: r.state.CorpseLocation.Y, z: r.state.CorpseLocation.Z}
-	if q.TriggerId != 0 || q.EnterInstance {
-		volume, found := areaTriggerReference(q.TriggerId)
-		if !found || volume.SourceMap != w.Self.MapId || volume.DestinationMap != r.state.CorpseMapId || volume.DestinationMap == volume.SourceMap {
-			return nil, status.Error(codes.FailedPrecondition, "exact public entrance for the queried corpse dungeon required")
-		}
-		to = position{x: float32(volume.X), y: float32(volume.Y), z: float32(volume.Z)}
-		if q.EnterInstance {
-			return s.enterCorpseInstanceLocked(ctx, q, w, volume)
-		}
+	if q.EnterInstance {
+		volume, _ := areaTriggerReference(q.TriggerId) // Validated before acquiring ownership.
+		return s.enterCorpseInstanceLocked(ctx, q, w, volume)
 	}
 	if distance(s.pos, to) <= float64(q.RangeYards) {
 		s.finishRecoveryMotionLocked(call, "within_requested_range", "observed_pose_within_requested_range")
