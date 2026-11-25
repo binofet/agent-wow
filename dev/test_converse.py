@@ -4302,6 +4302,102 @@ from test_owner_acknowledgement import OwnerAcknowledgementTests
 from test_model_transport import ModelTransportTests
 
 class OwnerPreemptionTests(unittest.TestCase):
+    def freshness_case(self, outcomes, *, mutate=None, elapsed=0.5, checks=1, clock_times=None):
+        calls=[];statuses=[];seen=[]
+        class Brain(converse.CodexBrain):
+            def __init__(self): self.developer_workspace=None
+            def generate(self,history,control_state=None,cancelled=None):
+                for _ in range(checks):
+                    stopped=cancelled();seen.append((stopped,converse.cancellation_reason(cancelled)))
+                    if stopped: raise converse.OwnerInputPending('freshness check stopped')
+                return dict(text='fresh',emote='NONE')
+        def call(method,params,timeout=None):
+            self.assertEqual(method,'buddy-chat.poll')
+            calls.append((copy.deepcopy(params),timeout))
+            outcome=outcomes[len(calls)-1]
+            if mutate is not None and len(calls)==1: mutate(loop)
+            if isinstance(outcome,Exception): raise outcome
+            return outcome
+        loop=converse.Conversation(types.SimpleNamespace(call=call),Brain(),status=lambda **kw:statuses.append(kw))
+        loop.session_id='chat';loop.cursor=41;loop.initialized=True
+        with patch.object(converse.time,'monotonic',side_effect=clock_times or [0,elapsed,elapsed]):
+            try: result=loop.generate_reply([],{})
+            except converse.OwnerInputPending: result=None
+        return loop,calls,statuses,seen,result
+
+    def test_chat_timeout_retries_one_same_cursor_read_and_accepts_fresh_result(self):
+        loop,calls,statuses,seen,result=self.freshness_case([
+            converse.ChatPollTimeout('timeout'),poll(latest=41,sessionId='chat')])
+        self.assertEqual(result['text'],'fresh');self.assertEqual(loop.cursor,41)
+        self.assertEqual(len(calls),2);self.assertEqual(calls[0][0],calls[1][0])
+        self.assertEqual(calls[0][1],0.5);self.assertLessEqual(calls[1][1],0.3)
+        self.assertEqual(seen,[(False,'owner_input_waiting')])
+
+    def test_chat_retry_respects_new_owner_persistent_failure_and_body_change(self):
+        cases=[(poll([message(42,'Stop',channel='WHISPER')],sessionId='chat'),'owner_input_waiting'),
+            (converse.ChatPollTimeout('again'),'chat_freshness_unavailable'),
+            (poll(latest=41,sessionId='other'),'chat_body_changed')]
+        for response,reason in cases:
+            with self.subTest(reason=reason):
+                loop,calls,statuses,seen,result=self.freshness_case([converse.ChatPollTimeout('first'),response])
+                self.assertIsNone(result);self.assertEqual(len(calls),2)
+                self.assertEqual(seen,[(True,reason)])
+                self.assertEqual(statuses[-1]['generationInterruptReason'],reason)
+                if reason=='chat_freshness_unavailable':
+                    self.assertEqual(statuses[-1]['generationFreshnessFailure'],'read_timeout')
+                if reason!='chat_body_changed':self.assertEqual(loop.cursor,41)
+
+    def test_chat_no_retry_for_invalid_read_changed_binding_or_elapsed_budget(self):
+        cases=[([converse.ConversationError('invalid json')],None,.1,'chat_freshness_unavailable'),
+            ([converse.ChatPollTimeout('first')],lambda loop:setattr(loop,'session_id','new'),.1,'owned_body_changed'),
+            ([converse.ChatPollTimeout('first')],None,.81,'chat_freshness_unavailable')]
+        for outcomes,mutate,elapsed,reason in cases:
+            with self.subTest(reason=reason):
+                loop,calls,statuses,seen,result=self.freshness_case(outcomes,mutate=mutate,elapsed=elapsed)
+                self.assertIsNone(result);self.assertEqual(len(calls),1)
+                self.assertEqual(seen,[(True,reason)])
+
+    def test_retry_is_once_per_generation_and_rejects_late_read_result(self):
+        _,calls,_,seen,result=self.freshness_case([converse.ChatPollTimeout('first'),
+            poll(latest=41,sessionId='chat'),converse.ChatPollTimeout('later')],
+            checks=2,clock_times=[0,.2,.2,1,1.1])
+        self.assertIsNone(result);self.assertEqual(len(calls),3)
+        self.assertEqual(seen,[(False,'owner_input_waiting'),(True,'chat_freshness_unavailable')])
+        _,calls,_,seen,result=self.freshness_case([converse.ChatPollTimeout('first'),
+            poll(latest=41,sessionId='chat')],clock_times=[0,.5,.81])
+        self.assertIsNone(result);self.assertEqual(len(calls),2)
+        self.assertEqual(seen,[(True,'chat_freshness_unavailable')])
+
+    def test_later_sampling_cannot_drop_owner_or_failed_read_latch(self):
+        for outcome,category in [(poll([message(42,'Stop',channel='WHISPER')],sessionId='chat'),None),
+                (converse.ConversationError('invalid response'),'unavailable_or_invalid_response')]:
+            calls=[];seen=[]
+            class Brain(converse.CodexBrain):
+                def __init__(self):self.developer_workspace=None
+                def generate(self,history,control_state=None,cancelled=None):
+                    for _ in range(3):seen.append(cancelled())
+                    raise converse.OwnerInputPending('latched')
+            def call(method,params,timeout=None):
+                calls.append(method)
+                if isinstance(outcome,Exception):raise outcome
+                return outcome
+            statuses=[];loop=converse.Conversation(types.SimpleNamespace(call=call),Brain(),status=lambda **kw:statuses.append(kw))
+            loop.session_id='chat';loop.cursor=41
+            with self.assertRaises(converse.OwnerInputPending):loop.generate_reply([],{})
+            self.assertEqual(seen,[True,True,True]);self.assertEqual(calls,['buddy-chat.poll'])
+            self.assertEqual(loop.cursor,41)
+            if category:self.assertEqual(statuses[-1]['generationFreshnessFailure'],category)
+
+    def test_rpc_only_classifies_chat_poll_timeout_as_retryable(self):
+        rpc=converse.RPC('http://127.0.0.1:8086/rpc')
+        for method,error,expected in [('buddy-chat.poll',TimeoutError(),converse.ChatPollTimeout),
+            ('buddy-chat.poll',converse.urllib.error.URLError(TimeoutError()),converse.ChatPollTimeout),
+            ('buddy-chat.poll',ValueError(),converse.ConversationError),
+            ('session.reload_policy',TimeoutError(),converse.ConversationError)]:
+            with self.subTest(method=method,error=type(error).__name__),patch.object(rpc.opener,'open',side_effect=error):
+                with self.assertRaises(expected) as caught:rpc.call(method,{})
+                self.assertEqual(type(caught.exception),expected)
+
     def test_actual_model_process_cancels_and_keeps_already_written_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder=Path(temporary);state=folder/'state';state.mkdir();marker=folder/'written.lua'
