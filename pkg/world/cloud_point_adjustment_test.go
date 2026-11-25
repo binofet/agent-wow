@@ -247,3 +247,123 @@ func TestCloudPointPreservesUrgentHealing(t *testing.T) {
 		t.Fatal("point consumer stole urgent healing", d.Output)
 	}
 }
+
+func TestCloudPointPassiveSludgeDoesNotBlanketVetoLocalEscape(t *testing.T) {
+	for _, kind := range []string{"distant_passive", "protected_clearance", "active_owner"} {
+		t.Run(kind, func(t *testing.T) {
+			p, o := cloudPointPolicy(t, "function()return {{x=2,y=0,z=0,radiusYards=5,expiresAtMs=120000}} end")
+			addFallbackTarget(o, fallbackNPC, 0, 100)
+			n := o.Targets[fallbackGUID(fallbackNPC)]
+			n.Entry = 12222
+			n.MapId = proto.Uint32(349)
+			n.X = 120
+			n.PositionKnown = true
+			n.AttackObservation = &actionsv1.EncounterAttackObservation{}
+			if kind == "protected_clearance" {
+				n.X = -17
+			}
+			if kind == "active_owner" {
+				o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: "ranged:maraudon_sludge_backline", RemainingMs: 2000}
+			}
+			d := cloudPointStep(t, p, o, 100000)
+			a, _ := d.Output["action"].(map[string]any)
+			stance := d.Output["rangedStance"].(map[string]any)
+			if stance["phase"] != "passive_distant_prior" || stance["active"] != false {
+				t.Fatal("not actual passive prior fixture", d.Output)
+			}
+			if kind == "distant_passive" {
+				if a["capability"] != "move_body" {
+					t.Fatal("inert passive prior starved correction", d.Output)
+				}
+			} else if d.Output["action"] != nil {
+				t.Fatal("cloud pulse bypassed active custody or existing clearance", d.Output)
+			}
+		})
+	}
+}
+
+func TestCloudPointPreservesUrgentInterruptApproach(t *testing.T) {
+	p, _ := cloudPointPolicy(t, "function()return {{x=2,y=0,z=0,radiusYards=5,expiresAtMs=120000}} end")
+	o := supportResObservation()
+	o.MapId = proto.Uint32(349)
+	for _, v := range o.Players {
+		v.MapId = proto.Uint32(349)
+		v.PositionKnown = true
+		v.MovementKnown = true
+	}
+	o.Navigation = &actionsv1.NavigationObservation{BodyMovementSupported: true, MovementOwner: &actionsv1.MovementOwnerState{}}
+	addFallbackTarget(o, fallbackNPC, fallbackSelf, 100)
+	n := o.Targets[fallbackGUID(fallbackNPC)]
+	n.MapId = proto.Uint32(349)
+	n.AttackObservation = &actionsv1.EncounterAttackObservation{VictimKnown: true, VictimGuid: fallbackSelf}
+	o.Support.CasterInCombat = true
+	o.Support.Interrupts = []*actionsv1.InterruptOption{{TargetGuid: fallbackNPC, SpellId: 1766, CastRevision: 8, RemainingMs: 1500, Healing: true, CanApproach: true, RangeYards: 5}}
+	d := cloudPointStep(t, p, o, 100000)
+	a, _ := d.Output["action"].(map[string]any)
+	if a["capability"] != "approach_target" || a["targetGuid"] != fallbackGUID(fallbackNPC) {
+		t.Fatal("point pulse stole urgent interrupt approach", d.Output)
+	}
+}
+
+func TestCloudPointUsesOnlyAcknowledgedExistingRoleGroundWriter(t *testing.T) {
+	for _, kind := range []string{"owned", "unknown_hold", "foreign", "changed_visit"} {
+		t.Run(kind, func(t *testing.T) {
+			p, o := cloudPointPolicy(t, "function()return {{x=2,y=0,z=0,radiusYards=5,expiresAtMs=120000}} end")
+			addFallbackTarget(o, fallbackNPC, 0, 100)
+			n := o.Targets[fallbackGUID(fallbackNPC)]
+			n.Entry = 12222
+			n.MapId = proto.Uint32(349)
+			n.PositionKnown = true
+			n.X = 123
+			n.AttackObservation = &actionsv1.EncounterAttackObservation{}
+			// Unknown combat status keeps the prior active, matching an admitted role
+			// rather than the separately tested inert passive branch.
+			o.Players["4"].CombatKnown = false
+			d := cloudPointStep(t, p, o, 100000)
+			a, _ := d.Output["action"].(map[string]any)
+			if a["capability"] != "movement_owner" || a["mode"] != "acquire" {
+				t.Fatal("role did not acquire through original path", d.Output)
+			}
+			id, e := p.host.ReserveAction(d)
+			if e != nil {
+				t.Fatal(e)
+			}
+			outcome := behavior.ActionConfirmed
+			if kind == "unknown_hold" {
+				outcome = behavior.ActionSettledUnverified
+			}
+			_, e = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: outcome, Payload: map[string]any{"capability": "movement_owner", "mode": "acquire", "owner": "ranged:maraudon_sludge_backline", "result": map[string]any{"token": "actual-role-token", "state": map[string]any{"sessionId": fallbackSession, "selfGuid": "4", "movementOwner": map[string]any{"active": true, "owner": "ranged:maraudon_sludge_backline"}}}}}})
+			if e != nil {
+				t.Fatal(e)
+			}
+			o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: "ranged:maraudon_sludge_backline", RemainingMs: 2000}
+			if kind == "foreign" {
+				o.Navigation.MovementOwner.Owner = "another-role"
+			}
+			if kind == "changed_visit" {
+				o.VisitId = 2
+			}
+			d = cloudPointStep(t, p, o, 100100)
+			a, _ = d.Output["action"].(map[string]any)
+			if kind == "owned" {
+				if a["capability"] != "move_body" || d.Output["cloudAdjustment"].(map[string]any)["existingRoleWriter"] != true {
+					t.Fatal("known own role could not use original ground writer", d.Output)
+				}
+				id, e = p.host.ReserveAction(d)
+				if e != nil {
+					t.Fatal(e)
+				}
+				_, e = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionUnknown, Payload: map[string]any{"capability": "move_body", "self_guid": "4", "visit_id": "1", "sequence_id": a["sequenceId"]}}})
+				if e != nil {
+					t.Fatal(e)
+				}
+				d = cloudPointStep(t, p, o, 100200)
+				if d.Output["action"] != nil || p.host.Status().Pending != 1 {
+					t.Fatal("owned writer replayed unknown cloud pulse", d.Output)
+				}
+			} else if a["capability"] == "move_body" {
+				t.Fatal("cloud step borrowed uncertain/foreign/prior-visit custody", d.Output)
+			}
+		})
+	}
+}

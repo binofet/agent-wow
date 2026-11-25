@@ -1083,6 +1083,35 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
     end
 end
 
+-- Reuse this role's acknowledged writer and existing ground receipt ledger.
+-- No lease is created/cleared/borrowed; only an otherwise idle admitted role
+-- may request a small cloud offset through its same winner-only ground path.
+local function cloud_point_step(obs,frame,sequence,out,row,status,points)
+    local hold,ground=state.rangedHold,state.rangedGround
+    local self=(obs.players or {})[obs.selfGuid]
+    if not row or row.origin~="learned_prior" or not status or status.phase~="supported_ranged_option_unavailable" or
+       out.action or #frame.pending~=0 or not self or self.positionEstimated==true or
+       not hold or hold.owner~="ranged:"..row.id or hold.sessionId~=obs.sessionId or hold.selfGuid~=obs.selfGuid or
+       hold.visitId~=obs.visitId or hold.mapId~=obs.mapId or hold.operation or hold.uncertain or hold.released or
+       type(hold.token)~="string" or #hold.token==0 or
+       ground and (ground.operation or ground.uncertain or ground.awaiting or ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or ground.id~=row.id) then return false end
+    local from=movement and movement.current_pose(self)
+    if not from then return false end
+    if not ground then
+        local key=row.id..":"..tostring(from.x)..":"..tostring(from.y)..":"..tostring(from.z)
+        ground={sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,id=row.id,key=key,positionKey=key,blocked={}}
+        state.rangedGround=ground
+    end
+    if ground.refused==ground.positionKey then return false end
+    if not movement.adjust_cloud_points(frame,obs,sequence,out,points,row,hold) then return false end
+    local a=out.action
+    local heading="cloud:"..tostring(a.bearingRadians)
+    if ground.blocked[heading] then out.action=nil;out.cloudAdjustment=nil;return false end
+    ranged_ground_proposal={action=a,ground=ground,operation={kind="move_body",sequence=sequence,heading=heading,x=from.x,y=from.y,z=from.z}}
+    status.phase="owned_cloud_point_reposition"
+    return true
+end
+
 local function ranged_finish(selected)
     if ranged_ground_proposal and ranged_ground_proposal.action==selected then
         ranged_ground_proposal.ground.operation=ranged_ground_proposal.operation
@@ -1099,4 +1128,4 @@ local function ranged_finish(selected)
 end
 
 return {on_event=on_event, export_state=export_state, import_state=import_state,
-        queue_intent=queue_intent, control_action=control_action, ranged_stance=ranged_stance, ranged_options=ranged_options, ranged_travel_safe=ranged_travel_safe,ranged_filter=ranged_filter, ranged_finish=ranged_finish}
+        queue_intent=queue_intent, control_action=control_action, ranged_stance=ranged_stance, ranged_options=ranged_options, ranged_travel_safe=ranged_travel_safe,ranged_filter=ranged_filter, ranged_finish=ranged_finish, cloud_point_step=cloud_point_step}

@@ -163,12 +163,16 @@ M.current_pose=pose
 -- in cloud_points; these are current-scope circles, not a native cloud sensor.
 -- No route/lease/controller is created. An ordinary bounded body input uses
 -- the same writer/physics checks and leaves the normal follow intent enabled.
-function M.adjust_cloud_points(frame,obs,sequence,out,points)
+function M.adjust_cloud_points(frame,obs,sequence,out,points,passivePrior,ownHold)
     if type(points)~="table" or #frame.pending~=0 then return false end
     local self=(obs.players or {})[obs.selfGuid]
     local nav=obs.navigation or {}
+    local owns=type(ownHold)=="table" and type(ownHold.token)=="string" and #ownHold.token>0 and
+        ownHold.sessionId==obs.sessionId and ownHold.selfGuid==obs.selfGuid and ownHold.visitId==obs.visitId and ownHold.mapId==obs.mapId and
+        not ownHold.operation and not ownHold.uncertain and not ownHold.released and type(nav.movementOwner)=="table" and
+        nav.movementOwner.active==true and nav.movementOwner.owner==ownHold.owner
     if nav.bodyMovementSupported~=true or nav.motionUnconfirmed==true or
-       type(nav.movementOwner)~="table" or nav.movementOwner.active==true or
+       type(nav.movementOwner)~="table" or nav.movementOwner.active==true and not owns or
        not self or self.present~=true or self.aliveKnown~=true or self.alive~=true or
        self.positionKnown~=true or self.positionInferred==true or self.mapKnown~=true or self.mapId~=obs.mapId or
        self.movementKnown~=true or not number(self.x) or not number(self.y) or not number(self.z) or
@@ -233,11 +237,28 @@ function M.adjust_cloud_points(frame,obs,sequence,out,points)
     local bearing=best-(self.orientation or 0)
     while bearing>3.141592653589793 do bearing=bearing-6.283185307179586 end
     while bearing< -3.141592653589793 do bearing=bearing+6.283185307179586 end
+    -- A passive prior is not a blanket veto, but its existing creature
+    -- clearance remains a constraint on this one local input.
+    if passivePrior then
+        local vx,vy=math.cos(best),math.sin(best)
+        local radius=passivePrior.minRangeYards+passivePrior.clearanceYards
+        for _,n in pairs(obs.targets or {}) do
+            if n.entry==passivePrior.creatureEntry and n.present==true and n.alive~=false then
+                if n.positionKnown~=true or n.positionInferred==true or n.positionEstimated==true or n.mapKnown~=true or n.mapId~=obs.mapId or
+                   not number(n.x) or not number(n.y) or not number(n.z) then return false end
+                local dx,dy=self.x-n.x,self.y-n.y
+                local q=math.max(0,math.min(length,-dx*vx-dy*vy))
+                if (dx+q*vx)^2+(dy+q*vy)^2+(self.z-n.z)^2<radius*radius then
+                    out.cloudAdjustment={phase="existing_prior_clearance",effectVerified=false};return false
+                end
+            end
+        end
+    end
     out.action={capability="move_body",sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,
         observationSequence=sequence,sequenceId=sequence,bearingRadians=bearing,durationMs=200,jump=false}
     out.followFormation=nil;out.portalCatchup=nil
     out.cloudAdjustment={phase="local_point_repulsion",effectVerified=false,referencePoseEstimated=self.positionEstimated==true,
-        point=contributor,distanceYards=math.sqrt(nearest),clearanceYards=math.sqrt(nearest)-5}
+        point=contributor,distanceYards=math.sqrt(nearest),clearanceYards=math.sqrt(nearest)-5,existingRoleWriter=owns==true}
     return true
 end
 

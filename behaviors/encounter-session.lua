@@ -583,6 +583,7 @@ local function decide_encounter(frame)
     if breaking then breaking.observationSequence=state.sequence;out.action=breaking;task_support_action=true;return out end
     local interrupt = support_policy and support_policy.interrupt(obs)
     if interrupt then
+        task_support_action=true
         interrupt.observationSequence = state.sequence
         out.action = interrupt
         return out
@@ -940,6 +941,13 @@ local function decide(frame)
         out.spellCancellation=status
         if cancel then out.action=cancel;out.followFormation=nil;out.portalCatchup=nil end
     end
+    if commands and commands.ranged_filter and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence then
+        commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status,out.rangedOffenseEligible and damage_spell or nil,task_view)
+        if ranged_config and transient_tasks and not task_support_action and not transient_tasks.allow(task_view,current,out.action) then out.action=nil end
+    end
+    if encounter_priors and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence then
+        encounter_priors.filter(current,out,ranged_status,prior_intent and prior_intent.explicitPullGuid,prior_requested_spell==out.action and prior_requested_spell or nil)
+    end
     if intent.cloud_points and movement and movement.adjust_cloud_points and current and host_can_decide(current) and
        current.sessionId==frame.session_id and current_visit(current) and frame.input.observationSequence==state.sequence and
        state.settledAt~=state.sequence then
@@ -948,17 +956,14 @@ local function decide(frame)
         local points=intent.cloud_points(frame.clock.unixMs,scope,sightings)
         out.cloudPointInput={sightings=#sightings,estimated=true,castObserved=false,
             activeMovementOwner=((current.navigation or {}).movementOwner or {}).active==true and ((current.navigation or {}).movementOwner or {}).owner or nil}
-        if not task_support_action and not prior_requested_spell and not ranged_config and
+        local passive=ranged_config and ranged_config.origin=="learned_prior" and ranged_status and ranged_status.active==false and ranged_status.phase=="passive_distant_prior"
+        if not task_support_action and not prior_requested_spell and (not ranged_config or passive) and
            not (task_view and (task_view.hold or task_view.action)) and not (out.consumable and out.consumable.hold) then
-            movement.adjust_cloud_points(frame,current,state.sequence,out,points)
+            movement.adjust_cloud_points(frame,current,state.sequence,out,points,passive and ranged_config or nil)
+        elseif not task_support_action and not prior_requested_spell and commands and commands.cloud_point_step and
+           not (task_view and (task_view.hold or task_view.action)) and not (out.consumable and out.consumable.hold) then
+            commands.cloud_point_step(current,frame,state.sequence,out,ranged_config,ranged_status,points)
         end
-    end
-    if commands and commands.ranged_filter and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence then
-        commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status,out.rangedOffenseEligible and damage_spell or nil,task_view)
-        if ranged_config and transient_tasks and not task_support_action and not transient_tasks.allow(task_view,current,out.action) then out.action=nil end
-    end
-    if encounter_priors and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence then
-        encounter_priors.filter(current,out,ranged_status,prior_intent and prior_intent.explicitPullGuid,prior_requested_spell==out.action and prior_requested_spell or nil)
     end
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
