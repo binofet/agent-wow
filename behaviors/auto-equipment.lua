@@ -2,6 +2,7 @@
 -- native operation verifies the exact swap. No party leader or town controls.
 local M={}
 local inventory,state=nil,{}
+local proposed
 local function n(v) return tonumber(v) or 0 end
 local function terminal(op)
  return op and op.leaseReleased==true and (op.status=="CONFIRMED" or op.status=="BLOCKED" or op.status=="SERVER_REJECTED")
@@ -24,6 +25,7 @@ function M.import_state(c)
  state=c.data;inventory=nil;return true
 end
 function M.decide(frame,obs,available,gear)
+ proposed=nil
  local v=inventory
  if not v or not obs or v.sessionId~=frame.session_id or v.selfGuid~=obs.selfGuid or obs.sessionId~=v.sessionId then return {phase="equipment_context_unavailable"} end
  if state.session and (state.session~=v.sessionId or state.self~=v.selfGuid) then
@@ -60,11 +62,17 @@ function M.decide(frame,obs,available,gear)
      requestId="gear-"..tostring(frame.cursor).."-"..source.itemGuid,
      expectedRevision=v.revision,expectedInventoryRevision=v.inventoryRevision,source=source,
      equipmentSlot=row.gearEquipmentSlot,expectedEquipmentRevision=v.equipmentRevision,expectedEquippedItemGuid=row.expectedEquippedItemGuid,vector=key(v)}
-    state.attempt=request
+    proposed=request
     return {phase="equipment_requested",action=request}
    end
   end
  end
  return {phase="no_equipment_upgrade"}
+end
+-- Only final arbitration may turn a proposal into a retained native intent.
+-- A loot close, requested-spell maintenance or cancellation may supersede it.
+function M.commit(action)
+ if proposed and action==proposed then state.attempt=proposed end
+ proposed=nil
 end
 return M

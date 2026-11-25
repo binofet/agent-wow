@@ -854,6 +854,7 @@ local function decide(frame)
     end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
     if spell_invocation then spell_invocation.commit(out.action) end
+    if auto_equipment then auto_equipment.commit(out.action) end
     return out
 end
 

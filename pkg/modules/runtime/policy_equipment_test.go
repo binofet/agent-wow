@@ -27,7 +27,7 @@ func TestActorEquipmentUsesAcceptedLuaAndExactNativeRequest(t *testing.T) {
 			}
 			source := "local gear=(function()\n" + string(gear) + "\nend)()\nlocal auto=(function()\n" + string(auto) + "\nend)()\n" + `
 return {on_event=auto.on_event,export_state=auto.export_state,import_state=auto.import_state,
-decide=function(f) return auto.decide(f,{sessionId=f.session_id,selfGuid="6",party={leaderGuid="` + leader + `"},players={["6"]={present=true,aliveKnown=true,alive=true,combatKnown=true,inCombat=false,movementKnown=true,moving=false}}},#f.pending==0,gear) end}`
+decide=function(f) local out=auto.decide(f,{sessionId=f.session_id,selfGuid="6",party={leaderGuid="` + leader + `"},players={["6"]={present=true,aliveKnown=true,alive=true,combatKnown=true,inCombat=false,movementKnown=true,moving=false}}},#f.pending==0,gear);auto.commit(out.action);return out end}`
 			host, err := m.StartPolicyWithOptions(context.Background(), source, behavior.SessionOptions{})
 			if err != nil {
 				t.Fatal(err)
@@ -117,7 +117,7 @@ func TestActorEquipmentWaitsForActiveUnknownAndLegalDestination(t *testing.T) {
 			auto, _ := os.ReadFile("../../../behaviors/auto-equipment.lua")
 			source := "local gear=(function()\n" + string(gear) + "\nend)()\nlocal auto=(function()\n" + string(auto) + "\nend)()\n" + `
 return {on_event=auto.on_event,export_state=auto.export_state,import_state=auto.import_state,
-decide=function(f)return auto.decide(f,{sessionId=f.session_id,selfGuid="6",players={["6"]={present=true,aliveKnown=true,alive=true,combatKnown=true,inCombat=false,movementKnown=true,moving=false}}},f.input.available,gear)end}`
+decide=function(f)local out=auto.decide(f,{sessionId=f.session_id,selfGuid="6",players={["6"]={present=true,aliveKnown=true,alive=true,combatKnown=true,inCombat=false,movementKnown=true,moving=false}}},f.input.available,gear);auto.commit(out.action);return out end}`
 			host, err := m.StartPolicyWithOptions(context.Background(), source, behavior.SessionOptions{})
 			if err != nil {
 				t.Fatal(err)
