@@ -4929,13 +4929,14 @@ class LiteralOwnerGMTests(unittest.TestCase):
             patcher=patch.object(target,name,side_effect=value);patcher.start();self.addCleanup(patcher.stop)
 
     def request(self,text='gm .appear Joel',*,sender=3,channel='WHISPER',receiver='87',lost=False,resumed=False):
-        self.rig.rpc.messages.append(message(109,text,sender=sender,channel=channel,receiverGuid=receiver))
+        sequence=len(self.rig.rpc.messages)+1
+        self.rig.rpc.messages.append(message(sequence,text,sender=sender,channel=channel,receiverGuid=receiver))
         self.rig.rpc.cursor_lost=lost
         self.loop=self.base.loop(resume_whispers=resumed)
         for name in ('maybe_repair_mission','maybe_review_combat','maybe_review_learned_spells','maybe_initiate'):
             setattr(self.loop,name,lambda:False) # Unrelated idle background work is outside this fixture.
         if not resumed:
-            self.loop.initialized=True;self.loop.session_id='chat-current';self.loop.cursor=108
+            self.loop.initialized=True;self.loop.session_id='chat-current';self.loop.cursor=sequence-1
         self.loop.tick()
         return self.loop
 
@@ -5062,10 +5063,9 @@ class LiteralOwnerGMTests(unittest.TestCase):
 
     def test_foreign_whisper_stale_or_gap_does_not_enter_literal(self):
         for changes in (dict(sender=99),dict(receiver='4'),dict(lost=True),dict(resumed=True)):
-            # Each condition owns a separate body/source fixture.
+            # Each condition has a fresh monotonic owner input; ACK/receipts remain.
             with self.subTest(changes=changes):
                 before=len(self.rig.rpc.packets)
-                self.rig.rpc.messages=self.rig.rpc.messages[:108]
                 self.request(**changes)
                 self.assertEqual(len(self.rig.rpc.packets),before)
         self.assertFalse(self.model_calls)
@@ -5073,7 +5073,6 @@ class LiteralOwnerGMTests(unittest.TestCase):
     def test_party_or_quoted_text_keeps_ordinary_model_path_and_no_literal_write(self):
         for text,channel in [('gm .appear Joel','PARTY'),('Please explain gm .appear Joel','WHISPER'),
                              ('"gm .appear Joel"','WHISPER'),('The command was "gm .appear Joel", right?','WHISPER')]:
-            self.rig.rpc.messages=self.rig.rpc.messages[:108]
             self.request(text,channel=channel)
         self.assertEqual(len(self.model_calls),4)
         self.assertFalse(self.rig.rpc.packets)
