@@ -162,6 +162,123 @@ class SpellInvocationPolicyTests(unittest.TestCase):
         data.update(payload)
         return dict(kind='action_result',receipt=dict(action_id=action_id,outcome=outcome,payload=data))
 
+    def geometry_obs(self, ready=False):
+        obs=self.stationary_obs(remaining=2900,owner='spell:geometry-1')
+        obs['hostTargetRangeBandSupported']=True
+        obs['players']['4'].update(x=0,y=0,z=0,orientation=3.141592653589793)
+        obs['targets']={'77':dict(guid='77',present=True,aliveKnown=True,alive=True,
+            positionKnown=True,mapKnown=True,mapId=0,x=24,y=0,z=0,orientation=0,entry=123,
+            attackable=True,engaged=True)}
+        obs['spells']={'10312':dict(known=True,metadataKnown=True,maxRange=30,minRange=0,castTimeMs=0)}
+        obs['targetMovement']=dict(targetGuid='77',visitId='1',rangeYards=25,minRangeYards=15,
+            clearanceYards=0,requireLos=True,ready=ready)
+        return obs
+
+    def geometry_request(self, position=None):
+        return dict(kind='command',sequence='3',value=dict(task='cast_spell',id='geometry-1',spellId=10312,
+            targets=dict(mask=2,objectGuid='77'),requirements=dict(position=position or dict(minRangeYards=15,maxRangeYards=25))))
+
+    def geometry_acquired(self, obs=None):
+        obs=obs or self.geometry_obs()
+        obs['navigation']['movementOwner']={}
+        first=self.run_policy([self.encounter_event(obs),self.geometry_request()],composed=True)
+        self.assertEqual(first['output']['action']['capability'],'movement_owner')
+        self.assertEqual(first['output']['action']['mode'],'acquire')
+        obs['navigation']['movementOwner']=dict(active=True,owner='spell:geometry-1',remainingMs=2900)
+        receipt=self.prep_receipt();receipt['receipt']['payload']['owner']='spell:geometry-1'
+        return obs,first,receipt
+
+    def test_opt_in_unit_preparation_aims_with_floor_then_casts_only_after_ready(self):
+        obs,first,receipt=self.geometry_acquired()
+        aim=self.run_policy([receipt,self.encounter_event(obs,'4')],checkpoint=first['checkpoint'],composed=True,sequence='4')
+        action=aim['output']['action']
+        self.assertEqual(action['capability'],'approach_target')
+        self.assertEqual(action['targetGuid'],'77')
+        self.assertEqual(action['minRangeYards'],15)
+        self.assertTrue(action['requireLos'])
+        # A stale ready bit does not override current backward facing.
+        obs['targetMovement']['ready']=True
+        wrong=self.run_policy([self.encounter_event(obs,'5')],checkpoint=aim['checkpoint'],composed=True,sequence='5')
+        self.assertNotEqual(wrong['output'].get('action',{}).get('capability'),'cast_spell')
+        obs['players']['4']['orientation']=0
+        cast=self.run_policy([self.encounter_event(obs,'6')],checkpoint=wrong['checkpoint'],composed=True,sequence='6')
+        self.assertEqual(cast['output']['action']['capability'],'cast_spell')
+        self.assertEqual(cast['output']['action']['spellId'],10312)
+        again=self.run_policy([self.encounter_event(obs,'7')],checkpoint=cast['checkpoint'],composed=True,sequence='7')
+        self.assertNotEqual(again['output'].get('action',{}).get('capability'),'cast_spell')
+
+    def test_geometry_default_try_now_and_unsupported_unknown_target_timeout(self):
+        obs=self.geometry_obs()
+        plain=self.run_policy([self.encounter_event(obs),dict(kind='command',sequence='3',value=dict(
+            task='cast_spell',id='try-now',spellId=10312,targets=dict(mask=2,objectGuid='77')))],composed=True)
+        self.assertEqual(plain['output']['action']['capability'],'cast_spell')
+        for mode in ('unsupported','estimated','unknown_position','changed_visit'):
+            with self.subTest(mode=mode):
+                obs,first,receipt=self.geometry_acquired()
+                if mode=='unsupported':obs['hostTargetRangeBandSupported']=False
+                elif mode=='estimated':obs['targets']['77']['positionEstimated']=True
+                elif mode=='unknown_position':obs['targets']['77']['positionKnown']=False
+                else:obs['visitId']='2'
+                hold=self.run_policy([receipt,self.encounter_event(obs,'4')],checkpoint=first['checkpoint'],composed=True,sequence='4')
+                self.assertNotEqual(hold['output'].get('action',{}).get('capability'),'cast_spell')
+                expired=self.run_policy([self.encounter_event(obs,'5')],checkpoint=hold['checkpoint'],composed=True,sequence='5',clock_ms=10000)
+                self.assertNotEqual(expired['output'].get('action',{}).get('capability'),'cast_spell')
+                if mode!='changed_visit':
+                    self.assertEqual(expired['checkpoint']['data']['spellInvocation']['data']['last']['phase'],'positioning_timeout')
+                    self.assertEqual(expired['output']['action']['capability'],'movement_owner')
+                    self.assertEqual(expired['output']['action']['mode'],'release')
+
+    def test_ranged_scope_preempts_aim_with_its_own_hazard_floor(self):
+        obs=self.geometry_obs()
+        obs['targets']['77'].update(x=3,entry=123)
+        obs['targets']['78']=dict(obs['targets']['77'],guid='78',x=40)
+        obs['navigation']['movementOwner']={}
+        directive=dict(kind='command',sequence='3',value=dict(task='ranged_only',id='hazard-band',
+            creatureEntry=123,mapId=0,visitId='1',minRangeYards=15,maxRangeYards=25,clearanceYards=2,durationMs=60000,enabled=True))
+        first=self.run_policy([self.encounter_event(obs),directive,self.geometry_request()],composed=True)
+        self.assertEqual(first['output']['action']['owner'],'ranged:hazard-band')
+        self.assertNotEqual(first['output']['action']['capability'],'cast_spell')
+        obs['navigation']['movementOwner']=dict(active=True,owner='ranged:hazard-band',remainingMs=50000)
+        receipt=self.prep_receipt();receipt['receipt']['payload']['owner']='ranged:hazard-band'
+        receipt['receipt']['payload']['result']['state']=dict(sessionId=obs['sessionId'],selfGuid=obs['selfGuid'],movementOwner=dict(active=True,owner='ranged:hazard-band'))
+        step=self.run_policy([receipt,self.encounter_event(obs,'4')],checkpoint=first['checkpoint'],composed=True,sequence='4')
+        action=step['output']['action']
+        self.assertEqual(action['capability'],'approach_target')
+        self.assertEqual(action['minRangeYards'],17)
+        self.assertEqual(action['clearanceYards'],17)
+        self.assertEqual(action['clearanceTargetGuids'],['77','78'])
+        self.assertNotEqual(action['capability'],'cast_spell')
+
+    def test_geometry_deadline_stops_owned_motion_before_releasing_lease(self):
+        obs,first,receipt=self.geometry_acquired()
+        obs['players']['4']['moving']=True
+        stop=self.run_policy([receipt,self.encounter_event(obs,'4')],checkpoint=first['checkpoint'],composed=True,sequence='4',clock_ms=10000)
+        self.assertEqual(stop['output']['action']['capability'],'stop_movement')
+        self.assertEqual(stop['output']['action']['targetGuid'],'4')
+        obs['players']['4']['moving']=False
+        stopped=dict(kind='action_result',receipt=dict(action_id='42',outcome='settled_unverified',
+            payload=dict(capability='stop_movement',target_guid='4',visit_id='1')))
+        done=self.run_policy([stopped,self.encounter_event(obs,'5')],checkpoint=stop['checkpoint'],composed=True,sequence='5',clock_ms=10001)
+        self.assertEqual(done['output']['action']['capability'],'movement_owner')
+        self.assertEqual(done['output']['action']['mode'],'release')
+        self.assertEqual(done['checkpoint']['data']['spellInvocation']['data']['last']['phase'],'positioning_timeout')
+
+    def test_geometry_requires_positive_minimum_and_unknown_pending_is_not_replayed(self):
+        obs=self.geometry_obs()
+        for minimum in (0,-1):
+            denied=self.run_policy([self.encounter_event(obs),self.geometry_request(dict(minRangeYards=minimum,maxRangeYards=25))],composed=True)
+            self.assertNotEqual(denied['output'].get('action',{}).get('capability'),'cast_spell')
+        obs,first,receipt=self.geometry_acquired()
+        pending=[dict(action_id='pending-motion',outcome='unknown')]
+        held=self.run_policy([receipt,self.encounter_event(obs,'4')],checkpoint=first['checkpoint'],pending=pending,composed=True,sequence='4')
+        self.assertNotEqual(held['output'].get('action',{}).get('capability'),'cast_spell')
+        self.assertNotEqual(held['output'].get('action',{}).get('capability'),'approach_target')
+        obs['navigation']['motionUnconfirmed']=True
+        uncertain=self.run_policy([receipt,self.encounter_event(obs,'5')],checkpoint=first['checkpoint'],composed=True,sequence='5',clock_ms=10000)
+        self.assertNotEqual(uncertain['output'].get('action',{}).get('capability'),'cast_spell')
+        self.assertNotEqual(uncertain['output'].get('action',{}).get('mode'),'release')
+        self.assertIn('current',uncertain['checkpoint']['data']['spellInvocation']['data'])
+
     def prepared_cast(self):
         obs=self.stationary_obs()
         acquired=self.run_policy([self.encounter_event(obs),self.stationary_request()],composed=True)

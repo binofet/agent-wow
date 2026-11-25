@@ -552,8 +552,8 @@ local function decide_encounter(frame)
             options=commands.ranged_options(obs,ranged_config,target,options)
             if not options then return end
             -- The old actuator cannot admit a band-constrained approach.
-            -- Final stance arbitration may retain only an already-stationary,
-            -- geometrically safe real ranged cast; it never closes to cast.
+            -- Final stance arbitration uses bounded physics-checked ground
+            -- inputs instead; never send a max-radius-only approach here.
             if obs.hostTargetRangeBandSupported~=true and (obs.targets or {})[target] and obs.targets[target].entry==ranged_config.creatureEntry then return end
         end
         local result = movement.for_spell(obs, state.sequence, target, rank, options)
@@ -563,7 +563,9 @@ local function decide_encounter(frame)
     -- Pending/native uncertainty above remains fenced; final outer arbitration
     -- alone commits the winner, so a close/release/roll cannot lose this task.
     if spell_invocation then
-        local requested,status=spell_invocation.propose(frame,obs,state.sequence)
+        local requested,status=spell_invocation.propose(frame,obs,state.sequence,{movement=movement,ranged=ranged_config and function(current,target,options)
+            return commands and commands.ranged_options and commands.ranged_options(current,ranged_config,target,options)
+        end})
         out.spellInvocation=status
         if requested then out.action=requested;return out end
     end
@@ -669,6 +671,7 @@ local function decide_encounter(frame)
     end
     local focus = out.focusGuid and obs.targets[out.focusGuid]
     if focus and focus.positionKnown == true then
+        out.rangedOffenseEligible=not (task_view and task_view.hold)
         local available = damage_spell(obs, focus, {require_ready=false})
         local rank = available and (obs.spells or {})[tostring(available)]
         -- Begin a legal swing before pursuing a positional weapon strike.
@@ -875,7 +878,8 @@ local function decide(frame)
         if cancel then out.action=cancel;out.followFormation=nil;out.portalCatchup=nil end
     end
     if commands and commands.ranged_filter and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence then
-        commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status)
+        commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status,out.rangedOffenseEligible and damage_spell or nil)
+        if ranged_config and transient_tasks and not task_support_action and not transient_tasks.allow(task_view,current,out.action) then out.action=nil end
     end
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end

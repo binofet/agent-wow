@@ -59,6 +59,9 @@ class BuddyLifecycleTests(unittest.TestCase):
         self.socket = self.patch(buddy.socket, "socket")
         self.ready_pid = 12345
         self.spawn = self.patch(buddy.subprocess, "Popen", side_effect=self.spawn_body)
+        self.startup_rpc = self.patch(buddy, "PolicyStartupRPC")
+        self.startup_rpc.return_value.call.side_effect = lambda *args: dict(
+            selfGuid=str(buddy.CHARACTER_GUID or 1), sessionId="startup-session")
 
         # A harmless real descriptor exercises the launcher's close() handling.
         # No actual pidfd or process signal is created, even on Linux CI runners.
@@ -971,6 +974,7 @@ class BuddyLifecycleTests(unittest.TestCase):
         selected.parent.mkdir()
         selected.write_text("released executable")
         selected.chmod(0o700)
+        (selected.parent / "mage.lua").write_text("return {}")
         release = {
             "binary": "release/agent-wow", "moduleDir": "release/modules",
             "policyFile": "release/mage.lua",
@@ -1002,6 +1006,37 @@ class BuddyLifecycleTests(unittest.TestCase):
         self.send_signal.side_effect = self.confirmed_exit
         self.assertEqual(buddy.stop(), 0)
         self.send_signal.assert_called_once()
+
+    def test_confirmed_self_edit_is_selected_on_next_owned_launch_only(self):
+        from test_self_edit import edit
+        self.profile()
+        policy=buddy.ROOT/'profile.lua';policy.write_text('return {}')
+        sidecar=buddy.PID_FILE.parent/'runtime-release.json'
+        sidecar.write_text(json.dumps(dict(policyFile=str(policy))))
+        self.profile()
+        self.launch()
+        class RPC:
+            source='return {}'
+            def call(self,method,params):
+                if method=='session.reload_policy':self.source=params['source']
+                return dict(characterGuid='10',sessionId='startup-session',source=self.source,revision=edit.digest(self.source))
+        learned='return {decide=function() return {improved=true} end}'
+        result=edit.edit('apply',10,'startup-session',RPC(),learned,edit.digest('return {}'),buddy.ROOT/'data/self-edit')
+        self.assertTrue(result['startupBindingConfirmed'])
+        self.send_signal.side_effect=self.confirmed_exit
+        self.assertEqual(buddy.stop(),0)
+        def respawn(*args, **kwargs):
+            self.alive=True
+            return self.spawn_body(*args, **kwargs)
+        self.spawn.side_effect=respawn
+        self.profile()
+        self.startup_rpc.return_value.call.side_effect=lambda *args:dict(selfGuid='10',sessionId='new-session')
+        self.launch()
+        selected=Path(self.spawn_arguments[1]['env']['AGENT_WOW_POLICY_FILE'])
+        self.assertEqual(selected.read_text(),learned)
+        self.assertEqual(selected.name,edit.digest(learned)+'.lua')
+        self.assertEqual(policy.read_text(),'return {}')
+        self.assertEqual(json.loads((buddy.ROOT/'data/self-edit/10/launch.json').read_text())['sessionId'],'new-session')
 
     def test_profile_release_explicit_paths_win_and_private_storage_is_optional(self):
         self.profile()
