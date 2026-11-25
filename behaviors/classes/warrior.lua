@@ -67,6 +67,12 @@ function M.choose(frame,obs,target,sequence,intent,active_melee)
   if not selected then return end
   local row=selected.row
   if (number(self.power) or 0)<(number(row.cost) or math.huge) or not self_only and not range(self,target,row) then return end
+  if not self_only and family~=355 then
+   local orientation=number(self.orientation or 0)
+   if not orientation or ((target.x or 0)-(self.x or 0))*math.cos(orientation)+((target.y or 0)-(self.y or 0))*math.sin(orientation)<0 then return end
+   -- Yield to the existing approach/face actuator instead of repeatedly
+   -- sending an in-range weapon ability while turned away.
+  end
   if (family==23922 or family==20243 or family==2565) and not shield(obs) then return end
   if family==5308 and (target.healthKnown~=true or (target.maxHealth or 0)<=0 or target.health>(target.maxHealth*0.20)) then return end
   if family==78 and (number(self.power) or 0)-(number(row.cost) or 0)<M.tuning.heroic_strike_reserve then return end

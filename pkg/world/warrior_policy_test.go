@@ -70,7 +70,7 @@ func TestWarriorProtectionUsesKnownRankRageAndExistingJournalSoloOrParty(t *test
 	}
 }
 func TestWarriorSafetyRageShieldAndProtectedTarget(t *testing.T) {
-	for _, mode := range []string{"rage", "shield", "protected", "unlearned", "not-ready", "other-class", "overflow", "outside-range"} {
+	for _, mode := range []string{"rage", "shield", "protected", "unlearned", "not-ready", "other-class", "overflow", "outside-range", "not-facing"} {
 		t.Run(mode, func(t *testing.T) {
 			p, obs := warriorPolicy(t, `{spec="protection",role="tank"}`)
 			if mode != "shield" {
@@ -92,6 +92,8 @@ func TestWarriorSafetyRageShieldAndProtectedTarget(t *testing.T) {
 				obs.TargetProtectionOverflow = true
 			case "outside-range":
 				obs.Targets[fallbackGUID(fallbackNPC)].X = 20
+			case "not-facing":
+				obs.Players["4"].Orientation = 3.14159265
 			}
 			out := p.decide(p.observe(obs)).Output
 			a, _ := out["action"].(map[string]any)
