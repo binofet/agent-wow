@@ -640,6 +640,8 @@ class DirectTools:
             return dict(sessionId=self.session_id, characterGuid=self.self_guid,
                         revision=sha(result["source"].encode()), saved=saved,
                         sourceKnown=True, gameplayDispatched=False)
+        if self.self_guid != "87":
+            result["pureTestContract"] = self._policy_test_contract()
         return self._project(result, args, force=True, force_keys=("source",))
 
     def _policy_apply(self, args):
@@ -686,16 +688,102 @@ class DirectTools:
                     "unique_attached_literal_required: old text must occur exactly once; read a narrower policy_show source page")
             source = source.replace(edit["old"], edit["new"], 1)
         require(0 < len(source.encode()) <= self.max_bytes, "patched_source_size_bound")
-        tested = self._evaluate_source(source.encode(), args.get("frame"))
+        require(("frame" in args) != ("test" in args),
+                "choose_exact_frame_OR_test: example test={kind:idle}; frame={} is not a session frame")
+        if "frame" in args:
+            tested = self._evaluate_source(source.encode(), args["frame"])
+            coverage = dict(kind="explicit_frame", eventCallbacksDelivered=False,
+                            meaning="One direct decide(frame) call with your exact frame, unchanged.")
+        else:
+            tested, coverage = self._policy_fixture(source.encode(), args["test"])
         result = dict(expectedRevision=expected, targetRevision=sha(source.encode()),
                       edits=len(edits), sourceBytes=len(source.encode()),
-                      tested=self._project(tested, {}), applied=False, gameEffectClaimed=False)
+                      tested=self._project(tested, {}), testCoverage=coverage,
+                      pureTestContract=self._policy_test_contract(),
+                      applied=False, gameEffectClaimed=False)
         if tested.get("valid") is not True or args.get("apply", False) is False:
             return result
         self._authorise()
         result["application"] = self._apply_policy_source(source, expected, "policy_patch")
         result["applied"] = True
         return result
+
+    def _policy_test_contract(self):
+        return dict(identity=dict(sessionId=self.session_id, selfGuid=self.self_guid),
+            idleFrame=dict(session_id=self.session_id, cursor="0", pending=[], events=[],
+                           input=dict(kind="idle"), clock=dict(monotonicMs=0, unixMs=0)),
+            idleExample=dict(test=dict(kind="idle")),
+            sequenceExample=dict(test=dict(kind="sequence", steps=[dict(
+                events=[dict(kind="encounter_observation", sequence="1", value={})],
+                frame=dict(input=dict(kind="encounter", observationSequence="1")))])),
+            semantics="Pure synthetic test only; no live facts, reservations, native actions or effects. "
+                "Idle coverage checks initialization and one idle decide, not requested behavior. "
+                "Sequence coverage calls the candidate's real on_event then decide in the same fresh VM; "
+                "provide your full synthetic observation/event values, frames, pending and clocks. "
+                "The empty observation in the example is a shape placeholder, not an adequate behavior fixture. "
+                "Synthetic receipts/pending are caller inputs, not real host action or replay verification.")
+
+    def _policy_fixture(self, source, test):
+        require(isinstance(test, dict) and test.get("kind") in ("idle", "sequence"),
+                "pure_test_kind_idle_or_sequence_required")
+        if test["kind"] == "idle":
+            require(set(test) == {"kind"}, "idle_test_has_only_kind")
+            return self._evaluate_source(source, self._policy_test_contract()["idleFrame"]), dict(
+                kind="idle", decideCalls=1, eventCallbacksDelivered=False, behaviorExercised=False,
+                meaning="Initialization and idle decide only; no encounter behavior or live effect verified.")
+        require(set(test) == {"kind", "steps"} and isinstance(test["steps"], list)
+                and 0 < len(test["steps"]) <= 32, "synthetic_sequence_requires_1_to_32_steps")
+        steps, event_count, cursor = [], 0, "0"
+        for step in test["steps"]:
+            require(isinstance(step, dict) and set(step) <= {"events", "frame"}, "test_step_events_and_frame_only")
+            events, overrides = step.get("events", []), step.get("frame", {})
+            require(isinstance(events, list) and len(events) <= 64 and isinstance(overrides, dict)
+                    and set(overrides) <= {"session_id", "cursor", "pending", "input", "clock"},
+                    "synthetic_step_frame_or_events_invalid")
+            frame = self._policy_test_contract()["idleFrame"]
+            frame.update(copy.deepcopy(overrides))
+            require(frame["session_id"] == self.session_id and isinstance(frame["pending"], list)
+                    and isinstance(frame["input"], dict) and isinstance(frame["clock"], dict),
+                    "synthetic_step_requires_bound_session_object_input_clock_and_pending_array")
+            for event in events:
+                require(isinstance(event, dict) and isinstance(event.get("kind"), str) and bool(event["kind"])
+                        and isinstance(event.get("sequence"), str)
+                        and re.fullmatch(r"[1-9][0-9]{0,19}", event["sequence"])
+                        and int(event["sequence"]) < 2**64, "synthetic_event_requires_kind_and_positive_string_sequence")
+            event_count += len(events)
+            if events:
+                cursor = events[-1]["sequence"]
+            if "cursor" not in overrides:
+                frame["cursor"] = cursor
+            steps.append(dict(events=copy.deepcopy(events), frame=frame))
+        require(event_count <= 256, "synthetic_sequence_event_bound")
+        # Existing pure evaluator, one fresh VM, no actual Session/controller or
+        # action reservation. Source remains intact inside a lexical closure.
+        wrapped = b"local candidate=(function()\n" + source + b"\nend)()\n" + b"""
+return {decide=function(spec)
+    local results={}
+    for _,step in ipairs(spec.steps) do
+        for _,event in ipairs(step.events) do
+            assert(type(candidate.on_event)=='function','candidate has no on_event callback')
+            assert(candidate.on_event(event)==true,'on_event must return true')
+        end
+        local decision=candidate.decide(step.frame)
+        assert(type(decision)=='table','decide must return a JSON object table')
+        for key in pairs(decision) do
+            assert(type(key)=='string','decide must return a JSON object table')
+        end
+        results[#results+1]=decision
+    end
+    return {decisions=results}
+end}
+"""
+        tested = self._evaluate_source(wrapped, dict(steps=steps))
+        tested["testHarnessSHA256"] = tested["sourceSHA256"]
+        tested["sourceSHA256"] = sha(source)
+        tested["candidateSourceLineOffset"] = 1
+        return tested, dict(kind="synthetic_event_sequence", stepsRequested=len(steps), eventsRequested=event_count,
+            callbacksCompleted=tested.get("valid") is True, hostReservationReplayVerified=False,
+            meaning="Real candidate callbacks in one pure VM using caller synthetic inputs; inspect each decision. No live effect.")
 
     def _policy_input(self, args):
         self._authorise()
@@ -1672,8 +1760,10 @@ class DirectTools:
                 ("policy_input", "Deliver one structured command to an already-present Lua handler. Delivery is not game success; no arbitrary receipt/event injection.", {"value": obj}, ["value"]),
             ]
             if self.self_guid != "87":
-                specs.append(("policy_patch", "Patch your CURRENT attached complete Lua bundle without filesystem paths or copying it. Read policy_show metadata for expected_revision and source pages to obtain unique literal old text. Supply edits=[{old,new}] and an explicit pure evaluator frame. Default apply=false previews/tests; apply=true tests then uses the SAME body-bound safe CAS reload preserving pending state. No standalone replacement source, native action or automatic retry. Failed tests do not apply; UNKNOWN must be reconciled, never replayed.",
-                    {"expected_revision": string, "edits": {"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","properties":{"old":string,"new":string},"required":["old","new"],"additionalProperties":False}}, "frame":obj,"apply":{"type":"boolean"}}, ["expected_revision","edits","frame"]))
+                specs.append(("policy_patch", "Patch your CURRENT attached complete Lua bundle without filesystem paths or copying it. Read policy_show for expected_revision, unique literal old text and pureTestContract. Supply edits=[{old,new}] and EXACTLY ONE of frame or test. frame is passed unchanged to one pure decide(frame); {} is not a valid session frame for the encounter bundle. Easy initialization/idle check: test={kind:'idle'} uses the binding-correct idleFrame shown by policy_show; this does NOT exercise requested behavior. For real synthetic callback coverage use test={kind:'sequence',steps:[{events:[{kind:'encounter_observation',sequence:'1',value:<your full synthetic observation>}],frame:{input:{kind:'encounter',observationSequence:'1'}}}]}; subsequent steps replay events/decisions in the same fresh VM. Override pending/cursor/clock explicitly when needed. No actual Session reservations, transport or game effects are tested. Default apply=false previews/tests; apply=true tests then uses the SAME body-bound safe CAS reload preserving pending state. Failed tests never apply; UNKNOWN must be reconciled, never replayed.",
+                    {"expected_revision": string, "edits": {"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","properties":{"old":string,"new":string},"required":["old","new"],"additionalProperties":False}}, "frame":obj,
+                     "test":{"type":"object","properties":{"kind":{"type":"string","enum":["idle","sequence"]},"steps":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"events":{"type":"array","maxItems":64,"items":obj},"frame":obj},"additionalProperties":False}}},"required":["kind"],"additionalProperties":False},
+                     "apply":{"type":"boolean"}}, ["expected_revision","edits"]))
             if self.self_guid == "87" and self.request_id and self.gm_allowed() is True:
                 specs += [("gm_task_start", "Optional ordered Lua recovery/regroup task, not a prerequisite for gm_execute. Goal uses current observed original roster/bindings; one task per owner request, never overwrite/replay. Inspect status for actual arrivals/health/cleanup.", {"goal": {"type":"object", "description":"Recovery goal: members=[{guid,name,rpcUrl?}] for the currently observed original party, plus destination={mapId,x,y,z,tolerance?} OR player={guid,name,tolerance?}. Companion rpcUrl must match current bindings. The shared Lua initializer validates admission before any hold or child starts."}}, ["goal"]),
                           ("gm_task_cancel", "Request existing task's observed cleanup. Accepts a direct task ID or the exact gm_current_task ID; never a path. This is not a completion receipt.", {"task_id": string}, ["task_id"]),
