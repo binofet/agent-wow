@@ -598,17 +598,40 @@ class DirectTools:
         self._catalog()
         if args.get("find") is not None:
             text = args["find"]
-            require(isinstance(text, str) and bool(text), "nonempty_attached_literal_find_required")
-            require(not {"save_as", "expected_sha256", "path", "offset"} & set(args),
-                    "literal_find_uses_its_own_source_offset")
+            require(isinstance(text, str) and 0 < len(text) <= 1024, "bounded_attached_literal_find_required")
+            require(not {"save_as", "expected_sha256"} & set(args),
+                    "literal_find_is_read_only_use_policy_show_save_as_separately")
+            require(args.get("path", []) in ([], ["source"]),
+                    "literal_find_path_must_be_empty_or_source_example_path_source_find_function")
             require(result.get("sourceKnown") is True and isinstance(result.get("source"), str),
                     "attached_source_unavailable")
             source = result["source"]
-            match = source.find(text)
+            offset, limit = args.get("offset", 0), args.get("limit", 4096)
+            require(type(offset) is int and 0 <= offset <= len(source) and type(limit) is int and 0 < limit <= 4096,
+                    "literal_find_requires_character_offset_0_to_source_length_and_limit_1_to_4096")
+            match = source.find(text, offset)
+            next_match = match + len(text) if match >= 0 else None
+            modules = list(dict.fromkeys(re.findall(r"(?m)^local ([A-Za-z_][A-Za-z0-9_]{0,127}) = \(function\(\)", source)))
+            functions = list(dict.fromkeys(re.findall(r"(?m)^\s*(?:local )?function ([A-Za-z_][A-Za-z0-9_.:]{0,127})\s*\(", source)))
+            examples = dict(readSource=dict(path=["source"], offset=offset, limit=4096))
+            if match >= 0:
+                examples["readMatch"] = dict(path=["source"], offset=match, limit=4096)
+                examples["findNext"] = dict(path=["source"], find=text, offset=next_match, limit=4096)
+            elif modules:
+                examples["findDiscoveredModule"] = dict(path=["source"], find="local "+modules[0]+" =", offset=0, limit=4096)
+            elif functions:
+                examples["findDiscoveredFunction"] = dict(path=["source"], find="function "+functions[0], offset=0, limit=4096)
             return dict(sessionId=self.session_id, characterGuid=self.self_guid,
                         revision=sha(source.encode()), matches=source.count(text),
+                        searchedFromOffset=offset, matchesAfterOffset=source.count(text, offset),
+                        nextSearchOffset=next_match, sourceCharacters=len(source), examples=examples,
+                        searchSemantics="Exact case-sensitive literal, character offsets; matches is whole-source count. "
+                            "No match means this literal is absent from the searched suffix, not that a capability is missing. "
+                            "Generic Lua may use spell IDs or shared functions rather than spell names. Textual declarations below are read-only discovery, not parsed capability proof.",
+                        discoveredDeclarations=dict(modules=modules[:40], functions=functions[:16],
+                            modulesTruncated=len(modules)>40, functionsTruncated=len(functions)>16),
                         matchOffset=match if match >= 0 else None,
-                        sourcePage=_page(source, offset=max(0, match-160), limit=args.get("limit",4096)) if match >= 0 else None,
+                        sourcePage=_page(source, offset=max(0, match-min(160,max(0,limit-len(text)))), limit=limit) if match >= 0 else None,
                         gameplayDispatched=False)
         if args.get("save_as") is not None:
             require(result.get("sourceKnown") is True and isinstance(result.get("source"), str),
@@ -1569,7 +1592,7 @@ class DirectTools:
               "path": paging["path"], "offset": paging["offset"], "page_limit": paging["limit"]}, []),
             ("session_catalog", "Default: bounded method index. method selects its exact contract/dependencies; message selects any exact message type. JSON path/offset/limit expand/page large schemas; row.key appends to path.", {"method": string, "message": string, **paging}, []),
             ("read_observation", "Read only an installed effect=read RPC on this exact actor. Optional JSON path/offset/limit project and page its result, never a new endpoint. Large results return explicit expandable summaries.", {"method": string, "params": obj, **paging}, ["method", "params"]),
-            ("policy_show", "Default: accepted-source metadata, not the full bundle. save_as snapshots into owned workspace; use workspace_read to inspect it. Or path=['source'] with character offset/limit reads exact source pages. Empty expected_sha256 requires a new file. find searches a literal in attached source and returns its first bounded excerpt, match count and exact revision without a workspace file; limit bounds excerpt characters.", {"save_as": string, "expected_sha256": string, "find":string, **paging}, []),
+            ("policy_show", "Default: accepted-source metadata, not the full bundle. save_as snapshots into owned workspace; use workspace_read to inspect it. Or path=['source'] with character offset/limit reads exact source pages. Empty expected_sha256 requires a new file. find searches an exact case-sensitive literal starting at offset (default 0); path may be omitted, [] or ['source']. Example: {path:['source'],find:'function',offset:0,limit:4096}. Returns bounded excerpt, whole-source and remaining match counts, nextSearchOffset, exact revision and valid follow-up examples. Misses include discovered textual module/function names; generic spell logic may use IDs rather than spell names. limit bounds excerpt characters. Search is read-only and cannot combine with save_as.", {"save_as": string, "expected_sha256": string, "find":string, **paging}, []),
             ("spell_inspect", "Exact spell_id returns complete raw learned mechanics. spell_id=0 lists the book with bounded JSON path/offset/limit paging; classification is not cast availability.", {"spell_id": {"type": "integer", "minimum": 0}, **paging}, []),
             ("workspace_read", "Read owned Lua/JSON text and full SHA256; literal find/start_line locates a section. Large windows page content by character offset/limit; nextOffset continues without losing a long source line.", {"path": string, "start_line": {"type": "integer", "minimum": 1}, "max_lines": {"type": "integer", "minimum": 1, "maximum": 1000}, "find": string, "offset": paging["offset"], "limit": paging["limit"]}, ["path"]),
         ]
