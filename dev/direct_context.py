@@ -228,6 +228,15 @@ def ordinary_context(state):
         if isinstance(value, (dict, list, str)):
             descriptor["capturedCount"] = len(value)
         result[key] = descriptor
+    omitted = []
+    for row in result["contextProjection"]["omittedPaths"]:
+        try:
+            if _at(result, row["path"]) == _at(source, row["path"]):
+                continue  # A required section restored whole is not deferred.
+        except (KeyError, IndexError, TypeError):
+            pass
+        omitted.append(row)
+    result["contextProjection"]["omittedPaths"] = omitted
     result["contextProjection"].update(mode="ordinary_factual_brief", byteLimit=None,
         note="Compact factual presentation only. Deferred data is not absent or unavailable. "
              "context_read accesses the complete immutable snapshot at the indicated paths; "

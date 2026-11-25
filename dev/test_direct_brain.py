@@ -718,6 +718,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
         self.assertLess(metrics["contextBytes"],metrics["fullContextBytes"]//2)
         self.assertEqual(brief["current_request"],request)
         self.assertEqual(brief["agentContext"],state["agentContext"])
+        self.assertNotIn(["agentContext"],[row["path"] for row in brief["contextProjection"]["omittedPaths"]])
         self.assertEqual(brief["controls"],state["controls"])
         self.assertEqual(brief["observations"]["owner"],state["observations"]["owner"])
         creature=brief["observations"]["nearbyCreatures"][0]
