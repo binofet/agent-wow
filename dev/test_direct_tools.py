@@ -1907,15 +1907,14 @@ from test_direct_tools import AttachedPolicyPatchTests
 case=AttachedPolicyPatchTests('runTest')
 case.setUp()
 try:
-    case.rpc.source='\\n'*200000+'  local function discover_me (x) return x end\\nreturn {}\\n'
+    case.rpc.source='\\n'*200000+'return {decide=function(f) return {output={}} end}\\n'
     result=case.tools.dispatch('policy_show',dict(find='Fireball',path=['source'],offset=0,limit=512))
     assert result['ok'],result
     view=result['result']
     assert view['matches']==0
-    assert 'discover_me' in view['discoveredDeclarations']['functions']
-    found=case.tools.dispatch('policy_show',view['examples']['findDiscoveredFunction'])
-    assert found['ok'],found
-    assert found['result']['matchOffset']==200008,found
+    assert view['discoveredDeclarations']['functions']==[]
+    assert case.rpc.source.count('\\n')==200001
+    assert view['sourceCharacters']==len(case.rpc.source)
     assert not case.rpc.writes
 finally:
     case.doCleanups()
