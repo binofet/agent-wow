@@ -2,9 +2,12 @@
 -- A deliberate `engage {pull=true}` overrides this default for that exact GUID.
 -- The exact current explicit cast_spell proposal also wins; automatic casts do not.
 -- These are roles and observed hazards, never inferred pack links or aggro.
--- Pull admission remains a standing prior. Automatic positioning activates only
--- once per body/map/visit for durationMs; expiry/cancel needs a new explicit
--- ranged_only order to renew. A new visit may activate its own finite stance.
+-- Admission and automatic positioning are standing learned defaults on current
+-- matching observations. durationMs bounds each native movement lease, not the
+-- lifetime of this knowledge. Current source tuning is read for each default
+-- decision. Explicit ranged_only orders remain separate finite overlays; their
+-- expiry resumes the default rather than renewing the user's order. Cancel this
+-- prior ID to suppress its automatic positioning in the current body/map/visit.
 local rules = {
     {id="maraudon_sludge_backline", mapId=349, creatureEntry=12222,
      tankGuid="3", minRangeYards=14, maxRangeYards=36, clearanceYards=2,

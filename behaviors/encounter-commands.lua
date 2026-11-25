@@ -125,7 +125,7 @@ local function on_event(event)
         if value.cancel==true or value.enabled==false then
             for _,prior in ipairs(encounter_priors and encounter_priors.rules or {}) do
                 if value.id==prior.id and state.session and guid(state.selfGuid) and guid(state.visitId) and state.mapId==prior.mapId then
-                    state.rangedPrior={id=value.id,sessionId=state.session,selfGuid=state.selfGuid,mapId=state.mapId,visitId=state.visitId}
+                    state.rangedPrior={id=value.id,sessionId=state.session,selfGuid=state.selfGuid,mapId=state.mapId,visitId=state.visitId,cancelled=true}
                 end
             end
             if state.rangedOnly and state.rangedOnly.id==value.id then state.rangedOnly=nil end
@@ -144,7 +144,7 @@ local function on_event(event)
                value.minRangeYards<=0 or value.clearanceYards<0 or value.maxRangeYards-value.minRangeYards<=2*value.clearanceYards then
                 state.rangedStatus={id=value.id,applied=false,active=false,phase="invalid_directive"};return true
             end
-            local next={id=value.id,visitId=value.visitId}
+            local next={id=value.id,visitId=value.visitId,origin="explicit"}
             for _,key in ipairs(fields) do next[key]=value[key] end
             local same=state.rangedOnly and state.rangedOnly.id==next.id and state.rangedOnly.visitId==next.visitId
             if same then for _,key in ipairs(fields) do if state.rangedOnly[key]~=next[key] then same=false end end end
@@ -508,7 +508,14 @@ local function import_state(saved)
     end
     local prior=saved.data.rangedPrior
     if prior~=nil and (type(prior)~="table" or type(prior.id)~="string" or type(prior.sessionId)~="string" or
-       not guid(prior.selfGuid) or not guid(prior.visitId) or type(prior.mapId)~="number" or prior.mapId<0 or prior.mapId%1~=0) then return false end
+       not guid(prior.selfGuid) or not guid(prior.visitId) or type(prior.mapId)~="number" or prior.mapId<0 or prior.mapId%1~=0 or
+       prior.cancelled~=nil and type(prior.cancelled)~="boolean") then return false end
+    local automatic=saved.data.rangedAutomatic
+    if automatic~=nil and (type(automatic)~="table" or type(automatic.id)~="string" or type(automatic.sessionId)~="string" or
+       not guid(automatic.selfGuid) or not guid(automatic.visitId) or type(automatic.sequence)~="string" or
+       type(automatic.mapId)~="number" or automatic.mapId<0 or automatic.mapId>4294967295 or automatic.mapId%1~=0 or
+       type(automatic.observedAt)~="number" or automatic.observedAt~=automatic.observedAt or math.abs(automatic.observedAt)==math.huge or
+       type(automatic.observedUnixMs)~="number" or automatic.observedUnixMs~=automatic.observedUnixMs or math.abs(automatic.observedUnixMs)==math.huge) then return false end
     local ground=saved.data.rangedGround
     if ground~=nil and (type(ground)~="table" or type(ground.sessionId)~="string" or not guid(ground.selfGuid) or not guid(ground.visitId) or type(ground.key)~="string" or type(ground.blocked)~="table" or ground.operation~=nil and type(ground.operation)~="table" or ground.awaiting~=nil and type(ground.awaiting)~="table") then return false end
     if ground then
@@ -551,25 +558,43 @@ local function ranged_stance(obs,frame)
             state.rangedOnly=pending;state.rangedStatus=nil
         end
     end
-    -- One finite automatic activation per exact body/map/visit. Expiry or
-    -- cancellation never silently renews it; a fresh explicit order can.
-    local prior=encounter_priors and encounter_priors.rule(obs)
-    local seen=state.rangedPrior
-    local same=prior and seen and seen.id==prior.id and seen.sessionId==obs.sessionId and seen.selfGuid==obs.selfGuid and seen.mapId==obs.mapId and seen.visitId==obs.visitId
-    if not state.rangedOnly and prior and not same then
-        state.rangedPrior={id=prior.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId}
-        state.rangedOnly={id=prior.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId,
-            creatureEntry=prior.creatureEntry,minRangeYards=prior.minRangeYards,maxRangeYards=prior.maxRangeYards,
-            clearanceYards=prior.clearanceYards,durationMs=prior.durationMs,expiresAt=now+prior.durationMs,expiresUnixMs=unix+prior.durationMs}
-    end
+    -- Explicit orders (including legacy rows whose origin is ambiguous) remain
+    -- finite overlays. Never rewrite their tuning or extend their deadline.
     local row=state.rangedOnly
     if row and (row.sessionId~=obs.sessionId or row.selfGuid~=obs.selfGuid or row.mapId~=obs.mapId or row.visitId~=obs.visitId or now>=row.expiresAt or unix>=row.expiresUnixMs) then
         state.rangedStatus={id=row.id,applied=true,active=false,phase=(now>=row.expiresAt or unix>=row.expiresUnixMs) and "expired" or "scope_ended"}
         state.rangedOnly=nil;row=nil
     end
-    if not row then return nil,state.rangedStatus or {applied=false,active=false,phase="not_requested"} end
-    return row,{id=row.id,applied=true,active=true,phase="applied",creatureEntry=row.creatureEntry,mapId=row.mapId,visitId=row.visitId,
-        minRangeYards=row.minRangeYards,maxRangeYards=row.maxRangeYards,clearanceYards=row.clearanceYards,remainingMs=math.max(0,row.expiresUnixMs-unix),rejected=state.rangedStatus}
+    if row then
+        return row,{id=row.id,origin=row.origin or "legacy_finite_overlay",applied=true,active=true,phase="applied",creatureEntry=row.creatureEntry,mapId=row.mapId,visitId=row.visitId,
+            minRangeYards=row.minRangeYards,maxRangeYards=row.maxRangeYards,clearanceYards=row.clearanceYards,remainingMs=math.max(0,row.expiresUnixMs-unix),rejected=state.rangedStatus}
+    end
+    local prior=encounter_priors and encounter_priors.rule(obs)
+    if not prior then return nil,state.rangedStatus or {applied=false,active=false,phase="not_requested"} end
+    local seen=state.rangedPrior
+    local same=seen and seen.id==prior.id and seen.sessionId==obs.sessionId and seen.selfGuid==obs.selfGuid and seen.mapId==obs.mapId and seen.visitId==obs.visitId
+    -- Retain a visible legacy cancellation as well as the new explicit marker.
+    local cancelled=same and (seen.cancelled==true or seen.cancelled==nil and state.rangedStatus and state.rangedStatus.id==prior.id and state.rangedStatus.phase=="cancelled")
+    if cancelled then return nil,{id=prior.id,origin="learned_prior",applied=true,active=false,phase="cancelled"} end
+    local capture=state.rangedAutomatic
+    if not capture or capture.id~=prior.id or capture.sessionId~=obs.sessionId or capture.selfGuid~=obs.selfGuid or capture.mapId~=obs.mapId or capture.visitId~=obs.visitId or capture.sequence~=tostring(state.sequence) then
+        capture={id=prior.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId,
+            sequence=tostring(state.sequence),observedAt=now,observedUnixMs=unix}
+        state.rangedAutomatic=capture
+    end
+    -- The learned default stands on matching observation ingress. Its duration
+    -- bounds each proposed native lease, not the lifetime of learned knowledge.
+    -- Committed/UNKNOWN ownership keeps its own horizon in rangedHold.
+    row={id=prior.id,origin="learned_prior",sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId,
+        creatureEntry=prior.creatureEntry,minRangeYards=prior.minRangeYards,maxRangeYards=prior.maxRangeYards,
+        clearanceYards=prior.clearanceYards,durationMs=prior.durationMs,
+        expiresAt=capture.observedAt+prior.durationMs,expiresUnixMs=capture.observedUnixMs+prior.durationMs}
+    if now>=row.expiresAt or unix>=row.expiresUnixMs then
+        return nil,{id=row.id,origin="learned_prior",applied=true,active=false,phase="awaiting_fresh_prior_observation"}
+    end
+    return row,{id=row.id,origin="learned_prior",standing=true,applied=true,active=true,phase="applied",creatureEntry=row.creatureEntry,mapId=row.mapId,visitId=row.visitId,
+        minRangeYards=row.minRangeYards,maxRangeYards=row.maxRangeYards,clearanceYards=row.clearanceYards,
+        leaseBudgetMs=prior.durationMs,leaseProposalUntilUnixMs=row.expiresUnixMs}
 end
 local function ranged_targets(obs,row)
     local ids,nearest,nearest_distance={},nil,nil
@@ -781,7 +806,11 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
     local facingOnly=not unsafe and distance>=lower and distance<=upper
     if facingOnly then length=0.014 end
     local duration=math.max(1,math.min(500,math.floor(length/14*1000)))
-    if type(status.remainingMs)~="number" or duration>=status.remainingMs then status.phase="ground_input_deadline";return end
+    local hold=state.rangedHold
+    local now=frame.clock and frame.clock.unixMs
+    local remaining=hold and type(hold.untilUnixMs)=="number" and type(now)=="number" and
+        math.min(hold.untilUnixMs,row.expiresUnixMs)-now
+    if type(remaining)~="number" or duration>=remaining then status.phase="ground_input_deadline";return end
     length=14*duration/1000
     local best,bestScore
     for i=0,31 do
@@ -826,11 +855,51 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
     status.phase=unsafe and "withdrawing_ground_input" or facingOnly and "facing_ground_input" or "approaching_ground_input"
 end
 
-local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,directed_pull)
+-- Only the automatic default yields to explicit travel. Unknown geometry or an
+-- engaged matching hazard cannot establish the harmless, distant exception.
+local function ranged_travel_safe(obs,row,in_combat)
+    if not row or row.origin~="learned_prior" or in_combat then return false end
+    local self=(obs.players or {})[obs.selfGuid]
+    if not self or self.combatKnown~=true or self.inCombat==true or self.mapKnown~=true or
+       self.mapId~=obs.mapId or self.positionKnown~=true or self.positionInferred==true then return false end
+    for _,key in ipairs({"x","y","z"}) do
+        local value=self[key] or 0
+        if type(value)~="number" or value~=value or value==math.huge or value==-math.huge then return false end
+    end
+    local ids,nearest,distance,complete=ranged_targets(obs,row)
+    if not complete then return false end
+    if #ids>0 and (not distance or distance<=row.minRangeYards+row.clearanceYards) then return false end
+    for _,id in ipairs(ids) do
+        local npc=(obs.targets or {})[id]
+        if npc.positionInferred==true or npc.positionEstimated==true or npc.engaged==true or
+           (obs.engagement or {})[id] then return false end
+        for _,key in ipairs({"x","y","z"}) do
+            local value=npc[key] or 0
+            if type(value)~="number" or value~=value or value==math.huge or value==-math.huge then return false end
+        end
+        local attack=npc.attackObservation
+        if attack and attack.victimKnown==true and guid(attack.victimGuid) then return false end
+    end
+    return true
+end
+
+local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task_view,directed_pull)
     out.rangedStance=status
     if not row then
         if #frame.pending==0 then ranged_hold(obs,frame,out,nil,status,false) end
         return
+    end
+    local task=task_view and task_view.task
+    if row.origin=="learned_prior" and task and task.kind=="rally_to" then
+        if task_view.rangedTravelSafe then
+            status.phase="yielding_to_explicit_rally"
+            if #frame.pending==0 then ranged_hold(obs,frame,out,row,status,false) end
+            return
+        end
+        -- Let the rally settle its own movement/token before the default tries
+        -- to acquire. These exact proposals still commit through task custody.
+        if task.pausedForEncounter and task_view.action==out.action and out.action and
+           (out.action.capability=="stop_movement" or out.action.capability=="movement_owner") then return end
     end
     local ids,nearest,distance,complete=ranged_targets(obs,row)
     status.matchedTargets=#ids
@@ -861,7 +930,11 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,dire
             status.phase="stationary_friendly_support";status.positionReady=false;return
         end
         if not complete then out.action=nil;status.phase="clearance_facts_unavailable";return end
-        ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choose_spell);return
+        ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choose_spell)
+        if task and task.pausedForEncounter and status.phase=="withdrawing_ground_input" then
+            task_view.rangedWithdrawal=out.action
+        end
+        return
     end
     if (obs.navigation or {}).motionUnconfirmed==true then out.action=nil;status.phase="waiting_for_native_custody";status.positionReady=false;return end
     if action and (action.capability=="heal" or action.capability=="buff") and action.targetGuid==obs.selfGuid then return end
@@ -869,7 +942,9 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,dire
     if distance and distance<row.minRangeYards+row.clearanceYards then
         local options=ranged_options(obs,row,nearest,{rangeYards=row.maxRangeYards,requireLos=false})
         local result=options and movement and movement.decide(obs,sequence,nearest,options)
-        out.action=result and result.action;status.phase=result and result.phase or "withdrawal_unavailable";status.positionReady=false;return
+        out.action=result and result.action;status.phase=result and result.phase or "withdrawal_unavailable";status.positionReady=false
+        if task and task.pausedForEncounter then task_view.rangedWithdrawal=out.action end
+        return
     end
     if action and action.capability=="approach_target" then
         local options=ranged_options(obs,row,action.targetGuid,action)
@@ -909,4 +984,4 @@ local function ranged_finish(selected)
 end
 
 return {on_event=on_event, export_state=export_state, import_state=import_state,
-        queue_intent=queue_intent, control_action=control_action, ranged_stance=ranged_stance, ranged_options=ranged_options, ranged_filter=ranged_filter, ranged_finish=ranged_finish}
+        queue_intent=queue_intent, control_action=control_action, ranged_stance=ranged_stance, ranged_options=ranged_options, ranged_travel_safe=ranged_travel_safe,ranged_filter=ranged_filter, ranged_finish=ranged_finish}

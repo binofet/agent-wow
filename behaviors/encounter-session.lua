@@ -537,7 +537,10 @@ local function decide_encounter(frame)
     if transient_tasks then
         local current=host_can_decide(obs) and obs.hostOwned==true and frame.input.observationSequence==state.sequence and
             state.settledAt~=state.sequence and #frame.pending==0
-        task_view=transient_tasks.step(obs,frame,state.sequence,targets,in_combat,current)
+        local travel_safe=commands.ranged_travel_safe(obs,ranged_config,in_combat)
+        task_view=transient_tasks.step(obs,frame,state.sequence,targets,in_combat,current,
+            ranged_config and ranged_config.origin=="learned_prior" and not travel_safe)
+        task_view.rangedTravelSafe=travel_safe
         out.task=task_view.status
         if current and not alive(self) and task_view.action then
             out.action=task_view.action;return out
@@ -888,7 +891,7 @@ local function decide(frame)
         if cancel then out.action=cancel;out.followFormation=nil;out.portalCatchup=nil end
     end
     if commands and commands.ranged_filter and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence then
-        commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status,out.rangedOffenseEligible and damage_spell or nil,
+        commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status,out.rangedOffenseEligible and damage_spell or nil,task_view,
             transient_tasks and transient_tasks.pull_context and transient_tasks.pull_context(current) or nil)
         if ranged_config and transient_tasks and not task_support_action and not transient_tasks.allow(task_view,current,out.action) then out.action=nil end
     end
