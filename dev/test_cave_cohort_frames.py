@@ -1,13 +1,16 @@
 """Complete cave-cohort frames through the accepted-source JSON consumer.
 
-These fixtures exercise the Python Bridge's actual JSON/default runtime bounds.
+Full accepted actor-source queries use the maintained 1000ms query profile.
+Separate checks exercise the SAME shared selector at ordinary 5ms/32KiB.
 The coordinator does not use the Actions-only native structpb callback.
 """
 
 import copy
 import json
 from pathlib import Path
+import subprocess
 import unittest
+from unittest.mock import patch
 
 import test_cave_catchup as fixture
 from test_starter_objective_policy import BINARY, runtime
@@ -131,7 +134,7 @@ class CaveCohortProjectionTests(unittest.TestCase):
 
 
 @unittest.skipUnless(BINARY.is_file(), "set BUDDY_LUAPOLICY_TEST_BINARY to the local compiled bridge")
-class CaveCohortDefaultFrameTests(unittest.TestCase):
+class CaveCohortAcceptedQueryFrameTests(unittest.TestCase):
     def evaluate(self, party, frame):
         before = copy.deepcopy(frame)
         packed = runtime.packed(frame, runtime.MAX_INPUT)
@@ -145,12 +148,33 @@ class CaveCohortDefaultFrameTests(unittest.TestCase):
         self.assertLessEqual(len(runtime.packed(result, runtime.MAX_INPUT)), 32768)
         return result
 
-    def test_all_96_rows_and_75_slots_use_actual_accepted_export_at_ordinary_defaults(self):
+    def test_all_96_rows_and_75_slots_use_actual_accepted_export_query_profile(self):
         party, _, scenes, frame = full_frame()
         before = copy.deepcopy(scenes)
         self.assertEqual(self.evaluate(party, frame), {"status": "ready", "choice": {"kind": "none"}})
         self.assertEqual(scenes, before)
         self.assertEqual(party.events, [])
+
+    def test_real_query_command_has_explicit_1000ms_and_unchanged_default_json_bound(self):
+        party,_,_,frame=full_frame()
+        commands=[];actual_run=subprocess.run
+        def record(command,*args,**kwargs):
+            commands.append(list(command));return actual_run(command,*args,**kwargs)
+        with patch.object(subprocess,'run',side_effect=record):
+            self.assertEqual(self.evaluate(party,frame),{'status':'ready','choice':{'kind':'none'}})
+        self.assertEqual(len(commands),1)
+        command=commands[0]
+        self.assertEqual(command[command.index('--execution-ms')+1],'1000')
+        self.assertNotIn('--value-bytes',command)
+        self.assertEqual(party.events,[])
+
+    def test_query_runaway_still_refuses_before_any_native_action(self):
+        party,_,_,frame=full_frame()
+        party.source='return {starter_spell=function(input) while true do end end}'
+        with self.assertRaisesRegex(ValueError,r'1000ms configured'):
+            fixture.cave.policy.evaluate_accepted(party.rpcs[1],
+                {'sessionId':'body-1','characterGuid':'1'},frame)
+        self.assertEqual(party.events,[])
 
     def test_last_observer_last_row_changes_the_actual_priority_decision(self):
         party, worker, scenes, frame = full_frame()
@@ -206,6 +230,52 @@ class CaveCohortDefaultFrameTests(unittest.TestCase):
             with self.subTest(case=index):
                 self.assertEqual(self.evaluate(party, malformed), {"status": "invalid"})
         self.assertEqual(party.events, [])
+
+
+@unittest.skipUnless(BINARY.is_file(), "set BUDDY_LUAPOLICY_TEST_BINARY to the local compiled bridge")
+class CaveCohortSelectorDefaultFrameTests(unittest.TestCase):
+    """Shared-selector proof, explicitly not full-bundle 5ms qualification."""
+    def compare(self,party,frame,want):
+        source=(ROOT/'behaviors/starter-objectives.lua').read_text()
+        before=copy.deepcopy(frame);raw=runtime.packed(frame,runtime.MAX_INPUT)
+        self.assertLessEqual(len(raw),32768)
+        commands=[];actual_run=subprocess.run
+        def record(command,*args,**kwargs):
+            commands.append(list(command));return actual_run(command,*args,**kwargs)
+        with patch.object(subprocess,'run',side_effect=record):
+            actual=runtime.Bridge(BINARY,ROOT/'modules').evaluate(source,frame)
+        self.assertEqual(len(commands),1)
+        self.assertNotIn('--execution-ms',commands[0]);self.assertNotIn('--value-bytes',commands[0])
+        self.assertEqual(actual,want)
+        accepted,binding=fixture.cave.policy.evaluate_accepted(party.rpcs[1],
+            {'sessionId':'body-1','characterGuid':'1'},frame)
+        self.assertEqual(actual,accepted)
+        self.assertEqual(binding['revision'],party.revision)
+        self.assertEqual(frame,before);self.assertEqual(runtime.packed(frame,runtime.MAX_INPUT),raw)
+        self.assertEqual(party.events,[])
+
+    def test_full_99_75_priority_and_last_attacker_match_full_source_query(self):
+        party,worker,scenes,frame=full_frame()
+        self.compare(party,frame,{'status':'ready','choice':{'kind':'none'}})
+        scenes[5]['world']['nearbyCreatures'][-1].update(attackVictimGuid='4',attackAgeMs='1')
+        self.compare(party,worker.policy_facts(scenes,'priority'),{'status':'ready',
+            'choice':{'kind':'actual_fresh_party_attacker','observerGuid':'5'}})
+
+    def test_full_non_npc_encounter_choice_uses_same_shared_selector_at_default(self):
+        party,worker,scenes,_=full_frame('encounter')
+        for scene in scenes.values():
+            for row in scene['world']['nearbyCreatures']:row['npcFlags']=0
+        row=final_candidate(scenes)
+        self.compare(party,worker.policy_facts(scenes,'encounter'),{'status':'ready',
+            'choice':{'kind':'arm','targetGuid':row['guid'],'entry':475,'engagerGuid':'4','order':['1','5','4']}})
+
+    def test_late_invalid_complete_rows_and_slots_fail_at_default_and_query_profiles(self):
+        party,_,_,frame=full_frame()
+        cases=[]
+        bad=copy.deepcopy(frame);bad['creatures'][-1][19][-1]=40000;cases.append(bad)
+        bad=copy.deepcopy(frame);bad['actors']['5']['q'][-1]=[62,0];cases.append(bad)
+        bad=copy.deepcopy(frame);bad['actors']['5']['c'][-1]=100;cases.append(bad)
+        for bad in cases:self.compare(party,bad,{'status':'invalid'})
 
 
 if __name__ == "__main__":

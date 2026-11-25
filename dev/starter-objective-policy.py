@@ -8,6 +8,7 @@ import re
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "behaviors/starter-objectives.lua"
+ACCEPTED_QUERY_EXECUTION_MS = 1000
 
 
 def evaluate(facts):
@@ -52,7 +53,10 @@ def evaluate_accepted(rpc, identity, facts, *, bridge=None):
         'if type(policy.starter_spell)~="function" then return {available=false} end '
         'return {available=true,decision=policy.starter_spell(input)} end}\n')
     binary = os.environ.get('BUDDY_LUAPOLICY_BINARY', os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY', ROOT / 'data/bin/luapolicy'))
-    bridge = bridge or runtime.Bridge(binary, ROOT / 'modules', source_bytes=max(limit, len(wrapped.encode())))
+    # Match the existing full accepted-source reward/profession query profile.
+    # This does not change the native selector/CLI default or JSON byte bound.
+    bridge = bridge or runtime.Bridge(binary, ROOT / 'modules', source_bytes=max(limit, len(wrapped.encode())),
+        execution_ms=ACCEPTED_QUERY_EXECUTION_MS)
     try: result = bridge.evaluate(wrapped, facts)
     except runtime.Error as error: raise ValueError(str(error)) from None
     binding = dict(identity, revision=revision, generation=generation)
