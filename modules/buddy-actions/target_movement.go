@@ -222,6 +222,7 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 	if constrained {
 		prior, _ := ctx.Value(movementPrewriteGuardKey{}).(movementPrewriteGuard)
 		boundStart := s.pos
+		boundSpeed := observedRunSpeed(s.lastWorld.GetSelf())
 		ctx = context.WithValue(ctx, movementPrewriteGuardKey{}, movementPrewriteGuard(func(call context.Context, current *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool) {
 			if prior != nil {
 				var allowed bool
@@ -234,7 +235,7 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 			freshTarget, known := targetMovementPosition(fresh, r.TargetGuid, s.posMap)
 			freshHazards, complete := targetClearancePositions(fresh, r.ClearanceTargetGuids, s.posMap)
 			valid := err == nil && known && complete && s.matchesCurrentEncounterVisitLocked(fresh) && r.VisitId == s.encounterVisit.revision &&
-				safeSelfCombat(fresh, s.selfGUID) == "" && s.admitsPolicyEncounterLocked(call, fresh) && distance(s.pos, boundStart) <= .05 && distance(freshTarget, target) <= .05
+				safeSelfCombat(fresh, s.selfGUID) == "" && s.admitsPolicyEncounterLocked(call, fresh) && boundSpeed > 0 && observedRunSpeed(fresh.GetSelf()) == boundSpeed && distance(s.pos, boundStart) <= .05 && distance(freshTarget, target) <= .05
 			if valid {
 				for i := range hazards {
 					if distance(hazards[i], freshHazards[i]) > .05 {

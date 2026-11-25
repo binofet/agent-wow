@@ -152,3 +152,25 @@ func TestTargetMovementBandReadinessRechecksTargetAfterStop(t *testing.T) {
 		t.Fatal("STOP callback changed target but readiness was claimed", got, err, f.packets)
 	}
 }
+
+func TestTargetMovementBandLateSlowdownRejectsStaleStep(t *testing.T) {
+	s, f, r, ctx, advance := targetMovementFixture(t)
+	f.world.RequestedCreature.X = 3
+	r.MinRangeYards = 17
+	r.RangeYards = 23
+	f.world.Self.RunSpeed = 7.5600004
+	if _, err := s.ApproachTarget(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	advance(200 * time.Millisecond)
+	before := s.pos
+	heartbeats := countOpcode(f, opcode.MSGMoveHeartbeat)
+	starts := countOpcode(f, opcode.MSGMoveStartForward)
+	f.onClock = func() { f.world.Self.RunSpeed = 3.5 }
+	if _, err := s.ApproachTarget(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if distance(before, s.pos) > 3.5*.2+.015 || countOpcode(f, opcode.MSGMoveHeartbeat) != heartbeats || countOpcode(f, opcode.MSGMoveStartForward) != starts {
+		t.Fatal("stale-speed step was written", before, s.pos, f.packets)
+	}
+}
