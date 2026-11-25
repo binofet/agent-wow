@@ -91,6 +91,15 @@ class Check(unittest.TestCase):
   self.inv['items']=[]
   r=g.check_inventory(self.inv,session_id=SID,character_guid=GUID,item_entry=100,world=self.world,lookup=self.templates.get,evaluate=lambda _:(_ for _ in ()).throw(RuntimeError('private details')),policy_revision=self.rev)
   self.assertEqual(r['status'],'unknown');self.assertEqual(r['reason'],'gear_policy_evaluation_failed');self.assertNotIn('private details',json.dumps(r))
+ def test_offhand_requires_known_occupied_mainhand_type(self):
+  self.inv['items']=[];candidate=template(600);candidate.update(subclass=0,inventoryType=23,stats=[dict(type=5,value=2)]);self.templates[600]=candidate
+  self.inv['equipment'][15].update(itemGuid='9999',entry=999,metadataKnown=False,enhancementsKnown=True,hasEnhancements=False)
+  self.assertEqual(self.check(600)['reason'],'occupied_mainhand_type_unknown')
+  for malformed in ({'available':True}, {'available':True,'inventoryType':None}, {'available':False,'inventoryType':13}):
+   self.templates[999]=malformed;self.assertEqual(self.check(600)['status'],'unknown')
+  main=template(999);main.update(itemClass=2,inventoryType=13,subclass=15);self.templates[999]=main
+  self.assertEqual(self.check(600)['status'],'upgrade')
+  main['inventoryType']=17;self.assertEqual(self.check(600)['reason'],'two_hand_mainhand_blocks_offhand')
  def test_inspect_source_body_before_after_and_no_mutations(self):
   self.inv['items']=[];calls=[];test=self
   class RPC:

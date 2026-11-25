@@ -125,9 +125,14 @@ def _destinations(candidate, player, world, equipment, templates):
         proficiency=433 if inv==14 and sub==6 else 0
         if inv==14 and sub!=6:
             return [],'shield_template_mismatch',False
-        main=templates.get(str(equipment[15].get('entry',0)),{})
-        if _occupied(equipment[15]) and main.get('inventoryType')==17:
-            return [],'two_hand_mainhand_blocks_offhand',False
+        main=templates.get(str(equipment[15].get('entry',0)))
+        if _occupied(equipment[15]):
+            if (not isinstance(main,dict) or main.get('available') is not True
+                    or type(main.get('inventoryType')) is not int
+                    or main['inventoryType'] not in (13,17,21)):
+                return [],'occupied_mainhand_type_unknown',False
+            if main['inventoryType']==17:
+                return [],'two_hand_mainhand_blocks_offhand',False
     elif kind==2 and sub in weapon_skills and inv in (13,15,17,21,22,25,26):
         proficiency=weapon_skills[sub]
         slots=[17] if inv in (15,25,26) else [16] if inv==22 else [15]
