@@ -3322,13 +3322,16 @@ class AttachedPolicyRepairTests(unittest.TestCase):
         self.assertEqual(state['controls'],original)
         failure=fault['evidence']['operationFailure']
         self.assertEqual((failure['spellId'],failure['failureCode'],failure['operationRevision']),
-            (8106,67,'12'))
+            (8106,None,'12'))
+        self.assertFalse(failure['failureCodeKnown'])
+        self.assertEqual(fault['evidence']['globalLastCastFailureContext']['lastCastFailure'],67)
         self.assertEqual(failure['targetGuid'],self.npc_guid)
         self.assertEqual(failure['casterGuid'],'5');self.assertEqual(failure['sessionId'],'aw-current')
         self.assertFalse(fault['operationOrigin']['known'])
         self.assertEqual(fault['policy']['revision'],self.policy['revision'])
         cue=self.brain.histories[0][0]['text']
-        self.assertIn('"spellId":8106',cue);self.assertIn('"failureCode":67',cue)
+        self.assertIn('"spellId":8106',cue);self.assertIn('"lastCastFailure":67',cue)
+        self.assertIn('Do not state that code as the exact operation failure',cue)
         self.assertNotIn('9474',cue)
         self.assertIn('never substitute a previous spell',cue)
         self.assertIn('not a controller refusal',cue)
@@ -3340,7 +3343,7 @@ class AttachedPolicyRepairTests(unittest.TestCase):
             lastCastSpellId=9474,lastCastTargetGuid='3',
             lastSpellOperation=dict(spellId=9474,targetGuid='3',capability='heal',
                 phase='server_rejected_no_replay',operationRevision='11'))
-        self.brain.reply=dict(text='Spell #9474 was attempted and server rejected code 40; no repair verified.',
+        self.brain.reply=dict(text='Spell #9474 was attempted; global last-cast status reports 40, exact operation code is unknown. No repair verified.',
             emote='NONE',action='NONE')
         self.loop.tick();self.loop.tick()
         self.assertEqual(len(self.brain.states),1)
@@ -3366,6 +3369,7 @@ class AttachedPolicyRepairTests(unittest.TestCase):
                 phase='server_rejected_no_replay',operationRevision='11'))
         original=copy.deepcopy(self.actions)
         for change in ({}, {'lastCastSpellId':9474,'lastCastTargetGuid':'4'},
+                       {'lastCastSpellId':9474,'lastCastTargetGuid':'3'},
                        {'lastCastSpellId':9474,'lastCastTargetGuid':'3',
                         'lastSpellOperation':dict(spellId=9474,targetGuid='3',
                             capability='heal',phase='transport_unconfirmed_no_retry',operationRevision='11')}):
@@ -3375,8 +3379,20 @@ class AttachedPolicyRepairTests(unittest.TestCase):
                 self.assertEqual(fault['evidence']['operationFailure']['spellId'],9474)
                 self.assertFalse(fault['evidence']['operationFailure']['failureCodeKnown'])
                 self.assertIsNone(fault['evidence']['operationFailure']['failureCode'])
-                self.assertNotIn('lastCastFailure',fault['evidence'])
+                context=fault['evidence']['globalLastCastFailureContext']
+                self.assertEqual(context['lastCastFailure'],67)
+                self.assertFalse(context['operationRevisionKnown'])
+                self.assertEqual(fault['evidence']['lastCastFailureScope'],'global_last_cast_not_operation_linked')
                 self.assertEqual(self.actions['lastCastFailure'],67)
+        # A retained generic cast and a later specialized buff can use the
+        # SAME learned spell and target. Those matches still identify no event.
+        self.actions.update(lastCastSpellId=1243,lastCastTargetGuid='3',lastCastFailure=67,
+            lastSpellOperation=dict(spellId=1243,targetGuid='3',capability='cast_spell',
+                phase='server_rejected_no_replay',operationRevision='11'))
+        fault=converse.attached_policy_faults(5,'aw-current',self.policy,self.actions)[0]
+        self.assertTrue(fault['evidence']['globalLastCastFailureContext']['matchesRetainedSpellAndTarget'])
+        self.assertFalse(fault['evidence']['operationFailure']['failureCodeKnown'])
+        self.assertIsNone(fault['evidence']['operationFailure']['failureCode'])
         self.actions=original
 
     def test_bad_targets_on_dead_or_absent_exact_npc_does_not_spend_a_model_turn(self):
