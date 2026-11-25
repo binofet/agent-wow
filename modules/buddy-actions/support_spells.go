@@ -404,6 +404,9 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, nil
 		}
 		op.view.Phase = "server_rejected_no_replay"
+		if starterSelf && op == s.starterSpells.uncertainStrike && !op.view.ServerCastGo && !op.view.EffectObserved {
+			s.starterSpells.uncertainStrike = nil
+		}
 		if (op.genericSpell || op.view.Capability == pickLockCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && code == opcode.SMSGCastFailed {
 			s.state.LastCastFailure = uint32(p[5])
 		}

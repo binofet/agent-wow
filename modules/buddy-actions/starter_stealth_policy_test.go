@@ -55,6 +55,46 @@ func TestStarterStealthFactsAdvertiseOnlyItsNativeTaskScope(t *testing.T) {
 	}
 }
 
+func TestStarterStealthExactRejectionSettlesOnlyPreGONoEffectCustody(t *testing.T) {
+	for _, mode := range []string{"rejected", "GO already known", "aura already observed"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, target, _, advance := starterStealthRig(t)
+			s.session = starterWeaponAmbiguousSession{f}
+			s.Tick(context.Background())
+			op := s.starterSpells.uncertainStrike
+			if op == nil || op != s.supportOp || op.view.TransportWritten {
+				t.Fatal("fixture did not enter ambiguous Stealth", s.stateLocked())
+			}
+			if mode == "GO already known" {
+				emitPolymorph(s, opcode.SMSGSpellGo, starterWeaponObservedGo(s, s.selfGUID, s.castCount))
+			} else if mode == "aura already observed" {
+				emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(s.selfGUID, s.selfGUID, 2, 1785, 0))
+			}
+			failure := binary.LittleEndian.AppendUint32([]byte{op.count}, op.view.SpellId)
+			failure = append(failure, 12)
+			emitPolymorph(s, opcode.SMSGCastFailed, failure)
+			if mode == "rejected" {
+				if s.starterSpells.uncertainStrike != nil || s.state.CastPending || op.view.Phase != "server_rejected_no_replay" || op.view.ServerCastGo || op.view.EffectObserved {
+					t.Fatal("exact pre-GO refusal left false uncertainty or lost the terminal receipt", op.view, s.stateLocked())
+				}
+				advance(2 * time.Second)
+				target.X = -8930
+				s.refreshPositionLocked(f.world)
+				point, _, _ := creaturePosition(target)
+				selected := s.starterWeaponDecisionLocked(context.Background(), f.world, target, point)
+				if !selected.valid || selected.kind != "cast" || selected.spell.ID != sinisterStrike {
+					t.Fatal("known refusal permanently blocked ordinary offense", selected, s.starterSpells.failure())
+				}
+			} else if s.starterSpells.uncertainStrike != op {
+				t.Fatal("failure after possible effect cleared ambiguous custody", op.view)
+			}
+			if countPackets(f, opcode.CMSGCastSpell) != 1 {
+				t.Fatal("native rejection reconciliation replayed Stealth", f.packets)
+			}
+		})
+	}
+}
+
 func TestStarterStealthLostReplyReconcilesOnlyAnExactCurrentNativeGO(t *testing.T) {
 	for _, mode := range []string{"confirm", "aura first", "newer Heal", "newer Heal aura first", "no GO", "wrong count", "wrong spell", "wrong target", "wrong caster", "replaced body", "replaced visit"} {
 		t.Run(mode, func(t *testing.T) {
