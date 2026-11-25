@@ -617,7 +617,10 @@ class DirectBrainIntegrationTests(unittest.TestCase):
         from direct_context import CONTEXT_BYTES, HISTORY_BYTES
         state = dict(character=dict(guid="4"), current_request=dict(source="owner", senderGuid="3"),
             observations=dict(self=dict(guid="4", aliveKnown=True, alive=True, healthKnown=True, health=900),
-                nearbyCreatures=[dict(guid=str(index+100), rawFacts="large-observation "*100) for index in range(90)]),
+                nearbyCreatures=[dict(guid=str(index+100),entry=12000+index,present=True,mapKnown=True,mapId=0,
+                    positionKnown=True,x=index,y=0,z=0,aliveKnown=True,alive=True,
+                    distanceToSelfObservedKnown=True,distanceToSelfObserved=22.5+index,
+                    positionAgeMs="9007199254740993",rawFacts="large-observation "*100) for index in range(90)]),
             spell_toolkit=dict(known=True, revision="17", spells=[dict(spellId=100+index,
                 mechanics="large-mechanical-facts "*50) for index in range(80)]))
         original = copy.deepcopy(state)
@@ -638,9 +641,18 @@ class DirectBrainIntegrationTests(unittest.TestCase):
         self.assertEqual(early[0]["childPhase"], "api.request")
         system = requests[0]["messages"][0]["content"]
         context_raw = system.split("Current observations and control state JSON:\n", 1)[1]
-        self.assertGreater(len(context_raw.encode()), 170*1024)
+        self.assertLess(len(context_raw.encode()), len(json.dumps(state).encode())//4)
         self.assertEqual(requests[0]["messages"][1], dict(role="user", content=latest["text"]))
-        self.assertEqual(json.loads(context_raw)["spell_toolkit"], state["spell_toolkit"])
+        brief = json.loads(context_raw)
+        self.assertEqual(brief["spell_toolkit"]["contextPath"], ["spell_toolkit"])
+        self.assertTrue(brief["spell_toolkit"]["deferred"])
+        self.assertEqual(len(brief["observations"]["nearbyCreatures"]),90)
+        self.assertEqual(brief["observations"]["nearbyCreatures"][79]["guid"],"179")
+        for key in ("entry","mapKnown","mapId","positionKnown","x","aliveKnown","alive",
+                    "distanceToSelfObservedKnown","distanceToSelfObserved","positionAgeMs"):
+            self.assertEqual(brief["observations"]["nearbyCreatures"][79][key],state["observations"]["nearbyCreatures"][79][key])
+        self.assertEqual(brief["observations"]["nearbyCreatures"][79]["contextPath"],
+                         ["observations","nearbyCreatures","79"])
         self.assertEqual(early[0]["promptMetrics"]["contextBytes"], len(context_raw.encode()))
         self.assertEqual(early[0]["promptMetrics"]["historyBytes"], len(json.dumps(history,
             ensure_ascii=False, separators=(",", ":")).encode()))
@@ -652,6 +664,80 @@ class DirectBrainIntegrationTests(unittest.TestCase):
         self.assertEqual(page["rows"][0]["preview"]["spellId"], 179)
         self.assertIn("context_read", [row["function"]["name"] for row in requests[0]["tools"]])
         self.assertEqual(state, original)
+        self.projection_metrics=dict(fullStateBytes=len(json.dumps(state,separators=(",",":" )).encode()),
+            systemBytes=len(system.encode()),briefBytes=len(context_raw.encode()),
+            fullCapturedBytes=early[0]["promptMetrics"]["fullCapturedContextBytes"],
+            toolSchemaBytes=early[0]["promptMetrics"]["toolSchemaBytes"],nearbyRows=len(brief["observations"]["nearbyCreatures"]))
+
+    def test_large_ordinary_owned_workspace_uses_brief_and_real_bound_read_tools(self):
+        responses=[chat(("full-spell","context_read",dict(path=["spell_toolkit","spells"],offset=119,limit=1))),
+                   chat(("body","read_observation",dict(method="buddy-actions.status",params={}))),spoken()]
+        with self.rig(responses) as (loop,brain,state,http):
+            state["spell_toolkit"]=dict(available=True,revision="71",spells=[dict(spellId=100+i,known=True,mechanics="public spell mechanics "*70) for i in range(120)])
+            state["inventory"]=dict(sessionId=self.rpc.core,selfGuid="4",inventoryKnown=True,inventoryRevision="5",
+                items=[dict(item=dict(entry=1000+i,itemGuid=str(4000+i)),template="public item facts "*30) for i in range(60)])
+            state["observations"]=dict(visitRevision="9",self=dict(guid="4",mapKnown=True,mapId=0,positionKnown=True,x=0,positionAgeMs="33"),
+                nearbyCreatures=[dict(guid="77",entry=12222,present=True,aliveKnown=True,alive=True,mapKnown=True,mapId=0,
+                    positionKnown=True,x=22.5,distanceToSelfObservedKnown=True,distanceToSelfObserved=22.5)])
+            warning="Stay at range from the currently observed creature."
+            state["current_request"]["messages"]=[dict(text=warning)]
+            loop.generate_reply([dict(speaker="Joel",text=warning)],state)
+            self.assertEqual(len(http.requests),3)
+            wire=http.requests[0]["body"]
+            view=json.loads(wire["messages"][0]["content"].split("Current observations and control state JSON:\n",1)[1])
+            self.assertEqual(view["observations"]["nearbyCreatures"][0]["entry"],12222)
+            self.assertEqual(view["development"]["sessionId"],self.rpc.core)
+            self.assertEqual(view["development"]["selfGuid"],"4")
+            self.assertTrue(view["inventory"]["deferred"])
+            names={row["function"]["name"] for row in wire["tools"]}
+            self.assertTrue({"workspace_read","workspace_write","context_read","read_observation"}<=names)
+            full=json.loads(http.requests[1]["body"]["messages"][-1]["content"])["result"]
+            self.assertEqual(full["rows"][0]["preview"]["spellId"],219)
+            body=json.loads(http.requests[2]["body"]["messages"][-1]["content"])["result"]
+            self.assertEqual(body["selfGuid"],"4")
+            self.assertIn(dict(role="user",content=warning),wire["messages"])
+            metrics=brain.last_development_result["promptMetrics"]
+            self.assertGreater(metrics["fullCapturedContextBytes"],170*1024)
+            self.assertLess(metrics["contextBytes"],metrics["fullCapturedContextBytes"]//4)
+            self.assertFalse(self.rpc.commands or self.rpc.replies)
+
+    def test_ordinary_brief_preserves_large_request_notes_and_custody_without_byte_abort(self):
+        from direct_context import ordinary_context, encode
+        request = dict(source="owner",senderGuid="3",text="exact current owner request "*1500)
+        unknown = dict(status="OUTCOME_UNCONFIRMED",requestId="old-exact",arguments=dict(itemGuid="9007199254740993"))
+        state = dict(character=dict(guid="4",name="Mira"),current_request=request,
+            agentContext=dict(activeNotes=[dict(text="My own learned note",sourceRequestId="prior",confidence="observed")]),
+            controls=dict(sessionId="exact-native",selfGuid="4",castPending=False,position=dict(known=True,mapKnown=True,mapId=0,visitId="9")),
+            observations=dict(visitRevision="9",self=dict(guid="4",positionKnown=True,positionAgeMs="9007199254740993",positionEstimated=False),
+                owner=dict(guid="3",present=False),nearbyCreatures=[dict(guid="77",entry=12222,present=True,mapKnown=True,mapId=0,positionKnown=True,x=0,
+                distanceToSelfObservedKnown=True,distanceToSelfObserved=22.5,positionAgeMs="101",trajectory=dict(known=False),rawTemplate="large"*18000)]),
+            inventory=dict(sessionId="exact-native",inventoryKnown=True,operation=unknown,items=[dict(template="facts"*20000)]))
+        before=copy.deepcopy(state)
+        brief,metrics=ordinary_context(state)
+        self.assertGreater(len(encode(brief)),24*1024)  # Required facts are not a presentation cap.
+        self.assertLess(metrics["contextBytes"],metrics["fullContextBytes"]//2)
+        self.assertEqual(brief["current_request"],request)
+        self.assertEqual(brief["agentContext"],state["agentContext"])
+        self.assertEqual(brief["controls"],state["controls"])
+        self.assertEqual(brief["observations"]["owner"],state["observations"]["owner"])
+        creature=brief["observations"]["nearbyCreatures"][0]
+        for key in ("guid","entry","mapId","x","distanceToSelfObservedKnown","distanceToSelfObserved","positionAgeMs","trajectory"):
+            self.assertEqual(creature[key],state["observations"]["nearbyCreatures"][0][key])
+        self.assertNotIn("rawTemplate",creature)
+        self.assertIn(dict(path=["inventory","operation"],value=unknown),brief["currentUnresolvedCustody"])
+        self.assertIsNone(brief["contextProjection"]["byteLimit"])
+        self.assertEqual(state,before)
+
+    def test_gm_prompt_does_not_apply_ordinary_brief(self):
+        with self.gm_primer_fixture() as (brain,state,clients):
+            state["spell_toolkit"]=dict(known=True,spells=[dict(spellId=i,mechanics="full GM facts "*100) for i in range(80)])
+            payloads=[]
+            def capture(payload,*_):
+                payloads.append(copy.deepcopy(payload));return spoken()
+            with patch.object(brain.client,"_http",side_effect=capture):brain.generate([dict(speaker="Joel",text="Read current facts")],state)
+            brief=json.loads(payloads[0]["messages"][0]["content"].split("Current observations and control state JSON:\n",1)[1])
+            self.assertNotIn("contextProjection",brief)
+            self.assertEqual(brief["spell_toolkit"],state["spell_toolkit"])
 
     def test_exact_http_body_metrics_are_published_before_connection_without_claiming_write(self):
         brain = converse.DirectBrain(self.state, character_name="Mira", character_class="mage",

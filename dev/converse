@@ -2951,6 +2951,10 @@ class DirectBrain(AgentBrain):
             tools.context = json.loads(captured)  # Complete detached snapshot, fixed before the API turn.
             record["gmObservationPrimer"] = {key:primer[key] for key in (
                 "readStartedAtUnixMs", "readCompletedAtUnixMs", "sessionId", "selfGuid", "outcome")}
+        if not allow_gm:
+            from direct_context import ordinary_context
+            prompt_state, brief_metrics = ordinary_context(prompt_state)
+            record["ordinaryContextProjection"] = brief_metrics
         record["promptMetrics"] = dict(contextBytes=len(encode(prompt_state)),
             historyBytes=len(encode(history)), fullCapturedContextBytes=len(encode(full_context)))
         def dispatch(name, arguments):

@@ -58,7 +58,7 @@ def _custody(value, path=()):
     found = []
     if isinstance(value, dict):
         unsettled = any(key in STATUS_KEYS and isinstance(item, str) and
-            re.search(r"unknown|unconfirmed|(?:^|_)(?:pending|issued|reserved|offered)(?:_|$)", item, re.I)
+            (item.upper() in NONTERMINAL_TRADE or re.search(r"unknown|unconfirmed|(?:^|_)(?:pending|issued|reserved|offered|entered|attempted|waiting)(?:_|$)", item, re.I))
             for key, item in value.items())
         if path == ("trade",) and value.get("phase") in NONTERMINAL_TRADE:
             unsettled = True
@@ -84,7 +84,7 @@ def project_context(state, max_bytes=CONTEXT_BYTES):
     # A typed request may carry host-only bound callbacks as attributes. Copy
     # only its JSON-visible mapping values; authority stays on the original.
     state = json.loads(raw)
-    if original <= max_bytes:
+    if max_bytes is not None and original <= max_bytes:
         return copy.deepcopy(state), dict(fullContextBytes=original, contextBytes=original,
                                           contextOmittedPaths=0)
     # These required values are never clipped. Oversized authority or unresolved
@@ -147,6 +147,8 @@ def project_context(state, max_bytes=CONTEXT_BYTES):
     # Small sections are copied whole, in stable name order, never ranked by
     # class, combat target, item quality or model intent.
     for key in sorted(state):
+        if max_bytes is None:
+            break  # Semantic brief mode has no byte-budget selection or abort.
         if key in result:
             continue
         value = state[key]
@@ -155,10 +157,83 @@ def project_context(state, max_bytes=CONTEXT_BYTES):
             if len(encode(candidate)) <= max_bytes - 4096:
                 result[key] = candidate[key]
     omissions(state, result)
-    if len(encode(result)) > max_bytes:
+    if max_bytes is not None and len(encode(result)) > max_bytes:
         raise ContextLimitError("Required identity, party or unresolved custody exceeds the 24 KiB initial context bound; no model request sent")
     return result, dict(fullContextBytes=original, contextBytes=len(encode(result)),
                         contextOmittedPaths=len(omitted))
+
+
+# Current observed unit identity/vitals/geometry, not template/equipment dumps.
+# Full rows (including future fields) remain at each exact context_read path.
+OBSERVED_UNIT_FIELDS = (
+    "guid", "entry", "name", "present", "mapKnown", "mapId", "positionKnown",
+    "x", "y", "z", "orientation", "positionRevision", "positionAgeMs",
+    "observationAgeMs", "vitalsAgeMs", "positionInferred", "positionEstimated",
+    "aliveKnown", "alive", "healthKnown", "health", "maxHealth", "powerKnown",
+    "powerType", "power", "maxPower", "classKnown", "classId", "levelKnown", "level",
+    "movementKnown", "moving", "movementFlags", "movementFlagsKnown", "extraMovementFlags",
+    "combatKnown", "inCombat", "unitFlagsKnown", "unitFlags", "unitFlags2", "npcFlags",
+    "dynamicFlagsKnown", "dynamicFlags", "factionTemplate", "targetKnown", "targetGuid",
+    "attackVictimKnown", "attackVictimGuid", "attackAgeMs", "combatReachKnown", "combatReach",
+    "distanceToSelfObservedKnown", "distanceToSelfObserved", "distanceToOwnerObservedKnown",
+    "distanceToOwnerObserved", "activeCast", "trajectory")
+
+
+def ordinary_context(state):
+    """Lossless-access ordinary briefing; no model/window cap or history edit.
+
+    The existing threshold only avoids changing already-small snapshots. Large
+    snapshots use semantic field selection, with NO maximum required-fact size.
+    Authority and tool admission continue to use the original captured state.
+    """
+    raw = encode(state)
+    if len(raw) <= CONTEXT_BYTES:
+        return json.loads(raw), dict(fullContextBytes=len(raw), contextBytes=len(raw), contextOmittedPaths=0)
+    source = json.loads(raw)
+    result, _ = project_context(source, max_bytes=None)
+    # These useful current role/request/learning values are never clipped.
+    for key in ("abilities", "controlFieldScopes", "model_selection", "agentContext",
+                "learned_spell_changes", "emote_catalog", "shared_development"):
+        if key in source:
+            result[key] = copy.deepcopy(source[key])
+    for key, value in source.items():
+        if not isinstance(value, (dict, list)):
+            result[key] = copy.deepcopy(value)
+    world = source.get("observations")
+    if isinstance(world, dict):
+        view = result.setdefault("observations", {})
+        for key in ("nearbyCreatures", "nearbyPlayers"):
+            rows = world.get(key)
+            if isinstance(rows, list):
+                view[key] = []
+                for index, row in enumerate(rows):
+                    # Invalid rows stay explicit; a missing list is never a
+                    # fabricated complete empty encounter.
+                    compact = _fields(row, OBSERVED_UNIT_FIELDS) if isinstance(row, dict) else {"invalidRow": copy.deepcopy(row)}
+                    compact["contextPath"] = ["observations", key, str(index)]
+                    view[key].append(compact)
+        view["contextPath"] = ["observations"]
+    if isinstance(result.get("development"), dict):
+        result["development"]["contextPath"] = ["development"]
+    # Every deferred section has a direct discovery path. Scalar status and
+    # identity facts are retained exactly; no false unavailable/empty claim.
+    metadata_fields = ("available", "known", "reason", "sessionId", "selfGuid", "revision",
+        "inventoryKnown", "inventoryRevision", "equipmentKnown", "equipmentRevision",
+        "ammoKnown", "ammoEntry", "ammoRevision", "active", "closing", "phase", "status")
+    for key, value in source.items():
+        if key in result:
+            continue
+        descriptor = _fields(value, metadata_fields) if isinstance(value, dict) else {}
+        descriptor.update(contextPath=[key], deferred=True, valueType=type(value).__name__)
+        if isinstance(value, (dict, list, str)):
+            descriptor["capturedCount"] = len(value)
+        result[key] = descriptor
+    result["contextProjection"].update(mode="ordinary_factual_brief", byteLimit=None,
+        note="Compact factual presentation only. Deferred data is not absent or unavailable. "
+             "context_read accesses the complete immutable snapshot at the indicated paths; "
+             "observed ranges retain server-pose ages, not arrival or current-instance proof.")
+    return result, dict(fullContextBytes=len(raw), contextBytes=len(encode(result)),
+        contextOmittedPaths=len(result["contextProjection"]["omittedPaths"]))
 
 
 def project_history(history, max_bytes=HISTORY_BYTES):
