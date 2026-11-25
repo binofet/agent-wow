@@ -222,3 +222,45 @@ func TestPassivePriorCleansHistoricalOwnLeaseBeforeWalkingOnlyWithRemoteProof(t 
 		})
 	}
 }
+
+func TestPassivePriorDoesNotBorrowOldVictimsDifferentFight(t *testing.T) {
+	for _, kind := range []string{"stale", "contradicted", "victim_unknown"} {
+		t.Run(kind, func(t *testing.T) {
+			p := passivePriorPolicy(t, "")
+			o := sludgePriorObservation()
+			o.Spells = map[string]*actionsv1.EncounterSpell{}
+			self := o.Players["4"]
+			self.CombatKnown = true
+			self.X, self.Y, self.Z = 0, 0, 0
+			o.Navigation.Following = true
+			o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{}
+			victim := o.Players["3"]
+			victim.CombatKnown = true
+			victim.InCombat = true
+			n := o.Targets[fallbackGUID(fallbackNPC)]
+			n.X, n.Y, n.Z = 170, 0, 0
+			n.AttackObservation = &actionsv1.EncounterAttackObservation{VictimKnown: true, VictimGuid: 3, AgeMs: 6001}
+			if kind == "contradicted" {
+				n.AttackObservation.AgeMs = 0
+				n.AttackObservation.TargetKnown = true
+				n.AttackObservation.TargetGuid = 8
+			}
+			if kind == "victim_unknown" {
+				n.AttackObservation.AgeMs = 0
+				n.AttackObservation.VictimKnown = false
+			}
+			other := proto.Clone(n).(*actionsv1.EncounterCreature)
+			other.Guid = fallbackNPC + 10
+			other.Entry = 777
+			other.X = 30
+			other.AttackObservation = &actionsv1.EncounterAttackObservation{VictimKnown: true, VictimGuid: 3, TargetKnown: true, TargetGuid: 3}
+			o.Targets[fallbackGUID(other.Guid)] = other
+			out := p.decide(observeRanged(t, p, o, false)).Output
+			a, _ := out["action"].(map[string]any)
+			status, _ := out["rangedStance"].(map[string]any)
+			if a["capability"] == "movement_owner" || status["phase"] != "passive_distant_prior" || status["active"] != false {
+				t.Fatal("old or contradictory victim borrowed unrelated combat", out)
+			}
+		})
+	}
+}

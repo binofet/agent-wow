@@ -128,7 +128,13 @@ func TestNativeFollowDoesNotOverrideExplicitDangerOrUnknownFacts(t *testing.T) {
 			}
 			out := p.decide(observeRanged(t, p, o, false)).Output
 			a, _ := out["action"].(map[string]any)
-			if a["capability"] == "movement_owner" && a["mode"] == "release" {
+			if kind == "stale_victim_fighting" {
+				// A historical victim's combat cannot refresh this distant
+				// creature's expired tuple or create a new positioning request.
+				if a["mode"] != "release" || a["token"] != "prior-fixture" {
+					t.Fatal("stale victim kept optional movement ownership", out)
+				}
+			} else if a["capability"] == "movement_owner" && a["mode"] == "release" {
 				t.Fatal("follow silently discarded explicit order/danger/unknown geometry", out)
 			}
 			if kind == "near_hazard" && a["capability"] != "move_body" {

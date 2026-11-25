@@ -72,13 +72,11 @@ local function positioning(obs,r)
                 if type(v)~="number" or v~=v or v==math.huge or v==-math.huge then return true,"positioning_facts_unavailable" end
             end
             if type(npc.attackObservation)~="table" then return true,"attack_facts_unavailable" end
-            if npc.engaged==true or (obs.engagement or {})[id] then return true,"current_engagement" end
             local admitted,why=admission(obs,id)
             if admitted and why~="outside_prior" then return true,why end
-            local a=npc.attackObservation
-            local victim=a and a.victimGuid and (obs.players or {})[a.victimGuid]
-            if victim and victim.present==true and victim.mapKnown==true and victim.mapId==obs.mapId and
-               victim.combatKnown==true and victim.inCombat==true then return true,"current_victim_combat" end
+            -- Historical engagement and an old victim's current combat do
+            -- not identify this creature's present fight. Admission above
+            -- requires the actual known/fresh/noncontradictory attack tuple.
             local dx,dy,dz=(self.x or 0)-(npc.x or 0),(self.y or 0)-(npc.y or 0),(self.z or 0)-(npc.z or 0)
             if dx*dx+dy*dy+dz*dz<=band*band then return true,"near_hazard" end
         end
