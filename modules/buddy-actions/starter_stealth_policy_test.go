@@ -75,7 +75,7 @@ func TestStarterStealthExactRejectionSettlesOnlyPreGONoEffectCustody(t *testing.
 			emitPolymorph(s, opcode.SMSGCastFailed, failure)
 			if mode == "rejected" {
 				if s.starterSpells.uncertainStrike != nil || s.state.CastPending || op.view.Phase != "server_rejected_no_replay" || op.view.ServerCastGo || op.view.EffectObserved {
-				t.Fatal("exact pre-GO refusal left false uncertainty or lost the terminal receipt", &op.view, s.stateLocked())
+					t.Fatal("exact pre-GO refusal left false uncertainty or lost the terminal receipt", &op.view, s.stateLocked())
 				}
 				advance(2 * time.Second)
 				target.X = -8930
