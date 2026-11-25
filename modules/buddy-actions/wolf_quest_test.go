@@ -125,7 +125,7 @@ func TestQuestPracticeRequiresOwnNonfailedKnownLogAndLevelLimit(t *testing.T) {
 	}
 }
 
-func TestWolfQuestLootApproachOnlyIgnoresOwnerForOwnActive33AndCorpse299(t *testing.T) {
+func TestCorpseApproachDoesNotReenterWolfQuestPolicy(t *testing.T) {
 	for _, mode := range []string{"active", "complete", "absent", "unknown", "failed", "duplicate", "othercorpse", "combat"} {
 		s, f, _, r := approachRig(t)
 		f.world.Owner = nil
@@ -149,7 +149,7 @@ func TestWolfQuestLootApproachOnlyIgnoresOwnerForOwnActive33AndCorpse299(t *test
 		if err != nil {
 			t.Fatal(mode, err)
 		}
-		if mode == "active" || mode == "complete" {
+		if mode != "combat" {
 			if !got.Moving || len(f.packets) != 1 {
 				t.Fatal(mode, got, f.packets)
 			}

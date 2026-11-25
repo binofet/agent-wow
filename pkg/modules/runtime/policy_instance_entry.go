@@ -32,10 +32,12 @@ import (
 )
 
 type policyInstanceEntry struct {
-	self                                         uint64
-	trigger                                      uint32 // Zero denotes a packet-free read.
-	stopAttempted, stopWritten, triggerAttempted bool
-	unknown                                      bool
+	self                                                 uint64
+	trigger                                              uint32 // Zero denotes a packet-free read.
+	stopAttempted, stopWritten, triggerAttempted         bool
+	unknown                                              bool
+	stopScope                                            *modv1.TransportScope
+	triggerWritten, triggerUnknown, triggerNotDispatched bool
 }
 
 func instanceEntryUint64(value any, zero bool) (uint64, bool) {
@@ -321,9 +323,10 @@ func (m *Manager) writePolicyInstanceEntryScoped(ctx context.Context, token, ses
 	registry := &m.policySpells
 	registry.mu.Lock()
 	op := registry.active[token]
-	if op == nil || !op.admitted || op.capability != "notify_area_trigger" || op.instanceEntry == nil ||
+	if op == nil || !op.admitted || op.instanceEntry == nil ||
+		!(op.capability == "notify_area_trigger" || op.capability == "enter_corpse_instance" && op.recovery != nil && op.recovery.epoch != 0 && op.recovery.self == op.instanceEntry.self && op.recovery.trigger == op.instanceEntry.trigger) ||
 		op.origin.Writer != "lua" || op.origin.ActionID == "" || op.origin.SessionID != sessionID || op.origin.Module != module || module != actionsModule ||
-		scope == nil || scope.SelfGuid != op.instanceEntry.self || !scope.VisitBound || scope.VisitRevision == 0 || scope.ConnectionId == "" ||
+		scope == nil || scope.SelfGuid != op.instanceEntry.self || !scope.VisitBound || scope.VisitRevision == 0 || scope.MotionRevision == 0 || scope.ConnectionId == "" ||
 		!op.matchesInstanceEntryPacket(code, payload) || ctx.Err() != nil || m.session.SendScopedPacket == nil {
 		registry.mu.Unlock()
 		return modcb.PacketNotDispatchedError("scoped callback is outside the exact instance-entry dispatch")
@@ -335,8 +338,11 @@ func (m *Manager) writePolicyInstanceEntryScoped(ctx context.Context, token, ses
 			return modcb.PacketNotDispatchedError("instance-entry STOP already attempted")
 		}
 		entry.stopAttempted = true
+		entry.stopScope = proto.Clone(scope).(*modv1.TransportScope)
 	} else {
-		if entry.triggerAttempted || !entry.stopWritten || entry.unknown {
+		if entry.triggerAttempted || !entry.stopWritten || entry.unknown || entry.stopScope == nil ||
+			scope.ConnectionId != entry.stopScope.ConnectionId || scope.SelfGuid != entry.stopScope.SelfGuid ||
+			scope.VisitRevision != entry.stopScope.VisitRevision || scope.MapId != entry.stopScope.MapId || scope.MotionRevision < entry.stopScope.MotionRevision {
 			registry.mu.Unlock()
 			return modcb.PacketNotDispatchedError("instance-entry trigger already attempted or lacks its known STOP")
 		}
@@ -349,6 +355,10 @@ func (m *Manager) writePolicyInstanceEntryScoped(ctx context.Context, token, ses
 	registry.mu.Lock()
 	if code == opcode.MSGMoveStop {
 		entry.stopWritten = err == nil
+	} else {
+		entry.triggerWritten = err == nil
+		entry.triggerNotDispatched = modcb.PacketWasNotDispatched(err)
+		entry.triggerUnknown = err != nil && !entry.triggerNotDispatched
 	}
 	entry.unknown = entry.unknown || err != nil && !modcb.PacketWasNotDispatched(err)
 	op.written = op.written || err == nil

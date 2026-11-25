@@ -206,7 +206,7 @@ func TestExplorationRejectsInvalidDestinationLeaseAndMapBeforePlanning(t *testin
 			case "falling":
 				f.world.Self.MovementFlags = 0x1000
 			case "speed":
-				f.world.Self.RunSpeed = 14
+				f.world.Self.RunSpeed = 14.1
 			case "casting":
 				s.state.CastPending = true
 			case "unconfirmed_motion":

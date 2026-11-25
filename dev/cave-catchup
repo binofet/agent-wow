@@ -22,46 +22,27 @@ loader = importlib.machinery.SourceFileLoader('cave_catchup_converse', str(Path(
 spec = importlib.util.spec_from_loader(loader.name, loader)
 c = importlib.util.module_from_spec(spec); loader.exec_module(c)
 Error = c.ConversationError
+loader = importlib.machinery.SourceFileLoader('cave_starter_policy', str(Path(__file__).with_name('starter-objective-policy.py')))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+policy = importlib.util.module_from_spec(spec); loader.exec_module(policy)
 ROSTER = {1: ('Arlen', 8086, 5), 4: ('Mira', 8087, 8), 5: ('Rook', 8088, 4)}
 GOALS = {47: (773, 10), 60: (772, 8)}
-ENTRIES = frozenset((40, 475))
 IDENTITY = {'version': 1, 'mode': 'fargodeep_collection', 'roster': [1, 4, 5], 'questIds': [47, 60, 62]}
 MAX_LEDGER = 131072
-# Actual samples from the complete physical entrance -> trigger corridor,
-# /private/tmp/cave-current-path.json (199 samples, 176.565 yd). These are
-# navigation goals, never authority to send an unplanned movement chord.
+MAX_RESPONSE = 262144
+MAX_SOURCE_RESPONSE = 6 * 8 * 1024 * 1024 + MAX_RESPONSE
 SEARCH_ROUTE = '33b3fc5d5667036167c668ae7ba69fc7f5cf6af57944790a46e185eb3f6de14d'
-SEARCH_STATIONS = (
-    (-9821.469, 215.5862, 16.341442),       # sample0
-    (-9820.893, 227.19437, 24.214392),      # sample18
-    (-9826.351, 237.92334, 31.82744),       # sample37
-    (-9834.488, 240.53362, 26.891457),      # sample54
-    (-9839.6, 230.13333, 18.551823),        # sample70
-    (-9834.666, 217.06573, 14.587091),      # sample87
-    (-9828.954, 204.60019, 14.721489),      # sample102
-    (-9828.05, 190.13332, 13.459157),       # sample118
-    (-9828.8, 176.71109, 12.31047),         # sample133
-    (-9835.635, 164.62372, 5.3633475),      # sample150
-    (-9842.402, 153.3405, 5.521588),        # sample166
-    (-9849.066, 140.4, 6.935242),           # sample182
-    (-9843.54, 127.525, 5.370034),          # sample198
-)
-SEARCH_LEGS = 8
 SEARCH_HISTORY = 64
-SEARCH_ARRIVAL = .75
 SEARCH_PRIORITY_REASONS = frozenset(('harvest_observed_self_owner_or_party_combat',
     'harvest_fresh_actual_attacker_takes_priority', 'harvest_observed_healing_need_takes_priority'))
 
 
-def station(index): return dict(zip(('x', 'y', 'z'), SEARCH_STATIONS[index]))
-
-AUTO_TERMINAL = frozenset(('additional_attacker_observed', 'navigation_unavailable', 'route_replan_limit', 'navigation_step_failed',
-    'target_unsafe_or_cast_failed', 'initial_target_not_idle_unclaimed', 'target_position_unavailable_or_outside_range',
-    'target_changed_during_plan', 'observations_changed_during_plan', 'quest_changed_during_plan', 'prewrite_observations_changed'))
-
-
 class EncounterRejected(Error):
     """Actual matching module FailedPrecondition; not a transport timeout."""
+
+
+class NotDispatched(Error):
+    """A proved local refusal before entering a new native mutation RPC."""
 
 
 
@@ -85,45 +66,41 @@ def point(row, known='positionKnown'):
 def distance(a, b): return math.dist(tuple(a[k] for k in ('x', 'y', 'z')), tuple(b[k] for k in ('x', 'y', 'z')))
 
 
-def ordinary_patrol(row):
-    if not point(row) or number(row.get('movementFlags', 0)) & ~0x780001ff: return False
-    t = row.get('trajectory')
-    if (not isinstance(t, dict) or t.get('known') is not True or t.get('stopped') is True
-            or t.get('cyclic') is True or t.get('transportRelative') is True or t.get('destinationKnown') is not True
-            or not 1 <= number(t.get('durationMs', 0)) <= 120000): return False
-    end = {k: t.get('destination'+k.upper()) for k in ('x', 'y', 'z')}
-    def area(p): return all(type(p[k]) in (int, float) and math.isfinite(p[k]) for k in p) and -10000 <= p['x'] <= -9700 and 50 <= p['y'] <= 320 and -10 <= p['z'] <= 65
-    return area({k: row[k] for k in end}) and area(end) and distance(row, end) <= 60
+def flags(row, names):
+    value = 0
+    for index, name in enumerate(names):
+        field = row.get(name, False)
+        if type(field) is not bool: raise Error('Invalid observed boolean')
+        if field: value |= 1 << index
+    return value
 
 
-def creature_position(row):
-    """Actual fresh patrol header or bounded elapsed endpoint, never interpolation."""
-    if not point(row) or number(row.get('movementFlags', 0)) & ~0x780001ff: return None
-    t = row.get('trajectory') or {}
-    if not isinstance(t, dict): return None
-    if t.get('known') is True:
-        if t.get('transportRelative') is True: return None
-        if t.get('stopped') is not True:
-            if not ordinary_patrol(row): return None
-            age, duration = number(t.get('ageMs', 0)), number(t.get('durationMs', 0))
-            if age >= duration:
-                if age-duration > 5000: return None
-                return dict(row, **{k: t['destination'+k.upper()] for k in ('x', 'y', 'z')})
-            if age > 750 or number(row.get('positionAgeMs', 0)) > 750: return None
-            return row
-        return row
-    return None if number(row.get('movementFlags', 0)) & 0x080000ff else row
+def scalar(row, key):
+    value = row.get(key, 0)
+    if type(value) not in (int, float) or not math.isfinite(value) or abs(value) >= 40000:
+        raise Error('Invalid observed coordinate')
+    return value
 
 
-def neighbor_near(row, target):
-    p = creature_position(row)
-    if p is not None: return distance(p, target) < 8
-    if ordinary_patrol(row):
-        t = row['trajectory']; age = number(t.get('ageMs', 0)); duration = number(t['durationMs'])
-        end = {k: t['destination'+k.upper()] for k in ('x', 'y', 'z')}
-        # Only displacement bounds, not a guessed point on the patrol path.
-        return distance(row, target) < 8+7*age/1000 and distance(end, target) < 8+7*abs(duration-age)/1000
-    return point(row) and distance(row, target) < 8
+def creature_facts(row):
+    """Lossless consumed fields, including unknownness and every observer row."""
+    guid, entry = number(row.get('guid', 0)), number(row.get('entry', 0))
+    known = flags(row, ('present','mapKnown','positionKnown','aliveKnown','alive','healthKnown','levelKnown',
+        'unitFlagsKnown','dynamicFlagsKnown','targetKnown','attackVictimKnown'))
+    if guid >> 48 == 0xf130 and guid & 0xffffff and guid >> 24 & 0xffffff == entry: known |= 2048
+    value = [str(guid), entry, known, number(row.get('mapId',0)), scalar(row,'x'), scalar(row,'y'), scalar(row,'z'),
+        number(row.get('health',0)), number(row.get('maxHealth',0)), number(row.get('level',0)),
+        number(row.get('unitFlags',0)), number(row.get('unitFlags2',0)), number(row.get('dynamicFlags',0)), number(row.get('npcFlags',0)),
+        str(number(row.get('targetGuid',0))), str(number(row.get('attackVictimGuid',0))), str(number(row.get('attackAgeMs',0))),
+        number(row.get('movementFlags',0)), str(number(row.get('positionAgeMs',0)))]
+    trajectory = row.get('trajectory')
+    if trajectory is not None:
+        if not isinstance(trajectory,dict): raise Error('Invalid observed trajectory')
+        value.append([flags(trajectory,('known','stopped','cyclic','transportRelative','destinationKnown')),
+            str(number(trajectory.get('ageMs',0))), number(trajectory.get('durationMs',0)),
+            scalar(trajectory,'destinationX'),scalar(trajectory,'destinationY'),scalar(trajectory,'destinationZ')])
+    while len(value)>10 and value[-1] in (0,'0'): value.pop()
+    return value
 
 
 def decode(raw):
@@ -163,21 +140,24 @@ def write_private(path, value):
 
 
 class RPC(c.RPC):
-    READS = frozenset(('buddy-world.snapshot', 'buddy-actions.status', 'buddy-party.state', 'buddy-quests.state', 'buddy-loot.state', 'buddy-trade.state', 'buddy-professions.state'))
+    READS = frozenset(('buddy-world.snapshot', 'buddy-actions.status', 'buddy-party.state', 'buddy-quests.state', 'buddy-loot.state', 'buddy-trade.state', 'buddy-professions.state', 'session.policy_source', 'session.attach'))
 
     def fork(self, timeout=35): return RPC(self.url, timeout=timeout)
 
     def call(self, method, params, timeout=None):
         if method not in self.READS | {'buddy-actions.fargodeep_encounter', 'buddy-actions.acquire_interaction',
                 'buddy-actions.release_interaction', 'buddy-actions.travel_to'} or not isinstance(params, dict) or self.request_id >= 8192:
-            raise Error('Cave RPC method or finite request bound is invalid')
+            raise NotDispatched('Cave RPC method or finite request bound is invalid')
         self.request_id += 1
         identity = self.request_id
-        request = urllib.request.Request(self.url, data=json.dumps({'jsonrpc': '2.0', 'id': identity,
-            'method': method, 'params': params}, allow_nan=False).encode(), headers={'Content-Type': 'application/json'})
         try:
-            with self.opener.open(request, timeout=min(self.timeout, timeout or self.timeout)) as response: raw = response.read(262145)
-            value = decode(raw) if len(raw) <= 262144 else None
+            request = urllib.request.Request(self.url, data=json.dumps({'jsonrpc': '2.0', 'id': identity,
+                'method': method, 'params': params}, allow_nan=False).encode(), headers={'Content-Type': 'application/json'})
+        except (ValueError,TypeError) as error: raise NotDispatched('Cave RPC request is invalid') from error
+        try:
+            bound = MAX_SOURCE_RESPONSE if method == 'session.policy_source' else MAX_RESPONSE
+            with self.opener.open(request, timeout=min(self.timeout, timeout or self.timeout)) as response: raw = response.read(bound+1)
+            value = decode(raw) if len(raw) <= bound else None
         except (OSError, ValueError, http.client.HTTPException): raise Error('Cave RPC outcome is unconfirmed') from None
         if (not isinstance(value, dict) or value.get('jsonrpc') != '2.0' or type(value.get('id')) is not int
                 or value['id'] != identity or ('error' in value) == ('result' in value)):
@@ -242,20 +222,21 @@ def carried_counts(world):
 
 
 class Catchup:
-    def __init__(self, rpcs, sessions, save=lambda _: None, stored=None, now=time.monotonic, stopped=lambda: False, max_seconds=600):
+    def __init__(self, rpcs, sessions, save=lambda _: None, stored=None, now=time.monotonic, stopped=lambda: False, max_seconds=600, bridge=None):
         if set(rpcs) != set(ROSTER) or set(sessions) != set(ROSTER) or not 1 <= max_seconds <= 600:
             raise Error('Cave catchup requires the fixed three-body roster and a finite budget')
         if any(hasattr(rpc, 'url') and rpc.url != f'http://127.0.0.1:{ROSTER[g][1]}/rpc' for g, rpc in rpcs.items()):
             raise Error('Cave actor endpoint differs from the fixed roster')
         self.rpcs, self.sessions, self.save, self.now, self.stopped = rpcs, {str(g): session(s) for g, s in sessions.items()}, save, now, stopped
         self.deadline, self.done = now() + max_seconds, False
+        self.bridge = bridge
         self.data = stored or {'identity': copy.deepcopy(IDENTITY), 'sessions': dict(self.sessions), 'encounters': []}
         rows = self.data.get('encounters')
         if self.data.get('identity') != IDENTITY or self.data.get('sessions') != self.sessions or not isinstance(rows, list) or len(rows) > 96:
             raise Error('Cave journal identity, sessions or bounds differ')
         for row in rows:
             if (not isinstance(row, dict) or row.get('phase') not in ('arming', 'active', 'loot', 'settled', 'unconfirmed', 'stopped')
-                    or number(row.get('engager', 0)) not in ROSTER or number(row.get('entry', 0)) not in ENTRIES
+                    or number(row.get('engager', 0)) not in ROSTER or not 0 < number(row.get('entry', 0)) < 2**24
                     or not isinstance(row.get('requests'), dict) or set(row['requests']) - set(self.sessions)
                     or type(row.get('deadObserved', False)) is not bool): raise Error('Cave encounter journal is invalid')
             target = number(row.get('target', 0))
@@ -265,16 +246,22 @@ class Catchup:
             if 'lootAt' in row and (type(row['lootAt']) not in (int, float) or not math.isfinite(row['lootAt']) or row['lootAt'] < 0):
                 raise Error('Cave loot time is invalid')
             for request in row['requests'].values():
-                if not isinstance(request, dict) or request.get('phase') not in ('reserved', 'sent', 'observed', 'stopped') or not 0 < number(request.get('questRevision', 0)) < 2**64:
+                if not isinstance(request, dict) or request.get('phase') not in ('reserved', 'sent', 'observed', 'stopped','not_dispatched') or not 0 < number(request.get('questRevision', 0)) < 2**64:
                     raise Error('Cave request reservation is invalid')
+                if request.get('phase')=='not_dispatched' and request.get('entered') is not False:
+                    raise Error('Local cave refusal lacks no-entry proof')
+            if row.get('notDispatched') is True and (row['phase']!='stopped' or not row['requests'] or
+                    any(r.get('phase')!='not_dispatched' or r.get('entered') is not False for r in row['requests'].values())):
+                raise Error('Cave local refusal conflicts with native request custody')
             approaches = row.get('lootApproaches', [])
             if not isinstance(approaches, list) or len(approaches) > 3: raise Error('Corpse approach history exceeds its bound')
             for leg in approaches:
-                if (not isinstance(leg, dict) or leg.get('phase') not in ('reserved', 'arrived', 'preempted', 'yielded')
+                if (not isinstance(leg, dict) or leg.get('phase') not in ('reserved', 'arrived', 'preempted', 'yielded','not_dispatched')
                         or leg.get('targetGuid') != row['target'] or not isinstance(leg.get('bodySessions'), dict)
                         or set(leg['bodySessions']) != set(self.sessions)
                         or any(not session(v) for v in leg['bodySessions'].values())
                         or type(leg.get('cleanupResolved', False)) is not bool): raise Error('Saved corpse approach is invalid')
+                if leg['phase']=='not_dispatched' and not self.local_no_dispatch(leg): raise Error('Corpse no-entry proof is invalid')
             for key in ('lootWaitAt','lootWaitPauseAt'):
                 if key in row and (type(row[key]) not in (int,float) or not math.isfinite(row[key]) or row[key]<0):
                     raise Error('Corpse loot clock is invalid')
@@ -286,19 +273,20 @@ class Catchup:
         if 'search' in self.data and search is None: raise Error('Saved corridor search is invalid')
         if search is not None:
             if (not isinstance(search, dict) or search.get('route') != SEARCH_ROUTE
-                    or type(search.get('cursor')) is not int or not 0 <= search['cursor'] < len(SEARCH_STATIONS)
+                    or type(search.get('cursor')) is not int or not 0 <= search['cursor'] < SEARCH_HISTORY
                     or type(search.get('direction')) is not int or search['direction'] not in (-1, 1)
                     or not isinstance(search.get('legs'), list) or not 1 <= len(search['legs']) <= SEARCH_HISTORY):
                 raise Error('Saved corridor search is invalid')
             for leg in search['legs']:
-                if (not isinstance(leg, dict) or type(leg.get('station')) is not int or not 0 <= leg['station'] < len(SEARCH_STATIONS)
-                        or leg.get('phase') not in ('reserved', 'arrived', 'yielded', 'preempted')
+                if (not isinstance(leg, dict) or type(leg.get('station')) is not int or not 0 <= leg['station'] < SEARCH_HISTORY
+                        or leg.get('phase') not in ('reserved', 'arrived', 'yielded', 'preempted','not_dispatched')
                         or type(leg.get('cleanupResolved', False)) is not bool
                         or leg.get('phase') == 'arrived' and leg.get('cleanupResolved') is not True
                         or type(leg.get('started')) not in (int, float) or not math.isfinite(leg['started']) or leg['started'] < 0):
                     raise Error('Saved corridor leg is invalid')
                 if leg['phase'] == 'preempted' and not self.known_preemption(leg):
                     raise Error('Saved corridor preemption lacks positive movement receipts')
+                if leg['phase']=='not_dispatched' and not self.local_no_dispatch(leg): raise Error('Corridor no-entry proof is invalid')
         self.status = {'identity': copy.deepcopy(IDENTITY), 'phase': 'starting', 'observationsCurrent': False, 'characters': []}
         controls = self.data.get('controls')
         if controls is not None and (not isinstance(controls, list) or len(controls) != 3 or any(not isinstance(row, list) or len(row) != 4 or any(type(v) is not bool for v in row) for row in controls)):
@@ -306,18 +294,110 @@ class Catchup:
 
     def persist(self): self.save(copy.deepcopy(self.data))
 
+    @staticmethod
+    def local_no_dispatch(leg):
+        return (leg.get('notDispatched') is True and leg.get('entered') is False and leg.get('cleanupResolved') is True
+            and leg.get('cleanup')==[] and leg.get('routeResults')=={})
+
+    def policy_facts(self, scenes, mode, row=None, tokens=None):
+        creatures, indices, actors = [], {}, {}
+        def reference(value):
+            packed = creature_facts(value)
+            key = json.dumps(packed, allow_nan=False, separators=(',',':'))
+            if key not in indices:
+                creatures.append(packed); indices[key] = len(creatures)
+            return indices[key]
+        for guid in ROSTER:
+            scene, own, actions = scenes[guid], scenes[guid]['self'], scenes[guid]['actions']
+            world, pos, loot = scene['world'], scene['position'], scene['loot']
+            nearby = world.get('nearbyCreatures',[])
+            if not isinstance(nearby,list) or len(nearby)>32: raise Error('Cave creature observation bound exceeded')
+            slots = sorted(world['selfQuestLog'], key=lambda v:number(v.get('slot',0)))
+            group = scene['party']['group']
+            farg, prof = actions.get('fargodeep') or {}, scene['professions']
+            operation = prof.get('operation') or {}
+            actors[str(guid)] = {
+                'b':[self.sessions[str(guid)],str(number(world.get('visitRevision',0))),str(scene['questRevision']),
+                    str(number(world.get('inventoryRevision',0))),str(number(group.get('groupGuid',0)))],
+                's':[flags(own,('present','aliveKnown','alive','healthKnown','classKnown','powerKnown','unitFlagsKnown','levelKnown',
+                        'movementFlagsKnown','mapKnown','positionKnown','baseManaKnown')),
+                    number(own.get('classId',0)),number(own.get('level',0)),number(own.get('health',0)),number(own.get('maxHealth',0)),
+                    number(own.get('powerType',0)),number(own.get('power',0)),number(own.get('maxPower',0)),number(own.get('baseMana',0)),
+                    number(own.get('unitFlags',0)),number(own.get('movementFlags',0)),number(own.get('extraMovementFlags',0)),
+                    number(own.get('playerFlags',0))],
+                'p':[flags(pos,('known','mapKnown')),number(pos.get('mapId',0)),scalar(pos,'x'),scalar(pos,'y'),scalar(pos,'z'),str(number(pos.get('revision',0)))],
+                'a':[flags(actions,('following','healing','assisting','practicing','moving','traveling','motionUnconfirmed',
+                    'autoAttackUnconfirmed','castPending','autoAttacking','autoAttackRequested','interactionHarvest')),
+                    actions.get('interactionOwner',''),str(number(actions.get('interactionLeaseRemainingMs',0))),
+                    flags(farg,('active',)),str(number(farg.get('targetGuid',0))),str(number(farg.get('engagerGuid',0))),self.phase(farg.get('phase'))],
+                'l':[flags(loot,('enabled',)),self.phase(loot.get('phase')),str(number(loot.get('pendingCorpseGuid',0))),str(number(loot.get('pendingGameObjectGuid',0))),
+                    bool(row and any(number(v.get('guid',0))==row['target'] for v in world.get('lootableCorpses',[])))],
+                'o':[scene['quests'].get('actionInFlight') is True, c.trade_idle(scene['trade']),
+                    flags(prof,('active','closing')),operation.get('status',''),flags(operation,('leaseReleased','cleanupUnconfirmed')),
+                    (world.get('owner') or {}).get('present') is True],
+                'q':[[number(v.get('questId',0)),number(v.get('state',0)),flags(v,('complete','failed'))] for v in slots],
+                'i':[scene['counts'][773],scene['counts'][772],scene['free']],
+                'c':[reference(v) for v in nearby],
+                'r':reference(world['requestedCreature']) if isinstance(world.get('requestedCreature'),dict) else 0,
+                'g':[[str(number(v.get('guid',0))),flags(v,('online','self'))] for v in group.get('members',[])],
+                't':bool(tokens and guid in tokens)}
+        search = self.data.get('search')
+        last = search['legs'][-1] if search else None
+        task = {'remaining':max(0,self.deadline-self.now()),'idle':self.idle_polls,'legs':self.search_legs,
+            'attempted':[str(v['target']) for v in self.data['encounters'] if v.get('notDispatched') is not True],
+            'controlsMatch':self.controls(scenes)==self.data.get('controls'),
+            'search':dict(cursor=search['cursor'],direction=search['direction'],count=len(search['legs']),
+                phase=last['phase'],station=last['station'],preempted=self.known_preemption(last)) if search else {},
+            'corpseArrival':str(self.recent_corpse_arrival() or 0)}
+        if row:
+            task['row']={k:copy.deepcopy(row[k]) for k in ('target','entry','engager','phase','deadObserved','requests','started')}
+            task['row']['target'],task['row']['engager']=str(row['target']),str(row['engager'])
+            task['row']['lootElapsed']=max(0,self.now()-row.get('lootWaitAt',self.now()))
+            task['row']['approachCount']=len(row.get('lootApproaches',[]))
+        return dict(selection='cave_cohort',format=1,mode=mode,sessionId=self.sessions['1'],selfGuid='1',actors=actors,creatures=creatures,task=task)
+
+    def decide(self, scenes, mode, row=None, tokens=None, rpc=None):
+        try:
+            result, binding = policy.evaluate_accepted(rpc or self.endpoint(1),dict(sessionId=self.sessions['1'],characterGuid='1'),
+                self.policy_facts(scenes,mode,row,tokens),bridge=self.bridge)
+        except (ValueError,OSError) as error: raise Error(str(error)) from None
+        if result.get('status')!='ready' or not isinstance(result.get('choice'),dict):
+            raise Error('Current accepted cave policy did not return a choice')
+        binding['bodies']={str(g):{'sessionId':self.sessions[str(g)],'visit':str(number(scenes[g]['world'].get('visitRevision',0)))} for g in ROSTER}
+        return result['choice'], binding
+
     def endpoint(self, guid):
         rpc = self.rpcs[guid]
         if hasattr(rpc, 'url') and rpc.url != f'http://127.0.0.1:{ROSTER[guid][1]}/rpc':
             self.done = True; raise Error('Cave actor endpoint changed')
         return rpc
 
-    def read(self, target=0, timeout=None, check=None):
+    def bound_body_current(self,guid,binding):
+        """Original receipt identity only; cleanup never needs healthy Lua."""
+        bodies=binding.get('bodies',{}) if isinstance(binding,dict) else {}
+        body=bodies.get(str(guid))
+        if not isinstance(body,dict) or body.get('sessionId')!=self.sessions[str(guid)] or not number(body.get('visit',0)):
+            return False
+        party=self.endpoint(guid).call('buddy-party.state',{},timeout=.5)
+        world=self.endpoint(guid).call('buddy-world.snapshot',{},timeout=.5)
+        return (party.get('sessionId')==body['sessionId'] and number(world.get('self',{}).get('guid',0))==guid
+            and str(number(world.get('visitRevision',0)))==body['visit'])
+
+    def preflight(self, authorize, target=0, rpcs=None):
+        """Reauthorize complete latest facts; never atomic native admission."""
+        try:
+            fresh=self.read(target,timeout=.5,rpcs=rpcs)
+            if not authorize(fresh,rpcs[1] if rpcs is not None else None) or self.stopped() or self.now()>=self.deadline:
+                raise ValueError('Complete current cohort no longer authorizes this dispatch')
+            return fresh
+        except (Error,ValueError,OSError) as error: raise NotDispatched(str(error)) from None
+
+    def read(self, target=0, timeout=None, check=None, rpcs=None):
         result, groups = {}, []
-        for guid in self.rpcs:
+        for guid in ROSTER:
             def call(method, params):
                 if check is not None and not check(): raise Error('Corridor read interrupted')
-                endpoint = self.endpoint(guid)
+                endpoint = rpcs[guid] if rpcs is not None else self.endpoint(guid)
                 return endpoint.call(method, params, timeout=timeout) if timeout is not None else endpoint.call(method, params)
             first = call('buddy-party.state', {})
             world = call('buddy-world.snapshot', {'creatureGuid': str(target)} if target else {})
@@ -332,6 +412,7 @@ class Catchup:
                 self.done = True; raise Error('A cave actor body session changed')
             own, pos = world.get('self', {}), actions.get('position', {})
             if number(own.get('guid', 0)) != guid: self.done = True; raise Error('Cave actor identity changed')
+            if not number(world.get('visitRevision',0)): raise Error('Current cave actor visit is unknown')
             group = final.get('group', {})
             members = group.get('members', [])
             if group.get('known') is not True or group.get('inGroup') is not True or not isinstance(members, list) or not 3 <= len(members) <= 40:
@@ -344,7 +425,7 @@ class Catchup:
             if not point(pos, 'known') or number(pos.get('mapId', 0)) != 0 or not point(own) or number(own.get('mapId', 0)) != 0:
                 raise Error('Actual same-map own position is required')
             result[guid] = {'world': world, 'actions': actions, 'loot': loot, 'self': own, 'position': pos, 'log': log,
-                'counts': counts, 'free': free, 'questRevision': number(world.get('selfQuestLogRevision', 0)), 'quests': quests, 'trade': trade, 'professions': professions}
+                'counts': counts, 'free': free, 'questRevision': number(world.get('selfQuestLogRevision', 0)), 'quests': quests, 'trade': trade, 'professions': professions,'party':final}
         if len(set(groups)) != 1: raise Error('Companions are not in one server-confirmed party')
         self.status.update(observationsCurrent=True, characters=[{'guid': g, 'sessionId': self.sessions[str(g)],
             'goldDust': result[g]['counts'][773], 'largeCandles': result[g]['counts'][772],
@@ -373,85 +454,44 @@ class Catchup:
         return isinstance(f, dict) and number(f.get('targetGuid', 0)) == row['target'] and number(f.get('engagerGuid', 0)) == row['engager']
 
     def safe_pull(self, scenes, owned=None):
-        for guid, scene in scenes.items():
-            p, a, loot = scene['self'], scene['actions'], scene['loot']
-            if (any(p.get(k) is not True for k in ('present', 'aliveKnown', 'alive', 'healthKnown', 'unitFlagsKnown', 'classKnown', 'powerKnown'))
-                    or number(p.get('classId', 0)) != ROSTER[guid][2] or self.combat(scene)
-                    or not number(p.get('maxHealth', 0)) or number(p.get('health', 0))*100 < number(p['maxHealth'])*95
-                    or number(p.get('health', 0)) > number(p['maxHealth'])
-                    or not scene['free'] or not scene['questRevision'] or a.get('assisting') is not True): return False
-            if number(p.get('powerType', 0)) != (3 if guid == 5 else 0): return False
-            if guid != 5 and (not number(p.get('maxPower', 0)) or number(p.get('power', 0))*100 < number(p['maxPower'])*60): return False
-            if guid == 5 and number(p.get('power', 0)) < 90: return False
-            if (any(a.get(k) is True for k in ('following', 'practicing', 'moving', 'traveling', 'motionUnconfirmed', 'autoAttackUnconfirmed', 'castPending'))
-                    or a.get('interactionOwner') or loot.get('enabled') is not True or loot.get('phase') != 'idle'
-                    or number(loot.get('pendingCorpseGuid', 0)) or number(loot.get('pendingGameObjectGuid', 0))): return False
-            if a.get('fargodeep', {}).get('active') is True and (owned is None or not self.scope(a, owned)): return False
-            prof, operation = scene['professions'], scene['professions'].get('operation') or {}
-            if (scene['quests'].get('actionInFlight') is True or not c.trade_idle(scene['trade']) or prof.get('active') is True
-                    or prof.get('closing') is True or operation.get('cleanupUnconfirmed') is True
-                    or operation and (operation.get('status') not in ('COMPLETED', 'SERVER_REJECTED', 'BLOCKED', 'CANCELLED') or operation.get('leaseReleased') is not True)):
-                return False
-        return scenes[1]['actions'].get('healing') is True
+        choice,binding=self.decide(scenes,'safe_pull',owned)
+        if set(choice)!={'kind','allowed'} or choice['kind']!='admission' or type(choice['allowed']) is not bool:
+            raise Error('Invalid accepted cave admission')
+        return choice['allowed'] and (owned is None or 'policyBinding' not in owned or binding==owned['policyBinding'])
 
     def search_read(self, cleanup=False, target=0):
         return self.read(target, timeout=.5, check=None if cleanup else lambda: not self.stopped() and self.now() < self.deadline)
 
-    def safe_search(self, scenes, tokens=None):
-        """Reuse pull safety, allowing only our own harvest-tagged movement."""
-        tokens = tokens or {}
-        if self.controls(scenes) != self.data.get('controls'): return False
-        adjusted = {}
-        for guid, scene in scenes.items():
-            own, a = scene['self'], scene['actions']
-            if ((scene['world'].get('owner') or {}).get('present') is True
-                    or own.get('movementFlagsKnown') is not True
-                    or number(own.get('unitFlags', 0)) & (0x1|0x4|0x40000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000)
-                    or number(own.get('movementFlags', 0)) & ~0x700001ff or number(own.get('extraMovementFlags', 0))
-                    or a.get('autoAttacking') is True or a.get('autoAttackRequested') is True
-                    or a.get('fargodeep', {}).get('active') is True): return False
-            for creature in scene['world'].get('nearbyCreatures', []):
-                if (creature.get('present') is True and creature.get('alive') is True
-                        and creature.get('attackVictimKnown') is True
-                        and number(creature.get('attackVictimGuid', 0)) in (1, 3, 4, 5)
-                        and number(creature.get('attackAgeMs', 0)) <= 5000): return False
-            adjusted[guid] = dict(scene, actions=dict(a))
-            if guid in tokens:
-                if (a.get('interactionOwner') != 'exploration' or a.get('interactionHarvest') is not True
-                        or not number(a.get('interactionLeaseRemainingMs', 0))): return False
-                # The unchanged pull guard still checks casts, uncertain motion,
-                # other modules, resources, logs and complete carried inventory.
-                adjusted[guid]['actions'].update(interactionOwner='', moving=False, traveling=False)
-        return self.safe_pull(adjusted)
+    def safe_search(self, scenes, tokens=None, binding=None, rpc=None):
+        choice,current=self.decide(scenes,'safe_search',tokens=tokens,rpc=rpc)
+        if set(choice)!={'kind','allowed'} or choice['kind']!='admission' or type(choice['allowed']) is not bool:
+            raise Error('Invalid accepted cave search admission')
+        return choice['allowed'] and (binding is None or binding==current)
 
-    def release_search(self, guid, token):
+    def release_search(self, guid, token, binding):
         result = {'guid': guid, 'releaseAck': False, 'custodyResolved': False}
         try:
-            if session(self.endpoint(guid).call('buddy-party.state', {}, timeout=.5).get('sessionId')) != self.sessions[str(guid)]: return result
+            if not self.bound_body_current(guid,binding):
+                result['reason']='original_body_visit_unverified_needs_reconciliation';return result
             try:
                 a = self.endpoint(guid).call('buddy-actions.release_interaction', {'owner': 'exploration', 'token': token}, timeout=.5)
                 result['releaseAck'] = True
             except Error:
                 # Danger can already have revoked this harvest token. Fresh
                 # stopped absence is distinct proof, never a fabricated ACK.
-                if session(self.endpoint(guid).call('buddy-party.state', {}, timeout=.5).get('sessionId')) != self.sessions[str(guid)]: return result
+                if not self.bound_body_current(guid,binding): return result
                 a = self.endpoint(guid).call('buddy-actions.status', {}, timeout=.5)
-            if session(self.endpoint(guid).call('buddy-party.state', {}, timeout=.5).get('sessionId')) != self.sessions[str(guid)]: return result
+            if not self.bound_body_current(guid,binding): return result
             result['custodyResolved'] = not a.get('interactionOwner') and not any(a.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed'))
         except Error: pass
         return result
 
-    @staticmethod
-    def search_priority(scenes):
-        for guid, scene in scenes.items():
-            if scene['self'].get('unitFlagsKnown') is True and Catchup.combat(scene):
-                return {'kind': 'actual_own_combat', 'observerGuid': guid}
-            for creature in scene['world'].get('nearbyCreatures', []):
-                if (creature.get('present') is True and creature.get('aliveKnown') is True and creature.get('alive') is True
-                        and creature.get('attackVictimKnown') is True and number(creature.get('attackVictimGuid', 0)) in (1, 4, 5)
-                        and number(creature.get('attackAgeMs', 0)) <= 5000):
-                    return {'kind': 'actual_fresh_party_attacker', 'observerGuid': guid}
-        return None
+    def search_priority(self, scenes):
+        choice,_=self.decide(scenes,'priority')
+        if choice=={'kind':'none'}: return None
+        if set(choice)!={'kind','observerGuid'} or choice['kind'] not in ('actual_own_combat','actual_fresh_party_attacker') or number(choice['observerGuid']) not in ROSTER:
+            raise Error('Invalid accepted cave priority observation')
+        return dict(choice,observerGuid=number(choice['observerGuid']))
 
     def known_preemption(self, leg):
         """Positive movement receipts, distinct from a later idle snapshot."""
@@ -485,19 +525,24 @@ class Catchup:
                 or not all(v.get('custodyResolved') is True for v in clean)
                 or not isinstance(before, dict) or set(before) != set(self.sessions)
                 or not isinstance(after, dict) or set(after) != set(self.sessions)): return False
-        goal = station(leg['station']) if goal is None else goal
+        goal = leg.get('goal') if goal is None else goal
+        if not isinstance(goal,dict) or set(goal)!={'x','y','z'}: return False
+        arrival=leg.get('arrivalDistance')
+        if type(arrival) not in (int,float) or not .5<=arrival<=3: return False
         return all(point(before[g], 'known') and point(after[g], 'known')
             and number(before[g].get('mapId', 0)) == 0 and number(after[g].get('mapId', 0)) == 0
             and number(after[g].get('revision', 0)) > number(before[g].get('revision', 0))
-            and distance(after[g], goal) <= SEARCH_ARRIVAL+1e-4 for g in self.sessions)
+            and distance(after[g], goal) <= arrival+1e-4 for g in self.sessions)
 
     def observe_stopped_arrival(self, scenes):
         saved = self.data['search']; leg = saved['legs'][-1]
         if not self.stopped_arrival_evidence(leg) or not self.safe_search(scenes): return False
-        goal = station(leg['station'])
-        if not all(distance(scene['position'], goal) <= SEARCH_ARRIVAL+1e-4
+        goal = leg['goal']
+        if not all(distance(scene['position'], goal) <= leg['arrivalDistance']+1e-4
                 and number(scene['position'].get('revision', 0)) >= number(leg['after'][str(g)].get('revision', 0)) for g, scene in scenes.items()): return False
-        direction = saved['direction'] if saved['cursor'] == leg['station'] else (1 if leg['station'] > saved['cursor'] else -1)
+        choice,_=self.decide(scenes,'search_arrival')
+        if set(choice)!={'kind','direction'} or choice['kind']!='arrival' or choice['direction'] not in (-1,1): return False
+        direction=choice['direction']
         saved.update(cursor=leg['station'], direction=direction)
         leg.update(phase='arrived', arrivalObservation={'kind': 'actual_station_after_resolved_stop',
             'sessions': dict(self.sessions), 'observedAt': self.now(),
@@ -511,10 +556,22 @@ class Catchup:
         """Shared normal NAV transport; caller owns the durable leg reservation."""
         tokens, pool, futures, results, releases = {}, None, {}, {}, []
         cause = 'corridor_guard_changed'
+        stage,guid='acquire_observation',None
+        entered=False
+        leg['entered']=False;self.persist()
         try:
             for guid in ROSTER:
+                stage='acquire_observation'
                 fresh = observe()
                 if not guard(fresh, tokens): raise Error('Corridor custody or party safety changed')
+                leg['entered']=True;self.persist()
+                stage='acquire_authorization'
+                fresh=observe()
+                if not guard(fresh,tokens) or self.stopped() or self.now()>=self.deadline:
+                    raise NotDispatched('Current cohort no longer authorizes this acquisition')
+                self.preflight(lambda fresh,rpc:guard(fresh,tokens,rpc),leg.get('targetGuid',0))
+                entered=True
+                stage='acquire'
                 lease = self.endpoint(guid).call('buddy-actions.acquire_interaction', {'owner': 'exploration', 'leaseMs': 30000, 'harvest': True}, timeout=.5)
                 token, a = lease.get('token'), lease.get('state') or {}
                 if not isinstance(token, str) or not 1 <= len(token) <= 128: raise Error('Corridor lease outcome is unconfirmed')
@@ -522,33 +579,51 @@ class Catchup:
                 if (a.get('interactionOwner') != 'exploration' or a.get('interactionHarvest') is not True
                         or not number(a.get('interactionLeaseRemainingMs', 0))) or any(a.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed')):
                     raise Error('Stopped guarded corridor custody was not confirmed')
+            stage='cohort_authorization'
             if not guard(observe(), tokens): raise Error('Corridor safety changed before movement')
             # Each blocking route uses a distinct connection/request sequence;
             # watchdog reads never share its RPC instance or request counter.
             routes = {g: self.endpoint(g).fork(timeout=35) for g in ROSTER}
             def travel(guid):
                 if self.stopped() or self.now() >= self.deadline: raise Error('Corridor start interrupted')
+                readers={g:self.endpoint(g).fork(timeout=.5) for g in ROSTER}
+                try:
+                    fresh=self.read(leg.get('targetGuid',0),timeout=.5,rpcs=readers)
+                    if not guard(fresh,tokens,readers[1]) or self.stopped() or self.now()>=self.deadline:
+                        raise NotDispatched('Current cohort no longer authorizes this route')
+                    self.preflight(lambda fresh,rpc:guard(fresh,tokens,rpc),leg.get('targetGuid',0),readers)
+                except (Error,OSError) as error: raise NotDispatched(str(error)) from None
                 return routes[guid].call('buddy-actions.travel_to',
-                    dict(token=tokens[guid], mapId=0, arrivalDistance=SEARCH_ARRIVAL, **goal), timeout=35)
+                    dict(token=tokens[guid], mapId=0, arrivalDistance=leg['arrivalDistance'], **goal), timeout=35)
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=3)
             futures = {g: pool.submit(travel, g) for g in ROSTER}
             while True:
+                stage,guid='watchdog_observation',None
                 fresh = observe()
+                stage='watchdog_priority'
                 priority = self.search_priority(fresh)
                 if priority is not None: leg['priorityObservation'] = priority
                 for guid, future in futures.items():
                     if future.done() and guid not in results:
+                        stage='route_result'
                         answer = future.result()
                         results[guid] = answer
                         if (answer.get('reason') != 'exploration_within_distance' or any(answer.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed'))):
                             cause = 'corridor_route_not_confirmed'; raise Error('Corridor route did not confirm arrival')
+                stage,guid='watchdog_authorization',None
                 if not guard(fresh, tokens): raise Error('Corridor safety changed during movement')
                 if len(results) == 3: break
                 time.sleep(.2)
-        except (Error, OSError): pass
+        except NotDispatched as error:
+            leg['failure']={'stage':stage,'actorGuid':str(guid) if guid else None,'reason':str(error)[:192]}
+            if not tokens and not futures: leg['entered']=False;leg['notDispatched']=True
+            cause='cave_policy_preflight_not_dispatched'
+        except (Error, OSError) as error:
+            leg['failure']={'stage':stage,'actorGuid':str(guid) if guid else None,'reason':str(error)[:192]}
+            if not entered: leg['entered']=False;leg['notDispatched']=True
         finally:
             # Revoke every exact owned token before waiting for route RPCs.
-            releases = [self.release_search(g, token) for g, token in tokens.items()]
+            releases = [self.release_search(g, token,leg.get('policyBinding')) for g, token in tokens.items()]
             if pool: pool.shutdown(wait=True)
             # Normal completion of the synchronous RPC proves that its movement
             # controller returned. A lost/error response never gains this proof
@@ -560,16 +635,20 @@ class Catchup:
                     summaries[str(guid)] = self.stopped_route_result(answer)
                     if answer.get('reason') in SEARCH_PRIORITY_REASONS:
                         leg['priorityObservation'] = {'kind': 'normal_server_priority', 'observerGuid': guid}
-                except (Error, OSError): summaries[str(guid)] = {'normalStopped': False, 'responseUnconfirmed': True}
+                except NotDispatched as error: summaries[str(guid)] = {'normalStopped':False,'notDispatched':True,'reason':str(error)[:192]}
+                except (Error, OSError) as error: summaries[str(guid)] = {'normalStopped': False, 'responseUnconfirmed': True,'reason':str(error)[:192]}
             leg['routeResults'] = summaries
             leg['cleanup'] = releases
             leg['cleanupResolved'] = len(tokens) == 3 and all(v['custodyResolved'] for v in releases)
+        if leg.get('notDispatched') is True and not tokens and not futures:
+            leg['cleanupResolved']=True
+            return 'not_dispatched',None,'cave_policy_preflight_not_dispatched'
         after = None
         try:
             after = observe(cleanup=True)
             leg['after'] = {str(g): dict(v['position']) for g, v in after.items()}
-            arrival = all(distance(v['position'], goal) <= SEARCH_ARRIVAL+1e-4 for v in after.values())
-            progress = all(distance(leg['before'][str(g)], goal) <= SEARCH_ARRIVAL+1e-4 or
+            arrival = all(distance(v['position'], goal) <= leg['arrivalDistance']+1e-4 for v in after.values())
+            progress = all(distance(leg['before'][str(g)], goal) <= leg['arrivalDistance']+1e-4 or
                 (number(v['position'].get('revision', 0)) > number(leg['before'][str(g)].get('revision', 0))
                     and distance(leg['before'][str(g)], goal)-distance(v['position'], goal) >= .5) for g, v in after.items())
             if (len(results) == 3 and all(v.get('reason') == 'exploration_within_distance' for v in results.values())
@@ -591,77 +670,43 @@ class Catchup:
                 and all(v.get('custodyResolved') is True for v in clean)): return row['target']
         return None
 
-    @staticmethod
-    def reconnect_station(scenes):
-        candidates=[i for i in range(len(SEARCH_STATIONS)) if all(distance(v['position'],station(i))<=60 for v in scenes.values())]
-        if not candidates: return None
-        same_floor=[i for i in candidates if all(abs(v['position']['z']-station(i)['z'])<=2 for v in scenes.values())]
-        return min(same_floor or candidates,key=lambda i:(max(distance(v['position'],station(i)) for v in scenes.values()),i))
-
     def search(self, scenes):
         """One journaled, physically planned cohort leg; no same-goal retries."""
         saved = self.data.get('search')
-        if self.search_legs >= SEARCH_LEGS or saved and len(saved['legs']) >= SEARCH_HISTORY:
-            self.done = True; self.status['phase'] = 'finite_corridor_search_limit'; return
-        if self.deadline-self.now() < 36:
-            self.done = True; self.status['phase'] = 'finite_corridor_search_time_remaining'; return
-        if saved and saved['legs'][-1]['phase'] not in ('arrived', 'preempted'):
+        if saved and saved['legs'][-1]['phase'] not in ('arrived', 'preempted','not_dispatched'):
             # An interrupted process cannot reissue a reserved movement leg.
             self.done = True; self.status['phase'] = 'corridor_previous_leg_requires_reconciliation'; return
-        if not self.safe_search(scenes):
-            self.status['phase'] = 'waiting_for_safe_idle_corridor_search'; return
-        reanchor=None; reconnect=None; corpse_arrival=self.recent_corpse_arrival()
+        choice,binding=self.decide(scenes,'search')
+        if choice.get('kind') in ('wait','stop'):
+            self.done=choice['kind']=='stop';self.status['phase']=self.phase(choice.get('phase'));return
+        goal=choice.get('goal')
+        if (set(choice)!={'kind','station','cursor','direction','goal','arrival','route','reanchor','corpseTargetGuid'} or choice['kind']!='search'
+                or type(choice['station']) is not int or not 0<=choice['station']<64 or type(choice['cursor']) is not int or not 0<=choice['cursor']<64
+                or type(choice['direction']) is not int or choice['direction'] not in (-1,1) or choice['route']!=SEARCH_ROUTE
+                or type(choice['reanchor']) is not bool or not isinstance(goal,dict) or set(goal)!={'x','y','z'}
+                or any(type(v) not in (int,float) or not math.isfinite(v) or abs(v)>=40000 for v in goal.values())
+                or type(choice['arrival']) not in (int,float) or not .5<=choice['arrival']<=3):
+            raise Error('Invalid accepted cave route choice')
+        goal_index,direction=choice['station'],choice['direction']
+        prior_cursor=saved['cursor'] if saved else None
         if saved is None:
-            anchors = [i for i in range(len(SEARCH_STATIONS)) if all(
-                abs(s['position']['z']-station(i)['z']) <= 2 and distance(s['position'], station(i)) <= 18 for s in scenes.values())]
-            if not anchors:
-                reconnect=self.reconnect_station(scenes) if corpse_arrival else None
-                if reconnect is None:
-                    self.done = True; self.status['phase'] = 'corridor_not_near_current_party_floor'; return
-                cursor=reconnect
-                reanchor={'kind':'fresh_safe_origin_reconnect','priorCursor':None,'corpseTargetGuid':corpse_arrival}
-            else: cursor = min(anchors, key=lambda i: (max(distance(s['position'], station(i)) for s in scenes.values()), i))
-            saved = {'route': SEARCH_ROUTE, 'cursor': cursor, 'direction': 1, 'legs': []}
-            self.data['search'] = saved
-        else:
-            cursor = saved['cursor']
-            if saved['legs'][-1]['phase'] == 'preempted':
-                previous = saved['legs'][-1]
-                if not self.known_preemption(previous): raise Error('Corridor preemption is unconfirmed')
-                previous['freshResumeObservation'] = {'sessions': dict(self.sessions), 'observedAt': self.now()}
-                if all(distance(v['position'], station(previous['station'])) <= SEARCH_ARRIVAL+1e-4 for v in scenes.values()):
-                    cursor = previous['station']; saved['cursor'] = cursor
-            elif any(abs(s['position']['z']-station(cursor)['z']) > 2 or distance(s['position'], station(cursor)) > 28 for s in scenes.values()):
-                reconnect=self.reconnect_station(scenes)
-                if reconnect is None:
-                    self.done = True; self.status['phase'] = 'corridor_party_left_current_station_floor'; return
-                reanchor={'kind':'fresh_safe_origin_reconnect','priorCursor':cursor,'corpseTargetGuid':corpse_arrival or 0}
-        direction = saved['direction']
-        # First regroup at the floor-matched station if the cohort is spread;
-        # otherwise advance in ordered 14.2--15.7yd corridor intervals.
-        if all(distance(s['position'], station(cursor)) <= SEARCH_ARRIVAL+1e-4 for s in scenes.values()):
-            if not 0 <= cursor+direction < len(SEARCH_STATIONS): direction = -direction
-            goal_index = cursor+direction
-        else: goal_index = cursor
-        if saved['legs'] and saved['legs'][-1]['phase'] == 'preempted':
-            previous_goal = saved['legs'][-1]['station']
-            if not all(distance(v['position'], station(previous_goal)) <= SEARCH_ARRIVAL+1e-4 for v in scenes.values()):
-                goal_index = previous_goal
-            if corpse_arrival and any(distance(v['position'],station(cursor))>28 or abs(v['position']['z']-station(cursor)['z'])>2 for v in scenes.values()):
-                reconnect=self.reconnect_station(scenes)
-                if reconnect is not None: reanchor={'kind':'fresh_safe_origin_reconnect','priorCursor':cursor,'corpseTargetGuid':corpse_arrival}
-            if reconnect is None and any(distance(v['position'], station(goal_index)) > 40 for v in scenes.values()):
-                self.done = True; self.status['phase'] = 'corridor_preempted_party_left_bounded_goal'; return
-        if reconnect is not None:
-            goal_index=reconnect
-            direction=saved['direction'] if cursor==goal_index else (1 if goal_index>cursor else -1)
-        goal = station(goal_index)
+            saved={'route':choice['route'],'cursor':choice['cursor'],'direction':direction,'legs':[]}
+            self.data['search']=saved
+        elif saved['legs'][-1]['phase']=='preempted':
+            if not self.known_preemption(saved['legs'][-1]): raise Error('Corridor preemption is unconfirmed')
+            saved['legs'][-1]['freshResumeObservation']={'sessions':dict(self.sessions),'observedAt':self.now()}
         leg = {'station': goal_index, 'phase': 'reserved', 'cleanupResolved': False, 'started': self.now(),
-            'bodySessions': dict(self.sessions), 'before': {str(g): dict(s['position']) for g, s in scenes.items()}}
-        if reanchor is not None:
-            leg['reanchor']=dict(reanchor, sessions=dict(self.sessions), observedAt=self.now())
+            'bodySessions': dict(self.sessions),'goal':dict(goal),'arrivalDistance':choice['arrival'],'policyBinding':binding,
+            'before': {str(g): dict(s['position']) for g, s in scenes.items()}}
+        if choice['reanchor']:
+            leg['reanchor']=dict(kind='fresh_safe_origin_reconnect',priorCursor=prior_cursor,corpseTargetGuid=number(choice['corpseTargetGuid']),
+                sessions=dict(self.sessions),observedAt=self.now())
         saved['legs'].append(leg); self.search_legs += 1; self.persist()
-        outcome, after, cause = self.move_cohort(leg, goal, self.search_read, self.safe_search)
+        outcome, after, cause = self.move_cohort(leg, goal, self.search_read,
+            lambda fresh,tokens=None,rpc=None:self.safe_search(fresh,tokens,binding,rpc))
+        if outcome=='not_dispatched':
+            leg.update(phase=outcome,outcome=cause);self.persist();self.idle_polls=0
+            self.status['phase']=cause;return
         if outcome == 'arrived':
             saved.update(cursor=goal_index, direction=direction)
             leg['phase'] = 'arrived'; self.persist(); self.idle_polls = 0
@@ -688,14 +733,13 @@ class Catchup:
                 missing = True; continue
             if isinstance(value,dict): value=dict(value,**{k:value.get(k,0) for k in ('x','y','z')})
             if (not isinstance(value, dict) or number(value.get('guid', 0)) != row['target']
-                    or number(value.get('entry', 0)) != row['entry'] or row['entry'] not in ENTRIES
+                    or number(value.get('entry', 0)) != row['entry']
                     or value.get('present') is not True or value.get('aliveKnown') is not True or value.get('alive',False) is not False
                     or value.get('healthKnown') is not True or number(value.get('health', 0)) != 0
-                    or value.get('levelKnown') is not True or not 5 <= number(value.get('level', 0)) <= 7
+                    or value.get('levelKnown') is not True
                     or value.get('unitFlagsKnown') is not True or value.get('dynamicFlagsKnown') is not True
                     or not number(value.get('dynamicFlags', 0)) & 8 or not point(value) or number(value.get('mapId', 0)) != 0
-                    or not number(value.get('positionRevision', 0))
-                    or not (-10000 <= value['x'] <= -9700 and 50 <= value['y'] <= 320 and -10 <= value['z'] <= 65)):
+                    or not number(value.get('positionRevision', 0))):
                 raise Error('Exact dead corpse context changed')
             views[str(guid)] = {k: value[k] for k in ('x','y','z')}
             views[str(guid)].update(positionRevision=number(value['positionRevision']))
@@ -714,26 +758,20 @@ class Catchup:
             return False
         return True
 
-    def corpse_guard(self, scenes, row, expected, tokens=None):
-        return self.corpse_context(scenes,row) and self.safe_search(scenes,tokens) and self.corpse_views(scenes,row)==expected
+    def corpse_guard(self, scenes, row, expected, tokens=None, rpc=None):
+        return self.corpse_context(scenes,row) and self.safe_search(scenes,tokens,row.get('lootPolicyBinding'),rpc) and self.corpse_views(scenes,row)==expected
 
     def corpse_loot_idle(self, scenes, row):
         """Expected same-source normal loot may begin immediately after release."""
         if not self.corpse_context(scenes,row): return False
-        adjusted = {}
         for guid, scene in scenes.items():
             a, loot = scene['actions'], scene['loot']; pending = number(loot.get('pendingCorpseGuid', 0))
             if (pending not in (0,row['target']) or number(loot.get('pendingGameObjectGuid', 0))
                     or 'unconfirmed' in str(loot.get('phase', '')).lower()): return False
-            adjusted[guid] = dict(scene, actions=dict(a), loot=dict(loot), free=max(1,scene['free']))
             if pending == row['target']:
                 if a.get('interactionOwner', '') not in ('','loot'): return False
-                adjusted[guid]['actions'].update(interactionOwner='', moving=False, traveling=False)
-                adjusted[guid]['loot'].update(phase='idle', pendingCorpseGuid='0')
-                # A confirmed normal pickup may just have filled the last slot;
-                # it changes future readiness, not an already observed arrival.
-                adjusted[guid]['free'] = max(1, scene['free'])
-        return self.safe_search(adjusted)
+        choice,binding=self.decide(scenes,'corpse_clock',row)
+        return choice=={'kind':'admission','allowed':True} and (not row.get('lootPolicyBinding') or binding==row['lootPolicyBinding'])
 
     def corpse_arrival_guard(self, scenes, row, expected):
         views = self.corpse_views(scenes, row, expected)
@@ -744,7 +782,7 @@ class Catchup:
 
     def corpse_arrival_observed(self, leg, goal, scenes, row, views):
         return (self.stopped_arrival_evidence(leg, goal) and self.corpse_arrival_guard(scenes,row,views)
-            and all(distance(v['position'], goal) <= SEARCH_ARRIVAL+1e-4
+            and all(distance(v['position'], goal) <= leg['arrivalDistance']+1e-4
                 and number(v['position'].get('revision',0)) >= number(leg['after'][str(g)].get('revision',0)) for g,v in scenes.items()))
 
     def prepare_corpse_loot(self, scenes, row):
@@ -764,9 +802,13 @@ class Catchup:
                     any(number(v.get('guid',0)) == row['target'] for v in s['world'].get('lootableCorpses',[])) for s in scenes.values()):
                 self.status['phase']='waiting_for_current_corpse_before_cohort_approach'; return True
             return False
+        choice,binding=self.decide(scenes,'corpse_plan',row)
+        if choice.get('kind') in ('wait','stop'):
+            self.done=choice['kind']=='stop';self.status['phase']=self.phase(choice.get('phase'));return True
+        if choice not in ({'kind':'near'},{'kind':'none'}) and choice.get('kind')!='move':
+            raise Error('Invalid accepted corpse movement choice')
         goal = {k: views['1'][k] for k in ('x','y','z')}
-        guard = lambda fresh, tokens=None: self.corpse_guard(fresh, row, views, tokens)
-        near = all(distance(s['position'], goal) <= 12 and abs(s['position']['z']-goal['z']) <= 1.5 for s in scenes.values())
+        guard = lambda fresh, tokens=None, rpc=None: self.corpse_guard(fresh, row, views, tokens,rpc)
         if legs and legs[-1]['phase'] == 'yielded':
             previous = legs[-1]
             if not self.corpse_arrival_observed(previous,goal,scenes,row,views):
@@ -776,22 +818,24 @@ class Catchup:
             self.persist()
         if legs and legs[-1]['phase'] == 'preempted' and not self.known_preemption(legs[-1]):
             self.done = True; self.status['phase'] = 'corpse_approach_unconfirmed_no_replay'; return True
-        if near:
+        if choice=={'kind':'near'}:
             if not self.corpse_loot_idle(scenes,row):
                 if 'lootWaitAt' in row: row.setdefault('lootWaitPauseAt', self.now()); self.persist()
                 self.status['phase']='waiting_for_safe_party_before_corpse_loot_clock'; return True
             if 'lootWaitPauseAt' in row:
                 row['lootWaitAt'] += max(0,self.now()-row.pop('lootWaitPauseAt')); self.persist()
             return False
-        if not any(number(s['world']['requestedCreature'].get('dynamicFlags', 0)) & 1 for s in scenes.values()): return False
+        if choice=={'kind':'none'}: return False
+        if (set(choice)!={'kind','goal','arrival'} or choice['goal']!=goal or type(choice['arrival']) not in (int,float)
+                or not .5<=choice['arrival']<=3): raise Error('Accepted corpse route is not the exact observed target')
+        row['lootPolicyBinding']=binding
         if not guard(scenes):
             self.status['phase'] = 'waiting_for_safe_idle_party_before_corpse_approach'; return True
-        if len(legs) >= 3 or self.deadline-self.now() < 36 or any(distance(v['position'], goal) > 60 for v in scenes.values()):
-            self.done = True; self.status['phase'] = 'finite_bound_corpse_approach_limit'; return True
         if 'lootWaitAt' in row:
             row.setdefault('lootWaitHistory', []).append(row.pop('lootWaitAt')); row.pop('lootWaitPauseAt',None)
         leg = {'targetGuid':row['target'], 'phase':'reserved', 'cleanupResolved':False, 'started':self.now(),
             'bodySessions':dict(self.sessions), 'targetViews':copy.deepcopy(views), 'goal':goal,
+            'arrivalDistance':choice['arrival'],'policyBinding':binding,
             'before':{str(g):dict(v['position']) for g,v in scenes.items()}}
         row.setdefault('lootApproaches', []).append(leg); self.persist()
         observe = lambda cleanup=False: self.search_read(cleanup=cleanup, target=row['target'])
@@ -807,47 +851,32 @@ class Catchup:
         return True
 
     def candidate(self, scenes):
-        attempted = {row['target'] for row in self.data['encounters']}
-        candidates, all_observed = {}, {}
-        for scene in scenes.values():
-            rows = scene['world'].get('nearbyCreatures', [])
-            if not isinstance(rows, list) or len(rows) > 32: raise Error('Cave creature observation bound exceeded')
-            for row in rows:
-                guid, entry = number(row.get('guid', 0)), number(row.get('entry', 0))
-                all_observed[guid] = row
-                current = creature_position(row)
-                if (guid in attempted or guid >> 48 != 0xf130 or not guid & 0xffffff or guid >> 24 & 0xffffff != entry or entry not in ENTRIES
-                        or row.get('present') is not True or row.get('aliveKnown') is not True or row.get('alive') is not True
-                        or row.get('healthKnown') is not True or not number(row.get('health', 0))
-                        or number(row.get('health', 0)) != number(row.get('maxHealth', 0)) or row.get('levelKnown') is not True
-                        or not 5 <= number(row.get('level', 0)) <= 7 or current is None or number(row.get('mapId', 0)) != 0
-                        or any(s['self'].get('levelKnown') is not True or number(row['level']) > number(s['self'].get('level', 0))+1 for s in scenes.values())
-                        or row.get('unitFlagsKnown') is not True or row.get('dynamicFlagsKnown') is not True
-                        or number(row.get('unitFlags', 0)) & (0x80000|0x2|0x80|0x100|0x10000|0x2000000|0x80000000)
-                        or number(row.get('unitFlags2', 0)) & 1 or number(row.get('dynamicFlags', 0)) or number(row.get('npcFlags', 0))
-                        or row.get('targetKnown') is not True or number(row.get('targetGuid', 0))
-                        or row.get('attackVictimKnown') is True and number(row.get('attackVictimGuid', 0))
-                        or any(distance(current, other['position']) > 28 for other in scenes.values())): continue
-                candidates[guid] = current
-        candidates = {guid: row for guid, row in candidates.items() if not any(
-            other_guid != guid and other.get('present') is True and other.get('aliveKnown') is True and other.get('alive') is True
-            and not number(other.get('npcFlags', 0)) and other.get('mapKnown') is True and number(other.get('mapId', 0)) == 0 and neighbor_near(other, row)
-            for other_guid, other in all_observed.items())}
-        return min(candidates.values(), key=lambda row: (max(distance(row, s['position']) for s in scenes.values()), number(row['guid']))) if candidates else None
+        choice,_=self.decide(scenes,'candidate')
+        if choice=={'kind':'none'}: return None
+        if set(choice)!={'kind','targetGuid','entry'} or choice['kind']!='candidate': raise Error('Invalid accepted cave target choice')
+        guid,entry=number(choice['targetGuid']),number(choice['entry'])
+        rows=[r for s in scenes.values() for r in s['world'].get('nearbyCreatures',[]) if number(r.get('guid',0))==guid]
+        if not rows or any(number(r.get('entry',0))!=entry for r in rows) or guid>>48!=0xf130 or guid>>24&0xffffff!=entry:
+            raise Error('Accepted cave target was not an exact observed creature')
+        return rows[-1]
 
     def cleanup(self, row):
         clean = True
         for guid, rpc in self.rpcs.items():
             if str(guid) not in row['requests']: continue
+            request=row['requests'][str(guid)]
+            if request.get('phase')=='not_dispatched' and request.get('entered') is False: continue
             try:
-                p = rpc.call('buddy-party.state', {})
-                if session(p.get('sessionId')) != self.sessions[str(guid)]: clean = False; continue
+                if not self.bound_body_current(guid,row.get('policyBinding')):
+                    row['cleanupDisposition']='original_body_visit_unverified_needs_reconciliation';clean=False;continue
                 a = rpc.call('buddy-actions.status', {})
                 if a.get('fargodeep', {}).get('active') is True:
                     if not self.scope(a, row): clean = False; continue
+                    if not self.bound_body_current(guid,row.get('policyBinding')): clean=False;continue
                     # Disable is bound to this exact body/target/engager too.
                     a = rpc.call('buddy-actions.fargodeep_encounter', {'enabled': False, 'sessionId': self.sessions[str(guid)],
                         'targetGuid': str(row['target']), 'engagerGuid': str(row['engager'])})
+                if not self.bound_body_current(guid,row.get('policyBinding')): clean=False;continue
                 if a.get('fargodeep', {}).get('active') is True or any(a.get(k) is True for k in ('moving', 'motionUnconfirmed', 'autoAttackUnconfirmed', 'autoAttacking', 'autoAttackRequested', 'castPending')):
                     clean = False
                 else: row['requests'][str(guid)]['phase'] = 'stopped'
@@ -881,29 +910,65 @@ class Catchup:
         self.status['phase'] = 'terminal_encounter_cleaned_target_quarantined'
         return True
 
-    def arm(self, scenes, target):
+    def arm(self, scenes, choice, binding):
         if len(self.data['encounters']) >= 96: raise Error('Finite encounter journal is full')
-        engager = next(g for g in (4, 1, 5) if not all(scenes[g]['log'][q] for q in GOALS))
-        row = {'target': number(target['guid']), 'entry': number(target['entry']), 'engager': engager, 'phase': 'arming',
-            'deadObserved': False, 'requests': {}, 'started': self.now()}
+        if (set(choice)!={'kind','targetGuid','entry','engagerGuid','order'} or choice['kind']!='arm'
+                or number(choice['engagerGuid']) not in ROSTER or not isinstance(choice['order'],list)
+                or len(choice['order'])!=3 or set(choice['order'])!=set(self.sessions)
+                or choice['order'][-1]!=choice['engagerGuid']): raise Error('Invalid accepted cave arming order')
+        target,entry,engager=number(choice['targetGuid']),number(choice['entry']),number(choice['engagerGuid'])
+        observed=[r for s in scenes.values() for r in s['world'].get('nearbyCreatures',[]) if number(r.get('guid',0))==target]
+        if not observed or any(number(r.get('entry',0))!=entry for r in observed) or target>>48!=0xf130 or target>>24&0xffffff!=entry:
+            raise Error('Accepted encounter target is not currently observed')
+        row = {'target':target,'entry':entry,'engager':engager,'phase':'arming','policyBinding':binding,
+            'deadObserved':False,'requests':{},'started':self.now()}
         self.data['encounters'].append(row); self.persist()
+        guid=None
         try:
-            for guid in [g for g in ROSTER if g != engager] + [engager]:
-                # A new read before each arming keeps support-before-pull order
-                # bound to current bodies, actual logs and safe party state.
-                fresh = self.read(row['target'])
-                if not self.safe_pull(fresh, row) or self.controls(fresh) != self.data.get('controls'):
-                    raise Error('Party safety or human control intent changed before encounter arming')
+            for _ in ROSTER:
+                try:
+                    fresh = self.read(row['target'])
+                    step,current=self.decide(fresh,'arm',row)
+                except Error as error: raise NotDispatched(str(error)) from None
+                if (current!=binding or self.controls(fresh)!=self.data.get('controls') or set(step)!={'kind','guid','engagerGuid','targetGuid'}
+                        or step['kind']!='arm' or number(step['guid']) not in ROSTER or str(step['guid']) in row['requests']
+                        or number(step['engagerGuid'])!=engager or number(step['targetGuid'])!=row['target']):
+                    raise NotDispatched('Current Lua/body facts no longer authorize this arming step')
+                guid=number(step['guid'])
                 if guid == engager and any(not self.scope(fresh[g]['actions'], row) or fresh[g]['actions'].get('fargodeep', {}).get('active') is not True for g in ROSTER if g != engager):
-                    raise Error('Supports were not actually armed before the pull')
-                if self.stopped() or self.now() >= self.deadline: raise Error('Finite catchup stopped before arming')
-                row['requests'][str(guid)] = {'phase': 'reserved', 'questRevision': fresh[guid]['questRevision']}; self.persist()
+                    raise NotDispatched('Supports were not actually armed before the pull')
+                if self.stopped() or self.now() >= self.deadline: raise NotDispatched('Finite catchup stopped before arming')
+                request={'phase':'reserved','entered':False,'questRevision':fresh[guid]['questRevision']}
+                row['requests'][str(guid)]=request;self.persist()
+                request['entered']=True;self.persist()
+                try:
+                    fresh=self.read(row['target'])
+                    confirmed,current=self.decide(fresh,'arm',row)
+                except Error as error: raise NotDispatched(str(error)) from None
+                if current!=binding or confirmed!=step or self.controls(fresh)!=self.data.get('controls') or self.stopped() or self.now()>=self.deadline:
+                    raise NotDispatched('Complete current cohort changed before this activation')
+                def authorize(observed,rpc):
+                    latest,current=self.decide(observed,'arm',row,rpc=rpc)
+                    return latest==step and current==binding and self.controls(observed)==self.data.get('controls')
+                fresh=self.preflight(authorize,row['target'])
                 answer = self.rpcs[guid].call('buddy-actions.fargodeep_encounter', {'enabled': True, 'sessionId': self.sessions[str(guid)],
                     'targetGuid': str(row['target']), 'engagerGuid': str(engager), 'expectedQuestLogRevision': str(fresh[guid]['questRevision'])})
                 row['requests'][str(guid)]['phase'] = 'sent'; self.persist()
                 if not self.scope(answer, row) or answer.get('fargodeep', {}).get('active') is not True: raise Error('Encounter activation is unconfirmed')
                 row['requests'][str(guid)]['phase'] = 'observed'; self.persist()
-            row['phase'] = 'active'; self.persist()
+            fresh=self.read(row['target'])
+            final,current=self.decide(fresh,'arm',row)
+            if current!=binding or final!={'kind':'armed'}: raise Error('Accepted cohort activation phase changed')
+            row['phase']='active';self.persist()
+        except NotDispatched:
+            request=row['requests'].get(str(guid))
+            if request is not None and request['phase']=='reserved': request.update(phase='not_dispatched',entered=False)
+            entered=any(r.get('entered',r.get('phase')!='not_dispatched') for r in row['requests'].values())
+            row['phase']='unconfirmed' if entered else 'stopped'
+            if not entered: row['notDispatched']=True
+            self.persist()
+            if entered: self.cleanup(row);self.done=True
+            self.status['phase']='cave_policy_preflight_not_dispatched';return
         except EncounterRejected:
             row['activationRejection'] = {'guid': guid, 'status': 'FailedPrecondition'}
             row['phase'] = 'unconfirmed'; self.persist()
@@ -923,7 +988,7 @@ class Catchup:
             self.done = True; return
         search = self.data.get('search')
         last_leg = search['legs'][-1] if search else None
-        if last_leg and last_leg['phase'] not in ('arrived', 'preempted') and not self.stopped_arrival_evidence(last_leg):
+        if last_leg and last_leg['phase'] not in ('arrived', 'preempted','not_dispatched') and not self.stopped_arrival_evidence(last_leg):
             self.done = True; self.status['phase'] = 'corridor_previous_leg_requires_reconciliation'; return
         self.status['observationsCurrent'] = False
         scenes = self.read(row['target'] if row else 0)
@@ -973,49 +1038,47 @@ class Catchup:
                     # A process restart cannot resend any reserved activation.
                     row['phase'] = 'unconfirmed'; self.persist(); self.cleanup(row)
                     self.done = True; self.status['phase'] = 'reserved_encounter_requires_reconciliation_no_replay'; return
-                if any(self.combat(s) for s in scenes.values()):
-                    self.status['phase'] = 'actual_party_combat_in_progress'; return
-                designated = scenes[row['engager']]['actions']
-                terminal = designated.get('fargodeep') or {}
-                if (not row['deadObserved'] and self.scope(designated, row) and terminal.get('active') is not True
-                        and terminal.get('phase') in AUTO_TERMINAL):
-                    cause = terminal['phase']
+                step,_=self.decide(scenes,'encounter',row)
+                if step.get('kind')=='wait':
+                    self.status['phase']=self.phase(step.get('phase'));return
+                if step.get('kind')=='abandon':
+                    cause=self.phase(step.get('cause'))
+                    terminal=scenes[row['engager']]['actions'].get('fargodeep') or {}
+                    if cause!=terminal.get('phase') or not self.scope(scenes[row['engager']]['actions'],row):
+                        raise Error('Accepted cave retirement lacks the exact native terminal receipt')
                     if self.abandon_terminal(row, cause): return
                     row['phase'] = 'unconfirmed'; self.persist(); self.done = True
                     self.status['phase'] = 'terminal_encounter_cleanup_unconfirmed'; return
-                if row['deadObserved']:
+                if step.get('kind')=='cleanup_dead':
+                    if not row['deadObserved']: raise Error('Accepted cave cleanup lacks a positive bound death observation')
                     if not self.cleanup(row): self.status['phase'] = 'waiting_for_exact_encounter_cleanup'; return
                     row['phase'], row['lootAt'] = 'loot', self.now(); self.persist()
-                elif not any(s['actions'].get('fargodeep', {}).get('active') is True for s in scenes.values()):
+                elif step.get('kind')=='unconfirmed':
                     row['phase'] = 'unconfirmed'; self.persist(); self.done = True
                     self.status['phase'] = 'encounter_ended_without_observed_dead_target'; return
-                else:
-                    self.status['phase'] = 'waiting_for_actual_engagement'; return
+                else: raise Error('Invalid accepted cave encounter phase')
             if row['phase'] == 'loot':
                 if self.prepare_corpse_loot(scenes, row): return
                 if 'lootWaitAt' not in row:
                     row['lootWaitAt'] = self.now(); self.persist()
-                pending = any(number(s['loot'].get('pendingCorpseGuid', 0)) or s['loot'].get('phase') != 'idle' for s in scenes.values())
-                eligible = any(any(number(t.get('guid', 0)) == row['target'] for t in s['world'].get('lootableCorpses', [])) for s in scenes.values())
-                if pending or eligible or self.now()-row['lootWaitAt'] < 2:
-                    self.status['phase'] = 'waiting_for_each_own_server_permitted_loot'
-                    if self.now()-row['lootWaitAt'] > 35:
-                        self.done = True; self.status['phase'] = 'loot_uncollected_or_cleanup_unconfirmed_no_new_pull'
-                    return
+                step,_=self.decide(scenes,'encounter',row)
+                if step.get('kind') in ('wait','stop'):
+                    self.done=step['kind']=='stop';self.status['phase']=self.phase(step.get('phase'));return
+                if step!={'kind':'settle'}: raise Error('Invalid accepted cave loot phase')
                 row['phase'] = 'settled'; self.persist()
-        if all(all(s['log'][qid] for qid in GOALS) for s in scenes.values()):
-            self.done = True; self.status['phase'] = 'own_collection_quests_complete_for_all_three'; return
-        if not self.safe_pull(scenes): self.status['phase'] = 'waiting_for_safe_healthy_idle_party'; return
+        step,binding=self.decide(scenes,'encounter')
+        if step.get('kind') in ('complete','wait','stop'):
+            self.done=step['kind'] in ('complete','stop');self.status['phase']=self.phase(step.get('phase'));return
+        if step.get('kind') not in ('arm','search','idle'): raise Error('Invalid accepted cave phase')
         if self.data.get('controls') is None:
             self.data['controls'] = self.controls(scenes); self.persist()
-        target = self.candidate(scenes)
-        if target is None:
+        if step['kind'] in ('idle','search'):
             self.idle_polls += 1
-            self.status['phase'] = 'waiting_for_actual_nearby_isolated_kobold'
-            if self.idle_polls >= 3: self.search(scenes)
+            self.status['phase']=self.phase(step.get('phase'))
+            if step['kind']=='search': self.search(scenes)
             return
         self.idle_polls = 0
-        self.arm(scenes, target)
+        self.arm(scenes,step,binding)
 
 
 def main(argv=None):

@@ -191,7 +191,15 @@ func (s *Service) NotifyAreaTrigger(ctx context.Context, request *actionsv1.Noti
 // This is observed adjacent map entry, not proof that this particular trigger
 // caused it, server admission/party-copy agreement, or a successful regroup.
 func (s *Service) observeAreaTriggerDestinationLocked(op *actionsv1.AreaTriggerOperation, w *worldv1.SnapshotResponse) {
-	if op == nil || op != s.areaTrigger.operation || !op.Pending || !op.TransportWritten && !op.TransportUnknown ||
+	if op != s.areaTrigger.operation {
+		return
+	}
+	s.observeScopedTriggerDestinationLocked(op, w)
+}
+
+// Shared factual transfer reconciliation; callers retain their own operation custody.
+func (s *Service) observeScopedTriggerDestinationLocked(op *actionsv1.AreaTriggerOperation, w *worldv1.SnapshotResponse) {
+	if op == nil || !op.Pending || !op.TransportWritten && !op.TransportUnknown ||
 		s.closed || op.SessionId != s.sessionID || op.SelfGuid != s.selfGUID || op.VisitId == math.MaxUint64 ||
 		w.GetVisitRevision() != op.VisitId+1 || !s.matchesCurrentEncounterVisitLocked(w) {
 		return

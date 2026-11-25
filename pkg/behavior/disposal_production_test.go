@@ -25,6 +25,7 @@ const disposalProcessLimit = 5 * time.Second
 var errDisposalOutputLimit = errors.New("production evaluator output limit exceeded")
 
 const disposalDefaultDecideResource = "decide: Lua execution budget exhausted (5ms configured): context deadline exceeded\n"
+const disposalDefaultInitializationResource = "chunk_initialize: Lua execution budget exhausted (5ms configured): context deadline exceeded\n"
 
 type disposalProductionResourceError struct {
 	phase, diagnostic string
@@ -38,6 +39,10 @@ func (e *disposalProductionResourceError) Unwrap() error { return ErrExecutionBu
 
 func disposalDefaultResourceTurn(exitCode int, processErr error, output []byte, diagnostic string) bool {
 	return processErr == nil && exitCode == 1 && len(output) == 0 && diagnostic == disposalDefaultDecideResource
+}
+
+func disposalDefaultInitializationResourceTurn(exitCode int, processErr error, output []byte, diagnostic string) bool {
+	return processErr == nil && exitCode == 1 && len(output) == 0 && diagnostic == disposalDefaultInitializationResource
 }
 
 type disposalBoundedOutput struct {
@@ -206,6 +211,19 @@ func decodeDisposalProduct(raw []byte) (map[string]any, error) {
 // rather than attesting unrecorded compiler inputs in arbitrary override files.
 func evaluateDisposalProduction(t *testing.T, source string, frame map[string]any) (map[string]any, error) {
 	t.Helper()
+	return evaluateDisposalProductionWithInitializationResource(t, source, frame, false)
+}
+
+func evaluateDisposalProductionWithInitializationResource(t *testing.T, source string, frame map[string]any, initializationResource bool) (map[string]any, error) {
+	t.Helper()
+	return evaluateDisposalProductionMode(t, source, frame, initializationResource, "")
+}
+
+func evaluateDisposalProductionMode(t *testing.T, source string, frame map[string]any, initializationResource bool, mode string) (map[string]any, error) {
+	t.Helper()
+	if mode != "" && mode != "evaluate-runtime" {
+		t.Fatal("unsupported production evaluator proof mode", mode)
+	}
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +273,11 @@ func evaluateDisposalProduction(t *testing.T, source string, frame map[string]an
 	ctx, cancel := context.WithTimeout(context.Background(), disposalProcessLimit)
 	defer cancel()
 	// No execution/value/source override, retry, shell or validation mode.
-	command := exec.CommandContext(ctx, binary, "-source", path)
+	args := []string{"-source", path}
+	if mode != "" {
+		args = append(args, "-mode", mode)
+	}
+	command := exec.CommandContext(ctx, binary, args...)
 	command.Dir, command.Stdin, command.WaitDelay = root, bytes.NewReader(input), time.Second
 	out, diagnostic := &disposalBoundedOutput{limit: MaxJSONBytes + 1}, &disposalBoundedOutput{limit: 8192}
 	command.Stdout, command.Stderr = out, diagnostic
@@ -281,6 +303,11 @@ func evaluateDisposalProduction(t *testing.T, source string, frame map[string]an
 			// decision. Existing callers remain strict unless they explicitly test
 			// the Runtime resource-turn contract.
 			return nil, &disposalProductionResourceError{"decide", diagnostic.String(), runErr}
+		}
+		if initializationResource && errors.As(runErr, &exit) && disposalDefaultInitializationResourceTurn(exit.ExitCode(), processErr, out.Bytes(), diagnostic.String()) {
+			// Only an explicit fixture opt-in can observe this exact Evaluate
+			// initialization refusal. Reload errors and other phases stay strict.
+			return nil, &disposalProductionResourceError{"chunk_initialize", diagnostic.String(), runErr}
 		}
 		return nil, fmt.Errorf("production evaluator: %w; stderr=%q", runErr, diagnostic.String())
 	}
@@ -314,6 +341,36 @@ func TestDisposalProductionResourceTurnRequiresExactNoDecision(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if disposalDefaultResourceTurn(tc.exit, tc.processErr, tc.output, tc.diagnostic) {
 				t.Fatal("noncanonical failure or production output became safe unavailability")
+			}
+		})
+	}
+}
+
+func TestDisposalProductionInitializationResourceTurnRequiresExactNoDecision(t *testing.T) {
+	if !disposalDefaultInitializationResourceTurn(1, nil, nil, disposalDefaultInitializationResource) {
+		t.Fatal("exact default initialization resource turn was not recognized")
+	}
+	for _, tc := range []struct {
+		name       string
+		exit       int
+		processErr error
+		output     []byte
+		diagnostic string
+	}{
+		{"success", 0, nil, nil, disposalDefaultInitializationResource},
+		{"other_exit", 2, nil, nil, disposalDefaultInitializationResource},
+		{"process_deadline", 1, context.DeadlineExceeded, nil, disposalDefaultInitializationResource},
+		{"partial_output", 1, nil, []byte(`{"kind":`), disposalDefaultInitializationResource},
+		{"wait_output", 1, nil, []byte(`{"kind":"wait"}`), disposalDefaultInitializationResource},
+		{"empty_output_object", 1, nil, []byte("{}\n"), disposalDefaultInitializationResource},
+		{"decide_phase", 1, nil, nil, disposalDefaultDecideResource},
+		{"reload_refusal", 1, nil, nil, "invalid behavior policy: " + disposalDefaultInitializationResource},
+		{"other_budget", 1, nil, nil, strings.Replace(disposalDefaultInitializationResource, "5ms", "50ms", 1)},
+		{"lua_error", 1, nil, nil, "policy:2: " + disposalDefaultInitializationResource + "stack traceback\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if disposalDefaultInitializationResourceTurn(tc.exit, tc.processErr, tc.output, tc.diagnostic) {
+				t.Fatal("noncanonical failure or production output became initialization unavailability")
 			}
 		})
 	}

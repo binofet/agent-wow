@@ -341,7 +341,13 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 			sapReady = sapReady || view.Ready
 		case spellcatalog.Damage, spellcatalog.WeaponStrike:
 			if !s.offenseRankSupportedLocked(spell) {
-				continue
+				// Expose learned mechanics even when an automatic offense
+				// classifier has no handler. Lua may use the normal generic
+				// cast contract; this creates no new packet authority.
+				view.Capability = "generic"
+				view.Available = s.encounterRankResourcesAvailable(spell, self)
+				view.Ready = currentCaster && !s.state.CastPending && view.Available
+				break
 			}
 			view.Capability = "offense"
 			if instantWeaponStrike(spell) {
@@ -366,7 +372,12 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 			view.Available = s.cleanseRankAvailableLocked(self, spell)
 			view.Ready = view.Available && s.cleanseCasterAvailableLocked(w, spell)
 		default:
-			continue
+			if spell.Passive() {
+				continue
+			}
+			view.Capability = "generic"
+			view.Available = s.encounterRankResourcesAvailable(spell, self)
+			view.Ready = currentCaster && !s.state.CastPending && view.Available
 		}
 		out.Spells[encounterGUID(uint64(id))] = view
 	}

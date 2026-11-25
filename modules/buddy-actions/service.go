@@ -67,7 +67,6 @@ type Service struct {
 	hostEncounterUntil                         time.Time
 	hostEncounterEpoch                         uint64
 	encounterVisit                             encounterVisit
-	automaticCorpseLoot                        bool
 	now                                        func() time.Time
 	state                                      actionsv1.State
 	closed                                     bool
@@ -204,14 +203,6 @@ func NewIndependentService(session sessionAPI, selfGUID uint64, sessionID ...str
 	s.independent = true
 	s.state.Limitation += " Independent mode disables owner follow, healing and assistance; own quest travel and practice retain their existing safety bounds."
 	return s
-}
-
-// UseAutomaticCorpseLoot allows server-offered corpses to use the ordinary
-// local movement policy without requiring the party owner's presence.
-func (s *Service) UseAutomaticCorpseLoot() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.automaticCorpseLoot = true
 }
 
 func (s *Service) stateLocked() *actionsv1.State {
@@ -890,6 +881,12 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	var w *worldv1.SnapshotResponse
 	var snapshotErr error
 	w, snapshotErr = s.snapshot(ctx)
+	if !moving && op == opcode.MSGMoveStop {
+		if cleanup, ok := ctx.Value(lootApproachCleanupKey{}).(*lootApproachCleanup); ok && !cleanup.current(s, w, snapshotErr != nil) {
+			s.state.Reason = "loot_approach_cleanup_owner_changed"
+			return false
+		}
+	}
 	// An owned corpse approach rechecks party and corpse authority after the
 	// clock callback. STOP remains available after that authority is revoked.
 	if moving && s.lootApproachGuard != nil {
@@ -1186,6 +1183,10 @@ func (s *Service) Tick(ctx context.Context) {
 			s.pendingSpell = 0
 			s.pendingTarget = 0
 		}
+	}
+	if op := s.supportOp; op != nil && op.owner != 0 && op.view.Capability == string(spellcatalog.Stealth) &&
+		!s.now().Before(op.until) && op.view.Phase != "server_rejected_no_replay" && (!op.view.ServerCastGo || !op.view.EffectObserved) {
+		s.starterSpells.uncertainStrike = op
 	}
 	if !s.closed && s.recoveryTickLocked(ctx) {
 		if s.fargodeep.active {

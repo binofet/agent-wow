@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -52,7 +53,7 @@ func TestLootApproachUsesBoundedNormalStepsAndStops(t *testing.T) {
 	}
 }
 func TestLootApproachRejectsUnsafeTargetsAndWrongLease(t *testing.T) {
-	for _, mode := range []string{"token", "living", "notlootable", "far", "vertical", "combat", "ownerfar", "map", "unknown", "transport"} {
+	for _, mode := range []string{"token", "living", "notlootable", "far", "vertical", "combat", "map", "unknown", "transport"} {
 		s, f, _, r := approachRig(t)
 		switch mode {
 		case "token":
@@ -67,8 +68,6 @@ func TestLootApproachRejectsUnsafeTargetsAndWrongLease(t *testing.T) {
 			f.world.LootableCorpses[0].Z = 2
 		case "combat":
 			f.world.Self.UnitFlags = 0x80000
-		case "ownerfar":
-			f.world.Owner.X = 31
 		case "map":
 			f.world.LootableCorpses[0].MapId = 1
 		case "unknown":
@@ -242,6 +241,37 @@ func harvestApproachRig(t *testing.T) (*Service, *fakeSession, func(time.Duratio
 	r.CorpseGuid, r.GameObjectGuid = 0, approachHarvestGUID
 	s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) { return []position{a, b}, nil }
 	return s, f, advance, r
+}
+
+func TestHarvestApproachFinalClockRetainsExactBodyVisit(t *testing.T) {
+	for _, moving := range []bool{false, true} {
+		for _, mode := range []string{"session", "same-map visit"} {
+			t.Run(fmt.Sprint(moving)+"/"+mode, func(t *testing.T) {
+				s, f, advance, request := harvestApproachRig(t)
+				if moving {
+					out, err := s.ApproachLoot(context.Background(), request)
+					if err != nil || !out.Moving {
+						t.Fatal(out, err)
+					}
+					advance(200 * time.Millisecond)
+				}
+				starts, beats := countPackets(f, opcode.MSGMoveStartForward), countPackets(f, opcode.MSGMoveHeartbeat)
+				f.onClock = func() {
+					f.onClock = nil
+					if mode == "session" {
+						s.sessionID += "-replacement"
+					} else {
+						f.world.VisitRevision++
+					}
+				}
+				out, err := s.ApproachLoot(context.Background(), request)
+				if err != nil || countPackets(f, opcode.MSGMoveStartForward) != starts || countPackets(f, opcode.MSGMoveHeartbeat) != beats ||
+					countPackets(f, opcode.MSGMoveStop) != 0 || s.lootApproachGuard != nil {
+					t.Fatal("old harvest route moved or stopped a replacement body/visit", out, err, f.packets)
+				}
+			})
+		}
+	}
 }
 
 func TestHarvestApproachRequiresExactOneTargetAndOwnIncompleteQuest(t *testing.T) {

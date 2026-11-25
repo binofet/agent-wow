@@ -84,6 +84,9 @@ class FakeRPC:
               "observedInventoryRevision": str(before_rev+1)}
         if method == "buddy-mail.claim_bag_attachment":
             low = params["itemGuidLow"]
+            selected_mail = next(row for row in self.mail["bagMails"] if row["mailId"] == params["mailId"])
+            attachment = next(row for row in selected_mail["attachments"] if row.get("attachmentIndex", 0) == params["attachmentIndex"])
+            assert attachment["itemGuidLow"] == low and attachment["entry"] == 41599 and attachment["count"] == 1
             g = 0x4000000000000000 + low
             (b, s), target = next(((b, s), i) for (b, s), i in slots.items() if not int(i.get("itemGuid", 0)))
             target.update(itemGuid=str(g), entry=41599, stackCount=1, metadataKnown=True)
@@ -95,9 +98,8 @@ class FakeRPC:
             self.mail["lastBagClaim"] = op
             self.mail["bagClaims"].append(op)
             self.mail["bagsClaimReserved"] += 1
-            self.mail["bagMails"][0]["attachments"] = [a for a in self.mail["bagMails"][0]["attachments"] if a["itemGuidLow"] != low]
-            if not self.mail["bagMails"][0]["attachments"]:
-                self.mail["bagMails"] = []
+            selected_mail["attachments"] = [a for a in selected_mail["attachments"] if a["itemGuidLow"] != low]
+            self.mail["bagMails"] = [row for row in self.mail["bagMails"] if row["attachments"]]
         else:
             src = params["source"]
             source = slots[src["bag"], src["slot"]]
@@ -138,7 +140,7 @@ class TownTests(unittest.TestCase):
     def setUp(self):
         self.bridge = mock.patch.object(m.destination_policy.runtime,'Bridge',side_effect=bridge_factory(m.destination_policy.runtime.Bridge))
         self.bridge.start();self.addCleanup(self.bridge.stop)
-        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
+        self.temp = tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve())
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)/"private"/"town.json"
         self.rpc = FakeRPC()
@@ -147,6 +149,188 @@ class TownTests(unittest.TestCase):
         with m.Journal(self.path, URL, 6) as journal:
             worker = m.Worker(self.rpc, 6, journal, sleep=lambda _: None)
             return getattr(worker, action)(**kwargs)
+
+    def test_accepted_lua_changes_exact_attachment_order_on_actual_claim(self):
+        self.assertEqual(self.worker('claim_one', mailbox_guid=MAILBOX)['phase'], 'confirmed')
+        self.assertEqual(self.rpc.mutations()[0][1]['attachmentIndex'], 0)
+        self.rpc, self.path = FakeRPC(), self.path.with_name('other-attachment.json')
+        source = service_source()
+        needle = 'candidate.attachmentIndex<selected.attachmentIndex'
+        self.assertEqual(source.count(needle), 1)
+        self.rpc.policy_source = source.replace(needle, 'candidate.attachmentIndex>selected.attachmentIndex')
+        self.assertEqual(self.worker('claim_one', mailbox_guid=MAILBOX)['phase'], 'confirmed')
+        request = self.rpc.mutations()[0][1]
+        self.assertEqual((request['mailId'], request['attachmentIndex'], request['itemGuidLow']), (7, 3, 2003))
+        row = json.loads(self.path.read_text())['attempts'][0]
+        self.assertEqual(row['policyBinding'], row['choicePolicyBinding'])
+
+    def test_all_200_eligible_attachments_reach_real_lua_without_python_truncation(self):
+        self.rpc.mail['listRevision'] = '18446744073709551615'
+        self.rpc.mail['bagMails'] = [dict(mailId=mid, attachments=[dict(attachmentIndex=index,
+            itemGuidLow=4294967295 if (mid, index) == (1, 0) else 2000+mid*4+index,
+            entry=41599, count=1) for index in (3, 2, 1, 0)]) for mid in range(50, 0, -1)]
+        actual = m.destination_policy.inventory_maintenance
+        with mock.patch.object(m.destination_policy, 'inventory_maintenance', wraps=actual) as planner:
+            self.assertEqual(self.worker('claim_one', mailbox_guid=MAILBOX)['phase'], 'confirmed')
+        facts = planner.call_args.args[2]
+        self.assertEqual(len(facts['candidates']), 200)
+        self.assertEqual(facts['listRevision'], '18446744073709551615')
+        self.assertEqual(facts['mailboxGuid'], str(MAILBOX))
+        request = self.rpc.mutations()[0][1]
+        self.assertEqual((request['mailId'], request['attachmentIndex'], request['itemGuidLow']), (1, 0, 4294967295))
+        self.assertEqual(request['listRevision'], '18446744073709551615')
+
+    def test_unavailable_or_invented_lua_attachment_has_no_python_min_fallback(self):
+        choices = ('{}', '{choice={kind="no_attachment"}}',
+            '{choice={kind="claim_attachment",mailId=999,attachmentIndex=0,itemGuidLow=2000}}',
+            '{choice={kind="claim_attachment",mailId=7,attachmentIndex=false,itemGuidLow=2000}}')
+        for index, choice in enumerate(choices):
+            self.rpc, self.path = FakeRPC(), self.path.with_name('bad-choice-'+str(index)+'.json')
+            self.rpc.policy_source = 'return {service_destination=function() return '+choice+' end}'
+            with self.assertRaises(m.Error): self.worker('claim_one', mailbox_guid=MAILBOX)
+            self.assertEqual(self.rpc.mutations(), [])
+            if self.path.exists(): self.assertEqual(json.loads(self.path.read_text())['attempts'], [])
+
+    def test_attachment_selection_cannot_adopt_transient_new_policy_then_send_under_old_policy(self):
+        self.rpc.current['inventoryBags'][0]['slots'][2] = {'slot': 2}
+        self.rpc.current['items'] = self.rpc.current['items'][1:]
+        original_source, original_call, selected_new = self.rpc.policy_source, self.rpc.call, [False]
+        def call(method, params):
+            value = original_call(method, params)
+            if method == 'buddy-mail.list': self.rpc.policy_source = original_source+'\n-- transient replacement'
+            if method == 'session.policy_source' and self.rpc.policy_source != original_source: selected_new[0] = True
+            if method == 'buddy-inventory.state' and selected_new[0]: self.rpc.policy_source = original_source
+            return value
+        self.rpc.call = call
+        self.assertEqual(self.worker('run', mailbox_guid=MAILBOX, claims_only=True)['phase'], 'not_dispatched')
+        self.assertTrue(selected_new[0])
+        self.assertEqual(self.rpc.policy_source, original_source)
+        self.assertEqual(self.rpc.mutations(), [])
+        row = json.loads(self.path.read_text())['attempts'][0]
+        self.assertNotEqual(row['policyBinding']['revision'], row['choicePolicyBinding']['revision'])
+        self.assertEqual(self.worker('reconcile')['phase'], 'not_dispatched')
+
+    def test_attachment_source_rechecked_after_its_own_durable_reservation(self):
+        original_save = m.Journal.save
+        def save(journal):
+            original_save(journal)
+            if journal.data['attempts'] and journal.data['attempts'][-1]['phase'] == 'reserved':
+                self.rpc.policy_source += '\n-- changed after attachment reservation'
+        with mock.patch.object(m.Journal, 'save', save):
+            self.assertEqual(self.worker('claim_one', mailbox_guid=MAILBOX)['phase'], 'not_dispatched')
+        self.assertEqual(self.rpc.mutations(), [])
+        self.assertEqual(self.worker('reconcile')['phase'], 'not_dispatched')
+
+    def test_current_accepted_lua_changes_priority_and_exact_bag_destination(self):
+        result = self.worker("run", vendor_guid=VENDOR)
+        self.assertEqual(result["phase"], "complete")
+        self.assertEqual([method for method, _ in self.rpc.mutations()], ["buddy-inventory.equip", "buddy-inventory.sell"])
+        self.rpc, self.path = FakeRPC(), self.path.with_name("different-order.json")
+        source = service_source()
+        self.assertEqual(source.count('local priorities={"equip","claim","sell"}'), 1)
+        self.rpc.policy_source = source.replace('local priorities={"equip","claim","sell"}',
+            'local priorities={"sell","equip","claim"}').replace('slot<empty', 'slot>empty')
+        result = self.worker("run", vendor_guid=VENDOR)
+        self.assertEqual(result["phase"], "complete")
+        writes = self.rpc.mutations()
+        self.assertEqual([method for method, _ in writes], ["buddy-inventory.sell", "buddy-inventory.equip"])
+        self.assertEqual(writes[1][1]["equipmentSlot"], 22)
+
+    def test_missing_or_unhealthy_priority_source_has_no_python_fallback(self):
+        for change in ("missing", "faulted", "replacement", "inventory"):
+            self.rpc, self.path = FakeRPC(), self.path.with_name(change+"-source.json")
+            if change == "missing": self.rpc.policy_source = 'return {service_destination=function() return {} end}'
+            original = self.rpc.call
+            def call(method, params):
+                value = original(method, params)
+                if method == 'session.attach':
+                    if change == 'faulted': value['policy']['faulted'] = True
+                    elif change == 'replacement': value['policy']['generation'] = '2'
+                if method == 'buddy-inventory.state' and change == 'inventory' and any(m == 'session.attach' for m, _ in self.rpc.calls):
+                    value['inventoryRevision'] = '999'
+                return value
+            self.rpc.call = call
+            with self.assertRaises(m.Error): self.worker('run', vendor_guid=VENDOR)
+            self.assertEqual(self.rpc.mutations(), [])
+            if self.path.exists(): self.assertEqual(json.loads(self.path.read_text())['attempts'], [])
+
+    def test_selected_source_replacement_after_reservation_is_durable_local_no_send(self):
+        original_save = m.Journal.save
+        def save(journal):
+            original_save(journal)
+            if journal.data['attempts'] and journal.data['attempts'][-1]['phase'] == 'reserved':
+                self.rpc.policy_source += '\n-- replaced during reservation fsync'
+        with mock.patch.object(m.Journal, 'save', save): result = self.worker('run', vendor_guid=VENDOR)
+        self.assertEqual(result['phase'], 'not_dispatched')
+        self.assertEqual(self.rpc.mutations(), [])
+        row = json.loads(self.path.read_text())['attempts'][0]
+        self.assertTrue(row['localNotDispatched'])
+        self.assertNotIn('receipt', row)
+        self.assertEqual(self.worker('reconcile')['phase'], 'not_dispatched')
+
+    def test_source_fault_during_sell_rediscovery_is_checked_before_dispatch(self):
+        source = service_source().replace('local priorities={"equip","claim","sell"}',
+            'local priorities={"sell","equip","claim"}')
+        self.rpc.policy_source = source
+        original, discovers = self.rpc.call, []
+        def call(method, params):
+            value = original(method, params)
+            if method == 'buddy-inventory.discover': discovers.append(params)
+            if method == 'session.attach' and len(discovers) >= 2: value['policy']['faulted'] = True
+            return value
+        self.rpc.call = call
+        self.assertEqual(self.worker('run', vendor_guid=VENDOR)['phase'], 'not_dispatched')
+        self.assertEqual(self.rpc.mutations(), [])
+
+    def test_claim_source_replacement_after_mail_wait_and_list_never_dispatches(self):
+        self.rpc.current['inventoryBags'][0]['slots'][2] = {'slot': 2}
+        self.rpc.current['items'] = self.rpc.current['items'][1:]
+        self.rpc.mail['listAgeMs'] = '0'
+        self.rpc.mail['bagMails'][0]['attachments'] = self.rpc.mail['bagMails'][0]['attachments'][:1]
+        original = self.rpc.call
+        def call(method, params):
+            value = original(method, params)
+            if method == 'buddy-mail.list': self.rpc.policy_source += '\n-- replaced after the mail wait/list'
+            return value
+        self.rpc.call = call
+        result = self.worker('run', mailbox_guid=MAILBOX, claims_only=True)
+        self.assertEqual(result['phase'], 'not_dispatched')
+        self.assertEqual(self.rpc.mutations(), [])
+        self.assertEqual(self.worker('reconcile')['phase'], 'not_dispatched')
+        first = json.loads(self.path.read_text())['attempts'][0]
+        self.rpc.call, self.rpc.policy_source = original, service_source()
+        self.assertEqual(self.worker('run', mailbox_guid=MAILBOX, claims_only=True)['phase'], 'complete')
+        claims = [request for method, request in self.rpc.mutations() if method == 'buddy-mail.claim_bag_attachment']
+        self.assertEqual(len(claims), 1)
+        self.assertEqual(claims[0]['itemGuidLow'], first['request']['itemGuidLow'])
+        self.assertNotEqual(claims[0]['requestId'], first['requestId'])
+        self.assertEqual(json.loads(self.path.read_text())['attempts'][0], first)
+
+    def test_local_refusal_save_failure_retains_reservation_without_sending(self):
+        original_save = m.Journal.save
+        def save(journal):
+            row = journal.data['attempts'][-1] if journal.data['attempts'] else {}
+            if row.get('phase') == 'not_dispatched': raise OSError('full disk')
+            original_save(journal)
+            if row.get('phase') == 'reserved': self.rpc.policy_source += '\n-- source changed after durable reservation'
+        with mock.patch.object(m.Journal, 'save', save), self.assertRaises(OSError):
+            self.worker('run', vendor_guid=VENDOR)
+        self.assertEqual(self.rpc.mutations(), [])
+        self.assertEqual(json.loads(self.path.read_text())['attempts'][0]['phase'], 'reserved')
+        self.worker('run', vendor_guid=VENDOR)
+        self.assertEqual(self.rpc.mutations(), [])
+
+    def test_pending_unknown_precedes_policy_and_cannot_be_replayed(self):
+        self.rpc.after = lambda _, op: op.update(status='OUTCOME_UNCONFIRMED', inventoryConfirmed=False, leaseReleased=False)
+        self.rpc.ambiguous = True
+        self.assertEqual(self.mutate()['phase'], 'transport_unknown')
+        original = json.loads(self.path.read_text())['attempts'][0]
+        self.rpc.policy_source = 'return {}'
+        result = self.worker('run', vendor_guid=VENDOR)
+        self.assertEqual(result['phase'], 'outcome_unconfirmed')
+        self.assertEqual(len(self.rpc.mutations()), 1)
+        self.assertFalse(any(method == 'session.policy_source' for method, _ in self.rpc.calls))
+        self.assertEqual(json.loads(self.path.read_text())['attempts'][0]['request'], original['request'])
 
     def mutate(self, kind="sell", **kw):
         opts = {"source_bag": 0, "source_slot": 3, "item_guid": str(JUNK), "vendor_guid": VENDOR}

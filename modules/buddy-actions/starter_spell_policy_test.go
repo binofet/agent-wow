@@ -53,6 +53,38 @@ func TestStarterSpellNativeSameBodyCASChangesDecisionWithoutReconnect(t *testing
 	}
 }
 
+func TestStarterSpellNativeLevelLimitUsesAcceptedLua(t *testing.T) {
+	s, f, target := starterNativeRig(t)
+	f.world.Self.LevelKnown, f.world.Self.Level = true, 6
+	point, _ := fargodeepCreaturePosition(target)
+	for _, tc := range []struct {
+		level uint32
+		known bool
+		kind  string
+	}{{9, true, "cast"}, {10, true, "wait"}, {10, false, "cast"}} {
+		target.Level, target.LevelKnown = tc.level, tc.known
+		decision := s.starterSpellDecisionLocked(context.Background(), f.world, target, point)
+		if !decision.valid || decision.kind != tc.kind {
+			t.Fatalf("level=%d known=%v: kind=%s valid=%v error=%s", tc.level, tc.known, decision.kind, decision.valid, s.starterSpells.failure())
+		}
+	}
+	target.LevelKnown = true
+	source := strings.Replace(behaviors.StarterSpellSource, "max_level_above_self=3", "max_level_above_self=4", 1)
+	if source == behaviors.StarterSpellSource {
+		t.Fatal("missing Lua level-limit tuning")
+	}
+	accepted, err := reloadStarterSemanticBehavior(t, s, context.Background(), &actionsv1.BehaviorReloadRequest{
+		SessionId: s.sessionID, SelfGuid: s.selfGUID, Source: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := s.starterSpellDecisionLocked(context.Background(), f.world, target, point)
+	if !decision.valid || decision.kind != "cast" || s.starterSpells.revision != accepted.Revision || len(f.packets) != 0 {
+		t.Fatal("accepted same-body tuning did not replace level choice", decision, s.starterSpells.failure(), f.packets)
+	}
+}
+
 func TestStarterSpellNativeCurrentSourceFailureNeverFallsBackToCastOrMelee(t *testing.T) {
 	for _, mode := range []string{"missing export", "transport", "extra field", "unknown rank", "fractional rank", "wrong kind", "missing rank"} {
 		t.Run(mode, func(t *testing.T) {
@@ -125,7 +157,7 @@ func TestStarterSpellNativeQuarantinedAuthoredSourceCannotRestoreOlderCast(t *te
 }
 
 func TestStarterSpellNativeRefusesFactsChangedDuringPureRead(t *testing.T) {
-	for _, mode := range []string{"mana", "target health", "target pose", "body revision", "visit", "spellbook", "own aura"} {
+	for _, mode := range []string{"mana", "target health", "target level", "target pose", "body revision", "visit", "spellbook", "own aura"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, target := starterNativeRig(t)
 			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
@@ -136,6 +168,8 @@ func TestStarterSpellNativeRefusesFactsChangedDuringPureRead(t *testing.T) {
 					f.world.Self.Power--
 				case "target health":
 					target.Health--
+				case "target level":
+					target.Level++
 				case "target pose":
 					target.X++
 				case "body revision":

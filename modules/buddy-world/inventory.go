@@ -18,6 +18,7 @@ type inventoryItemView struct {
 	durabilityKnown                 bool
 	durability, maximum             uint32
 	enhancementsKnown, enhancements bool
+	enhancementDetails              itemEnhancementView
 }
 type inventoryBagView struct {
 	guid                          uint64
@@ -57,6 +58,7 @@ func (s *observations) carriedItem(guid uint64) inventoryItemView {
 		r.durability, r.maximum = p.fields[0x3c], p.fields[0x3d]
 		r.durabilityKnown = p.known[0x3c] && p.known[0x3d] && r.durability <= r.maximum
 		r.enhancementsKnown, r.enhancements = itemEnhancements(p)
+		r.enhancementDetails = observedEnhancementDetails(p)
 	}
 	return r
 }
@@ -144,7 +146,7 @@ func (s *observations) appendInventory(r *worldv1.SnapshotResponse) {
 		if b.contents {
 			for slot := uint32(0); slot < b.count; slot++ {
 				item := b.slots[slot]
-				p.Slots = append(p.Slots, &worldv1.BackpackSlot{Bag: uint32(bag), Slot: slot, ItemGuid: item.guid, Entry: item.entry, StackCount: item.count, MetadataKnown: item.metadata, DurabilityKnown: item.durabilityKnown, Durability: item.durability, MaxDurability: item.maximum, EnhancementsKnown: item.enhancementsKnown, HasEnhancements: item.enhancements})
+				p.Slots = append(p.Slots, &worldv1.BackpackSlot{Bag: uint32(bag), Slot: slot, ItemGuid: item.guid, Entry: item.entry, StackCount: item.count, MetadataKnown: item.metadata, DurabilityKnown: item.durabilityKnown, Durability: item.durability, MaxDurability: item.maximum, EnhancementsKnown: item.enhancementsKnown, HasEnhancements: item.enhancements, EnhancementDetails: item.enhancementDetails.message()})
 			}
 		}
 		r.InventoryBags = append(r.InventoryBags, p)

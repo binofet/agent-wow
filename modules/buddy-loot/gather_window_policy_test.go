@@ -19,7 +19,7 @@ func observedGatherWindow(t *testing.T) (*Service, *fakeSession, *lootv1.CorpseO
 	t.Helper()
 	s, f, _ := harvestRig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	emit(s, opcode.SMSGLootResponse, harvestWindow(harvestGUID, lootItem{slot: 1, id: 42, count: 1}, lootItem{slot: 2, id: harvestItemID, count: 1, slotType: 4}))
 	for i := 0; i < 3; i++ {
 		s.Tick(context.Background())

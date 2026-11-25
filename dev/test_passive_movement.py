@@ -85,12 +85,14 @@ class PassiveMovementTests(unittest.TestCase):
             for scene in scenes.values():scene['self']['movementFlags']=flags
             self.assertTrue(worker.safe_search(scenes))
             target=copy.deepcopy(party.rpcs[1].target);target['movementFlags']=flags
-            self.assertIsNotNone(t.cave.creature_position(target))
+            for actor in party.rpcs.values():actor.target=copy.deepcopy(target)
+            self.assertIsNotNone(worker.candidate(worker.read()))
             for bad in UNSAFE:
                 scenes[1]['self']['movementFlags']=flags|bad
                 self.assertFalse(worker.safe_search(scenes))
                 target['movementFlags']=flags|bad
-                self.assertIsNone(t.cave.creature_position(target))
+                for actor in party.rpcs.values():actor.target=copy.deepcopy(target)
+                self.assertIsNone(worker.candidate(worker.read()))
                 scenes[1]['self']['movementFlags']=flags
 
     def test_stationary_area_profession_and_turnin_npcs_only_gain_passive_bits(self):

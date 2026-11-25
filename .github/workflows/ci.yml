@@ -14,10 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: Check and build
+  host:
+    name: Host checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Check out code
@@ -28,14 +28,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-
-      - name: Check formatting
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            printf 'Run gofmt on these files:\n%s\n' "$unformatted"
-            exit 1
-          fi
 
       - name: Check development launchers
         run: |
@@ -105,6 +97,32 @@ jobs:
           lua5.1 dev/test_prep_audit.lua addons/WarcraftBuddyQuestSync/PrepAudit.lua
           lua5.1 dev/test_warrior_action_bars.lua addons/WarcraftBuddyQuestSync/GearSwap.lua
 
+  native:
+    name: Native checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            printf 'Run gofmt on these files:\n%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Build evaluator for native contract tests
+        run: go build -o data/bin/luapolicy ./cmd/luapolicy
+
       - name: Vet
         run: go vet ./...
 
@@ -113,3 +131,21 @@ jobs:
 
       - name: Build
         run: ./run build
+
+  check:
+    name: Check and build
+    needs: [host, native]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Require host and native success
+        env:
+          HOST_RESULT: ${{ needs.host.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: |
+          printf 'Host checks: %s\nNative checks: %s\n' "$HOST_RESULT" "$NATIVE_RESULT"
+          if [ "$HOST_RESULT" != success ] || [ "$NATIVE_RESULT" != success ]; then
+            exit 1
+          fi

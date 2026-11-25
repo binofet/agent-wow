@@ -9,6 +9,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/areatriggerreference"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
@@ -45,6 +46,8 @@ type deathRecovery struct {
 	mapID                        uint32
 	revision                     uint64
 	expected                     position
+	pathTarget                   position
+	entryOperation               *actionsv1.AreaTriggerOperation
 	token                        string
 	releasePositionRevision      uint64
 	releaseMap                   uint32
@@ -64,6 +67,13 @@ func (r *deathRecovery) snapshot(now time.Time) *actionsv1.RecoveryState {
 func (s *Service) recoveryStateLocked() *actionsv1.RecoveryState {
 	now := s.now()
 	out := s.recovery.snapshot(now)
+	if out.CorpseQueryKnown && out.CorpseFound && out.CorpseLocation.GetKnown() && out.CorpseLocation.GetMapKnown() && out.CorpseLocation.MapId != out.CorpseMapId {
+		for _, row := range areatriggerreference.All() {
+			if row.SourceMap == out.CorpseLocation.MapId && row.DestinationMap == out.CorpseMapId {
+				out.CorpseEntrances = append(out.CorpseEntrances, &actionsv1.AreaTriggerVolume{TriggerId: row.ID, SourceMapId: row.SourceMap, DestinationMapId: row.DestinationMap, X: row.X, Y: row.Y, Z: row.Z, Radius: row.Radius, Length: row.Length, Width: row.Width, Height: row.Height, Orientation: row.Orientation, ReferenceOnly: true})
+			}
+		}
+	}
 	if offer := s.resurrectionOffer; offer != nil {
 		age := now.Sub(offer.observedAt).Milliseconds()
 		if age < 0 {
@@ -152,6 +162,7 @@ func (s *Service) observeRecoveryLifeLocked(w *worldv1.SnapshotResponse) {
 			DeathEpoch: r.state.DeathEpoch + 1, Phase: "observed_death", MovementUnconfirmed: s.state.MotionUnconfirmed,
 			ReclaimDelayKnown: r.delayEpoch == r.state.DeathEpoch+1}
 		r.queryPending = false
+		r.entryOperation = nil
 		r.path = nil
 		r.releasePositionRevision, r.releaseMap = 0, 0
 		r.graveyardPoseObserved = false
@@ -174,6 +185,19 @@ func (s *Service) observeRecoveryLifeLocked(w *worldv1.SnapshotResponse) {
 		r.state.GhostObserved = true
 		if !r.state.ReleaseAttempted || (p.PositionRevision != r.releasePositionRevision || p.MapId != r.releaseMap) && p.MovementFlagsKnown && p.MovementFlags&0xff == 0 {
 			r.graveyardPoseObserved = true
+		}
+	}
+	if !p.Alive && ghostSelf(w, s.selfGUID) && r.entryOperation != nil && !r.state.CorpseEntryDestinationObserved {
+		s.observeScopedTriggerDestinationLocked(r.entryOperation, w)
+		if r.entryOperation.DestinationObserved && p.MapId == r.state.CorpseMapId {
+			r.state.CorpseEntryDestinationObserved = true
+			// This is a new positively witnessed map visit. The exterior query is not
+			// an interior corpse position; permit one explicit fresh query, never entry replay.
+			r.state.CorpseQueryKnown = false
+			r.state.CorpseFound = false
+			r.state.CorpseLocation = nil
+			r.queryPending = false
+			r.path = nil
 		}
 	}
 	r.state.GhostMovementSupported = ghostSelf(w, s.selfGUID) && r.graveyardPoseObserved && !s.clientControlLost && !s.clientControlRestoring

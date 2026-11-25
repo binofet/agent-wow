@@ -1,7 +1,6 @@
 package buddyloot
 
 import (
-	"context"
 	"encoding/binary"
 	"fmt"
 	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
@@ -19,7 +18,7 @@ func TestOpeningMechanicComesFromCatalog(t *testing.T) {
 			t.Fatal(err)
 		}
 		enable(t, s)
-		s.Tick(context.Background())
+		tickGatherWindow(t, s)
 		if len(f.packets) != 1 || binary.LittleEndian.Uint32(f.packets[0].Payload[1:]) != spell {
 			t.Fatal("wrong opening mechanic", spell, current(t, s))
 		}
@@ -56,7 +55,7 @@ func TestUnseenCatalogContainerUsesOwnQuestAndExactSource(t *testing.T) {
 				s.catalog, _ = gamecatalog.Decode([]byte(`{"objects":{}}`))
 			}
 			enable(t, s)
-			s.Tick(context.Background())
+			tickGatherWindow(t, s)
 			if mode != "ordinary" && mode != "other_map" {
 				if len(f.packets) != 0 {
 					t.Fatal("unqualified source opened")

@@ -55,10 +55,18 @@ func TestPolicyContainerCapacityResumeUsesNativeRouteWithoutPhysicalPending(t *t
 				inst.healthy = true
 			}
 			writes := 0
-			m.session.SendPacket = func(context.Context, uint32, []byte) error { writes++; return nil }
+			var openingOpcode uint32
+			var openingOrigin modsession.WriteOrigin
+			m.session.SendPacket = func(ctx context.Context, code uint32, _ []byte) error {
+				if writes == 0 {
+					openingOpcode, openingOrigin = code, modsession.WriteOriginFromContext(ctx)
+				}
+				writes++
+				return nil
+			}
 			const source = uint64(0xf110000000000000 | uint64(161557)<<24 | 42)
 			w := &worldv1.SnapshotResponse{Self: &worldv1.PlayerState{Guid: 6, Present: true, AliveKnown: true, Alive: true, HealthKnown: true, Health: 100, MaxHealth: 100, MapKnown: true, PositionKnown: true, PositionRevision: 1, UnitFlagsKnown: true, MovementFlagsKnown: true},
-				InventoryKnown: true, InventoryRevision: 1, SelfQuestLogKnown: true, SelfQuestLogRevision: 1,
+				InventoryKnown: true, InventoryRevision: 1, VisitRevision: 1, SelfQuestLogKnown: true, SelfQuestLogRevision: 1,
 				QuestObjects: []*worldv1.GameObjectState{{Guid: source, Entry: 161557, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: 1, X: 2, TypeKnown: true, GameObjectType: 3, FlagsKnown: true}}}
 			for i := range 25 {
 				w.SelfQuestLog = append(w.SelfQuestLog, &worldv1.QuestLogEntry{Slot: uint32(i)})
@@ -75,46 +83,7 @@ func TestPolicyContainerCapacityResumeUsesNativeRouteWithoutPhysicalPending(t *t
 				w.InventoryBags = append(w.InventoryBags, bag)
 			}
 			callback := &corpseNativeCallback{manager: m, world: w, actions: &actionsv1.State{SessionId: "corpse-body", SelfGuid: 6, Position: &actionsv1.ClientPosition{Known: true, MapKnown: true, Revision: 1}}}
-			native := buddyloot.NewService(callback, 6, "corpse-body")
-			// Establish the capacity pause through actual public opening, window,
-			// inventory rejection and release packets, without private state writes.
-			native.Enable(context.Background(), &lootv1.EnableRequest{Enabled: true})
-			native.Tick(context.Background())
-			window := binary.LittleEndian.AppendUint64(nil, source)
-			window = append(window, 6)
-			window = binary.LittleEndian.AppendUint32(window, 0)
-			window = append(window, 1)
-			row := make([]byte, 22)
-			row[0] = 2
-			binary.LittleEndian.PutUint32(row[1:], 11119)
-			binary.LittleEndian.PutUint32(row[5:], 1)
-			row[21] = 4
-			window = append(window, row...)
-			native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLootResponse, Payload: window})
-			native.Tick(context.Background())
-			observedWindow, err := native.ObserveCorpses(context.Background(), &emptypb.Empty{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = native.TakeSlot(context.Background(), &lootv1.TakeLootRequest{SessionId: "corpse-body", SelfGuid: 6,
-				SourceGuid: source, OpenRequestId: observedWindow.Window.OpenRequestId, WindowRevision: observedWindow.Window.Revision,
-				RequestId: "capacity-fixture-slot", Slot: 2, ExpectedItemId: 11119, ExpectedCount: 1, ExpectedInventoryRevision: w.InventoryRevision})
-			if err != nil {
-				t.Fatal(err)
-			}
-			reject := make([]byte, 18)
-			reject[0] = 50
-			native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGInventoryChangeFailure, Payload: reject})
-			if _, err = native.CloseCorpse(context.Background(), &lootv1.CloseCorpseRequest{SessionId: "corpse-body", SelfGuid: 6, SourceGuid: source}); err != nil {
-				t.Fatal(err)
-			}
-			native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLootReleaseResponse, Payload: append(binary.LittleEndian.AppendUint64(nil, source), 1)})
-			native.Tick(context.Background())
-			paused, _ := native.GetState(context.Background(), &emptypb.Empty{})
-			if paused.CapacityPause == nil || writes != 3 {
-				t.Fatal("actual pause not established", paused, writes)
-			}
-			w.InventoryRevision++
+			native := buddyloot.NewAutomaticService(callback, 6, "corpse-body")
 			server := grpc.NewServer()
 			lootv1.RegisterBuddyLootServer(server, &capacityResumeNative{Service: native, loseResponse: unknown})
 			listener := bufconn.Listen(1 << 20)
@@ -135,6 +104,73 @@ func TestPolicyContainerCapacityResumeUsesNativeRouteWithoutPhysicalPending(t *t
 				t.Fatal(err)
 			}
 			defer host.close()
+			// Native ticks cannot choose a target or recipe. Open the actual
+			// capacity-pause source through the maintained Lua policy and bound RPC.
+			if _, err = native.Enable(context.Background(), &lootv1.EnableRequest{Enabled: true}); err != nil {
+				t.Fatal(err)
+			}
+			native.Tick(context.Background())
+			if writes != 0 {
+				t.Fatal("native selected a gather target before Lua", writes)
+			}
+			opening, err := m.InvokeJSON(context.Background(), "buddy-loot.observe_corpses", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var openingObservation map[string]any
+			if err = json.Unmarshal(opening, &openingObservation); err != nil {
+				t.Fatal(err)
+			}
+			openingSeq, err := host.Enqueue(behavior.Event{Kind: "corpse_loot_observation", Value: openingObservation})
+			if err != nil {
+				t.Fatal(err)
+			}
+			openingSequence := strconv.FormatUint(openingSeq, 10)
+			_, openingReceipt, err := host.Step(context.Background(), map[string]any{"observationSequence": openingSequence,
+				"observationSequences": map[string]any{"corpse_loot": openingSequence}}, nil)
+			if err != nil || openingReceipt == nil || openingReceipt.Outcome != behavior.ActionSettledUnverified ||
+				openingReceipt.Payload["capability"] != "loot_gather" || openingReceipt.Payload["source_guid"] != strconv.FormatUint(source, 10) ||
+				writes != 1 || openingOpcode != opcode.CMSGCastSpell || openingOrigin.Writer != "lua" ||
+				openingOrigin.Module != "buddy-loot" || openingOrigin.ActionID == "" {
+				t.Fatal("actual Lua-selected gather opening did not run", openingReceipt, err, writes, openingOpcode, openingOrigin)
+			}
+			// Establish the pause through actual window, inventory rejection and
+			// release packets, without private state writes.
+			window := binary.LittleEndian.AppendUint64(nil, source)
+			window = append(window, 6)
+			window = binary.LittleEndian.AppendUint32(window, 0)
+			window = append(window, 1)
+			row := make([]byte, 22)
+			row[0] = 2
+			binary.LittleEndian.PutUint32(row[1:], 11119)
+			binary.LittleEndian.PutUint32(row[5:], 1)
+			row[21] = 4
+			window = append(window, row...)
+			native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLootResponse, Payload: window})
+			native.Tick(context.Background())
+			observedWindow, err := native.ObserveCorpses(context.Background(), &emptypb.Empty{})
+			if err != nil || observedWindow == nil || observedWindow.Window == nil || !observedWindow.Window.Observed {
+				t.Fatal("actual gather window was not observed", observedWindow, err)
+			}
+			_, err = native.TakeSlot(context.Background(), &lootv1.TakeLootRequest{SessionId: "corpse-body", SelfGuid: 6,
+				SourceGuid: source, OpenRequestId: observedWindow.Window.OpenRequestId, WindowRevision: observedWindow.Window.Revision,
+				RequestId: "capacity-fixture-slot", Slot: 2, ExpectedItemId: 11119, ExpectedCount: 1, ExpectedInventoryRevision: w.InventoryRevision})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reject := make([]byte, 18)
+			reject[0] = 50
+			native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGInventoryChangeFailure, Payload: reject})
+			if _, err = native.CloseCorpse(context.Background(), &lootv1.CloseCorpseRequest{SessionId: "corpse-body", SelfGuid: 6, SourceGuid: source}); err != nil {
+				t.Fatal(err)
+			}
+			native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLootReleaseResponse, Payload: append(binary.LittleEndian.AppendUint64(nil, source), 1)})
+			native.Tick(context.Background())
+			paused, _ := native.GetState(context.Background(), &emptypb.Empty{})
+			if paused.CapacityPause == nil || writes != 3 {
+				t.Fatal("actual pause not established", paused, writes)
+			}
+			w.InventoryRevision++
 			observed, err := m.InvokeJSON(context.Background(), "buddy-loot.observe_corpses", nil)
 			if err != nil {
 				t.Fatal(err)

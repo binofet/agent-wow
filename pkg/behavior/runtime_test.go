@@ -207,7 +207,12 @@ func TestInfiniteLoopDeadlineDoesNotBanSourceOrRetryInline(t *testing.T) {
 }
 
 func TestUnsafeLibrariesAndHostAccessAbsent(t *testing.T) {
-	r := New()
+	// This fixture proves sandbox semantics; separate tests exercise the
+	// ordinary execution deadline and zero-output resource refusal.
+	r, err := NewWithOptions(SessionOptions{ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
 	load(t, r, `return {decide=function(s)
 local names={"io","os","debug","package","require","module","load","loadstring","loadfile","dofile","getfenv","setfenv","getmetatable","setmetatable","collectgarbage","newproxy","_G","print","coroutine","string","table","pcall","xpcall"}
 for _, name in ipairs(names) do assert(s[name]==nil) end

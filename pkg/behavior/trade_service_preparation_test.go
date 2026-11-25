@@ -196,8 +196,23 @@ func TestTradeServicePreparationIncompleteMalformedOrForeignFactsWait(t *testing
 		t.Run(name, func(t *testing.T) {
 			frame := tradeServicePreparationFrame()
 			edit(frame)
+			if name == "missing_cast_time" {
+				// This exact malformed frame measured an Evaluate initialization
+				// resource turn in the ordinary 5ms CLI. Prove its semantic wait
+				// separately, never replace a production refusal with that result.
+				tradeServiceMissingCastTimeInitializationResult(t, source, frame)
+				return
+			}
 			tradeConsentResult(t, disposalArmorSemanticRuntime(t, source), source, frame, "wait")
 		})
+	}
+}
+
+func tradeServiceMissingCastTimeInitializationResult(t *testing.T, source string, frame map[string]any) {
+	t.Helper()
+	out := tradeConsentSemanticAndProductionPhases(t, disposalArmorSemanticRuntime(t, source), source, frame, "wait", false, true)
+	if out["reason"] != "known_lockpicking_capability_required" {
+		t.Fatal("missing cast time lost its semantic refusal", out)
 	}
 }
 
