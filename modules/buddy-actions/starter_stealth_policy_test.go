@@ -75,7 +75,7 @@ func TestStarterStealthExactRejectionSettlesOnlyPreGONoEffectCustody(t *testing.
 			emitPolymorph(s, opcode.SMSGCastFailed, failure)
 			if mode == "rejected" {
 				if s.starterSpells.uncertainStrike != nil || s.state.CastPending || op.view.Phase != "server_rejected_no_replay" || op.view.ServerCastGo || op.view.EffectObserved {
-					t.Fatal("exact pre-GO refusal left false uncertainty or lost the terminal receipt", op.view, s.stateLocked())
+				t.Fatal("exact pre-GO refusal left false uncertainty or lost the terminal receipt", &op.view, s.stateLocked())
 				}
 				advance(2 * time.Second)
 				target.X = -8930
@@ -86,7 +86,7 @@ func TestStarterStealthExactRejectionSettlesOnlyPreGONoEffectCustody(t *testing.
 					t.Fatal("known refusal permanently blocked ordinary offense", selected, s.starterSpells.failure())
 				}
 			} else if s.starterSpells.uncertainStrike != op {
-				t.Fatal("failure after possible effect cleared ambiguous custody", op.view)
+				t.Fatal("failure after possible effect cleared ambiguous custody", &op.view)
 			}
 			if countPackets(f, opcode.CMSGCastSpell) != 1 {
 				t.Fatal("native rejection reconciliation replayed Stealth", f.packets)
@@ -148,7 +148,7 @@ func TestStarterStealthLostReplyReconcilesOnlyAnExactCurrentNativeGO(t *testing.
 			if auraFirst {
 				emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(s.selfGUID, s.selfGUID, 2, 1785, 0))
 				if s.starterSpells.uncertainStrike != op || op.view.ServerCastGo {
-					t.Fatal("aura alone settled an entered operation", op.view)
+					t.Fatal("aura alone settled an entered operation", &op.view)
 				}
 			}
 			if mode != "no GO" {
@@ -161,14 +161,14 @@ func TestStarterStealthLostReplyReconcilesOnlyAnExactCurrentNativeGO(t *testing.
 			}
 			if positive {
 				if s.starterSpells.uncertainStrike != nil || !op.view.ServerCastGo || !op.view.EffectObserved || op.view.Phase != "confirmed_aura" {
-					t.Fatal("late exact native evidence could not settle entered uncertainty", op.view)
+					t.Fatal("late exact native evidence could not settle entered uncertainty", &op.view)
 				}
 				if newer != nil && (s.supportOp != newer || !proto.Equal(newerView, &newer.view) ||
 					!s.state.CastPending || s.pendingSpell != newer.view.SpellId || s.pendingTarget != newer.view.TargetGuid || s.castCount != newer.count) {
-					t.Fatal("old GO/Aura changed a newer Heal's receipt or pending identity", newer.view, s.stateLocked())
+					t.Fatal("old GO/Aura changed a newer Heal's receipt or pending identity", &newer.view, s.stateLocked())
 				}
 			} else if s.starterSpells.uncertainStrike != op || op.view.ServerCastGo {
-				t.Fatal("unmatched late packet admitted an old uncertain self cast", op.view)
+				t.Fatal("unmatched late packet admitted an old uncertain self cast", &op.view)
 			}
 			if countPackets(f, opcode.CMSGCastSpell) != 1 || countPackets(f, opcode.CMSGAttackswing) != 0 {
 				t.Fatal("late native reconciliation replayed a mutation", f.packets)
@@ -297,7 +297,7 @@ func TestStarterStealthLateAuraReconcilesOnlyItsExactCurrentGO(t *testing.T) {
 			advance(6 * time.Second)
 			s.Tick(context.Background())
 			if s.starterSpells.uncertainStrike != op {
-				t.Fatal("fixture did not retain expired uncertainty", op.view)
+				t.Fatal("fixture did not retain expired uncertainty", &op.view)
 			}
 			spell, caster := uint32(1785), s.selfGUID
 			var newer *supportAttempt
@@ -317,11 +317,11 @@ func TestStarterStealthLateAuraReconcilesOnlyItsExactCurrentGO(t *testing.T) {
 			emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(s.selfGUID, caster, 2, spell, 0))
 			if mode == "confirm" || mode == "newer operation" {
 				if s.starterSpells.uncertainStrike != nil || !op.view.ServerCastGo || !op.view.EffectObserved || op.view.Phase != "confirmed_aura" {
-					t.Fatal("matching native confirmation could not settle exact old uncertainty", op.view)
+					t.Fatal("matching native confirmation could not settle exact old uncertainty", &op.view)
 				}
 				if newer != nil {
 					if s.supportOp != newer || !proto.Equal(newerView, &newer.view) || countPackets(f, opcode.CMSGCastSpell) != 1 {
-						t.Fatal("late evidence for the old Stealth altered a newer Heal", newerView, newer.view)
+						t.Fatal("late evidence for the old Stealth altered a newer Heal", newerView, &newer.view)
 					}
 					return
 				}
@@ -334,7 +334,7 @@ func TestStarterStealthLateAuraReconcilesOnlyItsExactCurrentGO(t *testing.T) {
 					t.Fatal("proven aura left ordinary named offense permanently blocked", selected, s.starterSpells.failure())
 				}
 			} else if s.starterSpells.uncertainStrike != op {
-				t.Fatal("unmatched/newer aura evidence cleared old uncertainty", op.view)
+				t.Fatal("unmatched/newer aura evidence cleared old uncertainty", &op.view)
 			}
 			if countPackets(f, opcode.CMSGCastSpell) != 1 {
 				t.Fatal("reconciliation sent another Stealth", f.packets)
@@ -368,13 +368,13 @@ func TestStarterStealthPendingAndUnknownCannotReplayAfterEditOrReceiptReplacemen
 				if mode == "GO without effect" {
 					emitPolymorph(s, opcode.SMSGSpellGo, starterWeaponObservedGo(s, s.selfGUID, s.castCount))
 					if !op.view.ServerCastGo || op.view.EffectObserved {
-						t.Fatal("actual parser did not retain GO/effect distinction", op.view)
+						t.Fatal("actual parser did not retain GO/effect distinction", &op.view)
 					}
 				}
 				advance(6 * time.Second)
 				s.Tick(context.Background())
 				if s.starterSpells.uncertainStrike != op {
-					t.Fatal("entered uncertainty was not retained", op.view, s.stateLocked())
+					t.Fatal("entered uncertainty was not retained", &op.view, s.stateLocked())
 				}
 				_, err := reloadStarterSemanticBehavior(t, s, context.Background(), &actionsv1.BehaviorReloadRequest{
 					SessionId: s.sessionID, SelfGuid: s.selfGUID, ExpectedRevision: s.behavior.Status().Revision, Source: source + "\n-- after entered self cast"})
@@ -396,7 +396,7 @@ func TestStarterStealthPendingAndUnknownCannotReplayAfterEditOrReceiptReplacemen
 			}
 			if countPackets(f, opcode.CMSGCastSpell) != 1 || op.view.EffectObserved ||
 				mode != "pending" && mode != "pending new target" && (s.starterSpells.uncertainStrike != op || s.supportOp == op) {
-				t.Fatal("source/task/target/general receipt replacement replayed a self cast", op.view, s.stateLocked(), f.packets)
+				t.Fatal("source/task/target/general receipt replacement replayed a self cast", &op.view, s.stateLocked(), f.packets)
 			}
 		})
 	}
