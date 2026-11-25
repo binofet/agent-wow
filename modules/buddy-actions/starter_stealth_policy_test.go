@@ -12,6 +12,7 @@ import (
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -156,6 +157,8 @@ func TestStarterStealthLateAuraReconcilesOnlyItsExactCurrentGO(t *testing.T) {
 				t.Fatal("fixture did not retain expired uncertainty", op.view)
 			}
 			spell, caster := uint32(1785), s.selfGUID
+			var newer *supportAttempt
+			var newerView *actionsv1.SpellOperation
 			switch mode {
 			case "wrong spell":
 				spell = 1784
@@ -164,13 +167,20 @@ func TestStarterStealthLateAuraReconcilesOnlyItsExactCurrentGO(t *testing.T) {
 			case "newer operation":
 				heal, _ := s.spellData.Lookup(lesserHeal)
 				s.reserveHealReceiptLocked("", heal, s.selfGUID)
+				newer, newerView = s.supportOp, proto.Clone(&s.supportOp.view).(*actionsv1.SpellOperation)
 			case "replaced visit":
 				emitPolymorph(s, opcode.SMSGNewWorld, make([]byte, 20))
 			}
 			emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(s.selfGUID, caster, 2, spell, 0))
-			if mode == "confirm" {
+			if mode == "confirm" || mode == "newer operation" {
 				if s.starterSpells.uncertainStrike != nil || !op.view.ServerCastGo || !op.view.EffectObserved || op.view.Phase != "confirmed_aura" {
 					t.Fatal("matching native confirmation could not settle exact old uncertainty", op.view)
+				}
+				if newer != nil {
+					if s.supportOp != newer || !proto.Equal(newerView, &newer.view) {
+						t.Fatal("late evidence for the old Stealth altered a newer Heal", newerView, newer.view)
+					}
+					return
 				}
 				s.refreshPositionLocked(f.world)
 				target := f.world.NearbyCreatures[0]
