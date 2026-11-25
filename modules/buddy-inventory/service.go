@@ -159,6 +159,9 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 	if e == nil && (w.InventoryRevision < s.state.InventoryRevision || w.SelfCopperRevision < s.state.CopperRevision) {
 		e = fail("inventory_or_wallet_revision_regressed")
 	}
+	if e == nil && w.SelfAmmoKnown && w.SelfAmmoRevision < s.state.AmmoRevision {
+		e = fail("ammo_revision_regressed")
+	}
 	if e == nil && w.SelfEquipmentKnown && w.SelfEquipmentRevision < s.state.EquipmentRevision {
 		e = fail("equipment_revision_regressed")
 	}
@@ -167,6 +170,7 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 	if e != nil {
 		s.state.InventoryKnown = false
 		s.state.CopperKnown = false
+		s.state.AmmoKnown = false
 		s.state.EquipmentKnown = false
 		s.state.BlockedReason = "coherent_current_observations_unavailable"
 	} else {
@@ -177,6 +181,7 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 		s.state.CopperKnown = w.SelfCopperKnown
 		s.state.Copper = w.SelfCopper
 		s.state.CopperRevision = w.SelfCopperRevision
+		s.ammoStateLocked(v)
 		s.equipmentStateLocked(v)
 		s.evidenceLocked(v)
 		s.consumableEvidenceLocked(v, selfAuras)
@@ -284,12 +289,14 @@ func (s *Service) eligibilityLocked() {
 		i := s.view.slots[k]
 		m := s.metadata[i.Entry]
 		r := &inventoryv1.ItemEligibility{Item: ref(i), MetadataKnown: m.known && i.MetadataKnown, SafeJunkSaleEligible: i.MetadataKnown && m.disposable() && m.sellPrice > 0, UnitSellPriceCopper: m.sellPrice, NormalBag: i.MetadataKnown && bagUsability(s.view.w, m) == "", ContainerSlots: m.containerSlots, Name: m.name}
+		r.AmmoBlockedReason = s.ammoEligibilityLocked(i)
+		r.AmmoSelectEligible = r.AmmoBlockedReason == ""
 		r.Consumable = consumableMetadata(m, s.view.w.Self)
 		r.GearFacts = s.gearFactsLocked(i)
 		r.GearBlockedReason = "lua_gear_evaluation_required"
 		if !i.MetadataKnown || !m.known {
 			r.BlockedReason = "complete_owned_item_metadata_pending"
-		} else if !r.SafeJunkSaleEligible && !r.NormalBag && !r.GearEquipEligible {
+		} else if !r.SafeJunkSaleEligible && !r.NormalBag && !r.GearEquipEligible && !r.AmmoSelectEligible {
 			r.BlockedReason = "not_supported_sale_bag_or_armor"
 		}
 		s.state.Items = append(s.state.Items, r)
@@ -443,7 +450,7 @@ func (s *Service) Discover(ctx context.Context, r *inventoryv1.DiscoverRequest) 
 	return out, nil
 }
 func (s *Service) gateLocked(op *operation, leased bool) string {
-	if reason := s.idleForOperationLocked(leased, op.receipt.Kind == "equip_gear"); reason != "" {
+	if reason := s.idleForOperationLocked(leased, passiveInventoryOperation(op.receipt.Kind)); reason != "" {
 		return reason
 	}
 	r := op.receipt
@@ -451,7 +458,7 @@ func (s *Service) gateLocked(op *operation, leased bool) string {
 		return "inventory_revision_changed"
 	}
 	source, ok := s.view.source(r.Source)
-	if !ok || !s.ordinaryBagLocked(source.Bag) {
+	if !ok || r.Kind != "select_ammo" && !s.ordinaryBagLocked(source.Bag) {
 		return "exact_owned_source_changed_or_unsupported_bag"
 	}
 	m := s.metadata[source.Entry]
@@ -494,6 +501,10 @@ func (s *Service) gateLocked(op *operation, leased bool) string {
 		}
 		if request.RequireConservativeUpgrade {
 			return "current_lua_upgrade_evaluation_required"
+		}
+	case "select_ammo":
+		if reason := s.ammoGateLocked(r, source); reason != "" {
+			return reason
 		}
 	case "sell":
 		if !m.disposable() || m.sellPrice == 0 || m.sellPrice != r.UnitSellPriceCopper {
@@ -636,7 +647,7 @@ func (s *Service) run(op *operation) {
 	s.mu.Lock()
 	op.token = lease.Token
 	s.mu.Unlock()
-	if lease.Token == "" || !safeOperationLeaseState(lease.State, op.receipt.Kind == "equip_gear") {
+	if lease.Token == "" || !safeOperationLeaseState(lease.State, passiveInventoryOperation(op.receipt.Kind)) {
 		s.finish(op, "BLOCKED", "trade_lease_stop_unconfirmed")
 		return
 	}
@@ -658,7 +669,7 @@ func (s *Service) run(op *operation) {
 	// Owner labels alone cannot prove that our exact token still owns the
 	// controller. A replacement trade lease must not authorize this old write.
 	renewed := &actionsv1.InteractionLease{}
-	if e := s.invoke(op.ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "trade", Token: op.token, LeaseMs: 15000}, renewed); e != nil || renewed.Token != op.token || !safeOperationLeaseState(renewed.State, op.receipt.Kind == "equip_gear") {
+	if e := s.invoke(op.ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "trade", Token: op.token, LeaseMs: 15000}, renewed); e != nil || renewed.Token != op.token || !safeOperationLeaseState(renewed.State, passiveInventoryOperation(op.receipt.Kind)) {
 		unlockWrite()
 		s.finish(op, "BLOCKED", "exact_trade_lease_renewal_unconfirmed")
 		return
@@ -670,10 +681,11 @@ func (s *Service) run(op *operation) {
 		v, e = validateWorld(w, s.selfGUID)
 	}
 	s.mu.Lock()
-	if e != nil || w.InventoryRevision < s.state.InventoryRevision || w.SelfCopperRevision < s.state.CopperRevision || w.SelfEquipmentKnown && w.SelfEquipmentRevision < s.state.EquipmentRevision {
+	if e != nil || w.InventoryRevision < s.state.InventoryRevision || w.SelfCopperRevision < s.state.CopperRevision || w.SelfEquipmentKnown && w.SelfEquipmentRevision < s.state.EquipmentRevision || w.SelfAmmoKnown && w.SelfAmmoRevision < s.state.AmmoRevision {
 		s.known = false
 		s.state.InventoryKnown = false
 		s.state.CopperKnown = false
+		s.state.AmmoKnown = false
 		s.state.EquipmentKnown = false
 		s.mu.Unlock()
 		unlockWrite()
@@ -687,6 +699,7 @@ func (s *Service) run(op *operation) {
 	s.state.CopperKnown = w.SelfCopperKnown
 	s.state.Copper = w.SelfCopper
 	s.state.CopperRevision = w.SelfCopperRevision
+	s.ammoStateLocked(v)
 	s.equipmentStateLocked(v)
 	s.actions = proto.Clone(renewed.State).(*actionsv1.State)
 	reason := s.gateLocked(op, true)
@@ -724,6 +737,9 @@ func (s *Service) run(op *operation) {
 	case "equip_gear":
 		code = opcode.CMSGAutoequipItemSlot
 		payload = equipGearPacket(r.Source.ItemGuid, r.EquipmentSlot)
+	case "select_ammo":
+		code = opcode.CMSGSetAmmo
+		payload = ammoPacket(r.AmmoEntry)
 	case "sell":
 		code = opcode.CMSGSellItem
 		payload = sellPacket(r.VendorGuid, r.Source.ItemGuid, r.Source.StackCount)
@@ -784,6 +800,17 @@ func (s *Service) evidenceLocked(v view) {
 	r.ObservedEquipmentRevision = v.w.SelfEquipmentRevision
 	r.ObservedCopperRevision = v.w.SelfCopperRevision
 	r.ObservedCopper = v.w.SelfCopper
+	if r.Kind == "select_ammo" {
+		r.ObservedAmmoRevision = v.w.SelfAmmoRevision
+		r.AmmoConfirmed = v.w.SelfAmmoKnown && v.w.SelfAmmoRevision > r.BaselineAmmoRevision && v.w.SelfAmmoEntry == r.AmmoEntry
+		r.InventoryConfirmed = v.w.InventoryRevision >= r.BaselineInventoryRevision && exactVector(op.baseline, v)
+		r.EquipmentConfirmed = v.w.SelfEquipmentRevision >= r.BaselineEquipmentRevision && exactEquipmentVector(op.baseline, v)
+		if r.AmmoConfirmed && r.InventoryConfirmed && r.EquipmentConfirmed {
+			r.Status = "CONFIRMED"
+			r.Reason = "newer_own_ammo_field_and_unchanged_owned_vectors_confirmed"
+		}
+		return
+	}
 	if v.w.InventoryRevision <= r.BaselineInventoryRevision {
 		return
 	}

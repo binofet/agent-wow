@@ -19,6 +19,7 @@ const (
 	backpackFirst      = 0x172
 	itemOwner          = 6
 	itemStack          = 0xe
+	playerAmmo         = 0x4ae // UNIT_END0x94 + PLAYER_AMMO_ID0x41a, PRIVATE own-only.
 	playerCoinage      = 0x492 // UNIT_END0x94 + PLAYER_FIELD_COINAGE0x3fe, PRIVATE own-only.
 	playerSkillsFirst  = 0x27c // UNIT_END0x94 + PLAYER_SKILL_INFO_1_1 0x1e8, 384 private words.
 	playerFreePrimary  = 0x3fd // UNIT_END0x94 + PLAYER_CHARACTER_POINTS2 0x369.
@@ -38,6 +39,7 @@ type observations struct {
 	edited              map[uint64]bool
 	itemRevision        uint64
 	copperRevision      uint64
+	ammoRevision        uint64
 	skillsRevision      uint64
 	freePrimaryRevision uint64
 	offhandRevision     uint64

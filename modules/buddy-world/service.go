@@ -65,6 +65,8 @@ type observed struct {
 	mainhand                    uint64
 	offhandKnown                bool
 	offhand                     uint64
+	ammoKnown                   bool
+	ammo                        uint32
 	copperKnown                 bool
 	copper                      uint32
 	skillsKnown                 bool
@@ -170,6 +172,8 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 	if r.Self.Guid != 0 && r.Self.Present && r.Self.MapKnown {
 		r.VisitRevision = s.state.visitRevision
 	}
+	r.SelfAmmoKnown, r.SelfAmmoEntry = s.state.ammoView()
+	r.SelfAmmoRevision = s.state.ammoRevision
 	r.SelfMovementFacts = s.state.ownMovement.snapshot(now)
 	r.SelfSplineFacts = s.state.ownSpline.snapshot(now)
 	r.SelfMotionAuthority = s.motionSnapshotLocked(now)
@@ -218,6 +222,11 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		s.observeMotionLocked(packet, old, current, &next, observedAt)
 		if !current.present || !current.mapKnown || !current.positionKnown || old.positionRevision != current.positionRevision || old.mapKnown != current.mapKnown || old.mapID != current.mapID {
 			next.discovery = clientDiscoveryAnchor{}
+		}
+		oldAmmoKnown, oldAmmo := s.state.ammoView()
+		newAmmoKnown, newAmmo := next.ammoView()
+		if oldAmmoKnown != newAmmoKnown || oldAmmo != newAmmo {
+			next.ammoRevision++
 		}
 		if old.copperKnown != current.copperKnown || old.copper != current.copper {
 			next.copperRevision++
