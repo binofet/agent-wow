@@ -186,9 +186,8 @@ func TestAutomaticCorpseApproachDoesNotReenterColdridgeGoalOrProfilePolicy(t *te
 	for _, entry := range []uint32{705, 707, 724, 708, 706} {
 		t.Run(fmt.Sprint(entry), func(t *testing.T) {
 			s, f, _, request := navLootRig(t)
-			// The maintained launcher enables this mode. Its exact target is a
-			// Lua caller's choice; native approach does not select a quest/profile.
-			s.UseAutomaticCorpseLoot()
+			// The exact target is a Lua caller's choice; the ordinary native
+			// constructor does not select a quest/profile.
 			f.world.SelfQuestLogKnown, f.world.SelfQuestLog = false, nil
 			corpse := f.world.LootableCorpses[0]
 			corpse.Entry, corpse.Guid = entry, coldThreatGUID(entry)

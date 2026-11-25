@@ -26,23 +26,6 @@ func safePracticeCharacter(w *worldv1.SnapshotResponse, selfGUID uint64) string 
 	return safeQuestCharacter(&worldv1.SnapshotResponse{Self: copy}, selfGUID)
 }
 
-func ownWolfQuest(w *worldv1.SnapshotResponse) (active, incomplete bool) {
-	if w == nil || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
-		return false, false
-	}
-	seen := [25]bool{}
-	for _, q := range w.SelfQuestLog {
-		if q == nil || q.Slot >= 25 || seen[q.Slot] {
-			return false, false
-		}
-		seen[q.Slot] = true
-		if q.QuestId == 33 && !q.Failed && q.State&2 == 0 {
-			active, incomplete = true, !q.Complete && q.State&1 == 0
-		}
-	}
-	return active, incomplete
-}
-
 func (s *Service) stopPracticeLocked(ctx context.Context, why string) {
 	s.state.Practicing = false
 	s.state.PracticePhase = why

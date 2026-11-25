@@ -88,33 +88,6 @@ func (f *fargodeepEncounter) snapshot(now time.Time) *actionsv1.FargodeepEncount
 	return out
 }
 
-// Item objectives are authoritative only in the own quest log's COMPLETE bit.
-// Its four small counters are creature objective counters, not item quantities.
-func ownFargodeepQuests(w *worldv1.SnapshotResponse) (active, incomplete bool) {
-	if w == nil || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
-		return
-	}
-	slots, ids := [25]bool{}, map[uint32]bool{}
-	for _, q := range w.SelfQuestLog {
-		if q == nil || q.Slot >= 25 || slots[q.Slot] || q.QuestId != 0 && ids[q.QuestId] {
-			return false, false
-		}
-		slots[q.Slot] = true
-		if q.QuestId != 0 {
-			ids[q.QuestId] = true
-		}
-		if (q.QuestId == 47 || q.QuestId == 60) && !q.Failed && q.State&2 == 0 {
-			active = true
-			incomplete = incomplete || !q.Complete && q.State&1 == 0
-		}
-	}
-	return
-}
-func fargodeepCharacter(w *worldv1.SnapshotResponse, self uint64) bool {
-	p := w.GetSelf()
-	return (self == 1 || self == 4 || self == 5) && safeSelfCombat(w, self) == "" && p.MapId == 0 && p.LevelKnown && p.Level >= 4 && p.Level <= 10 && p.ClassKnown && map[uint64]uint32{1: 5, 4: 8, 5: 4}[self] == p.ClassId && p.MaxHealth > 0 && p.Health <= p.MaxHealth && p.SpeedsKnown && math.Abs(float64(p.RunSpeed)-7) <= .01
-}
-
 func (s *Service) readFargodeepPartyLocked(ctx context.Context) *partyv1.StateResponse {
 	call, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
@@ -125,49 +98,6 @@ func (s *Service) readFargodeepPartyLocked(ctx context.Context) *partyv1.StateRe
 		return nil
 	}
 	return p
-}
-
-func (s *Service) fargodeepPartyLocked(ctx context.Context, w *worldv1.SnapshotResponse, session string, ready bool, target position) (map[uint64]bool, string) {
-	p := s.readFargodeepPartyLocked(ctx)
-	members, reason := s.fargodeepPartyObservationLocked(w, p, session, ready, target)
-	return members, reason
-}
-
-func (s *Service) fargodeepPartyObservationLocked(w *worldv1.SnapshotResponse, p *partyv1.StateResponse, session string, ready bool, target position) (map[uint64]bool, string) {
-	if !fargodeepCharacter(w, s.selfGUID) || len(w.NearbyPlayers) > 64 {
-		return nil, "own_state_unknown_or_unsafe"
-	}
-	if w.Owner != nil && w.Owner.Present {
-		return nil, "owner_returned"
-	}
-
-	if p == nil || p.SessionId != session || p.Group == nil || !p.Group.Known || !p.Group.InGroup || len(p.Group.Members) < 3 || len(p.Group.Members) > 40 {
-		return nil, "current_party_unknown_or_changed"
-	}
-	seen, online := map[uint64]bool{}, map[uint64]bool{}
-	for _, m := range p.Group.Members {
-		if m == nil || m.Guid == 0 || m.Guid>>48 != 0 || seen[m.Guid] || m.Self != (m.Guid == s.selfGUID) {
-			return nil, "current_party_unknown_or_changed"
-		}
-		seen[m.Guid], online[m.Guid] = true, m.Online
-	}
-	for guid, class := range map[uint64]uint32{1: 5, 4: 8, 5: 4} {
-		v := observedHealingPlayer(w, guid)
-		if !online[guid] || !safeHealingPlayer(v, 0) || !v.ClassKnown || v.ClassId != class || !v.LevelKnown || v.Level < 4 || v.Level > 10 || v.MaxHealth == 0 || v.Health > v.MaxHealth || v.PlayerFlags&2 != 0 {
-			return nil, "companion_observation_unknown_or_unsafe"
-		}
-		pos := playerPosition(v)
-		if guid == s.selfGUID {
-			pos = s.pos
-		}
-		if distance(s.pos, pos) > 35 || ready && distance(pos, target) > 28 {
-			return nil, "companions_outside_support_range"
-		}
-		if ready && (!v.HealthKnown || v.Health == 0 || v.UnitFlags&0x80000 != 0 || !v.PowerKnown || class == 4 && v.PowerType != 3 || class != 4 && v.PowerType != 0) {
-			return nil, "companions_recovering_before_pull"
-		}
-	}
-	return map[uint64]bool{1: true, 4: true, 5: true}, ""
 }
 
 func (s *Service) stopFargodeepLocked(ctx context.Context, reason string) {
