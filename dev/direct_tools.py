@@ -775,7 +775,7 @@ class DirectTools:
                         if args['value']['task']=='ranged_only':
                             result['requestedDirective']=copy.deepcopy(args['value'])
                             result['application']=dict(known=False,reason='queued_delivery_only',
-                                observePath='latestDecision.rangedStance',expectedTaskId=args['value'].get('id'))
+                                observePath='latestDecision.output.rangedStance',expectedTaskId=args['value'].get('id'))
                     else:
                         method = 'buddy-actions.follow' if name == 'follow' else 'buddy-actions.buffs'
                         result = self.rpc.call(method, dict(enabled=args['enabled'] if name == 'follow' else True))
@@ -1360,7 +1360,7 @@ class DirectTools:
                  'ranged_only accepts id, creatureEntry, mapId, visitId, minRangeYards, maxRangeYards, clearanceYards, durationMs, enabled:true; '
                  'use observed creature entry/map/visit and suitable ability ranges, not an NPC-name guess. '
                  'Cancel the same id with enabled:false or cancel:true. It is scoped to that entry/map/visit and duration. '
-                 'Inspect session.policy_state latestDecision.rangedStance (matching id, applied/active/phase). '
+                 'Inspect session.policy_state latestDecision.output.rangedStance (matching id, applied/active/phase). '
                  'applied means Lua acknowledged the directive, not physical readiness or damage; inspect positionReady/missing facts separately. '
                  'Do not promise wand use without an actual equipped wand and learned Shoot support; a cast GO does not verify ongoing fire. '
                  'Handler availability depends on the accepted source; inspect it if unknown. Lua owns choices and task lifecycle. '

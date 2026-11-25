@@ -7,6 +7,7 @@ import importlib.machinery
 import importlib.util
 import io
 import json
+import os
 import re
 from pathlib import Path
 import subprocess
@@ -841,6 +842,132 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                          current_request=dict(source="owner", senderGuid="3"))
             self.assertEqual(brain.development_enabled(state), developer)
             yield loop, brain, state, http
+
+    def tactical_self_edit_fixture(self, *, lost_apply=False):
+        """PUBLIC/SYNTHETIC protocol fixture; never a native game/model proof."""
+        binary=Path(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY',converse.ROOT/'data/bin/luapolicy'))
+        if not binary.is_file():self.skipTest('actual public Lua evaluator not configured')
+        public=Path(__file__).resolve().parent
+        (self.workspace/'dev').mkdir()
+        for name in ('self-edit','converse','gm_tasks.py','task-runtime','quest-rewards.py','game-catalog.py','combat_context.py'):
+            (self.workspace/'dev'/name).write_bytes((public/name).read_bytes())
+        (self.workspace/'data/bin').mkdir(parents=True)
+        (self.workspace/'data/bin/luapolicy').symlink_to(binary)
+        original='return {decide=function(f) return {output={allowDamage=true,healingEnabled=true}} end}\n'
+        candidate='''return {decide=function(f)
+  local p=f.owner or {}
+  local safe=p.healthKnown==true and type(p.health)=='number' and type(p.maxHealth)=='number' and p.maxHealth>0 and p.health/p.maxHealth>=0.5
+  return {output={allowDamage=safe,healingEnabled=true}}
+end}
+'''
+        parent=self
+        class PolicyRPC(PublicRPC):
+            def __init__(self):
+                super().__init__(owner_request=True)
+                self.source=original;self.pending=['original-UNKNOWN-retained'];self.policy_writes=[]
+                self.frame=dict(owner=dict(guid='3',present=True,healthKnown=True,health=40,maxHealth=100))
+            def evaluate(self,source,frame):
+                with tempfile.TemporaryDirectory() as folder:
+                    path=Path(folder)/'owned.lua';path.write_text(source)
+                    run=subprocess.run([str(binary),'--mode','evaluate','--source',str(path)],
+                        input=json.dumps(frame).encode(),capture_output=True,check=True)
+                    return json.loads(run.stdout)
+            def call(self,method,params,timeout=None):
+                if method=='session.describe':
+                    result=super().call(method,params,timeout)
+                    result['methods'].append(dict(name='buddy-actions.behavior',effect='read',inputType='Empty'))
+                    result['hostMethods'] += [dict(name=name,effect=effect,inputType='Empty') for name,effect in
+                        [('session.policy_source','read'),('session.reload_policy','mutation'),('session.policy_state','read')]]
+                    return result
+                if method in ('session.policy_source','session.reload_policy','session.policy_state','buddy-actions.behavior'):
+                    self.calls.append((method,copy.deepcopy(params)))
+                    if method=='buddy-actions.behavior':return dict(sessionId=self.core,selfGuid=self.guid)
+                    if method=='session.reload_policy':
+                        parent.assertEqual((params['sessionId'],params['characterGuid']),(self.core,self.guid))
+                        parent.assertEqual(params['expectedRevision'],hashlib.sha256(self.source.encode()).hexdigest())
+                        self.policy_writes.append(copy.deepcopy(params));self.source=params['source']
+                        if lost_apply:raise TimeoutError('SYNTHETIC reply lost after possible apply')
+                    result=dict(sessionId=self.core,characterGuid=self.guid,revision=hashlib.sha256(self.source.encode()).hexdigest())
+                    if method=='session.policy_state':return dict(result,latestDecision=self.evaluate(self.source,self.frame),
+                        synthetic=True,physicalEffectVerified=False,pending=copy.deepcopy(self.pending))
+                    return dict(result,source=self.source,sourceLimitBytes=8388608)
+                result=super().call(method,params,timeout)
+                if method=='buddy-chat.poll':
+                    for row in result['messages']:
+                        if row.get('sequence')=='1':row.update(text=parent.TACTICAL_SELF_EDIT_REQUEST,channel='PARTY',receiverGuid='0')
+                return result
+        self.rpc=PolicyRPC()
+        return original,candidate
+
+    TACTICAL_SELF_EDIT_REQUEST=('If my observed health falls below half, hold damage while keeping healing enabled. '
+        'Use your own editable behavior if this is not implemented; do not claim game effects without evidence.')
+
+    def test_synthetic_party_owner_inspects_tests_applies_and_verifies_own_new_behavior(self):
+        original,candidate=self.tactical_self_edit_fixture()
+        old=hashlib.sha256(original.encode()).hexdigest()
+        responses=[chat(('show','policy_show',dict(save_as='owned.lua',expected_sha256=''))),
+            chat(('inspect','workspace_read',dict(path='owned.lua'))),
+            chat(('edit','workspace_write',dict(path='owned.lua',content=candidate,expected_sha256=old))),
+            chat(('test','lua_evaluate',dict(path='owned.lua',frame=self.rpc.frame))),
+            chat(('apply','policy_apply',dict(path='owned.lua',expected_revision=old))),
+            chat(('verify','read_observation',dict(method='session.policy_state',params={}))),
+            spoken('The synthetic policy decision now holds damage and keeps healing enabled. Physical combat effects are unverified.')]
+        with self.rig(responses) as (loop,brain,state,http):
+            loop.controls.refresh=lambda:None
+            loop.controls.context=lambda:dict(observations=copy.deepcopy(self.rpc.frame),synthetic=True)
+            loop.controls.execute=lambda *args,**kwargs:None
+            loop.initialized=False;loop.session_id=None;loop.cursor=0
+            self.assertTrue(self.rpc.evaluate(original,self.rpc.frame)['output']['allowDamage'])
+            loop.tick();loop.tick()
+            errors=[json.loads(r['body']['messages'][-1]['content']).get('error') for r in http.requests if r['body']['messages'][-1].get('role')=='tool']
+            self.assertEqual(len(self.rpc.policy_writes),1,errors)
+            self.assertEqual(self.rpc.source,candidate)
+            self.assertEqual(self.rpc.pending,['original-UNKNOWN-retained'])
+            self.assertFalse(self.rpc.commands)
+            observed=json.loads(http.requests[-1]['body']['messages'][-1]['content'])['result']
+            self.assertEqual(observed['latestDecision']['output'],dict(allowDamage=False,healingEnabled=True))
+            self.assertFalse(observed['physicalEffectVerified'])
+            self.assertIn('Physical combat effects are unverified',self.rpc.replies[-1]['text'])
+            self.assertEqual(brain.last_development_result['selfGuid'],'4')
+            self.assertFalse(brain.last_development_result['pendingTools'])
+            self.assertEqual(brain.last_development_result['actionOutcome'],'not_inferred_from_model_reply')
+            names={row['function']['name'] for row in http.requests[0]['body']['tools']}
+            self.assertTrue({'policy_show','workspace_read','workspace_write','lua_evaluate','policy_apply','read_observation'}<=names)
+            system=http.requests[0]['body']['messages'][0]['content']
+            self.assertIn('A missing handler is not itself a missing mechanic',system)
+
+    def test_synthetic_tactical_acknowledgement_and_banter_do_not_apply_behavior(self):
+        self.tactical_self_edit_fixture()
+        for owner_text,reply,developer in [(self.TACTICAL_SELF_EDIT_REQUEST,'I heard the request; the behavior is not applied or verified.',True),
+                                 ('How are you today?','Doing well, Joel.',True),
+                                 (self.TACTICAL_SELF_EDIT_REQUEST,'No behavior change was applied: this session has no owned-workspace editing authority.',False)]:
+            with self.rig([spoken(reply)],developer=developer) as (loop,brain,state,http):
+                state['current_request'].update(channel='PARTY',conversationScope='PARTY',messages=[dict(text=owner_text)])
+                result=loop.generate_reply([dict(speaker='Joel',channel='PARTY',text=owner_text)],state)
+                self.assertEqual(result['text'],reply)
+                self.assertFalse(self.rpc.policy_writes);self.assertFalse(self.rpc.commands)
+                self.assertEqual(brain.last_development_result['actionOutcome'],'not_inferred_from_model_reply')
+                self.assertEqual(brain.last_development_result['counts']['completedTools'],0)
+                if not developer:
+                    names={row['function']['name'] for row in http.requests[0]['body']['tools']}
+                    self.assertFalse(names & {'workspace_write','policy_apply','policy_input'})
+
+    def test_synthetic_lost_apply_preserves_unknown_and_does_not_enter_verification(self):
+        original,candidate=self.tactical_self_edit_fixture(lost_apply=True)
+        old=hashlib.sha256(original.encode()).hexdigest()
+        responses=[chat(('show','policy_show',dict(save_as='owned.lua',expected_sha256=''))),
+            chat(('edit','workspace_write',dict(path='owned.lua',content=candidate,expected_sha256=old))),
+            chat(('apply','policy_apply',dict(path='owned.lua',expected_revision=old))),
+            chat(('must-not-enter','read_observation',dict(method='session.policy_state',params={})))]
+        with self.rig(responses) as (loop,brain,state,http):
+            state['current_request'].update(channel='PARTY',conversationScope='PARTY',messages=[dict(text=self.TACTICAL_SELF_EDIT_REQUEST)])
+            with self.assertRaisesRegex(converse.ConversationError,'tool_outcome_unknown'):
+                loop.generate_reply([dict(speaker='Joel',channel='PARTY',text=self.TACTICAL_SELF_EDIT_REQUEST)],state)
+            self.assertEqual(len(self.rpc.policy_writes),1)
+            self.assertFalse(any(method=='session.policy_state' for method,_ in self.rpc.calls))
+            self.assertEqual(len(http.requests),3)
+            self.assertEqual(self.rpc.pending,['original-UNKNOWN-retained'])
+            self.assertTrue(brain.last_failure_receipt['tools'][-1]['unknownReceipt'])
 
     def test_real_tool_roundtrip_workspace_public_read_input_schema_and_progress(self):
         source = "return { authored = true }\n"
