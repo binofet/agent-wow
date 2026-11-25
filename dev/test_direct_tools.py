@@ -782,6 +782,85 @@ class DirectToolTests(unittest.TestCase):
         self.assertFalse(self.rpc.writes)
         self.assertLessEqual(len(packed(observed)),READ_PAGE_BYTES)
 
+    def test_gm_owner_evidence_never_combines_coordinates_across_clients(self):
+        tools=self.gm_tools(mock.Mock())
+        def player(guid,x,*,present=True):
+            return dict(guid=guid,present=present,mapKnown=True,mapId=349,positionKnown=True,x=x,
+                positionAgeMs='1250',observationAgeMs='250',positionRevision='7')
+        source={
+            '87':dict(self=player('87',10),owner=player('3',10.25,present=False),nearbyPlayers=[]),
+            '5':dict(self=player('5',12),owner=player('3',10.25),nearbyPlayers=[player('87',10,present=False)])}
+        calls=[]
+        class PublicClient:
+            def __init__(self,guid):self.guid=guid
+            def call(self,method,params,**kwargs):
+                calls.append((self.guid,method))
+                if method=='buddy-actions.status':return dict(sessionId='aw-123' if self.guid=='87' else 'aw-rook',selfGuid=self.guid,
+                    position=dict(known=True,mapKnown=True,mapId=349,x=10.25,estimated=True))
+                if method=='buddy-party.state':return dict(sessionId='aw-123' if self.guid=='87' else 'aw-rook',group=dict(known=True,inGroup=True,leaderGuid='1'))
+                if method=='buddy-world.snapshot':return copy.deepcopy(source[self.guid])
+                raise AssertionError('read-only source only')
+        configured=[dict(guid='5',name='Rook',rpc_url='http://127.0.0.1:8085/rpc')]
+        original=copy.deepcopy(source)
+        with mock.patch.object(self.gm,'bindings',return_value=configured),mock.patch.object(self.gm,'task_rpc',side_effect=lambda url:PublicClient('87' if url==self.rpc.url else '5')):
+            first=tools.dispatch('gm_inspect',{})
+            self.assertTrue(first['ok'],first)
+            view=first['result'];own=view['actorOwnerObservation']
+            self.assertEqual(next(iter(view)),'actorOwnerObservation')
+            self.assertIs(own['ownerLocallyObserved'],False)
+            self.assertFalse(own['distanceKnown']);self.assertIsNone(own['observedDistance3D'])
+            self.assertEqual(own['reason'],'owner_not_locally_observed')
+            self.assertFalse(view['otherClientOwnerWitnesses'][0]['distanceKnown'])
+            self.assertIn('ACKs and saved binds do not verify',own['meaning'])
+            self.assertEqual(source,original);self.assertEqual(len(calls),6)
+            raw=tools.dispatch('gm_inspect',dict(path=['clients','0','observations','world','owner']))
+            self.assertTrue(raw['ok'],raw)
+            self.assertIn(dict(key='present',type='boolean',value=False,omitted=False),raw['result']['rows'])
+            # A later actual same-observer co-visibility sample supplies the
+            # nominal evidence, independently repeated in Rook's own client.
+            source['87']['owner']['present']=True
+            source['5']['nearbyPlayers'][0]['present']=True
+            before=len(calls);later=tools.dispatch('gm_inspect',{})
+            self.assertTrue(later['ok'],later)
+            own=later['result']['actorOwnerObservation'];other=later['result']['otherClientOwnerWitnesses'][0]
+            for evidence in (own,other):
+                self.assertTrue(evidence['distanceKnown']);self.assertEqual(evidence['observedDistance3D'],.25)
+                self.assertEqual(evidence['actorPose']['positionAgeMs'],'1250')
+                self.assertEqual(evidence['ownerPose']['observationAgeMs'],'250')
+                self.assertEqual(evidence['comparisonScope'],'one_observer_world_snapshot_only')
+                self.assertFalse(evidence['gameEffectClaimed'])
+            self.assertEqual(other['observerGuid'],'5')
+            self.assertEqual(other['actorPose']['rawPath'],['clients','1','observations','world','nearbyPlayers','0'])
+            self.assertEqual(len(calls)-before,6)
+        self.assertFalse(self.rpc.writes)
+
+    def test_gm_owner_evidence_binding_known_zero_and_inferred_pose(self):
+        from direct_tools import _gm_inspect_view
+        row=dict(guid='87',rpcUrl='http://127.0.0.1:8090/rpc',identityMatches=True,errors=[],observations=dict(
+            actions=dict(sessionId='aw-gm',selfGuid='87'),party=dict(sessionId='aw-gm'),
+            world=dict(self=dict(guid='87',present=True,mapKnown=True,positionKnown=True),
+                owner=dict(guid='3',present=True,mapKnown=True,positionKnown=True,x=.25))))
+        def view(value):
+            return _gm_inspect_view(dict(clients=[value]),actor_guid='87',session_id='aw-gm',rpc_url=row['rpcUrl'])['actorOwnerObservation']
+        self.assertEqual(view(row)['observedDistance3D'],.25)
+        self.assertEqual(view(row)['actorPose']['positionAgeMs'],0)
+        for field,value in [('positionInferred',True),('positionKnown',False),('x',True),('mapId',None)]:
+            bad=copy.deepcopy(row);bad['observations']['world']['self'][field]=value
+            self.assertFalse(view(bad)['distanceKnown'])
+        for key,value in [('identityMatches',False),('errors',[dict(method='world',error='read failed')])]:
+            bad=copy.deepcopy(row);bad[key]=value;self.assertFalse(view(bad)['distanceKnown'])
+        bad=copy.deepcopy(row);bad['observations']['actions']['sessionId']='other-body'
+        self.assertFalse(view(bad)['distanceKnown'])
+        bad=copy.deepcopy(row);bad['observations']['world']['self']['guid']='4'
+        self.assertFalse(view(bad)['distanceKnown'])
+        bad=copy.deepcopy(row);bad['observations']['world']['owner']['guid']='4'
+        self.assertFalse(view(bad)['distanceKnown'])
+        bad=copy.deepcopy(row);bad['observations']['world']['owner']={}
+        self.assertIsNone(view(bad)['ownerPose']['positionAgeMs'])
+        self.assertIsNone(view(bad)['observedDistance3D'])
+        ambiguous=_gm_inspect_view(dict(clients=[row,copy.deepcopy(row)]),actor_guid='87',session_id='aw-gm',rpc_url=row['rpcUrl'])
+        self.assertFalse(ambiguous['actorOwnerObservation']['distanceKnown'])
+
     def test_large_gm_inspection_default_keeps_all_client_and_player_facts_readable(self):
         tools=self.gm_tools(mock.Mock())
         configured=[dict(guid=guid,name=name,rpc_url='http://127.0.0.1:'+port+'/rpc')
