@@ -286,3 +286,45 @@ func TestRangedLegacyGroundMovingEnemyCannotResetRefusedPhysicalRays(t *testing.
 		t.Fatal("refused physical rays did not terminate", len(tried))
 	}
 }
+
+func TestRangedLegacyGroundRefusalIsSpecificToSpellAndTarget(t *testing.T) {
+	for _, mode := range []string{"spell", "target"} {
+		t.Run(mode, func(t *testing.T) {
+			p, o := legacyGround(t)
+			o.Targets[fallbackGUID(fallbackNPC)].X = 20
+			if mode == "target" {
+				addFallbackTarget(o, fallbackNPC+1, fallbackSelf, 900)
+				o.Targets[fallbackGUID(fallbackNPC+1)].Entry = 765432
+				o.Targets[fallbackGUID(fallbackNPC+1)].X = 20
+			}
+			d, a := groundAction(t, p, o)
+			targets := a["targets"].(map[string]any)
+			original := targets["objectGuid"].(string)
+			id, e := p.host.ReserveAction(d)
+			if e != nil {
+				t.Fatal(e)
+			}
+			_, e = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionNotDispatched, Payload: map[string]any{"capability": "cast_spell", "spell_id": uint32(133), "target_guid": original, "phase": "admission_rejected", "transport_written": false}}})
+			if e != nil {
+				t.Fatal(e)
+			}
+			if mode == "spell" {
+				o.Spells["133"].Ready = false
+				o.Spells["133"].Available = false
+				o.Spells["116"] = &actionsv1.EncounterSpell{Known: true, Ready: true, Available: true, MetadataKnown: true, Capability: "offense", FamilyId: 116, MaxRange: 30, DirectDamage: 90, Cost: 20}
+			} else {
+				o.Targets[original].Protected = true
+			}
+			next, b := groundAction(t, p, o)
+			if b["capability"] != "cast_spell" {
+				t.Fatal("one refusal blocked a different legal chosen action", next.Output)
+			}
+			if mode == "spell" && b["spellId"] != float64(116) {
+				t.Fatal(b)
+			}
+			if mode == "target" && b["targets"].(map[string]any)["objectGuid"] == original {
+				t.Fatal(b)
+			}
+		})
+	}
+}

@@ -77,7 +77,7 @@ local function on_event(event)
                 ground.operation=nil
                 ground.lastPhase,ground.lastDetail=p.phase,type(p.detail)=="string" and #p.detail>0 and p.detail or p.grpc_message or p.error
                 if op.kind=="cast_spell" then
-                    if receipt.outcome=="failed" or receipt.outcome=="not_dispatched" then ground.castRefused=ground.key end
+                    if receipt.outcome=="failed" or receipt.outcome=="not_dispatched" then ground.castRefused={key=ground.key,target=op.target,spell=op.spell} end
                 elseif p.transport_written==true and p.phase=="body_input_written" then
                     ground.awaiting=op;ground.observedSequence=op.sequence
                 else
@@ -504,6 +504,8 @@ local function import_state(saved)
     if ground~=nil and (type(ground)~="table" or type(ground.sessionId)~="string" or not guid(ground.selfGuid) or not guid(ground.visitId) or type(ground.key)~="string" or type(ground.blocked)~="table" or ground.operation~=nil and type(ground.operation)~="table" or ground.awaiting~=nil and type(ground.awaiting)~="table") then return false end
     if ground then
         if type(ground.id)~="string" or ground.uncertain~=nil and type(ground.uncertain)~="boolean" or ground.observedSequence~=nil and not guid(ground.observedSequence) then return false end
+        local refused=ground.castRefused
+        if refused~=nil and type(refused)~="string" and (type(refused)~="table" or type(refused.key)~="string" or not guid(refused.target) or not spell_id(refused.spell)) then return false end
         for k,v in pairs(ground.blocked) do if type(k)~="string" or type(v)~="boolean" then return false end end
         for _,op in pairs({operation=ground.operation,awaiting=ground.awaiting}) do
             if type(op)~="table" or not guid(op.sequence) or op.actionId~=nil and not guid(op.actionId) or (op.kind~="move_body" and op.kind~="cast_spell") then return false end
@@ -747,7 +749,8 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
             out.action={capability="cast_spell",sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,observationSequence=sequence,
                 spellId=ready,targets={mask=2,objectGuid=targetId}}
             status.phase="stationary_targeted_ranged_cast"
-            if ground.castRefused==key then out.action=nil;status.phase="ranged_cast_refused_at_observed_pose"
+            local refused=ground.castRefused
+            if refused==key or type(refused)=="table" and refused.key==key and refused.target==targetId and refused.spell==ready then out.action=nil;status.phase="ranged_cast_refused_at_observed_pose"
             else ranged_ground_proposal={action=out.action,ground=ground,operation={kind="cast_spell",sequence=sequence,target=targetId,spell=ready}} end
         else status.phase="waiting_for_ranged_spell" end
         return
