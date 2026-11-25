@@ -335,3 +335,80 @@ func TestEncounterCommandedControlPrecedesIdleBuffMaintenance(t *testing.T) {
 		t.Fatal("idle buffs displaced the player's explicit control", out)
 	}
 }
+
+func TestLuaBuffFollowRangeFiltersBeforeRecipientPreference(t *testing.T) {
+	for _, following := range []bool{false, true} {
+		t.Run(fmt.Sprint(following), func(t *testing.T) {
+			host := newBuffPolicy(t, buffsPolicySource(t))
+			obs := buffPolicyObservation()
+			obs["navigation"] = map[string]any{"following": following}
+			obs["players"].(map[string]any)["3"].(map[string]any)["x"] = float64(140)
+			installBuffAura(obs, "4", 1244, 600000, false)
+			obs["party"].(map[string]any)["group"].(map[string]any)["members"] = []any{map[string]any{"guid": "3", "online": true}, map[string]any{"guid": "9", "online": true}}
+			a := decideBuff(t, host, obs)
+			want := "3"
+			if following {
+				want = "9"
+			}
+			if a["targetGuid"] != want || a["needsApproach"] != !following {
+				t.Fatal("follow filter did not preserve viable alternative/nonfollow", a)
+			}
+		})
+	}
+	t.Run("self remains eligible", func(t *testing.T) {
+		host := newBuffPolicy(t, buffsPolicySource(t))
+		obs := buffPolicyObservation()
+		obs["navigation"] = map[string]any{"following": true}
+		obs["players"].(map[string]any)["3"].(map[string]any)["x"] = float64(140)
+		if a := decideBuff(t, host, obs); a["targetGuid"] != "4" {
+			t.Fatal(a)
+		}
+	})
+}
+
+func TestEncounterBuffFollowDoesNotApproachDistantOptionalRecipient(t *testing.T) {
+	for _, following := range []bool{false, true} {
+		t.Run(fmt.Sprint(following), func(t *testing.T) {
+			p := newFallbackPolicyTest(t, "")
+			obs := positionedHealObservation()
+			obs.Healing.Patients = nil
+			obs.Healing.Spells = nil
+			buff := &actionsv1.EncounterSpell{Known: true, Ready: true, Available: true, MetadataKnown: true, Capability: "buff", TargetRule: "ally", FamilyId: 5697, Rank: 1, Cost: 10, MaxRange: 30, AuraEffects: []*actionsv1.EncounterAuraEffect{{Kind: 6, Aura: 82}}}
+			obs.Spells = map[string]*actionsv1.EncounterSpell{"5697": buff}
+			for _, player := range obs.Players {
+				player.HealthKnown = true
+				player.Health = 100
+				player.MaxHealth = 100
+				player.PowerKnown = true
+				player.PowerType = 0
+				player.Power = 100
+				player.MaxPower = 100
+				player.CombatKnown = true
+				player.InCombat = false
+			}
+			obs.Navigation = &actionsv1.NavigationObservation{Following: following}
+			self := obs.Players[fallbackGUID(fallbackSelf)]
+			obs.Players["3"].PositionKnown = true
+			obs.Players["3"].X = self.X + 140
+			obs.Players["3"].Y = self.Y
+			obs.Players["3"].Z = self.Z
+			obs.Support = &actionsv1.EncounterSupport{AuraSpells: map[uint32]*actionsv1.EncounterSpell{5697: proto.Clone(buff).(*actionsv1.EncounterSpell)}}
+			for guid := range obs.Players {
+				if guid != "3" {
+					var n uint64
+					fmt.Sscan(guid, &n)
+					obs.Support.PlayerAuras = append(obs.Support.PlayerAuras, &actionsv1.PlayerAuras{TargetGuid: n, Auras: []*actionsv1.ObservedAura{{SpellId: 5697, Positive: true}}})
+				}
+			}
+			out := p.decide(observeRanged(t, p, obs, false)).Output
+			a, _ := out["action"].(map[string]any)
+			if following {
+				if a["capability"] == "approach_target" || a["capability"] == "buff" {
+					t.Fatal("optional distant buff fought follow", out)
+				}
+			} else if a["capability"] != "approach_target" || a["targetGuid"] != "3" {
+				t.Fatal("nonfollow approach changed", out)
+			}
+		})
+	}
+}

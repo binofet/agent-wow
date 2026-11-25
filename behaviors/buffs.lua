@@ -66,6 +66,14 @@ local function healthy(p,fraction)
     return alive(p) and p.healthKnown==true and (p.maxHealth or 0)>0 and
         (p.health or 0)>=(p.maxHealth or 0)*fraction
 end
+-- Optional party buffs must not pull against an active owner-follow route.
+-- Filter each recipient before preference so nearby/self alternatives survive.
+local function follow_range_ok(obs,self,target,p,spell)
+    if target==obs.selfGuid or (obs.navigation or {}).following~=true then return true end
+    local d=(self.x or 0)-(p.x or 0);local e=(self.y or 0)-(p.y or 0);local f=(self.z or 0)-(p.z or 0)
+    local distance=math.sqrt(d*d+e*e+f*f)
+    return distance==distance and distance<= (spell.maxRange or 0) and distance>= (spell.minRange or 0)
+end
 local function prefer_rank(a,b)
     if not b then return true end
     if (a.level or 0)~=(b.level or 0) then return (a.level or 0)>(b.level or 0) end
@@ -147,7 +155,7 @@ function M.choose(obs,frame)
                 local reserve=wet and 0 or (self.maxPower or 0)*(target==obs.selfGuid and self_reserve or reserve_fraction)
                 if (self.power or 0)>=(s.cost or 0)+reserve and
                    alive(p) and p.positionKnown==true and p.mapKnown==true and p.mapId==obs.mapId and
-                   (target==obs.selfGuid or s.targetRule=='ally') and mana_ok and
+                   (target==obs.selfGuid or s.targetRule=='ally') and mana_ok and follow_range_ok(obs,self,target,p,s) and
                    (not retry or now>=retry.at) and not observed_buff(obs,target,s) then
                     local candidate={target=target,spell=s,water=wet,selfOnly=s.targetRule=='self',selfTarget=target==obs.selfGuid}
                     if prefer(candidate,best) then best=candidate end
