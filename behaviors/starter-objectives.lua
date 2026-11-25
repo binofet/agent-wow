@@ -591,34 +591,41 @@ local function cave_age(v)
     -- the original exact uint64 string remains in the factual frame.
     return #v>9 and 1000000000 or tonumber(v)
 end
-local function cave_movement(row)
-    -- Exactly bits 0..8 and 27..30; the decoder already proves uint32.
-    return row.movementFlags<0x80000000 and row.movementFlags%0x08000000<512
+-- Creature tuples remain immutable after the complete validator. Derive a
+-- point only where a selector consumes it; do not expand 99 flag maps eagerly.
+local function cave_xyz(r) return {x=r[5],y=r[6],z=r[7]} end
+local function cave_end(t) return {x=t[4],y=t[5],z=t[6]} end
+local function cave_movement(r)
+    local flags=r[18] or 0
+    return flags<0x80000000 and flags%0x08000000<512
 end
 local function cave_area(p) return p.x>=-10000 and p.x<=-9700 and p.y>=50 and p.y<=320 and p.z>=-10 and p.z<=65 end
-local function cave_patrol(row)
-    local t=row.trajectory
-    return row.mapKnown and row.positionKnown and cave_movement(row) and t and t.known and not t.stopped and
-        not t.transportRelative and not t.cyclic and t.destinationKnown and t.duration>=1 and t.duration<=120000 and
-        cave_area(row) and cave_area(t) and distance2(row,t)<=3600 or false
+local function cave_patrol(r)
+    local t=r[20]
+    if r[3]%8<6 or not cave_movement(r) or not t or not cave_bit(t[1],1) or cave_bit(t[1],2) or
+        cave_bit(t[1],4) or cave_bit(t[1],8) or not cave_bit(t[1],16) or t[3]<1 or t[3]>120000 then return false end
+    local start,finish=cave_xyz(r),cave_end(t)
+    return cave_area(start) and cave_area(finish) and distance2(start,finish)<=3600
 end
-local function cave_point(row,patrol)
-    if not row or not row.present or not row.mapKnown or not row.positionKnown or not cave_movement(row) then return end
-    local t=row.trajectory
-    if t and t.known then
-        if t.transportRelative then return end
-        if not t.stopped then
+local function cave_point(r,patrol)
+    if r[3]%8~=7 or not cave_movement(r) then return end
+    local t=r[20]
+    if t and cave_bit(t[1],1) then
+        if cave_bit(t[1],8) then return end
+        if not cave_bit(t[1],2) then
             if not patrol then return end
-            if t.age>=t.duration then return t.age-t.duration<=5000 and t or nil end
-            if t.age>750 or row.positionAge>750 then return end
+            local age=cave_age(t[2])
+            if age>=t[3] then return age-t[3]<=5000 and cave_end(t) or nil end
+            if age>750 or cave_age(r[19] or "0")>750 then return end
         end
     else
-        if row.movementFlags%256~=0 or cave_bit(row.movementFlags,0x08000000) then return end
+        local flags=r[18] or 0
+        if flags%256~=0 or cave_bit(flags,0x08000000) then return end
     end
-    return row
+    return cave_xyz(r)
 end
 
-local function cave_creature(r,id,priority)
+local function cave_creature(r,id)
     if not array(r,20) or #r<10 or not id(r[1]) or not cave_uint(r[2]) or not cave_uint(r[3]) or r[3]>4095 or
         not cave_uint(r[4]) or not cave_uint(r[8]) or not cave_uint(r[9]) or not cave_uint(r[10]) or not cave_uint(r[11] or 0) or
         not cave_uint(r[12] or 0) or not cave_uint(r[13] or 0) or not cave_uint(r[14] or 0) or not cave_uint(r[18] or 0) or
@@ -629,23 +636,7 @@ local function cave_creature(r,id,priority)
     if t and (not array(t,6) or #t~=6 or not cave_uint(t[1]) or t[1]>31 or not id(t[2]) or not cave_uint(t[3]) or
         not number(t[4]) or math.abs(t[4])>=40000 or not number(t[5]) or math.abs(t[5])>=40000 or
         not number(t[6]) or math.abs(t[6])>=40000) then return end
-    local f=r[3]
-    if priority then
-        return {guid=r[1],present=cave_bit(f,1),aliveKnown=cave_bit(f,8),alive=cave_bit(f,16),attackVictimKnown=cave_bit(f,1024),
-            victimGuid=r[16] or "0",attackAge=cave_age(r[17] or "0")}
-    end
-    local c={guid=r[1],entry=r[2],present=cave_bit(f,1),mapKnown=cave_bit(f,2),positionKnown=cave_bit(f,4),
-        aliveKnown=cave_bit(f,8),alive=cave_bit(f,16),healthKnown=cave_bit(f,32),levelKnown=cave_bit(f,64),unitFlagsKnown=cave_bit(f,128),
-        dynamicFlagsKnown=cave_bit(f,256),targetKnown=cave_bit(f,512),attackVictimKnown=cave_bit(f,1024),identityValid=cave_bit(f,2048),
-        mapId=r[4],x=r[5],y=r[6],z=r[7],health=r[8],maxHealth=r[9],level=r[10],
-        unitFlags=r[11] or 0,unitFlags2=r[12] or 0,dynamicFlags=r[13] or 0,npcFlags=r[14] or 0,
-        targetGuid=r[15] or "0",victimGuid=r[16] or "0",attackAge=cave_age(r[17] or "0"),
-        movementFlags=r[18] or 0,positionAge=cave_age(r[19] or "0")}
-    if t then
-        c.trajectory={known=cave_bit(t[1],1),stopped=cave_bit(t[1],2),cyclic=cave_bit(t[1],4),transportRelative=cave_bit(t[1],8),
-            destinationKnown=cave_bit(t[1],16),age=cave_age(t[2]),duration=t[3],x=t[4],y=t[5],z=t[6]}
-    end
-    return c
+    return r
 end
 
 local function cave_scenes(input)
@@ -662,7 +653,7 @@ local function cave_scenes(input)
     end
     local rows,scenes,players={},{},{}
     for i,row in ipairs(input.creatures) do
-        rows[i]=cave_creature(row,id,input.mode=="priority");if not rows[i] then return end
+        rows[i]=cave_creature(row,id);if not rows[i] then return end
     end
     local count=0
     for guid in pairs(input.actors) do if guid~="1" and guid~="4" and guid~="5" then return end;count=count+1 end
@@ -729,59 +720,65 @@ local function cave_admission(scenes,players,tuning,row,search,clock)
             for _,mask in ipairs({0x1,0x4,0x40000,0x100000,0x400000,0x800000,0x1000000,0x2000000,0x8000000}) do if cave_bit(p.unitFlags,mask) then return false end end
             if p.movementFlags>=0x80000000 or p.movementFlags%0x10000000>=512 then return false end
             if v.t and (a[2]~="exploration" or not cave_bit(a[1],2048) or a[3]=="0") then return false end
-            for _,c in ipairs(s.nearby) do if c.present and c.alive and c.attackVictimKnown and
-                (c.victimGuid=="1" or c.victimGuid=="3" or c.victimGuid=="4" or c.victimGuid=="5") and c.attackAge<=5000 then return false end end
+            for _,c in ipairs(s.nearby) do if cave_bit(c[3],1) and cave_bit(c[3],16) and cave_bit(c[3],1024) and
+                (c[16]=="1" or c[16]=="3" or c[16]=="4" or c[16]=="5") and cave_age(c[17] or "0")<=5000 then return false end end
         end
     end
     return cave_bit(scenes["1"].raw.a[1],2)
 end
 
 local function cave_candidate(scenes,tuning,attempted)
-    local seen,candidates={},{}
+    local seen,candidates,points,patrols={},{},{},{}
+    local function current(c)
+        if points[c]==nil then
+            patrols[c]=cave_patrol(c);points[c]=cave_point(c,patrols[c]) or false
+        end
+        return points[c]
+    end
     for _,guid in ipairs({"1","4","5"}) do
         for _,c in ipairs(scenes[guid].nearby) do
-            if c.npcFlags==0 and c.present and c.aliveKnown and c.alive and not c.currentComputed then
-                c.patrol=cave_patrol(c);c.current=cave_point(c,c.patrol);c.currentComputed=true
-            end
-            seen[c.guid]=c
-            local p=c.current
-            local okay=p and not attempted[c.guid] and c.identityValid and tuning.entries[c.entry]==true and c.present and c.aliveKnown and c.alive and
-                c.healthKnown and c.health>0 and c.health==c.maxHealth and c.levelKnown and c.level>=tuning.minimum_level and c.level<=tuning.maximum_level and c.mapId==0 and
-                c.unitFlagsKnown and c.dynamicFlagsKnown and c.dynamicFlags==0 and c.npcFlags==0 and c.targetKnown and c.targetGuid=="0" and
-                not (c.attackVictimKnown and c.victimGuid~="0") and not cave_bit(c.unitFlags2,1)
+            seen[c[1]]=c
+            local f,u=c[3],c[11] or 0
+            -- Bits 0..9 prove the complete known/alive header; bit11 proves
+            -- the exact encoded creature identity. Attack-victim bit10 is optional.
+            local okay=not attempted[c[1]] and f>=2048 and f%1024==1023 and tuning.entries[c[2]]==true and
+                c[8]>0 and c[8]==c[9] and c[10]>=tuning.minimum_level and c[10]<=tuning.maximum_level and c[4]==0 and
+                (c[13] or 0)==0 and (c[14] or 0)==0 and (c[15] or "0")=="0" and
+                not (cave_bit(f,1024) and (c[16] or "0")~="0") and (c[12] or 0)%2==0 and
+                u<0x80000000 and u%4<2 and u%512<128 and u%0x20000<0x10000 and
+                u%0x100000<0x80000 and u%0x4000000<0x2000000
+            local p=okay and current(c)
+            okay=okay and p
             if okay then
-                local u=c.unitFlags
-                -- Exact rejected bits: 1,7,8,16,19,25,31.
-                okay=u<0x80000000 and u%4<2 and u%512<128 and u%0x20000<0x10000 and
-                    u%0x100000<0x80000 and u%0x4000000<0x2000000
+                for _,scene in pairs(scenes) do
+                    if not scene.self.levelKnown or c[10]>scene.self.level+tuning.level_above_self or
+                        distance2(p,scene.position)>tuning.maximum_range^2 then okay=false;break end
+                end
             end
-            if okay then
-                for _,s in pairs(scenes) do if not s.self.levelKnown or c.level>s.self.level+tuning.level_above_self or distance2(p,s.position)>tuning.maximum_range^2 then okay=false;break end end
-            end
-            if okay then candidates[c.guid]={creature=c,position=p} end
+            if okay then candidates[c[1]]={creature=c,position=p} end
         end
     end
     local best,score
     for guid,candidate in pairs(candidates) do
         local isolated=true
         for other,c in pairs(seen) do
-            if other~=guid and c.present and c.aliveKnown and c.alive and c.npcFlags==0 and c.mapKnown and c.mapId==0 then
-                local p=c.current
+            local f=c[3]
+            if other~=guid and cave_bit(f,1) and f%32>=24 and (c[14] or 0)==0 and cave_bit(f,2) and c[4]==0 then
+                local p=current(c)
                 local near=p and distance2(p,candidate.position)<tuning.isolation_yards^2
-                if not p and c.patrol then
-                    local t=c.trajectory
-                    near=distance2(c,candidate.position)<(tuning.isolation_yards+7*t.age/1000)^2 and
-                        distance2(t,candidate.position)<(tuning.isolation_yards+7*math.abs(t.duration-t.age)/1000)^2
-                elseif not p then near=c.positionKnown and distance2(c,candidate.position)<tuning.isolation_yards^2 end
+                if not p and patrols[c] then
+                    local t=c[20];local age=cave_age(t[2])
+                    near=distance2(cave_xyz(c),candidate.position)<(tuning.isolation_yards+7*age/1000)^2 and
+                        distance2(cave_end(t),candidate.position)<(tuning.isolation_yards+7*math.abs(t[3]-age)/1000)^2
+                elseif not p then near=cave_bit(f,4) and distance2(cave_xyz(c),candidate.position)<tuning.isolation_yards^2 end
                 if near then isolated=false;break end
             end
         end
         if isolated then
             local rank=0
-            for _,s in pairs(scenes) do rank=math.max(rank,distance2(candidate.position,s.position)) end
-            if not best or tuning.prefer_nearest and rank<score or tuning.prefer_nearest==false and rank>score or rank==score and cave_guid_less(guid,best.guid) then
-                best,score=candidate.creature,rank
-            end
+            for _,scene in pairs(scenes) do rank=math.max(rank,distance2(candidate.position,scene.position)) end
+            if not best or tuning.prefer_nearest and rank<score or tuning.prefer_nearest==false and rank>score or
+                rank==score and cave_guid_less(guid,best.guid) then best,score={guid=guid,entry=candidate.creature[2]},rank end
         end
     end
     return best
@@ -814,18 +811,19 @@ end
 local function cave_corpse(scenes,row,tuning)
     local missing,near,lootable=false,true,false
     local goal
-    for _,s in pairs(scenes) do
-        local c=s.target
+    for _,guid in ipairs({"1","4","5"}) do
+        local scene=scenes[guid];local c=scene.target
         if not c then missing=true
-        elseif c.guid~=row.target or c.entry~=row.entry or not tuning.entries[c.entry] or not c.present or
-            not c.aliveKnown or c.alive or not c.healthKnown or c.health~=0 or not c.levelKnown or
-            c.level<tuning.minimum_level or c.level>tuning.maximum_level or not c.unitFlagsKnown or
-            not c.dynamicFlagsKnown or not cave_bit(c.dynamicFlags,8) or not c.mapKnown or c.mapId~=0 or
-            not c.positionKnown or not cave_area(c) then return end
-        if c then
-            if not goal then goal={x=c.x,y=c.y,z=c.z} end
-            near=near and distance2(s.position,c)<=tuning.corpse_yards^2 and math.abs(s.position.z-c.z)<=tuning.corpse_floor
-            lootable=lootable or cave_bit(c.dynamicFlags,1)
+        else
+            local f,p=c[3],cave_xyz(c)
+            if c[1]~=row.target or c[2]~=row.entry or not tuning.entries[c[2]] or not cave_bit(f,1) or
+                not cave_bit(f,8) or cave_bit(f,16) or not cave_bit(f,32) or c[8]~=0 or not cave_bit(f,64) or
+                c[10]<tuning.minimum_level or c[10]>tuning.maximum_level or not cave_bit(f,128) or
+                not cave_bit(f,256) or not cave_bit(c[13] or 0,8) or not cave_bit(f,2) or c[4]~=0 or
+                not cave_bit(f,4) or not cave_area(p) then return end
+            if guid=="1" then goal=p end
+            near=near and distance2(scene.position,p)<=tuning.corpse_yards^2 and math.abs(scene.position.z-p.z)<=tuning.corpse_floor
+            lootable=lootable or cave_bit(c[13] or 0,1)
         end
     end
     return {missing=missing,near=near,lootable=lootable,goal=goal}
@@ -950,7 +948,7 @@ function M.cave_cohort(input)
             local s=scenes[guid]
             if s.self.unitFlagsKnown and cave_bit(s.self.unitFlags,0x80000) then return ready({kind="actual_own_combat",observerGuid=guid}) end
             for _,c in ipairs(s.nearby) do
-                if c.present and c.aliveKnown and c.alive and c.attackVictimKnown and scenes[c.victimGuid] and c.attackAge<=5000 then
+                if cave_bit(c[3],1) and c[3]%32>=24 and cave_bit(c[3],1024) and scenes[c[16]] and cave_age(c[17] or "0")<=5000 then
                     return ready({kind="actual_fresh_party_attacker",observerGuid=guid})
                 end
             end

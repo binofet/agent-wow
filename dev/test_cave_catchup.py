@@ -25,6 +25,13 @@ STATIONS = ((-9821.469,215.5862,16.341442),(-9820.893,227.19437,24.214392),
 def station(index): return dict(zip(('x','y','z'),STATIONS[index]))
 
 
+def worker_failure(worker):
+    search=worker.data.get('search',{}).get('legs',[])
+    approaches=[leg for row in worker.data['encounters'] for leg in row.get('lootApproaches',[])]
+    leg=(approaches or search or [{}])[-1]
+    return dict(status=worker.status,primaryFailure=leg.get('failure'),routes=leg.get('routeResults'),cleanup=leg.get('cleanup'))
+
+
 @functools.lru_cache(maxsize=1)
 def public_source():
     return subprocess.check_output([sys.executable,str(Path(__file__).with_name('encounter-bundle'))],text=True)
@@ -133,7 +140,7 @@ class CatchupTests(unittest.TestCase):
         self.assertEqual([g for g,r in p.events if r['enabled']], [1,5,4])
         self.assertEqual(w.data['encounters'][0]['phase'],'active')
         self.assertEqual(w.status['phase'],'waiting_for_actual_combat_and_loot')
-        self.assertFalse(w.done)
+        self.assertFalse(w.done,worker_failure(w))
         for guid,request in p.events:
             self.assertEqual(request['sessionId'],p.rpcs[guid].session)
             self.assertEqual(request['targetGuid'],str(TARGET))
@@ -151,7 +158,7 @@ class CatchupTests(unittest.TestCase):
 
     def test_no_synthetic_quest_credit_from_kill_or_log_objective_counters(self):
         p=Party();w=p.worker();w.tick();p.kill();w.tick();p.time+=3;w.tick()
-        self.assertFalse(w.done)
+        self.assertFalse(w.done,worker_failure(w))
         for actor in p.rpcs.values():
             for row in actor.logs:row['objectiveCounts']=[65535]*4
             actor.items(9,7)
@@ -225,9 +232,9 @@ class CatchupTests(unittest.TestCase):
             self.assertTrue(row['deadObserved']);self.assertEqual(row['phase'],'loot')
             self.assertEqual(row['deathObservation']['source'],'actions_retained_bound_death')
             self.assertEqual(row['deathObservation']['targetGuid'],str(TARGET))
-            self.assertFalse(w.done);self.assertEqual(p.events,[])
+            self.assertFalse(w.done,worker_failure(w));self.assertEqual(p.events,[])
             p.time+=3;w.tick()
-            self.assertEqual(row['phase'],'settled');self.assertFalse(w.done)
+            self.assertEqual(row['phase'],'settled');self.assertFalse(w.done,worker_failure(w))
             self.assertTrue(all(not r['quest47Complete'] and not r['quest60Complete'] and r['goldDust']==r['largeCandles']==0 for r in w.status['characters']))
             self.assertEqual(set(row['requests']),set(old_requests));self.assertEqual(p.events,[])
 
@@ -427,7 +434,7 @@ class CatchupTests(unittest.TestCase):
         p=Party();w=p.worker();w.tick();row=w.data['encounters'][0]
         p.rpcs[4].actions['fargodeep'].update(active=False,phase='navigation_unavailable');p.events=[]
         w.tick()
-        self.assertFalse(w.done);self.assertEqual(row['phase'],'stopped');self.assertFalse(row['deadObserved'])
+        self.assertFalse(w.done,worker_failure(w));self.assertEqual(row['phase'],'stopped');self.assertFalse(row['deadObserved'])
         self.assertEqual(row['abandonment']['kind'],'outcome_unknown_target_quarantined')
         self.assertEqual([g for g,r in p.events if not r['enabled']],[1,5]);self.assertEqual(p.time,0.)
         self.assertFalse(any(r['enabled'] for _,r in p.events))
@@ -513,7 +520,7 @@ class CatchupTests(unittest.TestCase):
                     w = p.worker(stored=copy.deepcopy(w.data)); row = w.data['encounters'][0]
                 before = [copy.deepcopy(a.bags) for a in p.rpcs.values()]
                 p.events = []; w.tick()
-                self.assertFalse(w.done); self.assertEqual(row['phase'], 'stopped')
+                self.assertFalse(w.done,worker_failure(w)); self.assertEqual(row['phase'], 'stopped')
                 self.assertFalse(row['deadObserved']); self.assertNotIn('deathObservation', row)
                 self.assertEqual(row['abandonment']['kind'], 'outcome_unknown_target_quarantined')
                 self.assertEqual(row['abandonment']['cause'], 'additional_attacker_observed')
@@ -738,6 +745,15 @@ class SearchParty(Party):
 
 
 class CorridorSearchTests(unittest.TestCase):
+    def test_original_entered_failure_reason_precedes_cleanup_and_remains_unknown(self):
+        p=SearchParty();w=p.worker();p.rpcs[4].mode='acquire_lost';p.scan(w)
+        leg=w.data['search']['legs'][-1]
+        self.assertTrue(w.done);self.assertTrue(leg['entered']);self.assertFalse(leg.get('notDispatched',False))
+        self.assertEqual(leg['failure'],dict(stage='acquire',actorGuid='4',reason='acquire response lost'))
+        self.assertEqual(leg['phase'],'yielded');self.assertFalse(leg['cleanupResolved'])
+        calls=copy.deepcopy(p.movement);restored=p.worker(stored=copy.deepcopy(w.data));restored.tick()
+        self.assertEqual(p.movement,calls)
+
     def test_release_uses_original_visit_and_ignores_policy_fault(self):
         for replaced in (False,True):
             with self.subTest(replaced=replaced):
@@ -769,7 +785,7 @@ class CorridorSearchTests(unittest.TestCase):
                         reads[0]+=1
                         if reads[0]==2:p.rpcs[4].self['health']=94;changed[0]=True
                 p.hook=change;p.scan(w)
-                self.assertEqual(p.movement,[]);self.assertFalse(w.done)
+                self.assertEqual(p.movement,[]);self.assertFalse(w.done,worker_failure(w))
                 leg=w.data['search']['legs'][-1]
                 self.assertEqual(leg['phase'],'not_dispatched');self.assertFalse(leg['entered'])
                 self.assertTrue(leg['notDispatched']);self.assertEqual(leg['cleanup'],[])
@@ -782,7 +798,7 @@ class CorridorSearchTests(unittest.TestCase):
         p = SearchParty(); w = p.worker(); raw = [copy.deepcopy(a.self) for a in p.rpcs.values()]
         w.tick(); w.tick(); self.assertEqual(p.movement, [])
         w.tick()
-        self.assertFalse(w.done); self.assertEqual(len(p.routes()), 3)
+        self.assertFalse(w.done,worker_failure(w)); self.assertEqual(len(p.routes()), 3)
         self.assertEqual(w.status['phase'], 'corridor_station_arrived_reobserve')
         self.assertEqual(w.data['encounters'], [])
         self.assertEqual(w.data['search']['cursor'], 5)
@@ -803,7 +819,7 @@ class CorridorSearchTests(unittest.TestCase):
     def test_max_eight_legs_and_ordered_reverse_next_pass_without_history_reset(self):
         p = SearchParty(); w = p.worker()
         for _ in range(8): p.scan(w)
-        self.assertFalse(w.done); self.assertEqual(w.data['search']['cursor'], 12)
+        self.assertFalse(w.done,worker_failure(w)); self.assertEqual(w.data['search']['cursor'], 12)
         self.assertEqual([leg['station'] for leg in w.data['search']['legs']], list(range(5, 13)))
         p.scan(w); self.assertTrue(w.done); self.assertEqual(len(p.routes()), 24)
         old = copy.deepcopy(w.data['search']['legs'])
@@ -894,7 +910,7 @@ class CorridorSearchTests(unittest.TestCase):
                             p.rpcs[4].actions.update(interactionOwner='training', moving=False, traveling=False)
                             p.rpcs[4].unblock.set()
                 p.hook = trigger; p.scan(w)
-                self.assertTrue(changed[0]); self.assertTrue(w.done)
+                self.assertTrue(changed[0],worker_failure(w)); self.assertTrue(w.done)
                 self.assertEqual(len([v for v in p.movement if v[1] == 'buddy-actions.release_interaction']), 3)
                 self.assertFalse(p.rpcs[1].actions.get('interactionOwner'))
                 self.assertFalse(p.rpcs[5].actions.get('interactionOwner'))
@@ -947,7 +963,7 @@ class CorridorSearchTests(unittest.TestCase):
                         if mode == 'body': actor.session = 'new-body'
                         else: actor.url = 'http://127.0.0.1:8402/rpc'
                 p.hook = replace; p.scan(w)
-                self.assertTrue(changed[0]); self.assertTrue(w.done)
+                self.assertTrue(changed[0],worker_failure(w)); self.assertTrue(w.done)
                 self.assertFalse(w.data['search']['legs'][-1]['cleanupResolved'])
                 self.assertEqual(p.events, [])
 
@@ -1000,7 +1016,7 @@ class PriorityParty(SearchParty):
 class KnownSearchStopTests(unittest.TestCase):
     def test_known_combat_partial_waits_then_new_token_and_fresh_plan_without_claiming_old_arrival(self):
         p = PriorityParty(); w = p.worker(); p.scan(w)
-        self.assertFalse(w.done)
+        self.assertFalse(w.done,worker_failure(w))
         old = w.data['search']['legs'][0]
         self.assertEqual(old['phase'], 'preempted'); self.assertTrue(old['cleanupResolved'])
         self.assertTrue(all(r['normalStopped'] for r in old['routeResults'].values()))
@@ -1008,7 +1024,7 @@ class KnownSearchStopTests(unittest.TestCase):
         calls = len(p.routes()); w.tick(); self.assertEqual(len(p.routes()), calls)
         self.assertEqual(w.status['phase'], 'waiting_for_safe_party_after_known_corridor_preemption')
         p.recover(); p.scan(w)
-        self.assertFalse(w.done); self.assertEqual(len(p.routes()), calls+3)
+        self.assertFalse(w.done,worker_failure(w)); self.assertEqual(len(p.routes()), calls+3)
         self.assertEqual([leg['phase'] for leg in w.data['search']['legs']], ['preempted', 'arrived'])
         self.assertEqual(w.data['search']['cursor'], 5); self.assertEqual(w.search_legs, 2)
         self.assertEqual(w.data['search']['legs'][1]['before']['1'], old['after']['1'])
@@ -1027,7 +1043,7 @@ class KnownSearchStopTests(unittest.TestCase):
                 if mode == 'trade': a.trade['phase'] = 'ACTIVE'
                 if mode == 'loot': a.loot.update(phase='waiting_release', pendingCorpseGuid=str(TARGET))
                 calls = len(p.routes()); p.scan(w)
-                self.assertFalse(w.done); self.assertEqual(len(p.routes()), calls)
+                self.assertFalse(w.done,worker_failure(w)); self.assertEqual(len(p.routes()), calls)
                 self.assertEqual(w.status['phase'], 'waiting_for_safe_party_after_known_corridor_preemption')
         p = PriorityParty(); w = p.worker(); p.scan(w); p.recover(); p.rpcs[4].actions['following'] = True
         w.tick(); self.assertTrue(w.done); self.assertEqual(len(p.routes()), 3)
@@ -1046,7 +1062,7 @@ class KnownSearchStopTests(unittest.TestCase):
 
     def test_observed_full_arrival_with_lost_rpc_records_station_fact_without_resending(self):
         p = SearchParty(); w = p.worker(); p.rpcs[4].mode = 'lost'; p.scan(w)
-        self.assertFalse(w.done); self.assertEqual(len(p.routes()), 3)
+        self.assertFalse(w.done,worker_failure(w)); self.assertEqual(len(p.routes()), 3)
         leg = w.data['search']['legs'][0]
         self.assertEqual(leg['phase'], 'arrived'); self.assertEqual(w.data['search']['cursor'], 5)
         self.assertFalse(leg['arrivalObservation']['oldRpcSuccessClaimed'])
@@ -1063,7 +1079,7 @@ class KnownSearchStopTests(unittest.TestCase):
     def test_existing_119_yielded_arrived_reconciles_only_positive_complete_samebody_proof(self):
         p, saved = self.legacy_yielded_arrival(); before = copy.deepcopy(saved['encounters'])
         calls = len(p.routes()); w = p.worker(stored=saved); w.tick()
-        self.assertFalse(w.done); self.assertEqual(len(p.routes()), calls)
+        self.assertFalse(w.done,worker_failure(w)); self.assertEqual(len(p.routes()), calls)
         leg = w.data['search']['legs'][-1]
         self.assertEqual(leg['phase'], 'arrived'); self.assertEqual(w.data['search']['cursor'], 5)
         self.assertEqual(leg['outcome'], 'corridor_guard_changed')
@@ -1097,7 +1113,7 @@ class KnownSearchStopTests(unittest.TestCase):
             leg['after'][str(g)].update(station(11))
             actor.actions['position'].update(leg['after'][str(g)])
         calls = len(p.routes()); w = p.worker(stored=saved); w.tick()
-        self.assertFalse(w.done); self.assertEqual(len(p.routes()), calls)
+        self.assertFalse(w.done,worker_failure(w)); self.assertEqual(len(p.routes()), calls)
         self.assertEqual(w.data['search']['cursor'], 11); self.assertEqual(w.data['search']['direction'], -1)
         self.assertFalse(leg['arrivalObservation']['oldRpcSuccessClaimed'])
 
@@ -1108,7 +1124,7 @@ class KnownSearchStopTests(unittest.TestCase):
             leg['before'][str(guid)].update(station(5));leg['after'][str(guid)].update(station(4))
             actor.actions['position'].update(leg['after'][str(guid)])
         calls=len(p.routes());w=p.worker(stored=saved);w.tick()
-        self.assertFalse(w.done);self.assertEqual(len(p.routes()),calls)
+        self.assertFalse(w.done,worker_failure(w));self.assertEqual(len(p.routes()),calls)
         self.assertEqual(saved['search']['cursor'],4);self.assertEqual(saved['search']['direction'],-1)
 
     def test_known_preemption_still_counts_every_attempt_toward_eight_and_body_binding(self):
@@ -1116,7 +1132,7 @@ class KnownSearchStopTests(unittest.TestCase):
         for n in range(8):
             if n: p.recover(); p.rpcs[1].mode = 'priority'; p.rpcs[4].mode = p.rpcs[5].mode = 'normal_cancel'
             p.scan(w)
-            self.assertFalse(w.done); self.assertEqual(w.search_legs, n+1)
+            self.assertFalse(w.done,worker_failure(w)); self.assertEqual(w.search_legs, n+1)
         p.recover(); p.scan(w); self.assertTrue(w.done); self.assertEqual(len(p.routes()), 24)
         saved = copy.deepcopy(w.data); saved['search']['legs'][-1]['bodySessions']['4'] = 'other'
         with self.assertRaises(cave.Error): p.worker(stored=saved)
@@ -1151,7 +1167,7 @@ class CorpseCohortTests(unittest.TestCase):
         before = [copy.deepcopy(a.bags) for a in p.rpcs.values()]
         requests = copy.deepcopy(row['requests']); target = row['target']
         w.tick()
-        self.assertFalse(w.done); self.assertEqual(len(p.routes()), 3)
+        self.assertFalse(w.done,worker_failure(w)); self.assertEqual(len(p.routes()), 3)
         self.assertEqual({tuple(r[k] for k in ('x','y','z')) for _,_,r in p.routes()}, {tuple(UPPER_CORPSE[k] for k in ('x','y','z'))})
         leg = row['lootApproaches'][0]
         self.assertEqual(leg['phase'], 'arrived'); self.assertTrue(leg['cleanupResolved'])
@@ -1160,8 +1176,8 @@ class CorpseCohortTests(unittest.TestCase):
         self.assertEqual(row['requests'], requests); self.assertEqual(row['target'], target)
         self.assertNotIn('search', w.data)
         p.time = 102; w.tick()
-        self.assertFalse(w.done); self.assertEqual(row['lootWaitAt'], 102)
-        p.time = 136; w.tick(); self.assertFalse(w.done)
+        self.assertFalse(w.done,worker_failure(w)); self.assertEqual(row['lootWaitAt'], 102)
+        p.time = 136; w.tick(); self.assertFalse(w.done,worker_failure(w))
         p.time = 138; w.tick(); self.assertTrue(w.done)
         self.assertEqual(w.status['phase'], 'loot_uncollected_or_cleanup_unconfirmed_no_new_pull')
 
@@ -1169,7 +1185,7 @@ class CorpseCohortTests(unittest.TestCase):
         p,w,row=corpse_party()
         for actor in p.rpcs.values():
             actor.target.pop('alive');actor.target.pop('health');actor.target.pop('mapId')
-        w.tick();self.assertFalse(w.done);self.assertEqual(len(p.routes()),3)
+        w.tick();self.assertFalse(w.done,worker_failure(w));self.assertEqual(len(p.routes()),3)
         self.assertEqual(row['lootApproaches'][0]['phase'],'arrived')
         p,w,row=corpse_party()
         for actor in p.rpcs.values():
@@ -1196,7 +1212,7 @@ class CorpseCohortTests(unittest.TestCase):
         p, w, row = corpse_party()
         for actor in p.rpcs.values(): actor.actions['position'].update(UPPER_CORPSE)
         p.events = []; p.time = 30; w.tick()
-        self.assertFalse(w.done); self.assertEqual(p.routes(), []); self.assertEqual(p.events, [])
+        self.assertFalse(w.done,worker_failure(w)); self.assertEqual(p.routes(), []); self.assertEqual(p.events, [])
         self.assertEqual(row['lootWaitAt'], 30); self.assertNotIn('lootApproaches', row)
 
     def test_actual_bound_dead_corpse_and_normal_safety_are_required_before_any_move(self):
@@ -1259,15 +1275,15 @@ class CorpseCohortTests(unittest.TestCase):
 
     def test_known_combat_partial_defends_then_uses_new_snapshot_and_new_physical_plan(self):
         p, w, row = corpse_party(priority=True); w.tick()
-        self.assertFalse(w.done); self.assertEqual(row['lootApproaches'][0]['phase'], 'preempted')
+        self.assertFalse(w.done,worker_failure(w)); self.assertEqual(row['lootApproaches'][0]['phase'], 'preempted')
         self.assertNotIn('lootWaitAt', row); calls = len(p.routes())
-        w.tick(); self.assertEqual(len(p.routes()), calls); self.assertFalse(w.done)
+        w.tick(); self.assertEqual(len(p.routes()), calls); self.assertFalse(w.done,worker_failure(w))
         p.recover()
         # A NEW dead-corpse observation is the new route goal. Frozen revision
         # comparisons applied within the prior leg, not guessed old coordinates.
         for a in p.rpcs.values(): a.target.update(x=UPPER_CORPSE['x']+.5, positionRevision='2')
         w.tick()
-        self.assertFalse(w.done); self.assertEqual(len(p.routes()), calls+3)
+        self.assertFalse(w.done,worker_failure(w)); self.assertEqual(len(p.routes()), calls+3)
         self.assertEqual([leg['phase'] for leg in row['lootApproaches']], ['preempted','arrived'])
         second = row['lootApproaches'][1]
         self.assertEqual(second['targetViews']['1']['positionRevision'], 2)
@@ -1300,8 +1316,8 @@ class CorpseCohortTests(unittest.TestCase):
                 if foreign:
                     self.assertTrue(w.done);self.assertEqual(row['lootApproaches'][0]['phase'],'yielded')
                 else:
-                    self.assertFalse(w.done);self.assertEqual(row['lootApproaches'][0]['phase'],'arrived')
-                    w.tick();self.assertFalse(w.done);self.assertIn('lootWaitAt',row)
+                    self.assertFalse(w.done,worker_failure(w));self.assertEqual(row['lootApproaches'][0]['phase'],'arrived')
+                    w.tick();self.assertFalse(w.done,worker_failure(w));self.assertIn('lootWaitAt',row)
                     self.assertEqual(w.status['phase'],'waiting_for_each_own_server_permitted_loot')
                 self.assertEqual(len(p.routes()),3)
 
@@ -1310,9 +1326,9 @@ class CorpseCohortTests(unittest.TestCase):
         for a in p.rpcs.values():a.actions['position'].update(UPPER_CORPSE)
         p.time=1;w.tick();self.assertEqual(row['lootWaitAt'],1)
         p.time=20;p.rpcs[1].self['unitFlags']|=0x80000;w.tick()
-        self.assertFalse(w.done);self.assertEqual(row['lootWaitPauseAt'],20)
+        self.assertFalse(w.done,worker_failure(w));self.assertEqual(row['lootWaitPauseAt'],20)
         p.time=80;p.rpcs[1].self['unitFlags']&=~0x80000;w.tick()
-        self.assertFalse(w.done);self.assertEqual(row['lootWaitAt'],61)
+        self.assertFalse(w.done,worker_failure(w));self.assertEqual(row['lootWaitAt'],61)
         self.assertNotIn('lootWaitPauseAt',row);self.assertEqual(p.routes(),[])
         p.time=98;w.tick();self.assertTrue(w.done)
 
@@ -1320,7 +1336,7 @@ class CorpseCohortTests(unittest.TestCase):
         p, w, row = corpse_party(priority=True)
         for n in range(3):
             if n: p.recover(); p.rpcs[1].mode = 'priority'; p.rpcs[4].mode = p.rpcs[5].mode = 'normal_cancel'
-            w.tick(); self.assertFalse(w.done)
+            w.tick(); self.assertFalse(w.done,worker_failure(w))
         p.recover(); w.tick(); self.assertTrue(w.done)
         self.assertEqual(len(p.routes()), 9); self.assertEqual(len(row['lootApproaches']), 3)
         p, w, row = corpse_party(priority=True); w.tick(); p.recover()
@@ -1340,7 +1356,7 @@ class FreshCorridorReconnectTests(unittest.TestCase):
         for a in p.rpcs.values():a.lootable=[];a.target['dynamicFlags']=8
         w.tick();p.time=3;w.tick();self.assertEqual(row['phase'],'settled')
         before=copy.deepcopy(row);w.tick();w.tick()
-        self.assertFalse(w.done);self.assertEqual(len(p.routes()),6)
+        self.assertFalse(w.done,worker_failure(w));self.assertEqual(len(p.routes()),6)
         leg=w.data['search']['legs'][-1]
         self.assertEqual(leg['phase'],'arrived');self.assertEqual(leg['reanchor']['corpseTargetGuid'],TARGET)
         self.assertEqual(row,before)
@@ -1351,7 +1367,7 @@ class FreshCorridorReconnectTests(unittest.TestCase):
         p=SearchParty();w=p.worker();p.scan(w);old=copy.deepcopy(w.data['search']['legs'][0])
         for a in p.rpcs.values():a.actions['position'].update(station(8),revision='10')
         p.scan(w)
-        self.assertFalse(w.done);self.assertEqual(w.data['search']['cursor'],8)
+        self.assertFalse(w.done,worker_failure(w));self.assertEqual(w.data['search']['cursor'],8)
         self.assertEqual(w.data['search']['legs'][0],old)
         new=w.data['search']['legs'][-1]
         self.assertEqual(new['reanchor']['priorCursor'],5);self.assertEqual(new['station'],8)

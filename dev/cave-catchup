@@ -556,18 +556,22 @@ class Catchup:
         """Shared normal NAV transport; caller owns the durable leg reservation."""
         tokens, pool, futures, results, releases = {}, None, {}, {}, []
         cause = 'corridor_guard_changed'
+        stage,guid='acquire_observation',None
         entered=False
         leg['entered']=False;self.persist()
         try:
             for guid in ROSTER:
+                stage='acquire_observation'
                 fresh = observe()
                 if not guard(fresh, tokens): raise Error('Corridor custody or party safety changed')
                 leg['entered']=True;self.persist()
+                stage='acquire_authorization'
                 fresh=observe()
                 if not guard(fresh,tokens) or self.stopped() or self.now()>=self.deadline:
                     raise NotDispatched('Current cohort no longer authorizes this acquisition')
                 self.preflight(lambda fresh,rpc:guard(fresh,tokens,rpc),leg.get('targetGuid',0))
                 entered=True
+                stage='acquire'
                 lease = self.endpoint(guid).call('buddy-actions.acquire_interaction', {'owner': 'exploration', 'leaseMs': 30000, 'harvest': True}, timeout=.5)
                 token, a = lease.get('token'), lease.get('state') or {}
                 if not isinstance(token, str) or not 1 <= len(token) <= 128: raise Error('Corridor lease outcome is unconfirmed')
@@ -575,6 +579,7 @@ class Catchup:
                 if (a.get('interactionOwner') != 'exploration' or a.get('interactionHarvest') is not True
                         or not number(a.get('interactionLeaseRemainingMs', 0))) or any(a.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed')):
                     raise Error('Stopped guarded corridor custody was not confirmed')
+            stage='cohort_authorization'
             if not guard(observe(), tokens): raise Error('Corridor safety changed before movement')
             # Each blocking route uses a distinct connection/request sequence;
             # watchdog reads never share its RPC instance or request counter.
@@ -593,22 +598,28 @@ class Catchup:
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=3)
             futures = {g: pool.submit(travel, g) for g in ROSTER}
             while True:
+                stage,guid='watchdog_observation',None
                 fresh = observe()
+                stage='watchdog_priority'
                 priority = self.search_priority(fresh)
                 if priority is not None: leg['priorityObservation'] = priority
                 for guid, future in futures.items():
                     if future.done() and guid not in results:
+                        stage='route_result'
                         answer = future.result()
                         results[guid] = answer
                         if (answer.get('reason') != 'exploration_within_distance' or any(answer.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed'))):
                             cause = 'corridor_route_not_confirmed'; raise Error('Corridor route did not confirm arrival')
+                stage,guid='watchdog_authorization',None
                 if not guard(fresh, tokens): raise Error('Corridor safety changed during movement')
                 if len(results) == 3: break
                 time.sleep(.2)
-        except NotDispatched:
+        except NotDispatched as error:
+            leg['failure']={'stage':stage,'actorGuid':str(guid) if guid else None,'reason':str(error)[:192]}
             if not tokens and not futures: leg['entered']=False;leg['notDispatched']=True
             cause='cave_policy_preflight_not_dispatched'
-        except (Error, OSError):
+        except (Error, OSError) as error:
+            leg['failure']={'stage':stage,'actorGuid':str(guid) if guid else None,'reason':str(error)[:192]}
             if not entered: leg['entered']=False;leg['notDispatched']=True
         finally:
             # Revoke every exact owned token before waiting for route RPCs.
@@ -624,8 +635,8 @@ class Catchup:
                     summaries[str(guid)] = self.stopped_route_result(answer)
                     if answer.get('reason') in SEARCH_PRIORITY_REASONS:
                         leg['priorityObservation'] = {'kind': 'normal_server_priority', 'observerGuid': guid}
-                except NotDispatched: summaries[str(guid)] = {'normalStopped':False,'notDispatched':True}
-                except (Error, OSError): summaries[str(guid)] = {'normalStopped': False, 'responseUnconfirmed': True}
+                except NotDispatched as error: summaries[str(guid)] = {'normalStopped':False,'notDispatched':True,'reason':str(error)[:192]}
+                except (Error, OSError) as error: summaries[str(guid)] = {'normalStopped': False, 'responseUnconfirmed': True,'reason':str(error)[:192]}
             leg['routeResults'] = summaries
             leg['cleanup'] = releases
             leg['cleanupResolved'] = len(tokens) == 3 and all(v['custodyResolved'] for v in releases)
