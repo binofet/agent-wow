@@ -83,10 +83,11 @@ func tickDeathLua(t *testing.T, s *Service) {
 		case "accept_resurrection":
 			_, callErr = s.AcceptResurrection(context.Background(), &actionsv1.AcceptResurrectionRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID,
 				CasterGuid: parse("casterGuid"), DeathEpoch: epoch, ExpectedOfferRevision: parse("expectedOfferRevision")})
-		case "approach_corpse", "stop_corpse":
+		case "approach_corpse", "enter_corpse_instance", "stop_corpse":
 			radius, _ := action["rangeYards"].(float64)
+			trigger, _ := action["triggerId"].(float64)
 			_, callErr = s.ApproachCorpse(context.Background(), &actionsv1.CorpseApproachRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, DeathEpoch: epoch,
-				ExpectedPositionRevision: parse("expectedPositionRevision"), CorpseQueryRevision: parse("corpseQueryRevision"), RangeYards: float32(radius), Stop: action["capability"] == "stop_corpse"})
+				ExpectedPositionRevision: parse("expectedPositionRevision"), CorpseQueryRevision: parse("corpseQueryRevision"), RangeYards: float32(radius), Stop: action["capability"] == "stop_corpse", TriggerId: uint32(trigger), EnterInstance: action["capability"] == "enter_corpse_instance"})
 		case "reclaim_corpse":
 			_, callErr = s.ReclaimCorpse(context.Background(), &actionsv1.ReclaimCorpseRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, DeathEpoch: epoch,
 				ExpectedPositionRevision: parse("expectedPositionRevision"), CorpseGuid: parse("corpseGuid"), ExpectedCorpseRevision: parse("expectedCorpseRevision")})
