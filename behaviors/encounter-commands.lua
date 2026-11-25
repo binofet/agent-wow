@@ -957,7 +957,7 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
     end
     -- Reconcile only the existing finite ownership uncertainty, not an input
     -- or ground UNKNOWN. This step performs cleanup only, never a replacement.
-    if prior and hold and hold.uncertain and not hold.operation and
+    if prior and #frame.pending==0 and hold and hold.uncertain and not hold.operation and
        hold.sessionId==obs.sessionId and hold.selfGuid==obs.selfGuid and
        hold.visitId==obs.visitId and hold.mapId==obs.mapId and
        type(nav.movementOwner)=="table" and nav.movementOwner.active~=true and

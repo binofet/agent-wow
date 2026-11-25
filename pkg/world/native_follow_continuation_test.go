@@ -210,6 +210,7 @@ return {on_event=function() end,export_state=function() return {version=1,data={
   local function step(now,action)
    seq=seq+1;commands.on_event({kind="encounter_observation",sequence=tostring(seq),value=obs})
    local f={session_id=obs.sessionId,input={observationSequence=tostring(seq)},clock={monotonicMs=now,unixMs=now},pending={}}
+   if kind=="pending" and now>=600001 then f.pending={{action_id="99",outcome="unknown"}} end
    local row,status=commands.ranged_stance(obs,f);local out={action=action}
    commands.ranged_filter(obs,f,tostring(seq),out,row,status,nil);commands.ranged_finish(out.action)
    return out,status
@@ -239,7 +240,7 @@ return {on_event=function() end,export_state=function() return {version=1,data={
   return {early=early.action,earlyPhase=earlyStatus.phase,before=before,later=later.action,laterPhase=laterStatus.phase,held=remaining~=nil}
  end
  local out={}
- for _,kind in ipairs({'same','active','body','visit','motion','ground','friendly'}) do out[kind]=scenario(kind) end
+ for _,kind in ipairs({'same','active','body','visit','motion','ground','friendly','pending'}) do out[kind]=scenario(kind) end
  return out
 end}`
 	h, e := behavior.NewSession(context.Background(), "finite-fixture", source)
@@ -251,7 +252,7 @@ end}`
 	if e != nil {
 		t.Fatal(e)
 	}
-	for _, kind := range []string{"same", "active", "body", "visit", "motion", "ground", "friendly"} {
+	for _, kind := range []string{"same", "active", "body", "visit", "motion", "ground", "friendly", "pending"} {
 		row, _ := d.Output[kind].(map[string]any)
 		if kind == "friendly" {
 			a, _ := row["later"].(map[string]any)
@@ -269,6 +270,9 @@ end}`
 			}
 		} else if row["held"] != true {
 			t.Fatal(kind, row)
+		}
+		if kind == "pending" && row["laterPhase"] != "waiting_for_native_custody" {
+			t.Fatal("pending expiry falsely reported reconciliation", row)
 		}
 	}
 }
