@@ -40,9 +40,8 @@ func TestStarterStealthAcceptedSameSessionChoiceAndRankReachActualSelfPacket(t *
 			if !s.refreshPositionLocked(f.world) {
 				t.Fatal("missing current pose")
 			}
-			// The active mission has selected this observed wolf. The same native
-			// selector can inspect all learned ranks without writing a packet.
-			s.practiceTarget, s.practicePullStarted = target.Guid, true
+			// Inspect the same native facts without bypassing the real Tick's
+			// initial visit binding and Lua target admission.
 			point, _, _ := creaturePosition(target)
 			before := s.starterWeaponDecisionLocked(context.Background(), f.world, target, point)
 			if !before.valid || before.kind != "cast_self" || before.spell.ID != 1785 || len(f.packets) != 0 {
@@ -147,7 +146,7 @@ func TestStarterStealthPendingAndUnknownCannotReplayAfterEditOrReceiptReplacemen
 			}
 			if mode != "pending" {
 				if mode == "GO without effect" {
-					emitPolymorph(s, opcode.SMSGSpellGo, buffGo(s, s.selfGUID))
+					emitPolymorph(s, opcode.SMSGSpellGo, starterWeaponObservedGo(s, s.selfGUID, s.castCount))
 					if !op.view.ServerCastGo || op.view.EffectObserved {
 						t.Fatal("actual parser did not retain GO/effect distinction", op.view)
 					}

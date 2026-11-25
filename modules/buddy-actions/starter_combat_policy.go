@@ -298,9 +298,10 @@ func (s *Service) castStarterSelfLocked(ctx context.Context, w *worldv1.Snapshot
 		return false
 	}
 	fresh, creature, point, valid := s.practiceWeaponAuthorityLocked(ctx, target)
-	if !valid || !binding.current(s, ctx, fresh) {
+	if !valid || !binding.sameTask(s, ctx) || fresh.VisitRevision != binding.visit || !s.practiceLifecycleSourceCurrentLocked(source) {
 		return false
 	}
+	binding = s.practiceLifecycleBindingLocked(fresh)
 	selected := s.starterWeaponDecisionLocked(ctx, fresh, creature, point)
 	if !selected.valid || selected.kind != "cast_self" || selected.spell.ID != chosen.spell.ID || s.starterSpells.revision != source {
 		return false
