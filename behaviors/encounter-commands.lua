@@ -1030,6 +1030,20 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
            self.movementKnown==true and self.moving~=true and nav.motionUnconfirmed~=true and drink then
             state.rangedHold=nil;hold=nil
         end
+        -- An expired acknowledged learned lease with a current inactive owner
+        -- needs no release packet or position witness. Retire only local
+        -- bookkeeping; never reconcile entered/unknown ground or ownership.
+        local now=frame.clock and frame.clock.unixMs
+        if hold and hold.owner=="ranged:"..row.id and
+           hold.sessionId==obs.sessionId and hold.selfGuid==obs.selfGuid and
+           hold.visitId==obs.visitId and hold.mapId==obs.mapId and
+           not hold.operation and not hold.uncertain and
+           not (ground and (ground.operation or ground.uncertain or ground.awaiting)) and
+           type(owner)=="table" and owner.active==false and nav.motionUnconfirmed~=true and
+           type(now)=="number" and type(hold.untilUnixMs)=="number" and now>=hold.untilUnixMs and
+           self.aliveKnown==true and self.alive==true and self.movementKnown==true and self.moving==false then
+            state.rangedHold=nil;hold=nil
+        end
         -- Never turn an initial estimated pose into proof for releasing a
         -- previously held lease. A recorded interrupted native goal is distinct.
         if hold and not hold.released and self.positionEstimated==true and not resumed_follow then
