@@ -24,7 +24,8 @@ func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootReq
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cleanup := &lootApproachCleanup{session: s.sessionID, self: s.selfGUID, token: r.Token,
-		visit: s.lastWorld.GetVisitRevision(), bound: s.state.Moving && s.lastWorld != nil}
+		visit: s.lastWorld.GetVisitRevision(), bound: s.state.Moving && s.lastWorld != nil,
+		native: s.encounterVisit, nativeKnown: s.matchesCurrentEncounterVisitLocked(s.lastWorld)}
 	ctx = context.WithValue(ctx, lootApproachCleanupKey{}, cleanup)
 	// An owned approach already in motion still owes a STOP when its caller
 	// cancels. Use fresh bounded transport only for this exact active token.
@@ -48,12 +49,22 @@ type lootApproachCleanup struct {
 	session, token string
 	self, visit    uint64
 	bound          bool
+	native         encounterVisit
+	nativeKnown    bool
 }
 
-func (b *lootApproachCleanup) current(s *Service, w *worldv1.SnapshotResponse) bool {
-	return b.bound && !s.closed && s.sessionID == b.session && s.selfGUID == b.self &&
-		w.GetSelf().GetGuid() == b.self && w.GetVisitRevision() == b.visit &&
-		s.state.InteractionOwner == "loot" && subtle.ConstantTimeCompare([]byte(b.token), []byte(s.interactionToken)) == 1
+func (b *lootApproachCleanup) current(s *Service, w *worldv1.SnapshotResponse, worldUnavailable bool) bool {
+	if !b.bound || s.closed || s.sessionID != b.session || s.selfGUID != b.self ||
+		s.state.InteractionOwner != "loot" || subtle.ConstantTimeCompare([]byte(b.token), []byte(s.interactionToken)) != 1 ||
+		b.nativeKnown && s.encounterVisit != b.native {
+		return false
+	}
+	if worldUnavailable {
+		// Only the already-captured, independently matched native visit permits
+		// the existing bounded STOP fallback. Cached World is not a fresh read.
+		return b.nativeKnown && s.matchesCurrentEncounterVisitLocked(s.lastWorld) && s.lastWorld.GetVisitRevision() == b.visit
+	}
+	return w.GetSelf().GetGuid() == b.self && w.GetVisitRevision() == b.visit
 }
 
 type lootApproachNavigation struct {
@@ -93,7 +104,10 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		if cleanup.session != s.sessionID || cleanup.self != s.selfGUID || cleanup.bound && cleanup.visit != w.VisitRevision {
 			return pause("loot_approach_body_or_visit_changed")
 		}
-		cleanup.visit, cleanup.bound = w.VisitRevision, true
+		if !cleanup.bound {
+			cleanup.native, cleanup.nativeKnown = s.encounterVisit, s.matchesCurrentEncounterVisitLocked(w)
+			cleanup.visit, cleanup.bound = w.VisitRevision, true
+		}
 	}
 	if !s.refreshPositionLocked(w) {
 		return pause("loot_approach_authoritative_position_changed")

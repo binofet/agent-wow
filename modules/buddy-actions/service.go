@@ -882,7 +882,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	var snapshotErr error
 	w, snapshotErr = s.snapshot(ctx)
 	if !moving && op == opcode.MSGMoveStop {
-		if cleanup, ok := ctx.Value(lootApproachCleanupKey{}).(*lootApproachCleanup); ok && !cleanup.current(s, w) {
+		if cleanup, ok := ctx.Value(lootApproachCleanupKey{}).(*lootApproachCleanup); ok && !cleanup.current(s, w, snapshotErr != nil) {
 			s.state.Reason = "loot_approach_cleanup_owner_changed"
 			return false
 		}
