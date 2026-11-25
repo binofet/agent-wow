@@ -2022,6 +2022,132 @@ finally:
             env=dict(os.environ,PYTHONPATH=str(ROOT/'dev')),capture_output=True,text=True,timeout=5)
         self.assertEqual(completed.returncode,0,completed.stdout+completed.stderr)
 
+    def test_empty_explicit_frame_is_not_rewritten_and_idle_fixture_is_honestly_limited(self):
+        self.rpc.source=subprocess.check_output([sys.executable,str(ROOT/'dev/encounter-bundle')],text=True)
+        self.revision=checksum(self.rpc.source)
+        edits=[dict(old='local encounter_mission_repair =',new='-- synthetic test\nlocal encounter_mission_repair =')]
+        args=dict(expected_revision=self.revision,edits=edits,frame={})
+        invalid=self.tools.dispatch('policy_patch',args)
+        self.assertTrue(invalid['ok'],invalid);view=invalid['result']
+        self.assertFalse(view['tested']['valid']);self.assertFalse(view['applied'])
+        self.assertEqual(view['testCoverage']['kind'],'explicit_frame')
+        template=view['pureTestContract']['idleFrame']
+        self.assertEqual(template['session_id'],self.tools.session_id)
+        self.assertEqual(template['pending'],[]);self.assertEqual(template['events'],[])
+        idle=self.tools.dispatch('policy_patch',dict(expected_revision=self.revision,edits=edits,test=dict(kind='idle')))
+        self.assertTrue(idle['ok'],idle);view=idle['result']
+        self.assertTrue(view['tested']['valid'],view)
+        self.assertFalse(view['testCoverage']['behaviorExercised'])
+        self.assertFalse(view['applied']);self.assertFalse(self.rpc.writes)
+        self.assertTrue(self.tools.dispatch('policy_patch',dict(args,frame=template))['result']['tested']['valid'])
+
+    def test_synthetic_sequence_calls_real_events_in_one_vm_and_keeps_explicit_frame_unchanged(self):
+        self.rpc.source="""local count=0
+return {on_event=function(e) count=count+e.value.amount;return true end,
+ decide=function(f)return {output={count=count,cursor=f.cursor,session=f.session_id,pending=#f.pending,events=#f.events}}end}
+"""
+        self.revision=checksum(self.rpc.source)
+        edits=[dict(old='count=count+e.value.amount',new='count=count+2*e.value.amount')]
+        steps=[dict(events=[dict(kind='observation',sequence='1',value=dict(amount=3))]),
+               dict(events=[dict(kind='observation',sequence='2',value=dict(amount=4))],frame=dict(pending=[dict(action_id='synthetic-only',outcome='unknown')]))]
+        fixture=dict(kind='sequence',steps=steps)
+        before=copy.deepcopy(fixture)
+        result=self.tools.dispatch('policy_patch',dict(expected_revision=self.revision,edits=edits,test=fixture))
+        self.assertTrue(result['ok'],result);view=result['result']
+        self.assertTrue(view['tested']['valid'],view)
+        decisions=view['tested']['decision']['decisions']
+        self.assertEqual([row['output']['count'] for row in decisions],[6,14])
+        self.assertEqual([row['output']['cursor'] for row in decisions],['1','2'])
+        self.assertEqual(decisions[1]['output']['pending'],1)
+        self.assertEqual(decisions[1]['output']['events'],0)
+        self.assertEqual(decisions[0]['output']['session'],self.tools.session_id)
+        self.assertFalse(view['testCoverage']['hostReservationReplayVerified'])
+        self.assertTrue(view['testCoverage']['callbacksCompleted'])
+        self.assertEqual(fixture,before);self.assertFalse(self.rpc.writes)
+        self.assertEqual(view['tested']['sourceSHA256'],view['targetRevision'])
+        # Same raw frame semantics: no on_event delivery is implied by its events.
+        frame=self.tools._policy_test_contract()['idleFrame'];frame['events']=steps[0]['events']
+        explicit=self.tools.dispatch('policy_patch',dict(expected_revision=self.revision,edits=edits,frame=frame))
+        self.assertEqual(explicit['result']['tested']['decision']['output']['count'],0)
+
+    def test_synthetic_fixture_rejects_bad_identity_and_callback_fault_without_apply(self):
+        edits=[dict(old='value=f.value',new='value=f.value+1')]
+        for test in (dict(kind='sequence',steps=[dict(frame=dict(session_id='foreign-body'))]),
+                     dict(kind='sequence',steps=[]),dict(kind='idle',steps=[])):
+            result=self.tools.dispatch('policy_patch',dict(expected_revision=self.revision,edits=edits,test=test,apply=True))
+            self.assertFalse(result['ok'],result)
+        self.rpc.source='return {on_event=function(e) return false end,decide=function(f) return {} end}'
+        self.revision=checksum(self.rpc.source)
+        result=self.tools.dispatch('policy_patch',dict(expected_revision=self.revision,edits=[dict(old='return false',new='return nil')],
+            test=dict(kind='sequence',steps=[dict(events=[dict(kind='command',sequence='1',value={})])]),apply=True))
+        self.assertTrue(result['ok'],result);self.assertFalse(result['result']['tested']['valid'])
+        self.assertFalse(result['result']['applied']);self.assertFalse(self.rpc.writes)
+
+    def test_full_encounter_sequence_exercises_observation_command_and_expiry_not_idle(self):
+        self.rpc.source=subprocess.check_output([sys.executable,str(ROOT/'dev/encounter-bundle')],text=True)
+        self.revision=checksum(self.rpc.source)
+        obs=dict(sessionId=self.tools.session_id,selfGuid=self.tools.self_guid,mapKnown=True,mapId=0,visitId='1',
+            hostOwned=True,hostTargetRangeBandSupported=False,spellbookKnown=True,meleeKnown=True,
+            players={self.tools.self_guid:dict(guid=self.tools.self_guid,present=True,aliveKnown=True,alive=True,
+                mapKnown=True,mapId=0,positionKnown=True,x=0,y=0,z=0)},targets={},spells={},navigation={},party={})
+        directive=dict(task='ranged_only',id='synthetic-range',creatureEntry=12222,mapId=0,visitId='1',
+            minRangeYards=15,maxRangeYards=25,clearanceYards=2,durationMs=60000,enabled=True)
+        steps=[dict(events=[dict(kind='encounter_observation',sequence='1',value=obs),dict(kind='command',sequence='2',value=directive)],
+                    frame=dict(input=dict(kind='encounter',observationSequence='1'))),
+               dict(frame=dict(input=dict(kind='encounter',observationSequence='1'),clock=dict(monotonicMs=60001,unixMs=60001)))]
+        edits=[dict(old='remainingMs=math.max(0,row.expiresUnixMs-unix)',new='remainingMs=math.max(0,row.expiresUnixMs-unix-1)')]
+        result=self.tools.dispatch('policy_patch',dict(expected_revision=self.revision,edits=edits,test=dict(kind='sequence',steps=steps)))
+        self.assertTrue(result['ok'],result);view=result['result']
+        self.assertTrue(view['tested']['valid'],view)
+        first,last=view['tested']['decision']['decisions']
+        self.assertEqual(first['rangedStance']['id'],'synthetic-range')
+        self.assertTrue(first['rangedStance']['active'])
+        self.assertEqual(first['rangedStance']['remainingMs'],59999)
+        self.assertEqual(last['rangedStance']['phase'],'expired')
+        self.assertFalse(last['rangedStance']['active'])
+        self.assertFalse(view['applied']);self.assertFalse(view['gameEffectClaimed']);self.assertFalse(self.rpc.writes)
+
+    def test_synthetic_sequence_cannot_hide_invalid_decisions_or_clear_live_custody(self):
+        for output in ('nil','{1,2}'):
+            self.rpc.source='return {decide=function(f)return '+output+' end}'
+            self.revision=checksum(self.rpc.source)
+            result=self.tools.dispatch('policy_patch',dict(expected_revision=self.revision,
+                edits=[dict(old='return {decide=',new='-- fixture\nreturn {decide=')],
+                test=dict(kind='sequence',steps=[{}]),apply=True))
+            self.assertTrue(result['ok'],result)
+            self.assertFalse(result['result']['tested']['valid']);self.assertFalse(result['result']['applied'])
+        self.assertFalse(self.rpc.writes)
+        self.rpc.source=self.original;self.revision=checksum(self.rpc.source)
+        fixture=dict(kind='sequence',steps=[dict(frame=dict(input={},pending=[]))])
+        # A valid explicit synthetic frame for this tiny fixture policy.
+        fixture['steps'][0]['frame']['value']=4
+        # Unknown frame keys are refused; no partial native apply.
+        denied=self.tools.dispatch('policy_patch',dict(expected_revision=self.revision,
+            edits=[dict(old='value=f.value',new='value=f.value+1')],test=fixture,apply=True))
+        self.assertFalse(denied['ok']);self.assertFalse(self.rpc.writes)
+        self.tools.unknown_receipt=dict(outcome='unconfirmed',operation='original')
+        before=copy.deepcopy(self.tools.unknown_receipt)
+        denied=self.tools.dispatch('policy_patch',dict(expected_revision=self.revision,
+            edits=[dict(old='value=f.value',new='value=f.value+1')],test=dict(kind='idle'),apply=True))
+        self.assertFalse(denied['ok']);self.assertEqual(self.tools.unknown_receipt,before)
+        self.assertFalse(self.rpc.writes)
+
+    def test_synthetic_sequence_snapshots_reused_nested_decision_tables_per_step(self):
+        self.rpc.source="""local count=0
+local reused={output={count=0}}
+return {on_event=function(e) count=count+2;return true end,
+ decide=function(f) reused.output.count=count;return reused end}
+"""
+        self.revision=checksum(self.rpc.source)
+        result=self.tools.dispatch('policy_patch',dict(expected_revision=self.revision,
+            edits=[dict(old='count=count+2',new='count=count+(2)')],
+            test=dict(kind='sequence',steps=[dict(events=[dict(kind='observation',sequence='1',value={})]),
+                                            dict(events=[dict(kind='observation',sequence='2',value={})])])) )
+        self.assertTrue(result['ok'],result);view=result['result']
+        self.assertTrue(view['tested']['valid'],view)
+        self.assertEqual([row['output']['count'] for row in view['tested']['decision']['decisions']],[2,4])
+        self.assertFalse(view['applied']);self.assertFalse(self.rpc.writes)
+
     def test_existing_self_edit_lock_collision_cannot_apply(self):
         self.tools.dispatch('policy_show',{})
         lock_path=self.rig.edit.DATA/self.rpc.guid/'edit.lock'
