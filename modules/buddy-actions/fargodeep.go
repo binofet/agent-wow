@@ -396,12 +396,17 @@ func (s *Service) fargodeepTickLocked(ctx context.Context, w *worldv1.SnapshotRe
 		f.phase = "waiting_for_server_attack_stop"
 		return true
 	}
-	stand := float64(28) // Existing verified conservative Smite range.
-	if w.Self.ClassId == 8 {
-		stand = 33 // Existing verified conservative Fireball range.
-	} else if w.Self.ClassId == 4 {
-		stand = 3.5
+	scope := ctx.Value(fargodeepReadinessKey{}).(*fargodeepReadinessScope)
+	if scope.stance == nil {
+		if _, valid := s.fargodeepReadinessDecisionLocked(ctx, w, s.readFargodeepPartyLocked(ctx)); !valid {
+			if s.fargodeepCleanupCurrentLocked(ctx) {
+				s.stopLocked(ctx)
+				f.phase = "readiness_policy_unavailable_or_changed"
+			}
+			return true
+		}
 	}
+	stand := scope.stance.standYards
 	// A fresh in-range unit-target spell needs no walking authority. The server
 	// validates spell LOS/range; a rejected spell is never damage confirmation.
 	// Every actual approach still requires the complete verified ground route.
@@ -587,6 +592,10 @@ func (s *Service) fargodeepObservedActionAllowedLocked(ctx context.Context, targ
 	if reason != "" || c.DynamicFlags&4 != 0 && c.DynamicFlags&8 == 0 {
 		return refuse()
 	}
+	scope := ctx.Value(fargodeepReadinessKey{}).(*fargodeepReadinessScope)
+	if movement && (scope.stance == nil || !s.fargodeepReadinessMatchesLocked(ctx, *scope.stance, w, party, false)) {
+		return policyRefused()
+	}
 	engaged := c.AttackVictimKnown && members[c.AttackVictimGuid] && c.AttackAgeMs <= 30000
 	if engaged {
 		victim := observedHealingPlayer(w, c.AttackVictimGuid)
@@ -613,7 +622,7 @@ func (s *Service) fargodeepObservedActionAllowedLocked(ctx context.Context, targ
 			// native guard on fresh views; this pass only compares its facts.
 			return s.fargodeepObservedActionAllowedLocked(ctx, targetGUID, spell, movement, selected, &decision)
 		}
-		if !s.fargodeepReadinessMatchesLocked(ctx, *readiness, w, party) {
+		if !s.fargodeepReadinessMatchesLocked(ctx, *readiness, w, party, true) {
 			return policyRefused()
 		}
 		if len(w.NearbyCreatures) > 32 {

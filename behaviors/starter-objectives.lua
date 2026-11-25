@@ -1,7 +1,7 @@
 -- Starter mission objectives and practice lifecycle. The caller owns observed
 -- facts, exact native toggles, durable mutation reservations and receipt custody.
 local M = {}
-M.fargodeep_pull={minimum_health=95, minimum_mana=45, minimum_energy=90}
+M.fargodeep_pull={minimum_health=95, minimum_mana=45, minimum_energy=90,stand_yards={[4]=3.5,[5]=28,[8]=33}}
 local function array(v,max)
     if type(v)~="table" or #v>max then return false end
     local n=0
@@ -227,7 +227,7 @@ local function ready(choice) return {status="ready",choice=choice} end
 local function invalid() return {status="invalid"} end
 local function fargodeep_readiness(input)
     local selection="fargodeep_pull_readiness"
-    local hold={kind="wait",spellId=0,selection=selection}
+    local hold={kind="wait",spellId=0,selection=selection,standYards=0}
     local function uint(value)
         return type(value)=="number" and value>=0 and value<=4294967295 and value%1==0
     end
@@ -243,7 +243,12 @@ local function fargodeep_readiness(input)
        (mission.engagerGuid~="1" and mission.engagerGuid~="4" and mission.engagerGuid~="5") then return hold end
     local tuning=M.fargodeep_pull
     if type(tuning)~="table" or not uint(tuning.minimum_health) or tuning.minimum_health>100 or
-       not uint(tuning.minimum_mana) or tuning.minimum_mana>100 or not uint(tuning.minimum_energy) then return hold end
+       not uint(tuning.minimum_mana) or tuning.minimum_mana>100 or not uint(tuning.minimum_energy) or
+       type(tuning.stand_yards)~="table" then return hold end
+    local self=obs.players[input.selfGuid]
+    local stand=type(self)=="table" and self.classKnown==true and tuning.stand_yards[self.classId]
+    if not number(stand) or stand<=0 or stand>240 then return hold end
+    hold.standYards=stand
     for _,member in ipairs({{guid="1",class=5},{guid="4",class=8},{guid="5",class=4}}) do
         local player=obs.players[member.guid]
         if type(player)~="table" or player.guid~=member.guid or player.classKnown~=true or player.classId~=member.class or
@@ -262,7 +267,7 @@ local function fargodeep_readiness(input)
             if player.power<budget then return hold end
         end
     end
-    return {kind="ready",spellId=0,selection=selection}
+    return {kind="ready",spellId=0,selection=selection,standYards=stand}
 end
 local function practice(input,active)
     local a=input.actions or {}

@@ -141,7 +141,7 @@ function M.decide(input, override, movement, objectives)
     if type(input)=="table" and input.selection=="fargodeep_pull_readiness" then
         objectives=objectives or starter_objectives
         if type(objectives)~="table" or type(objectives.decide)~="function" then
-            return {kind="wait",spellId=0,selection="fargodeep_pull_readiness"}
+            return {kind="wait",spellId=0,selection="fargodeep_pull_readiness",standYards=0}
         end
         return objectives.decide(input)
     end
