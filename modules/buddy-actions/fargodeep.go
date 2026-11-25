@@ -593,7 +593,7 @@ func (s *Service) fargodeepObservedActionAllowedLocked(ctx context.Context, targ
 		return refuse()
 	}
 	scope := ctx.Value(fargodeepReadinessKey{}).(*fargodeepReadinessScope)
-	if movement && (scope.stance == nil || !s.fargodeepReadinessMatchesLocked(ctx, *scope.stance, w, party, false)) {
+	if scope.stance == nil || !s.fargodeepReadinessMatchesLocked(ctx, *scope.stance, w, party, false) {
 		return policyRefused()
 	}
 	engaged := c.AttackVictimKnown && members[c.AttackVictimGuid] && c.AttackAgeMs <= 30000

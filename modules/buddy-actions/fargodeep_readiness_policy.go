@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"math"
 	"reflect"
 	"strconv"
 	"time"
@@ -149,7 +148,7 @@ func (s *Service) fargodeepReadinessDecisionLocked(ctx context.Context, w *world
 	digest, revisionErr := hex.DecodeString(revision)
 	if err != nil || output == nil || len(output) != 4 || decoder.Decode(&selected) != nil ||
 		(selected.Kind != "ready" && selected.Kind != "wait") || selected.SpellID != 0 || selected.Selection != fargodeepReadinessSelection ||
-		math.IsNaN(selected.StandYards) || math.IsInf(selected.StandYards, 0) || selected.StandYards <= 0 || selected.StandYards > 240 ||
+		!(selected.StandYards > 0 && selected.StandYards <= 240) ||
 		revisionErr != nil || len(digest) != 32 || hex.EncodeToString(digest) != revision || s.behavior != authored || s.fargodeep.pulled != pulled {
 		return fargodeepReadinessDecision{}, false
 	}

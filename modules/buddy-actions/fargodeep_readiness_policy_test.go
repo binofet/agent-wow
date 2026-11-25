@@ -725,3 +725,39 @@ func TestFargodeepStanceCannotRebindAPullChangeInsideItsPolicyRead(t *testing.T)
 	}
 	requireNoFargodeepReadinessDispatch(t, s, f)
 }
+
+func TestFargodeepStanceFactsCannotChangeAcrossAnEngagedCastWrite(t *testing.T) {
+	s, f, target, request, _ := fargodeepReadinessRig(t, 4)
+	target.X += 22 // Twenty-five yards: cast under the first stance, approach under the changed stance.
+	armFargodeep(t, s, request)
+	f.world.Self.UnitFlags |= 0x80000
+	target.AttackVictimKnown, target.AttackVictimGuid, target.AttackAgeMs = true, s.selfGUID, 100
+	const stance = "local stand=type(self)==\"table\" and self.classKnown==true and tuning.stand_yards[self.classId]"
+	if strings.Count(behaviors.StarterSpellSource, stance) != 1 {
+		t.Fatal("actual shared stance expression is missing or ambiguous")
+	}
+	edited := strings.Replace(behaviors.StarterSpellSource, stance, stance+"\n    if stand and self.health<100 then stand=20 end", 1)
+	runtime := starterLuaRuntime(t, edited)
+	stanceRead, changed := false, false
+	s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+		out, err := runtime.EvaluateContext(ctx, input)
+		selection, _ := input["selection"].(string)
+		if selection == fargodeepReadinessTestSelection {
+			stanceRead = true
+			if out["standYards"] != float64(33) {
+				t.Fatal("initial actual Lua stance did not permit casting at twenty-five yards", out)
+			}
+		} else if selection == "" && stanceRead && !changed {
+			changed = true
+			f.world.Self.Health = 99
+		}
+		return true, runtime.Status().Revision, out, err
+	}
+	s.Tick(context.Background())
+	current, err := runtime.EvaluateContext(context.Background(), s.fargodeepReadinessFactsLocked(f.world, f.party))
+	if err != nil || current["standYards"] != float64(20) || !changed || !stanceRead || !s.fargodeepSeen[target.Guid] ||
+		countPackets(f, opcode.CMSGCastSpell) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 ||
+		countPackets(f, opcode.MSGMoveStartForward) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 || s.state.AssistAttempts != 0 {
+		t.Fatal("a changed stance input reused the earlier cast choice or erased custody", current, err, s.stateLocked(), f.packets)
+	}
+}
