@@ -1868,6 +1868,54 @@ class AttachedPolicyPatchTests(unittest.TestCase):
         args.update(kwargs)
         return self.tools.dispatch('policy_patch', args)
 
+    def test_callback_contract_bound_fixture_and_inert_onupdate_are_honest(self):
+        self.rpc.source = subprocess.check_output([sys.executable, str(ROOT/'dev/encounter-bundle')], text=True)
+        self.revision = checksum(self.rpc.source)
+        contract = self.tools._policy_test_contract()
+        self.assertIn('onUpdate', contract['runtimeCallbacks']['notInvokedAutomatically'])
+        fixture = contract['sequenceExample']['steps']
+        observed = fixture[0]['events'][0]['value']
+        self.assertEqual(observed['sessionId'], self.tools.session_id)
+        self.assertEqual(observed['selfGuid'], self.tools.self_guid)
+        result = self.tools.dispatch('policy_patch', dict(expected_revision=self.revision,
+            edits=[dict(old='local ',new='local ',)], steps=fixture))
+        # Use an unambiguous harmless appended callback instead of an ambiguous literal.
+        self.assertFalse(result['ok'])
+        result = self.tools.dispatch('policy_patch', dict(expected_revision=self.revision,
+            edits=[dict(old=self.rpc.source, new=self.rpc.source+'\n-- onUpdate is not a runtime hook\n')], steps=fixture))
+        self.assertTrue(result['ok'], result)
+        view = result['result']
+        self.assertTrue(view['tested']['valid'], view)
+        self.assertFalse(view['decisionComparison']['encounterObservationIncomplete'], view)
+        self.assertFalse(view['decisionComparison']['selectedDecisionChanged'], view)
+        self.assertEqual(view['lifecycle'], 'preview_only')
+        self.assertFalse(view['applied']); self.assertFalse(view['gameEffectClaimed'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_uninvoked_onupdate_cannot_demonstrate_action_change(self):
+        self.rpc.source = 'local n=0; return {decide=function(f)return {action={kind="hold",value=n}} end}'
+        self.revision = checksum(self.rpc.source)
+        result = self.tools.dispatch('policy_patch', dict(expected_revision=self.revision,
+            edits=[dict(old='local n=0;', new='local n=0; local function onUpdate() n=1 end;')], steps=[]))
+        self.assertTrue(result['ok'], result)
+        self.assertTrue(result['result']['tested']['valid'])
+        self.assertFalse(result['result']['decisionComparison']['selectedDecisionChanged'])
+        self.assertFalse(result['result']['applied'])
+
+    def test_selected_action_difference_and_apply_are_not_live_effects(self):
+        self.rpc.source = 'return {decide=function(f)return {action={kind="hold"}} end}'
+        self.revision = checksum(self.rpc.source)
+        result = self.tools.dispatch('policy_patch', dict(expected_revision=self.revision,
+            edits=[dict(old='kind="hold"', new='kind="retreat"')], steps=[], apply=True))
+        self.assertTrue(result['ok'], result)
+        view = result['result']
+        self.assertTrue(view['decisionComparison']['selectedDecisionChanged'])
+        self.assertEqual(view['decisionComparison']['before'][0]['action']['kind'], 'hold')
+        self.assertEqual(view['decisionComparison']['after'][0]['action']['kind'], 'retreat')
+        self.assertEqual(view['lifecycle'], 'accepted_source_applied_not_game_effect')
+        self.assertTrue(view['applied']); self.assertFalse(view['gameEffectClaimed'])
+        self.assertEqual(self.rpc.pending, ['issued-before-edit'])
+
     def test_preview_then_apply_current_bundle_without_workspace_or_source_copy(self):
         self.rig.workspace.chmod(0o775)
         preview = self.patch()
@@ -2021,6 +2069,45 @@ finally:
         completed=subprocess.run([sys.executable,'-B','-c',code],cwd=ROOT,
             env=dict(os.environ,PYTHONPATH=str(ROOT/'dev')),capture_output=True,text=True,timeout=5)
         self.assertEqual(completed.returncode,0,completed.stdout+completed.stderr)
+
+    def test_advertised_patch_has_one_test_input_and_preserves_older_call_forms(self):
+        spec=next(row["function"] for row in self.tools.tool_schemas() if row["function"]["name"]=="policy_patch")
+        fields=spec["parameters"]["properties"]
+        self.assertIn("steps",spec["parameters"]["required"])
+        self.assertNotIn("test",fields)
+        self.assertNotIn("frame",fields)
+        args=dict(expected_revision=self.revision,edits=[dict(old="value=f.value",new="value=f.value or 0")],steps=[])
+        result=self.tools.dispatch("policy_patch",args)
+        self.assertTrue(result["ok"],result)
+        self.assertTrue(result["result"]["tested"]["valid"])
+        self.assertEqual(result["result"]["testCoverage"]["kind"],"idle")
+        result=self.tools.dispatch("policy_patch",dict(args,steps=[dict(frame={})]))
+        self.assertTrue(result["result"]["tested"]["valid"],result)
+        self.assertEqual(result["result"]["testCoverage"]["kind"],"synthetic_event_sequence")
+        mixed=self.tools.dispatch("policy_patch",dict(args,frame={},apply=True))
+        self.assertFalse(mixed["ok"])
+        self.assertFalse(self.rpc.writes)
+
+    def test_numbered_edits_bind_to_original_revision_across_shifting_line_counts(self):
+        self.rpc.source="local a=1\nlocal b=2\nreturn {decide=function()return {output={sum=a+b}}end}\n"
+        before=checksum(self.rpc.source)
+        match=self.tools.dispatch("policy_show",{"find":"local b="})["result"]
+        self.assertEqual(match["matchLine"],2)
+        numbered=self.tools.dispatch("policy_show",match["readMatchedLines"])["result"]
+        self.assertEqual(numbered["sourceLines"]["rows"][0],dict(line=2,text="local b=2"))
+        args=dict(expected_revision=before,steps=[],apply=True,edits=[
+            dict(first_line=1,last_line=1,new="local a=3\n-- extra line"),
+            dict(first_line=2,last_line=2,new="local b=4")])
+        for changes in (args["edits"][::-1],[dict(first_line=1,last_line=90,new="x")]):
+            self.assertFalse(self.tools.dispatch("policy_patch",dict(args,edits=changes))["ok"])
+        self.assertFalse(self.rpc.writes)
+        out=self.tools.dispatch("policy_patch",args)
+        self.assertTrue(out["ok"],out)
+        self.assertTrue(out["result"]["applied"])
+        self.assertIn("-- extra line\nlocal b=4\nreturn",self.rpc.source)
+        self.assertEqual(self.rpc.pending,["issued-before-edit"])
+        self.assertFalse(self.tools.dispatch("policy_patch",args)["ok"])
+        self.assertEqual(len(self.rpc.writes),1)
 
     def test_empty_explicit_frame_is_not_rewritten_and_idle_fixture_is_honestly_limited(self):
         self.rpc.source=subprocess.check_output([sys.executable,str(ROOT/'dev/encounter-bundle')],text=True)
