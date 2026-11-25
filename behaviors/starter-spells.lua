@@ -141,6 +141,10 @@ local function weapon_choice(obs, target, self, override)
 end
 
 function M.decide(input, override, movement, objectives)
+    if type(input)=="table" and input.selection=="cave_cohort" then
+        objectives=objectives or starter_objectives
+        return type(objectives)=="table" and type(objectives.cave_cohort)=="function" and objectives.cave_cohort(input) or {status="invalid"}
+    end
     if type(input)=="table" and (input.selection=="practice_lifecycle" or input.selection=="coldridge_lifecycle") then
         objectives=objectives or starter_objectives
         if type(objectives)~="table" or type(objectives[input.selection])~="function" then return {kind="wait"} end

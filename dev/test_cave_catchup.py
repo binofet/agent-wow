@@ -1,8 +1,12 @@
-"""Mock-only fixed-party encounter, inventory and custody checks."""
+"""Accepted Lua choices with fixture-only native observations and custody."""
 import copy
+import functools
+import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import threading
@@ -12,17 +16,33 @@ loader = importlib.machinery.SourceFileLoader('tested_cave_catchup', str(Path(__
 spec = importlib.util.spec_from_loader(loader.name, loader)
 cave = importlib.util.module_from_spec(spec); loader.exec_module(cave)
 TARGET = 0xf1300001db000001  # Actual encoded entry475, arbitrary observed spawn fixture.
+# Independent observations/expected navigation points from the retained route.
+STATIONS = ((-9821.469,215.5862,16.341442),(-9820.893,227.19437,24.214392),
+    (-9826.351,237.92334,31.82744),(-9834.488,240.53362,26.891457),(-9839.6,230.13333,18.551823),
+    (-9834.666,217.06573,14.587091),(-9828.954,204.60019,14.721489),(-9828.05,190.13332,13.459157),
+    (-9828.8,176.71109,12.31047),(-9835.635,164.62372,5.3633475),(-9842.402,153.3405,5.521588),
+    (-9849.066,140.4,6.935242),(-9843.54,127.525,5.370034))
+def station(index): return dict(zip(('x','y','z'),STATIONS[index]))
+
+
+@functools.lru_cache(maxsize=1)
+def public_source():
+    return subprocess.check_output([sys.executable,str(Path(__file__).with_name('encounter-bundle'))],text=True)
 
 
 class Party:
     def __init__(self):
         self.time = 0.; self.events = []; self.saved = []; self.hook = None; self.lost_reply = None
+        self.source, self.generation, self.faulted = public_source(), 1, False
         self.rpcs = {g: Actor(self, g) for g in cave.ROSTER}
 
     def worker(self, stored=None, stop=lambda: False, seconds=600):
         return cave.Catchup(self.rpcs, {g: a.session for g, a in self.rpcs.items()},
             save=lambda value: self.saved.append(copy.deepcopy(value)), stored=stored,
             now=lambda: self.time, stopped=stop, max_seconds=seconds)
+
+    @property
+    def revision(self): return hashlib.sha256(self.source.encode()).hexdigest()
 
     def kill(self):
         for actor in self.rpcs.values():
@@ -58,15 +78,21 @@ class Actor:
         self.lootable = []
 
     def world(self, params):
-        value = dict(self=copy.deepcopy(self.self),selfQuestLogKnown=True,selfQuestLogRevision='1',
+        value = dict(self=copy.deepcopy(self.self),visitRevision='1',selfQuestLogKnown=True,selfQuestLogRevision='1',
             selfQuestLog=copy.deepcopy(self.logs),inventoryKnown=True,inventoryRevision='1',inventoryBags=copy.deepcopy(self.bags),
             nearbyCreatures=[copy.deepcopy(self.target)],lootableCorpses=copy.deepcopy(self.lootable))
         if params.get('creatureGuid') == self.target['guid']: value['requestedCreature']=copy.deepcopy(self.target)
         return value
 
-    def call(self, method, params):
+    def call(self, method, params, timeout=None):
         self.calls.append((method,copy.deepcopy(params)))
         if self.party.hook: self.party.hook(self,method,params)
+        if method=='session.policy_source':
+            return dict(sessionId=self.session,characterGuid=str(self.guid),source=self.party.source,
+                revision=self.party.revision,generation=str(self.party.generation),sourceLimitBytes=8*1024*1024,faulted=self.party.faulted)
+        if method=='session.attach':
+            return dict(sessionId=self.session,characterGuid=str(self.guid),policy=dict(revision=self.party.revision,
+                generation=str(self.party.generation),faulted=self.party.faulted))
         if method=='buddy-party.state': return dict(sessionId=self.session,group=copy.deepcopy(self.group))
         if method=='buddy-world.snapshot': return self.world(params)
         if method=='buddy-actions.status': return copy.deepcopy(self.actions)
@@ -315,7 +341,9 @@ class CatchupTests(unittest.TestCase):
                     destinationX=-9790.,destinationY=120.,destinationZ=8.)
                 if age>3000:row['x']=-9840. # Stale raw XYZ would incorrectly fail the28yd gate.
             scenes=w.read();candidate=w.candidate(scenes)
-            self.assertIsNotNone(candidate);self.assertEqual(candidate['x'],-9790.)
+            self.assertIsNotNone(candidate);self.assertEqual(candidate['guid'],str(TARGET))
+            # Dispatch binds the raw GUID; Lua alone evaluates the elapsed endpoint.
+            self.assertEqual(candidate['x'],-9840. if age>3000 else -9790.)
             self.assertEqual(p.rpcs[1].target['x'],-9840. if age>3000 else -9790.)
             w.tick();self.assertEqual([g for g,r in p.events if r['enabled']],[1,5,4])
 
@@ -357,14 +385,17 @@ class CatchupTests(unittest.TestCase):
             self.assertEqual(candidate is None,near)
 
     def test_unknown_midleg_neighbor_is_not_treated_as_absent(self):
-        p=Party();row=copy.deepcopy(p.rpcs[1].target)
-        row.update(x=-9780.,movementFlags=0x08000001,positionAgeMs=1500)
+        p=Party();w=p.worker();row=copy.deepcopy(p.rpcs[1].target)
+        row.update(guid=str(TARGET+1),x=-9780.,movementFlags=0x08000001,positionAgeMs=1500)
         row['trajectory']=dict(known=True,durationMs=3000,ageMs=1500,destinationKnown=True,
             destinationX=-9795.,destinationY=120.,destinationZ=8.)
-        self.assertIsNone(cave.creature_position(row))
-        self.assertTrue(cave.neighbor_near(row,p.rpcs[1].target))
+        def scene(params):
+            value=Actor.world(p.rpcs[1],params);value['nearbyCreatures'].append(copy.deepcopy(row));return value
+        p.rpcs[1].world=scene
+        w.data['encounters'].append(dict(target=TARGET+1))
+        self.assertIsNone(w.candidate(w.read()))
         row['x']=-9750.;row['trajectory']['destinationX']=-9740.
-        self.assertFalse(cave.neighbor_near(row,p.rpcs[1].target))
+        self.assertEqual(w.candidate(w.read())['guid'],str(TARGET))
 
 
     def test_caster_priority_changes_only_after_own_collection_completion(self):
@@ -500,11 +531,86 @@ class CatchupTests(unittest.TestCase):
                 self.assertFalse(any(request['enabled'] for _, request in p.events))
 
 
+class AcceptedCohortTests(unittest.TestCase):
+    def test_same_session_accepted_source_controls_rank_engager_order_and_admission(self):
+        p=Party();w=p.worker()
+        for actor in p.rpcs.values():
+            original=actor.world
+            def two(params,original=original):
+                value=original(params);other=copy.deepcopy(value['nearbyCreatures'][0])
+                other.update(guid=str(TARGET+1),x=-9800.,y=140.)
+                value['nearbyCreatures'].append(other);return value
+            actor.world=two
+        scene=w.read();initial=w.decide(scene,'encounter')[0]
+        self.assertEqual((initial['targetGuid'],initial['engagerGuid'],initial['order']),
+            (str(TARGET),'4',['1','5','4']))
+        before=copy.deepcopy(scene)
+        self.assertEqual(p.source.count('engagers={"4","1","5"},prefer_nearest=true'),1)
+        p.source=p.source.replace('engagers={"4","1","5"},prefer_nearest=true',
+            'engagers={"5","4","1"},prefer_nearest=false',1);p.generation+=1
+        choice=w.decide(scene,'encounter')[0]
+        self.assertEqual((choice['targetGuid'],choice['engagerGuid'],choice['order']),
+            (str(TARGET+1),'5',['1','4','5']))
+        w.tick();self.assertEqual([g for g,r in p.events if r['enabled']],[1,4,5])
+        self.assertEqual(scene,before);self.assertEqual(w.sessions,{'1':'body-1','4':'body-4','5':'body-5'})
+        # Old max-mana cohort admission is deliberately stronger than base-mana continuation.
+        p=Party();w=p.worker();p.rpcs[4].self.update(baseManaKnown=True,baseMana=50,power=59)
+        w.tick();self.assertEqual(p.events,[])
+        p.source=p.source.replace('minimum_mana=60,mana_pool="maximum"','minimum_mana=45,mana_pool="base"',1)
+        p.generation+=1;w.tick();self.assertEqual([g for g,r in p.events if r['enabled']],[1,5,4])
+
+    def test_missing_export_or_invalid_source_has_no_repository_chooser_fallback(self):
+        for source in ('return {}','return {starter_spell=function() return {status="pending"} end}'):
+            p=Party();p.source=source;w=p.worker()
+            with self.assertRaises(cave.Error):w.tick()
+            self.assertEqual(p.events,[]);self.assertEqual(w.data['encounters'],[])
+        p=Party();p.faulted=True;w=p.worker()
+        with self.assertRaises(cave.Error):w.tick()
+        self.assertEqual(p.events,[])
+
+    def test_each_activation_rechecks_source_complete_cohort_and_body_after_reservation(self):
+        for mode in ('source','fault','health','visit','body'):
+            with self.subTest(mode=mode):
+                p=Party();w=p.worker();changed=[False]
+                def change(actor,method,params):
+                    rows=w.data['encounters']
+                    if changed[0] or not rows or not rows[0]['requests'] or method!='session.policy_source':return
+                    changed[0]=True
+                    if mode=='source':p.source+='\n-- actual same-body replacement\n';p.generation+=1
+                    elif mode=='fault':p.faulted=True
+                    elif mode=='health':p.rpcs[5].self['health']=94
+                    elif mode=='body':p.rpcs[5].session='replacement'
+                    else:
+                        original=p.rpcs[5].world
+                        p.rpcs[5].world=lambda params:dict(original(params),visitRevision='2')
+                p.hook=change;w.tick()
+                self.assertEqual(p.events,[],mode)
+                row=w.data['encounters'][0]
+                self.assertTrue(row['notDispatched']);self.assertEqual(row['requests']['1']['phase'],'not_dispatched')
+                self.assertFalse(row['requests']['1']['entered'])
+                # The durable local refusal is distinct from an entered unknown.
+                p.hook=None;p.rpcs[5].session='body-5';p.faulted=False;p.rpcs[5].self['health']=100
+                restored=p.worker(stored=copy.deepcopy(w.data));restored.tick()
+                self.assertEqual([g for g,r in p.events if r['enabled']],[1,5,4])
+
+    def test_later_support_resource_change_never_dispatches_engager_and_unknown_never_replays(self):
+        p=Party();w=p.worker()
+        def change(actor,method,params):
+            if actor.guid==1 and method=='buddy-actions.fargodeep_encounter' and params.get('enabled'):
+                p.rpcs[4].self['power']=59
+        p.hook=change;w.tick()
+        self.assertEqual([g for g,r in p.events if r['enabled']],[1])
+        self.assertTrue(w.done)
+        p.hook=None;p.rpcs[4].self['power']=100;p.events=[]
+        restored=p.worker(stored=copy.deepcopy(w.data));restored.tick()
+        self.assertFalse(any(r['enabled'] for _,r in p.events))
+
+
 class SearchActor(Actor):
     def __init__(self, party, guid):
         super().__init__(party, guid)
         self.self['movementFlagsKnown'] = True
-        self.actions['position'].update(cave.station(4), revision='1')
+        self.actions['position'].update(station(4), revision='1')
         self.target['present'] = False
         self.token = None
         self.mode = 'arrive'
@@ -515,7 +621,8 @@ class SearchActor(Actor):
         actor = self
         self.forks += 1
         class Route:
-            def call(self, method, params, timeout=None): return actor.route(method, params, timeout)
+            def call(self, method, params, timeout=None):
+                return actor.route(method, params, timeout) if method=='buddy-actions.travel_to' else actor.call(method,params,timeout)
         return Route()
 
     def call(self, method, params, timeout=None):
@@ -588,7 +695,7 @@ class CorridorSearchTests(unittest.TestCase):
         self.assertTrue(all(not a.actions['interactionOwner'] for a in p.rpcs.values()))
         # Actual post-arrival observed target enters the ordinary candidate flow.
         for a in p.rpcs.values():
-            a.target.update(cave.station(5), present=True)
+            a.target.update(station(5), present=True)
             a.target['x'] += 5
         w.tick()
         self.assertEqual([g for g, request in p.events if request['enabled']], [1, 5, 4])
@@ -610,7 +717,7 @@ class CorridorSearchTests(unittest.TestCase):
         p = SearchParty(); w = p.worker()
         p.rpcs[5].actions['position']['x'] += 4
         p.scan(w)
-        self.assertEqual({tuple(r[k] for k in ('x', 'y', 'z')) for _, _, r in p.routes()}, {cave.SEARCH_STATIONS[4]})
+        self.assertEqual({tuple(r[k] for k in ('x', 'y', 'z')) for _, _, r in p.routes()}, {STATIONS[4]})
         self.assertEqual(w.data['search']['cursor'], 4)
         p = SearchParty(); w = p.worker()
         for a in p.rpcs.values(): a.actions['position']['z'] += 100
@@ -699,7 +806,7 @@ class CorridorSearchTests(unittest.TestCase):
     def test_reserved_leg_restart_does_not_arm_even_if_new_target_visible(self):
         p = SearchParty(); w = p.worker(); p.scan(w)
         saved = copy.deepcopy(w.data); saved['search']['legs'][-1]['phase'] = 'reserved'
-        for a in p.rpcs.values(): a.target.update(cave.station(5), present=True)
+        for a in p.rpcs.values(): a.target.update(station(5), present=True)
         count = len(p.movement); resumed = p.worker(stored=saved); resumed.tick()
         self.assertTrue(resumed.done); self.assertEqual(p.events, []); self.assertEqual(len(p.movement), count)
 
@@ -709,7 +816,7 @@ class CorridorSearchTests(unittest.TestCase):
             abandonment=dict(kind='outcome_unknown_target_absent_all_three'))
         w.data['encounters'].append(copy.deepcopy(old)); p.scan(w)
         self.assertEqual(w.data['encounters'], [old])
-        for a in p.rpcs.values(): a.target.update(cave.station(5), present=True)
+        for a in p.rpcs.values(): a.target.update(station(5), present=True)
         w.tick(); self.assertEqual(p.events, [])
 
     def test_final_stop_before_route_threads_and_changed_endpoint_never_write(self):
@@ -885,10 +992,10 @@ class KnownSearchStopTests(unittest.TestCase):
 
     def test_existing_trigger_to_station11_arrival_sets_reverse_cursor_without_resending(self):
         p, saved = self.legacy_yielded_arrival(); leg = saved['search']['legs'][-1]
-        saved['search'].update(cursor=12, direction=1); leg['station'] = 11
+        saved['search'].update(cursor=12, direction=1); leg['station'] = 11;leg['goal']=station(11)
         for g, actor in p.rpcs.items():
-            leg['before'][str(g)].update(cave.station(12))
-            leg['after'][str(g)].update(cave.station(11))
+            leg['before'][str(g)].update(station(12))
+            leg['after'][str(g)].update(station(11))
             actor.actions['position'].update(leg['after'][str(g)])
         calls = len(p.routes()); w = p.worker(stored=saved); w.tick()
         self.assertFalse(w.done); self.assertEqual(len(p.routes()), calls)
@@ -1129,18 +1236,18 @@ class FreshCorridorReconnectTests(unittest.TestCase):
         self.assertEqual(leg['phase'],'arrived');self.assertEqual(leg['reanchor']['corpseTargetGuid'],TARGET)
         self.assertEqual(row,before)
         self.assertEqual(leg['station'],2)
-        self.assertEqual({tuple(v[k] for k in ('x','y','z')) for _,_,v in p.routes()[3:]},{cave.SEARCH_STATIONS[2]})
+        self.assertEqual({tuple(v[k] for k in ('x','y','z')) for _,_,v in p.routes()[3:]},{STATIONS[2]})
 
     def test_closed_arrived_cursor_reanchors_after_observed_normal_external_walk(self):
         p=SearchParty();w=p.worker();p.scan(w);old=copy.deepcopy(w.data['search']['legs'][0])
-        for a in p.rpcs.values():a.actions['position'].update(cave.station(8),revision='10')
+        for a in p.rpcs.values():a.actions['position'].update(station(8),revision='10')
         p.scan(w)
         self.assertFalse(w.done);self.assertEqual(w.data['search']['cursor'],8)
         self.assertEqual(w.data['search']['legs'][0],old)
         new=w.data['search']['legs'][-1]
         self.assertEqual(new['reanchor']['priorCursor'],5);self.assertEqual(new['station'],8)
         self.assertEqual(w.search_legs,2)
-        self.assertEqual(new['before']['1']['x'],cave.SEARCH_STATIONS[8][0])
+        self.assertEqual(new['before']['1']['x'],STATIONS[8][0])
 
     def test_unknown_scope_or_unbounded_origin_never_reanchors(self):
         for mode in ('reserved','yielded','too_far','no_closed_corpse'):
@@ -1149,7 +1256,7 @@ class FreshCorridorReconnectTests(unittest.TestCase):
                 if mode!='no_closed_corpse':p.scan(w)
                 if mode in ('reserved','yielded'):w.data['search']['legs'][-1]['phase']=mode
                 for a in p.rpcs.values():
-                    a.actions['position'].update(UPPER_CORPSE if mode=='no_closed_corpse' else cave.station(8),revision='20')
+                    a.actions['position'].update(UPPER_CORPSE if mode=='no_closed_corpse' else station(8),revision='20')
                     if mode=='too_far':a.actions['position']['x']=-9700
                 count=len(p.routes())
                 if mode in ('reserved','yielded'):w.tick()
@@ -1158,7 +1265,7 @@ class FreshCorridorReconnectTests(unittest.TestCase):
 
     def test_known_stopped_search_never_blocks_processing_a_new_owned_encounter(self):
         p=PriorityParty();w=p.worker();p.scan(w);p.recover()
-        for a in p.rpcs.values():a.target.update(cave.station(4),present=True);a.target['x']+=5
+        for a in p.rpcs.values():a.target.update(station(4),present=True);a.target['x']+=5
         w.tick();self.assertEqual(w.data['encounters'][0]['phase'],'active')
         p.kill();w.tick()
         self.assertEqual(w.data['encounters'][0]['phase'],'loot')
