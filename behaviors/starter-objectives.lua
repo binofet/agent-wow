@@ -1,7 +1,7 @@
 -- Starter mission objectives and practice lifecycle. The caller owns observed
 -- facts, exact native toggles, durable mutation reservations and receipt custody.
 local M = {}
-M.fargodeep_pull={minimum_health=95, minimum_mana=45, minimum_energy=90,stand_yards={[4]=3.5,[5]=28,[8]=33}}
+M.fargodeep_pull={minimum_health=95, minimum_mana=45, minimum_energy=90,stand_yards={[4]=3.5,[5]=28,[8]=33},quests={47,60},recheck_ms=250}
 local function array(v,max)
     if type(v)~="table" or #v>max then return false end
     local n=0
@@ -309,6 +309,168 @@ local function fargodeep_readiness(input)
     end
     return {kind="ready",spellId=0,selection=selection,standYards=stand}
 end
+
+-- The accepted policy owns the whole explicit encounter's goal, roles and
+-- lifecycle. The native caller supplies actual views and executes only the
+-- returned physical step; a new observation is required across every callback.
+function M.fargodeep_lifecycle(input)
+    local w=type(input)=="table" and input.workflow
+    local m=type(input)=="table" and input.mission
+    local stand,budget=0,0
+    local function out(kind,phase,pulled)
+        return {kind=kind,phase=phase,selection="fargodeep_pull_readiness",standYards=stand,pulled=pulled==true,validForMs=math.floor(budget)}
+    end
+    local function future(ms) if number(ms) and ms>=0 then budget=math.min(budget,ms) end end
+    local function motion_expiry(c)
+        local t=c.trajectory
+        if c.motionPositionKnown==true and type(t)=="table" and t.known==true and t.stopped~=true then
+            local age=tonumber(t.ageMs or "0")
+            if age<(t.durationMs or 0) then future(750-math.max(age,tonumber(c.positionAgeMs or "0")))
+            else future((t.durationMs or 0)+5000-age) end
+        end
+    end
+    local function stop(phase) return out("stop",phase,m and m.pulled) end
+    local function area(p)
+        return point(p) and (p.x or 0)>=-10000 and (p.x or 0)<=-9700 and (p.y or 0)>=50 and
+            (p.y or 0)<=320 and (p.z or 0)>=-10 and (p.z or 0)<=65
+    end
+    if type(w)~="table" or type(m)~="table" or not decimal(m.targetGuid) or m.targetGuid=="0" or
+       type(m.pulled)~="boolean" or (m.engagerGuid~="1" and m.engagerGuid~="4" and m.engagerGuid~="5") or
+       type(w.scene)~="table" or not uint(w.nearbyPlayerCount) or w.nearbyPlayerCount>64 or not array(w.scene.nearbyCreatures or {},32) or
+       not array(w.scene.selfQuestLog or {},25) or type(w.selfSafe)~="boolean" then return stop("observations_unavailable") end
+    local scene,target=w.scene,w.scene.requestedCreature
+    local self=((input.observation or {}).players or {})[input.selfGuid]
+    local classes={["1"]=5,["4"]=8,["5"]=4}
+    if not classes[input.selfGuid] or type(self)~="table" or self.guid~=input.selfGuid or not w.selfSafe or
+       self.mapKnown~=true or (self.mapId or 0)~=0 or self.classKnown~=true or self.classId~=classes[input.selfGuid] or
+       self.levelKnown~=true or not uint(self.level) or self.level<4 or self.level>10 or
+       not uint(self.health) or not uint(self.maxHealth) or self.maxHealth==0 or self.health>self.maxHealth or
+       self.speedsKnown~=true or not number(self.runSpeed) or math.abs(self.runSpeed-7)>.01 or
+       not area(w.clientPosition) then return stop("own_state_unknown_or_unsafe") end
+    local readiness=fargodeep_readiness(input)
+    stand=readiness.standYards
+    if not number(stand) or stand<=0 or stand>240 then return stop("readiness_policy_unavailable_or_changed") end
+    if not uint(M.fargodeep_pull.recheck_ms) or M.fargodeep_pull.recheck_ms>30000 then return stop("readiness_policy_unavailable_or_changed") end
+    budget=M.fargodeep_pull.recheck_ms
+    local rows=quest_rows({questLogKnown=scene.selfQuestLogKnown,questLog=scene.selfQuestLog})
+    local goals=ids(M.fargodeep_pull.quests,25)
+    if not goals or not next(goals) then return stop("readiness_policy_unavailable_or_changed") end
+    local active,needed=false,false
+    if rows then for q in pairs(goals) do
+        active=active or active_quest(rows[tonumber(q)])
+        needed=needed or incomplete(rows[tonumber(q)])
+    end end
+    if type(target)~="table" or target.guid~=m.targetGuid then return stop("target_unsafe_or_cast_failed") end
+    if target.aliveKnown==true and target.alive~=true and target.healthKnown==true and (target.health or 0)==0 and w.stage~="arm" then
+        return stop("target_death_observed")
+    end
+    if not active or not m.pulled and m.engagerGuid==input.selfGuid and not needed then return stop("own_quest_goal_complete_or_unknown") end
+    if w.targetGuidType~=0xf130 or w.targetGuidEntry~=target.entry or (target.entry~=40 and target.entry~=475) or
+       target.present~=true or target.mapKnown~=true or (target.mapId or 0)~=0 or target.levelKnown~=true or
+       not uint(target.level) or target.level<5 or target.level>7 or target.level>self.level+1 or
+       target.aliveKnown~=true or target.alive~=true or target.healthKnown~=true or not uint(target.health) or
+       not uint(target.maxHealth) or target.health==0 or target.health>target.maxHealth or (target.npcFlags or 0)~=0 or
+       target.unitFlagsKnown~=true or target.dynamicFlagsKnown~=true or bit(target.unitFlags2,1) or bit(target.dynamicFlags,0x20) or
+       w.failedTarget==true then return stop("target_unsafe_or_cast_failed") end
+    for _,mask in ipairs({2,0x80,0x100,0x10000,0x2000000,0x80000000}) do
+        if bit(target.unitFlags,mask) then return stop("target_unsafe_or_cast_failed") end
+    end
+    local p=w.targetPosition
+    if not area(p) or distance2(w.clientPosition,p)>35*35 or
+       w.targetPositionKnown~=true and w.targetPatrol~=true then
+        return stop("target_position_unavailable_or_outside_range")
+    end
+    if w.stage=="arm" and w.targetPositionKnown~=true then
+        local t=target.trajectory or {}
+        local endpoint={x=t.destinationX,y=t.destinationY,z=t.destinationZ}
+        if w.targetPatrol~=true or not point(endpoint) or distance2(w.clientPosition,endpoint)>35*35 then
+            return stop("target_position_unavailable_or_outside_range")
+        end
+    end
+    motion_expiry(target)
+    for _,other in ipairs(scene.nearbyCreatures or {}) do motion_expiry(other) end
+    local party=w.party
+    local group=type(party)=="table" and party.group
+    if type(group)~="table" or party.sessionId~=m.partySessionId or group.known~=true or group.inGroup~=true or
+       not array(group.members,40) or #group.members<3 then return stop("current_party_unknown_or_changed") end
+    if scene.owner and scene.owner.present==true then return stop("owner_returned") end
+    local members={}
+    for _,member in ipairs(group.members) do
+        if type(member)~="table" or not decimal(member.guid) or member.guid=="0" or #member.guid>15 or
+           #member.guid==15 and member.guid>"281474976710655" or members[member.guid]~=nil or
+           (member.self==true)~=(member.guid==input.selfGuid) then return stop("current_party_unknown_or_changed") end
+        members[member.guid]=member.online==true
+    end
+    local full=(input.observation or {}).players or {}
+    for guid,class in pairs(classes) do
+        local v=full[guid]
+        if members[guid]~=true or type(v)~="table" or w.safePlayers[guid]~=true or v.classKnown~=true or v.classId~=class or
+           v.levelKnown~=true or not uint(v.level) or v.level<4 or v.level>10 or not uint(v.maxHealth) or v.maxHealth==0 or
+           not uint(v.health) or v.health>v.maxHealth or bit(v.playerFlags,2) then return stop("companion_observation_unknown_or_unsafe") end
+        local pos=guid==input.selfGuid and w.clientPosition or v
+        if distance2(w.clientPosition,pos)>35*35 then return stop("companions_outside_support_range") end
+    end
+    -- Extra actual group members do not acquire a role in this explicit task.
+    members={["1"]=true,["4"]=true,["5"]=true}
+    if w.stage=="arm" then return out("arm","armed_waiting_for_designated_engager",false) end
+    if w.authorized~=true then return stop("authorization_expired") end
+    local victim=target.attackVictimKnown==true and target.attackVictimGuid or "0"
+    if victim~="0" and not members[victim] or bit(target.dynamicFlags,4) and not bit(target.dynamicFlags,8) then
+        return stop("target_claimed_or_attacking_foreign_player")
+    end
+    for _,other in ipairs(scene.nearbyCreatures or {}) do
+        if other.guid~=m.targetGuid and other.present==true and other.aliveKnown==true and other.alive==true and
+           other.attackVictimKnown==true and members[other.attackVictimGuid] and recent_age(other.attackAgeMs or "0") then
+            return stop("additional_attacker_observed")
+        end
+    end
+    if w.targetPositionKnown~=true then return out("hold","waiting_for_fresh_patrol_position",m.pulled) end
+    local age=tonumber(target.attackAgeMs or "0")
+    local engaged=members[victim]==true and age and age<=30000 and full[victim] and (bit(full[victim].unitFlags,0x80000) or age<=5000)
+    if engaged then future((bit(full[victim].unitFlags,0x80000) and 30000 or 5000)-age) end
+    local pulled=m.pulled or engaged
+    if not engaged and m.engagerGuid~=input.selfGuid then return out("hold","waiting_for_actual_party_attack_start",pulled) end
+    if not engaged and not pulled then
+        for guid,class in pairs(classes) do
+            local v=full[guid]
+            local pos=guid==input.selfGuid and w.clientPosition or v
+            if distance2(pos,p)>28*28 then return out("hold","companions_outside_support_range",pulled) end
+            if v.healthKnown~=true or (v.health or 0)==0 or bit(v.unitFlags,0x80000) or v.powerKnown~=true or
+               (class==4 and v.powerType~=3 or class~=4 and (v.powerType or 0)~=0) then
+                return out("hold","companions_recovering_before_pull",pulled)
+            end
+        end
+        if bit(target.unitFlags,0x80000) or (target.dynamicFlags or 0)~=0 or victim~="0" or
+           target.targetKnown~=true or (target.targetGuid or "0")~="0" then return stop("initial_target_not_idle_unclaimed") end
+        for _,other in ipairs(scene.nearbyCreatures or {}) do
+            local pos=other.motionPositionKnown==true and (other.motionPosition or other) or nil
+            local near=pos and distance2(pos,p)<8*8
+            if not pos and other.patrolKnown==true then
+                local motion=other.trajectory
+                local age,duration=tonumber(motion.ageMs or "0"),motion.durationMs
+                local endpoint={x=motion.destinationX,y=motion.destinationY,z=motion.destinationZ}
+                near=math.sqrt(distance2(other,p))<8+7*age/1000 and math.sqrt(distance2(endpoint,p))<8+7*math.abs(duration-age)/1000
+                local start_reach=(math.sqrt(distance2(other,p))-8)*1000/7
+                local end_reach=(math.sqrt(distance2(endpoint,p))-8)*1000/7
+                future(start_reach-age);future(duration-end_reach-age);future(duration+end_reach-age)
+            elseif not pos then near=other.positionKnown==true and point(other) and distance2(other,p)<8*8 end
+            if other.guid~=m.targetGuid and other.present==true and other.aliveKnown==true and other.alive==true and
+               (other.npcFlags or 0)==0 and near then return out("hold","waiting_for_isolated_kobold",pulled) end
+        end
+        if readiness.kind~="ready" then return out("hold","companions_recovering_before_pull",pulled) end
+    end
+    if self.classId==5 and w.learnedHealing~=true then return stop("priest_healing_intent_required") end
+    if w.stage=="tick" and w.castPending==true then return out("hold","waiting_for_actual_cast_result",pulled) end
+    if w.stage=="tick" and w.autoAttackUnconfirmed==true then return out("hold","waiting_for_server_attack_stop",pulled) end
+    if m.engagerGuid==input.selfGuid and (self.classId==4 and not pulled or distance2(w.clientPosition,p)>stand*stand) then
+        if w.routeKnown~=true or not pulled and w.routeTargetDrift>.25 then return out("plan","waiting_for_verified_route",pulled) end
+        if distance2(w.clientPosition,p)>stand*stand or w.routeRemaining>stand or w.routeDirect~=true then
+            return out("approach","approaching_designated_kobold_on_verified_route",pulled)
+        end
+    end
+    if not engaged and pulled then return out("hold","waiting_for_actual_party_attack_start",pulled) end
+    return out("attack",engaged and "fighting_actual_bound_kobold" or "waiting_for_class_gate",pulled)
+end
 local function practice(input,active)
     local a=input.actions or {}
     if a.practicing==true then
@@ -387,7 +549,10 @@ function M.decide(input)
     if type(input)~="table" then return invalid() end
     if input.selection=="practice_lifecycle" then return M.practice_lifecycle(input) end
     if input.selection=="coldridge_lifecycle" then return M.coldridge_lifecycle(input) end
-    if input.selection=="fargodeep_pull_readiness" then return fargodeep_readiness(input) end
+    if input.selection=="fargodeep_pull_readiness" then
+        if input.workflow then return M.fargodeep_lifecycle(input) end
+        return fargodeep_readiness(input)
+    end
     local active,desired,confirmed=ids(input.activeQuestIds,25),ids(input.desiredQuestIds,25),ids(input.confirmedQuestIds,3)
     if not active or not desired or not confirmed or not decimal(input.selfGuid) or type(input.autonomous)~="boolean" then return invalid() end
     local missing,exact={},true
