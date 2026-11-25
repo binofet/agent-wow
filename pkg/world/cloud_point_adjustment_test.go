@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -306,7 +307,7 @@ func TestCloudPointPreservesUrgentInterruptApproach(t *testing.T) {
 }
 
 func TestCloudPointUsesOnlyAcknowledgedExistingRoleGroundWriter(t *testing.T) {
-	for _, kind := range []string{"owned", "unknown_hold", "foreign", "changed_visit"} {
+	for _, kind := range []string{"owned", "unknown_hold", "foreign", "changed_visit", "matching_estimate", "unrelated_estimate"} {
 		t.Run(kind, func(t *testing.T) {
 			p, o := cloudPointPolicy(t, "function()return {{x=2,y=0,z=0,radiusYards=5,expiresAtMs=120000}} end")
 			addFallbackTarget(o, fallbackNPC, 0, 100)
@@ -345,9 +346,38 @@ func TestCloudPointUsesOnlyAcknowledgedExistingRoleGroundWriter(t *testing.T) {
 			}
 			d = cloudPointStep(t, p, o, 100100)
 			a, _ = d.Output["action"].(map[string]any)
-			if kind == "owned" {
+			if kind == "owned" || kind == "matching_estimate" || kind == "unrelated_estimate" {
 				if a["capability"] != "move_body" || d.Output["cloudAdjustment"].(map[string]any)["existingRoleWriter"] != true {
 					t.Fatal("known own role could not use original ground writer", d.Output)
+				}
+				if kind == "matching_estimate" || kind == "unrelated_estimate" {
+					first := a
+					id, e = p.host.ReserveAction(d)
+					if e != nil {
+						t.Fatal(e)
+					}
+					_, e = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionSettledUnverified, Payload: map[string]any{"capability": "move_body", "self_guid": "4", "visit_id": "1", "sequence_id": first["sequenceId"], "phase": "body_input_written", "transport_written": true}}})
+					if e != nil {
+						t.Fatal(e)
+					}
+					sequence, _ := strconv.ParseUint(first["sequenceId"].(string), 10, 64)
+					o.Players["4"].PositionEstimated = true
+					o.Players["4"].X = -1.4
+					o.Navigation.BodyMovement = &actionsv1.BodyMovementState{SequenceId: sequence, VisitId: 1, Phase: "body_input_written", TransportWritten: true, PositionEstimated: true, X: -1.4}
+					if kind == "unrelated_estimate" {
+						o.Navigation.BodyMovement.SequenceId++
+					}
+					d = cloudPointStep(t, p, o, 100200)
+					a, _ = d.Output["action"].(map[string]any)
+					if kind == "unrelated_estimate" {
+						if d.Output["action"] != nil {
+							t.Fatal("borrowed unrelated estimated body witness", d.Output)
+						}
+						return
+					}
+					if a["capability"] != "move_body" || a["sequenceId"] == first["sequenceId"] {
+						t.Fatal("correlated own body could not continue exiting disk", d.Output)
+					}
 				}
 				id, e = p.host.ReserveAction(d)
 				if e != nil {

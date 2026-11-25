@@ -1090,13 +1090,20 @@ local function cloud_point_step(obs,frame,sequence,out,row,status,points)
     local hold,ground=state.rangedHold,state.rangedGround
     local self=(obs.players or {})[obs.selfGuid]
     if not row or row.origin~="learned_prior" or not status or status.phase~="supported_ranged_option_unavailable" or
-       out.action or #frame.pending~=0 or not self or self.positionEstimated==true or
+       out.action or #frame.pending~=0 or not self or
        not hold or hold.owner~="ranged:"..row.id or hold.sessionId~=obs.sessionId or hold.selfGuid~=obs.selfGuid or
        hold.visitId~=obs.visitId or hold.mapId~=obs.mapId or hold.operation or hold.uncertain or hold.released or
        type(hold.token)~="string" or #hold.token==0 or
        ground and (ground.operation or ground.uncertain or ground.awaiting or ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or ground.id~=row.id) then return false end
     local from=movement and movement.current_pose(self)
     if not from then return false end
+    if self.positionEstimated==true then
+        local body=(obs.navigation or {}).bodyMovement
+        if not ground or not ground.observedSequence or not body or body.sequenceId~=ground.observedSequence or
+           body.visitId~=obs.visitId or body.transportWritten~=true or body.positionEstimated~=true or
+           (body.phase~="body_input_written" and body.phase~="body_settled_written") or
+           math.abs(from.x-(body.x or 0))>.0001 or math.abs(from.y-(body.y or 0))>.0001 or math.abs(from.z-(body.z or 0))>.0001 then return false end
+    end
     if not ground then
         local key=row.id..":"..tostring(from.x)..":"..tostring(from.y)..":"..tostring(from.z)
         ground={sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,id=row.id,key=key,positionKey=key,blocked={}}
