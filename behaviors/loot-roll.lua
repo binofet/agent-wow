@@ -193,7 +193,8 @@ function M.decide(frame,gear)
     local waiting
     for _,o in ipairs(ordered) do
         if millis(o.remainingMs)>0 and not state.reservations[key(o)] then
-            local result,comparisonReason=classification(view,o,templates,gear)
+            local result,comparisonReason="need_not_offered","need_not_offered"
+            if bit(o.offeredMask,1) then result,comparisonReason=classification(view,o,templates,gear) end
             local timedOut=false
             if result=="metadata_pending" then
                 local now=frame.clock and frame.clock.monotonicMs
@@ -202,10 +203,14 @@ function M.decide(frame,gear)
                 if type(now)~="number" or now<0 or now-now~=0 or type(delay)~="number" or delay<=0 or delay-delay~=0 or
                    prior and now<prior.at then result="unknown"
                 else
-                    prior=prior or {at=now};state.metadataWait[key(o)]=prior
-                    state.sessionId,state.selfGuid=view.sessionId,view.selfGuid
+                    prior=prior or {at=now}
                     local left=delay-(now-prior.at)
-                    if left>0 then waiting={phase="waiting_for_complete_metadata",classification=result,rollGuid=o.rollGuid,retryAfterMs=left}
+                    if left>0 and millis(o.remainingMs)<=left then
+                        result="unknown";comparisonReason="metadata_window_would_reach_offer_expiry"
+                    elseif left>0 then
+                        state.metadataWait[key(o)]=prior
+                        state.sessionId,state.selfGuid=view.sessionId,view.selfGuid
+                        waiting={phase="waiting_for_complete_metadata",classification=result,rollGuid=o.rollGuid,retryAfterMs=left}
                     else result="unknown";timedOut=true end
                 end
             end

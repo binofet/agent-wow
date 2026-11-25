@@ -244,6 +244,32 @@ end}
         self.view['metadata']=[dict(itemId=5000,pending=True,reason='waiting_for_complete_server_item_query')]
         self.assertEqual(self.tick(clock=dict(monotonicMs=0))['action']['choice'],'disenchant')
 
+    def test_without_offered_need_neither_comparison_nor_cold_query_delays_role_vote(self):
+        for actor,mask,want in (('4',8,'disenchant'),('4',1,'pass'),('5',9,'pass')):
+            for pending in (False,True):
+                with self.subTest(actor=actor,mask=mask,pending=pending):
+                    self.setUp();self.view['selfGuid']=self.view['player']['guid']=actor
+                    self.view['offers'][0]['offeredMask']=mask
+                    self.source=self.compose('return {preview=function() error("comparison not required") end}')
+                    if pending:self.view['metadata']=[dict(itemId=5000,pending=True,reason='waiting_for_complete_server_item_query')]
+                    decision=self.tick(clock=dict(monotonicMs=0))
+                    self.assertEqual(decision['action']['choice'],want)
+                    self.assertEqual(decision['lootRoll']['classification'],'need_not_offered')
+                    self.assertFalse(self.checkpoint['data']['metadataWait'])
+
+    def test_cold_query_window_never_consumes_remaining_offer_lifetime(self):
+        self.view['metadata']=[dict(itemId=5000,pending=True,reason='waiting_for_complete_server_item_query')]
+        self.view['offers'][0]['remainingMs']='25'
+        decision=self.tick(clock=dict(monotonicMs=0))
+        self.assertEqual(decision['action']['choice'],'disenchant')
+        self.assertEqual(decision['lootRoll']['comparisonReason'],'metadata_window_would_reach_offer_expiry')
+        self.setUp()
+        self.view['metadata']=[dict(itemId=5000,pending=True,reason='waiting_for_complete_server_item_query')]
+        self.view['offers'][0]['remainingMs']='26'
+        self.assertNotIn('action',self.tick(clock=dict(monotonicMs=0)))
+        self.view['offers'][0]['remainingMs']='24'
+        self.assertEqual(self.tick(clock=dict(monotonicMs=1))['action']['choice'],'disenchant')
+
     def test_cold_metadata_window_never_rebinds_to_another_body(self):
         self.view['metadata']=[dict(itemId=5000,pending=True,reason='waiting_for_complete_server_item_query')]
         self.assertNotIn('action',self.tick(clock=dict(monotonicMs=0)))
