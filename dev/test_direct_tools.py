@@ -2132,6 +2132,22 @@ return {on_event=function(e) count=count+e.value.amount;return true end,
         self.assertFalse(denied['ok']);self.assertEqual(self.tools.unknown_receipt,before)
         self.assertFalse(self.rpc.writes)
 
+    def test_synthetic_sequence_snapshots_reused_nested_decision_tables_per_step(self):
+        self.rpc.source="""local count=0
+local reused={output={count=0}}
+return {on_event=function(e) count=count+2;return true end,
+ decide=function(f) reused.output.count=count;return reused end}
+"""
+        self.revision=checksum(self.rpc.source)
+        result=self.tools.dispatch('policy_patch',dict(expected_revision=self.revision,
+            edits=[dict(old='count=count+2',new='count=count+(2)')],
+            test=dict(kind='sequence',steps=[dict(events=[dict(kind='observation',sequence='1',value={})]),
+                                            dict(events=[dict(kind='observation',sequence='2',value={})])])) )
+        self.assertTrue(result['ok'],result);view=result['result']
+        self.assertTrue(view['tested']['valid'],view)
+        self.assertEqual([row['output']['count'] for row in view['tested']['decision']['decisions']],[2,4])
+        self.assertFalse(view['applied']);self.assertFalse(self.rpc.writes)
+
     def test_existing_self_edit_lock_collision_cannot_apply(self):
         self.tools.dispatch('policy_show',{})
         lock_path=self.rig.edit.DATA/self.rpc.guid/'edit.lock'

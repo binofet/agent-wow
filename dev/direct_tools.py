@@ -828,6 +828,14 @@ class DirectTools:
         # Existing pure evaluator, one fresh VM, no actual Session/controller or
         # action reservation. Source remains intact inside a lexical closure.
         wrapped = b"local candidate=(function()\n" + source + b"\nend)()\n" + b"""
+local function snapshot(value,seen)
+    if type(value)~='table' then return value end
+    seen=seen or {}
+    if seen[value] then return seen[value] end
+    local copy={};seen[value]=copy
+    for key,item in pairs(value) do copy[key]=snapshot(item,seen) end
+    return copy
+end
 return {decide=function(spec)
     local results={}
     for _,step in ipairs(spec.steps) do
@@ -840,7 +848,7 @@ return {decide=function(spec)
         for key in pairs(decision) do
             assert(type(key)=='string','decide must return a JSON object table')
         end
-        results[#results+1]=decision
+        results[#results+1]=snapshot(decision)
     end
     return {decisions=results}
 end}
