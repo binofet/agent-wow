@@ -1159,7 +1159,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             self.assertIs(prepared["current_request"]["repair_requests_allowed"], False)
             tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
             self.assertEqual(set(tools), {"context_read", "chat_read", "session_catalog", "read_observation", "party_invite",
-                "gameplay_command", "request_buffs", "spell_inspect"})
+                "gameplay_command", "request_buffs", "spell_inspect", "find_usable_items"})
             self.assertNotIn("final_reply", tools)
             self.assertFalse(brain.model_selection()["codexInvoked"])
 
