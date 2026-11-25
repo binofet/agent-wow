@@ -290,14 +290,7 @@ func TestColdridge182EligibilityKeepsExistingIdentityAndLivingSafetyGates(t *tes
 	}
 }
 
-func TestColdridge182DoesNotChangeLegacyScalarProfilesOrLogRules(t *testing.T) {
-	for _, test := range []struct{ quest, level, health, faction uint32 }{{179, 0, 0, 0}, {170, 2, 55, 36}, {183, 3, 71, 189}, {182, 0, 0, 0}} {
-		g := coldridgePracticeGoal{questID: test.quest}
-		level, health, faction := g.creatureProfile()
-		if level != test.level || health != test.health || faction != test.faction {
-			t.Fatal("legacy scalar profile changed or hid182's dual tuples", test, level, health, faction)
-		}
-	}
+func TestColdridge182DoesNotChangeLegacyLogRules(t *testing.T) {
 	for _, quest := range []uint32{179, 170, 183} {
 		w := cold182GoalWorld(1)
 		w.SelfQuestLog[1].QuestId = quest

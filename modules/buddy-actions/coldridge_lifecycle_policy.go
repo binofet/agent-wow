@@ -76,9 +76,8 @@ func decodeColdridgeLifecycle(output map[string]any) (coldridgeLifecycleDecision
 	if out.Kind == "start" && (out.LeaseMS == 0 || out.LeaseMS > 600000) || out.Kind != "start" && out.LeaseMS != 0 {
 		return out, false
 	}
-	goal := coldridgePracticeGoal{questID: out.QuestID}
 	for i, entry := range out.NeededEntries {
-		if !goal.supportsEntry(entry) || i > 0 && entry == out.NeededEntries[0] {
+		if entry == 0 || i > 0 && entry == out.NeededEntries[0] {
 			return out, false
 		}
 	}
@@ -120,7 +119,7 @@ func (s *Service) coldridgeLifecycleFacts(w *worldv1.SnapshotResponse, stage str
 			return nil
 		}
 		p, known, _ := creaturePosition(c)
-		row["eligible"], row["positionWithin"], row["unclaimed"] = goal.eligible(c, w.Self), known && goal.contains(p) && goal.positionEvidenceWithin(c), unclaimedColdridgePull(c)
+		row["physicalAvailable"], row["positionWithin"], row["unclaimed"] = coldridgeCreatureAvailable(c, w.Self), known && goal.contains(p) && goal.positionEvidenceWithin(c), unclaimedColdridgePull(c)
 		return row
 	}
 	nearby := make([]any, 0, len(w.NearbyCreatures))
@@ -297,15 +296,6 @@ func (g *coldridgePracticeGoal) applyLifecycle(out coldridgeLifecycleDecision) {
 	g.questID, g.counts, g.needed = out.QuestID, [2]uint32{out.Counts[0], out.Counts[1]}, out.Needed
 	g.neededEntries = [2]uint32{}
 	copy(g.neededEntries[:], out.NeededEntries)
-}
-
-func (s *Service) observeColdridgeGoalLocked(ctx context.Context, w *worldv1.SnapshotResponse) (bool, bool) {
-	out, _, owned := s.coldridgeLifecycleLocked(ctx, w, "observe")
-	if !owned || !out.Valid {
-		return false, false
-	}
-	s.coldridgeGoal.applyLifecycle(out)
-	return out.Active, out.Needed
 }
 
 func (s *Service) pauseColdridgeLifecycleLocked(ctx context.Context, binding practiceLifecycleBinding) {

@@ -216,6 +216,14 @@ func evaluateDisposalProduction(t *testing.T, source string, frame map[string]an
 
 func evaluateDisposalProductionWithInitializationResource(t *testing.T, source string, frame map[string]any, initializationResource bool) (map[string]any, error) {
 	t.Helper()
+	return evaluateDisposalProductionMode(t, source, frame, initializationResource, "")
+}
+
+func evaluateDisposalProductionMode(t *testing.T, source string, frame map[string]any, initializationResource bool, mode string) (map[string]any, error) {
+	t.Helper()
+	if mode != "" && mode != "evaluate-runtime" {
+		t.Fatal("unsupported production evaluator proof mode", mode)
+	}
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -265,7 +273,11 @@ func evaluateDisposalProductionWithInitializationResource(t *testing.T, source s
 	ctx, cancel := context.WithTimeout(context.Background(), disposalProcessLimit)
 	defer cancel()
 	// No execution/value/source override, retry, shell or validation mode.
-	command := exec.CommandContext(ctx, binary, "-source", path)
+	args := []string{"-source", path}
+	if mode != "" {
+		args = append(args, "-mode", mode)
+	}
+	command := exec.CommandContext(ctx, binary, args...)
 	command.Dir, command.Stdin, command.WaitDelay = root, bytes.NewReader(input), time.Second
 	out, diagnostic := &disposalBoundedOutput{limit: MaxJSONBytes + 1}, &disposalBoundedOutput{limit: 8192}
 	command.Stdout, command.Stderr = out, diagnostic

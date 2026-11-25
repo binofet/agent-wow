@@ -177,7 +177,7 @@ func practiceLifecycleCreatureFacts(c *worldv1.CreatureState) map[string]any {
 	row := map[string]any{"guid": strconv.FormatUint(c.Guid, 10), "entry": c.Entry, "present": c.Present,
 		"mapKnown": c.MapKnown, "mapId": c.MapId, "positionKnown": c.PositionKnown,
 		"x": c.X, "y": c.Y, "z": c.Z, "orientation": c.Orientation, "positionRevision": strconv.FormatUint(c.PositionRevision, 10),
-		"levelKnown": c.LevelKnown, "level": c.Level, "aliveKnown": c.AliveKnown, "alive": c.Alive,
+		"factionTemplate": c.FactionTemplate, "levelKnown": c.LevelKnown, "level": c.Level, "aliveKnown": c.AliveKnown, "alive": c.Alive,
 		"healthKnown": c.HealthKnown, "health": c.Health, "maxHealth": c.MaxHealth, "npcFlags": c.NpcFlags,
 		"unitFlagsKnown": c.UnitFlagsKnown, "unitFlags": c.UnitFlags, "unitFlags2": c.UnitFlags_2,
 		"dynamicFlagsKnown": c.DynamicFlagsKnown, "dynamicFlags": c.DynamicFlags,
