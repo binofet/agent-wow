@@ -2,7 +2,6 @@ package buddyloot
 
 import (
 	"context"
-	"math"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -86,7 +85,7 @@ func stoppedLootLease(a *actionsv1.State) bool {
 
 func (s *Service) openingCapacity(ctx context.Context) *worldv1.SnapshotResponse {
 	baseline := &worldv1.SnapshotResponse{}
-	if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), baseline) != nil || !s.exactCorpse && !ownKnownFreeSlot(baseline, s.selfGUID) {
+	if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, baseline) != nil || !s.exactCorpse && !ownKnownFreeSlot(baseline, s.selfGUID) {
 		s.pauseForCapacity()
 		s.finish(ctx)
 		return nil
@@ -100,25 +99,8 @@ func (s *Service) openingCapacity(ctx context.Context) *worldv1.SnapshotResponse
 		s.finish(ctx)
 		return nil
 	}
-	// Retain progress already seen by this operation before a later response can
-	// regress it. This is pure validation against the same bound quest and GUID.
-	if s.questColdridge && !s.coldridgeGoal.context(baseline, preliminary.Position, s.selfGUID, s.pendingGUID()) {
-		s.state.Reason = "coldridge_loot_scope_changed_before_final_observation"
-		s.finish(ctx)
-		return nil
-	}
-	if s.questFargodeep && (!s.fargodeepPartyCurrent(ctx) || !fargodeepLootContext(baseline, preliminary, s.selfGUID, s.pendingGUID())) {
-		s.state.Reason = "fargodeep_loot_scope_changed_before_final_observation"
-		s.finish(ctx)
-		return nil
-	}
 	if s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", Token: s.token, LeaseMs: 15000}, lease) != nil || lease.Token != s.token || !stoppedLootLease(lease.State) {
 		s.state.Reason = "loot_exact_owned_stopped_lease_required_before_open"
-		s.finish(ctx)
-		return nil
-	}
-	if s.questFargodeep && !s.fargodeepPartyCurrent(ctx) {
-		s.state.Reason = "fargodeep_party_changed_before_final_observation"
 		s.finish(ctx)
 		return nil
 	}
@@ -126,7 +108,7 @@ func (s *Service) openingCapacity(ctx context.Context) *worldv1.SnapshotResponse
 	// from this response, against the renewed stopped position. A newer actual
 	// self position invalidates that position, even if the target remains near it.
 	w := &worldv1.SnapshotResponse{}
-	if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), w) != nil || !s.exactCorpse && !ownKnownFreeSlot(w, s.selfGUID) {
+	if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, w) != nil || !s.exactCorpse && !ownKnownFreeSlot(w, s.selfGUID) {
 		s.pauseForCapacity()
 		s.finish(ctx)
 		return nil
@@ -159,33 +141,5 @@ func (s *Service) openingContext(w *worldv1.SnapshotResponse, a *actionsv1.State
 	if s.exactCorpse && s.corpseRequest != nil {
 		return exactCorpseCurrent(s.corpseRequest.request, w, a)
 	}
-	if s.questWolf && !wolfQuestContext(w, a.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(w, a.Position, s.selfGUID, s.pendingGUID()) {
-		return false
-	}
-	if s.questFargodeep && !fargodeepLootSelection(w, a, s.selfGUID, s.pendingGUID()) {
-		return false
-	}
-	if !s.automaticCorpseContext(w, a) && !s.questWolf && !s.questColdridge && !s.questFargodeep {
-		p, owner := a.Position, w.Owner
-		if !activeOwnerReady(w) || p == nil || !p.Known || !p.MapKnown || !owner.MapKnown || owner.MapId != p.MapId || !owner.PositionKnown {
-			return false
-		}
-		distance := math.Pow(float64(p.X-owner.X), 2) + math.Pow(float64(p.Y-owner.Y), 2) + math.Pow(float64(p.Z-owner.Z), 2)
-		if math.IsNaN(distance) || math.IsInf(distance, 0) || distance > 30*30 {
-			return false
-		}
-	}
-	if len(w.LootableCorpses) > 64 {
-		return false
-	}
-	var corpse *worldv1.CreatureState
-	for _, c := range w.LootableCorpses {
-		if c != nil && c.Guid == s.pendingGUID() {
-			if corpse != nil || s.questWolf && c.Entry != 299 || s.questColdridge && !s.coldridgeGoal.matchesCorpse(c) {
-				return false
-			}
-			corpse = c
-		}
-	}
-	return eligible(w.Self, a.Position, corpse)
+	return false
 }

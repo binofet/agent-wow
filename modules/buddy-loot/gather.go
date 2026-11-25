@@ -132,13 +132,6 @@ func (s *Service) pendingGUID() uint64 {
 	return s.state.PendingCorpseGuid
 }
 
-// A timed-out opening has issued no Autostore, hence no old GUID-less item or
-// slot receipt can belong to this attempt. Cancel/release its exact source and
-// keep it in gatherSeen. Once a window was accepted, retain the fail-closed
-// timeout behavior because later item/slot receipts cannot identify a source.
-func (s *Service) gatherOpeningTimeoutRecoverable() bool {
-	return s.questGather && s.state.LastGather != nil && !s.state.LastGather.LootWindowObserved && !s.state.LastGather.ItemPushObserved
-}
 func (s *Service) observeGatherQuest(w *worldv1.SnapshotResponse) {
 	r := s.state.LastGather
 	recipe := s.boundHarvestRecipe()
