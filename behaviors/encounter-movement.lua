@@ -159,6 +159,84 @@ end
 
 M.current_pose=pose
 
+-- Generic local adjustment only. The agent owns point production/deduplication
+-- in cloud_points; these are current-scope circles, not a native cloud sensor.
+-- No route/lease/controller is created. An ordinary bounded body input uses
+-- the same writer/physics checks and leaves the normal follow intent enabled.
+function M.adjust_cloud_points(frame,obs,sequence,out,points)
+    if type(points)~="table" or #frame.pending~=0 then return false end
+    local self=(obs.players or {})[obs.selfGuid]
+    local nav=obs.navigation or {}
+    if nav.bodyMovementSupported~=true or nav.motionUnconfirmed==true or
+       type(nav.movementOwner)~="table" or nav.movementOwner.active==true or
+       not self or self.present~=true or self.aliveKnown~=true or self.alive~=true or
+       self.positionKnown~=true or self.positionInferred==true or self.mapKnown~=true or self.mapId~=obs.mapId or
+       self.movementKnown~=true or not number(self.x) or not number(self.y) or not number(self.z) or
+       not number(self.orientation or 0) then return false end
+    local cap=out.action and out.action.capability
+    if cap and cap~="approach_target" and cap~="offense" and cap~="melee_start" then return false end
+    local now=frame.clock and frame.clock.unixMs
+    if not number(now) then return false end
+    local target=out.followFormation or out.action and (obs.targets or {})[out.action.targetGuid]
+    local ux,uy=math.cos(self.orientation or 0),math.sin(self.orientation or 0)
+    if target and number(target.x) and number(target.y) then
+        local dx,dy=target.x-self.x,target.y-self.y
+        local d=math.sqrt(dx*dx+dy*dy)
+        if d>0 then ux,uy=dx/d,dy/d end
+    end
+    local length=2.8 -- entire200ms input at the existing native maximum14yd/s
+    local rx,ry,nearest,nx,ny=0,0,nil,nil,nil
+    local hit=false
+    -- One linear pass, no all-or-nothing point-count cutoff. Cheap local
+    -- filtering keeps dense20s emitter output useful, even a late underfoot
+    -- point. The ordinary Lua VM's existing execution/memory budgets apply.
+    for _,p in ipairs(points) do
+        -- Scope and emission/deduplication belong to the agent's producer.
+        -- Expiry is absolute Unixms: reading a point never extends it.
+        if type(p)=="table" and p.radiusYards==5 and number(p.expiresAtMs) and
+           p.expiresAtMs>now and p.expiresAtMs<=now+20000 and
+           number(p.x) and number(p.y) and number(p.z) and math.abs(p.x-self.x)<7.8 and math.abs(p.y-self.y)<7.8 and math.abs(p.z-self.z)<5 then
+            local dx,dy=self.x-p.x,self.y-p.y
+            local projection=math.max(0,math.min(length,-dx*ux-dy*uy))
+            local cx,cy=dx+projection*ux,dy+projection*uy
+            local dz=self.z-p.z
+            local d2=dx*dx+dy*dy
+            if d2+dz*dz<25 or cx*cx+cy*cy+dz*dz<25 then
+                hit=true
+                local d=math.sqrt(d2)
+                local vx,vy=dx,dy
+                if d2>=25 then
+                    vx,vy=-uy,ux
+                    if vx*dx+vy*dy<0 then vx,vy=-vx,-vy end
+                    d=1
+                end
+                if d<.000001 then vx,vy=-uy,ux;d=1 end
+                local weight=1/math.max(d,.25)
+                rx,ry=rx+vx/d*weight,ry+vy/d*weight
+                if not nearest or d2<nearest then nearest,nx,ny=d2,vx/d,vy/d end
+            end
+        end
+    end
+    if not hit then return false end
+    -- Inside overlapping circles a useful exit may initially approach one
+    -- redundant point. Do not veto every improving escape per historical point.
+    if rx*rx+ry*ry<.000001 then rx,ry=nx,ny end
+    local best,dot
+    for i=0,15 do
+        local angle=i*.392699081698724
+        local value=rx*math.cos(angle)+ry*math.sin(angle)
+        if not dot or value>dot then best,dot=angle,value end
+    end
+    local bearing=best-(self.orientation or 0)
+    while bearing>3.141592653589793 do bearing=bearing-6.283185307179586 end
+    while bearing< -3.141592653589793 do bearing=bearing+6.283185307179586 end
+    out.action={capability="move_body",sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,
+        observationSequence=sequence,sequenceId=sequence,bearingRadians=bearing,durationMs=200,jump=false}
+    out.followFormation=nil;out.portalCatchup=nil
+    out.cloudAdjustment={phase="local_point_repulsion",effectVerified=false,referencePoseEstimated=self.positionEstimated==true}
+    return true
+end
+
 local rejected_route = {follow_navigation_unavailable=true,follow_navigation_invalid_step=true,
     follow_navigation_invalid_target=true}
 local function recovery_probe(obs,sequence,key,phase,goal)
