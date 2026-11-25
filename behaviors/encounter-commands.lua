@@ -532,7 +532,7 @@ local function import_state(saved)
         end
     end
     local hold=saved.data.rangedHold
-    if hold~=nil and (type(hold)~="table" or type(hold.owner)~="string" or type(hold.sessionId)~="string" or not guid(hold.selfGuid) or type(hold.untilUnixMs)~="number" or hold.token~=nil and type(hold.token)~="string") then return false end
+    if hold~=nil and (type(hold)~="table" or type(hold.owner)~="string" or type(hold.sessionId)~="string" or not guid(hold.selfGuid) or type(hold.untilUnixMs)~="number" or hold.token~=nil and type(hold.token)~="string" or hold.followScope~=nil and (type(hold.followScope)~="string" or #hold.followScope==0 or #hold.followScope>512)) then return false end
     state = saved.data
     return true
 end
@@ -653,6 +653,15 @@ local function ranged_friendly_support(obs,action)
     local d2=dx*dx+dy*dy+dz*dz
     return d2>=(spell.minRange or 0)^2 and d2<=spell.maxRange^2
 end
+-- Goal identity only, never a position witness or a movement receipt.
+local function native_follow_scope(obs)
+    local nav=obs.navigation or {}
+    if nav.following~=true or type(obs.sessionId)~="string" or not guid(obs.selfGuid) or not guid(obs.visitId) or
+       type(obs.mapId)~="number" or obs.mapId<0 or obs.mapId>4294967295 or obs.mapId%1~=0 or
+       not guid(nav.ownerGuid) or not guid(nav.followRevision) then return end
+    return tostring(#obs.sessionId)..":"..obs.sessionId..":"..obs.selfGuid..":"..obs.visitId..":"..
+        tostring(obs.mapId)..":"..nav.ownerGuid..":"..nav.followRevision
+end
 local function ranged_hold(obs,frame,out,row,status,wanted,stopTarget)
     local hold=state.rangedHold
     local owner=(obs.navigation or {}).movementOwner
@@ -661,6 +670,11 @@ local function ranged_hold(obs,frame,out,row,status,wanted,stopTarget)
     if #frame.pending~=0 then status.phase="waiting_for_native_custody";out.action=nil;return true end
     if not hold then
         hold={owner="ranged:"..row.id,sessionId=obs.sessionId,selfGuid=obs.selfGuid,untilUnixMs=row.expiresUnixMs}
+        -- Record only a new protective lease that interrupted an unowned
+        -- native follow goal; never infer this from an existing owner label.
+        if row.origin=="learned_prior" and type(owner)=="table" and owner.active~=true then
+            hold.followScope=native_follow_scope(obs)
+        end
         state.rangedHold=hold
     end
     if hold.sessionId~=obs.sessionId or hold.selfGuid~=obs.selfGuid then status.phase="movement_hold_other_body";out.action=nil;return true end
@@ -916,9 +930,20 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
     local self=(obs.players or {})[obs.selfGuid]
     local prior=row.origin=="learned_prior" and (obs.navigation or {}).following==true and
         encounter_priors and encounter_priors.rule(obs)
-    local follow_safe=prior and self and self.positionEstimated~=true and
+    local nav,hold,ground=obs.navigation or {},state.rangedHold,state.rangedGround
+    local resumed_follow=hold and hold.followScope~=nil and hold.followScope==native_follow_scope(obs)
+    local follow_safe=prior and self and (self.positionEstimated~=true or resumed_follow and self.movementKnown==true) and nav.motionUnconfirmed~=true and
         ranged_travel_safe(obs,row,false,prior.attackWitnessMaxAgeMs)
-    if not follow_safe then out.followFormation,out.portalCatchup=nil,nil end
+    -- Native walking publishes its actually written own pose as estimated.
+    -- Continuing that already active controller is not a new handoff: never
+    -- release an active lease, borrow a token, or settle uncertain work here.
+    local follow_continuing=prior and self and self.positionEstimated==true and self.movementKnown==true and
+        type(nav.movementOwner)=="table" and nav.movementOwner.active~=true and nav.motionUnconfirmed~=true and
+        #frame.pending==0 and not (hold and (hold.operation or hold.uncertain or
+            hold.sessionId~=obs.sessionId or hold.selfGuid~=obs.selfGuid)) and
+        not (ground and (ground.operation or ground.uncertain)) and
+        ranged_travel_safe(obs,row,false,prior.attackWitnessMaxAgeMs)
+    if not follow_safe and not follow_continuing then out.followFormation,out.portalCatchup=nil,nil end
     if not self or self.aliveKnown~=true or self.alive~=true then return end
     local action=out.action
     local cleanup=action and (action.capability=="fear_break" or action.capability=="cancel_spell" or action.capability=="loot_close" or action.capability=="release_interaction" or action.capability=="melee_stop")
@@ -930,8 +955,16 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
         out.action={capability="melee_stop",sessionId=obs.sessionId,selfGuid=obs.selfGuid,targetGuid=swinging,visitId=obs.visitId,observationSequence=sequence}
         status.phase="stopping_melee";return
     end
-    if follow_safe then
-        status.phase="yielding_to_native_follow"
+    if prior and (nav.motionUnconfirmed==true or hold and (hold.operation or hold.uncertain) or
+       ground and (ground.operation or ground.uncertain)) then
+        out.action,out.followFormation,out.portalCatchup=nil,nil,nil
+        status.phase="waiting_for_native_follow_custody"
+        return
+    end
+    if follow_safe or follow_continuing then
+        status.phase=follow_continuing and "continuing_native_follow_estimate" or
+            self.positionEstimated==true and "resuming_native_follow_estimate" or "yielding_to_native_follow"
+        if self.positionEstimated==true then status.poseSource="native_written_estimate";status.positionReady=false end
         ranged_hold(obs,frame,out,row,status,false)
         return
     end
