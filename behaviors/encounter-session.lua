@@ -7,6 +7,7 @@
 -- reflected game feed supplies observations; it never authors a plan.
 local tactics = assert(encounter_tactics)
 local spells = assert(encounter_spells)
+local warrior = encounter_warrior
 local healing = encounter_healing
 local starter_spells = encounter_starter_spells
 local self_mana = encounter_self_mana
@@ -55,6 +56,7 @@ local function host_can_decide(obs)
 end
 
 local function on_event(event)
+    if warrior and not warrior.on_event(event) then return false end
     if spell_invocation and not spell_invocation.on_event(event) then return false end
     if control_recovery and not control_recovery.on_event(event) then return false end
     if movement and not movement.on_event(event) then return false end
@@ -98,7 +100,7 @@ local function on_event(event)
 end
 
 local function export_state()
-    return {version=1, data={controlRecovery=control_recovery and control_recovery.export_state(),encounter=state,deathRecovery=death_recovery and death_recovery.export_state(),buffs=buffs and buffs.export_state(), healing=healing and healing.export_state(),
+    return {version=1, data={warrior=warrior and warrior.export_state(),controlRecovery=control_recovery and control_recovery.export_state(),encounter=state,deathRecovery=death_recovery and death_recovery.export_state(),buffs=buffs and buffs.export_state(), healing=healing and healing.export_state(),
                             selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
                             tasks=transient_tasks and transient_tasks.export_state(),
                             spellInvocation=spell_invocation and spell_invocation.export_state(),
@@ -113,6 +115,7 @@ local function import_state(checkpoint)
     if checkpoint.version ~= 1 or type(checkpoint.data) ~= "table" then return false end
     if checkpoint.data.deathRecovery and (not death_recovery or not death_recovery.import_state(checkpoint.data.deathRecovery)) then return false end
     if checkpoint.data.buffs and (not buffs or not buffs.import_state(checkpoint.data.buffs)) then return false end
+    if checkpoint.data.warrior and (not warrior or not warrior.import_state(checkpoint.data.warrior)) then return false end
     local saved = checkpoint.data.encounter
     if type(saved) ~= "table" or type(saved.bindings) ~= "table" or type(saved.defeated) ~= "table"
        or type(saved.controls) ~= "table" then return false end
@@ -610,6 +613,10 @@ local function decide_encounter(frame)
         function(proposed)return not transient_tasks or transient_tasks.allow(task_view,obs,proposed) end) end
     out.controlStatus = command_status
     if command_action then out.action = command_action; return out end
+    if warrior and out.focusGuid and (not active_melee or active_melee==out.focusGuid) then
+        local class_action=warrior.choose(frame,obs,obs.targets[out.focusGuid],state.sequence,intent,active_melee~=nil)
+        if class_action then out.action=class_action;return out end
+    end
     if active_melee then
         local held = targets[active_melee]
         if obs.targetProtectionOverflow == true or not alive(held) or held.protected or
@@ -854,6 +861,7 @@ local function decide(frame)
     end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
     if spell_invocation then spell_invocation.commit(out.action) end
+    if warrior then warrior.commit(out.action) end
     if auto_equipment then auto_equipment.commit(out.action) end
     return out
 end
