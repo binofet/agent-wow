@@ -455,7 +455,8 @@ class DirectTools:
     def _helper(self, name):
         if name not in self.helpers:
             filename = {"self-edit": "self-edit", "gm_tasks": "gm_tasks.py", "task_runtime": "task-runtime",
-                        "game_catalog": "game-catalog.py", "item_recipient": "item_recipient.py"}.get(name)
+                        "game_catalog": "game-catalog.py", "item_recipient": "item_recipient.py",
+                        "gear_check": "gear_check.py"}.get(name)
             require(filename is not None, "maintained_helper_required")
             self.helpers[name] = load_helper(self.root / "dev" / filename,
                                              "direct_" + name.replace("-", "_"))
@@ -1330,12 +1331,19 @@ class DirectTools:
                 "Before supplying gear or consumables, search by the recipient's observed level, class and proficiencies. "
                 "Use kind for alternatives or item_ids to check exact items and see exclusions. Omit recipient_guid for yourself. "
                 "An authorized GM can name an observed recipient by GUID. Returns reference candidates and their requirements. "
-                "Compare worn gear before claiming an upgrade. Checking or finding an item never grants, equips or consumes it.",
+                "Use check_gear_upgrade to compare a candidate with worn gear.",
                 {"recipient_guid": string, "kind": {"type": "string", "enum": list(item_search.KINDS)},
                  "name": {"type": "string", "description": "Optional words in the item name, in any order.", "maxLength": 120},
                  "slot": {"type": "string", "enum": list(item_search.SLOT_TYPES)},
                  "item_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 12},
                  "limit": {"type": "integer", "minimum": 1, "maximum": 12}, "offset": paging["offset"]}, []))
+            specs.append(("check_gear_upgrade",
+                "Compare an item ID with your current worn gear using your accepted gear policy. "
+                "For a particular bag copy, pass its item_guid. For an unowned item ID the result describes "
+                "the base template. Returns upgrade, not_upgrade or unknown, with slots, reasons and missing facts. "
+                "A GM may set recipient_guid to a configured companion. This is read-only.",
+                {"item_entry": {"type": "integer", "minimum": 1, "maximum": 4294967295},
+                 "item_guid": string, "recipient_guid": string, **paging}, ["item_entry"]))
         if self.owner_allowed() is True:
             specs += [
                 ('gameplay_command', 'Send structured intent to your current accepted Lua: value is an object with task. '
@@ -1457,6 +1465,11 @@ class DirectTools:
                 recipient = self._helper("item_recipient").resolve(self, guid)
                 result = item_search.find(self._helper("game_catalog").catalog(), recipient, args)
                 self._catalog()
+            elif name == "check_gear_upgrade":
+                comparison = self._helper("item_recipient").compare_gear(
+                    self, args.get("recipient_guid", self.self_guid), args["item_entry"], args.get("item_guid"))
+                self._catalog()
+                result = self._project(comparison, args)
             elif name == "workspace_read":
                 data = self._read_file(args["path"])
                 lines = data.decode().splitlines(True)
@@ -1510,7 +1523,7 @@ class DirectTools:
             else:
                 raise ToolError("tool_not_implemented")
             require(len(packed(result)) <= self.max_bytes, "tool_result_size_bound")
-            if name in ("context_read", "chat_read", "session_catalog", "read_observation", "policy_show", "workspace_read", "spell_inspect", "find_usable_items", "gm_task_status", "gm_current_task", "gm_inspect"):
+            if name in ("context_read", "chat_read", "session_catalog", "read_observation", "policy_show", "workspace_read", "spell_inspect", "find_usable_items", "check_gear_upgrade", "gm_task_status", "gm_current_task", "gm_inspect"):
                 bound = GM_INSPECT_BYTES if name=="gm_inspect" and result.get("presentation",{}).get("kind")=="compact_identity_scoped_observations" else READ_PAGE_BYTES
                 require(len(packed(dict(ok=True, result=result))) <= bound, "read_page_size_bound")
             self.last_receipt = dict(tool=name, sessionId=self.session_id, characterGuid=self.self_guid,
