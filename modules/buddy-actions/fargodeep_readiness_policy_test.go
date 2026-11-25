@@ -903,3 +903,44 @@ func TestFargodeepWorkflowElapsedAgesKeepTheLuaFreshnessDeadline(t *testing.T) {
 		})
 	}
 }
+
+func TestFargodeepWorkflowFinalOffenseCannotUseTheExpiredLuaDeadline(t *testing.T) {
+	for _, combat := range []bool{false, true} {
+		t.Run(fmt.Sprint(combat), func(t *testing.T) {
+			s, f, target, request, advance := fargodeepReadinessRig(t, 4)
+			target.X += 22
+			armFargodeep(t, s, request)
+			before := uint64(4999)
+			if combat {
+				f.world.Self.UnitFlags |= 0x80000
+				before = 29999
+			}
+			target.AttackVictimKnown, target.AttackVictimGuid, target.AttackAgeMs = true, s.selfGUID, before
+			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+			changed, spellReads := false, 0
+			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+				out, err := runtime.EvaluateContext(ctx, input)
+				selection, _ := input["selection"].(string)
+				if selection == "" {
+					spellReads++
+				}
+				workflow, _ := input["workflow"].(map[string]any)
+				if selection == fargodeepReadinessTestSelection && workflow["stage"] == "offense" && !changed {
+					if spellReads == 0 || out["validForMs"] != float64(1) {
+						t.Fatal("fixture missed the final source-bound offense decision", spellReads, out)
+					}
+					changed = true
+					target.AttackAgeMs = before + 2
+					advance(time.Millisecond)
+				}
+				return true, runtime.Status().Revision, out, err
+			}
+			s.Tick(context.Background())
+			if !changed || spellReads == 0 || countPackets(f, opcode.CMSGCastSpell) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 ||
+				countPackets(f, opcode.MSGMoveStartForward) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 ||
+				s.state.AssistAttempts != 0 || !s.fargodeepSeen[target.Guid] {
+				t.Fatal("the final physical consumer crossed Lua's returned deadline or erased custody", s.stateLocked(), f.packets)
+			}
+		})
+	}
+}

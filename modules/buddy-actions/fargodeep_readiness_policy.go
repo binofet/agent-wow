@@ -252,7 +252,7 @@ func (s *Service) fargodeepReadinessMatchesLocked(ctx context.Context, selected 
 	workflow, _ := selected.facts["workflow"].(map[string]any)
 	stage, _ := workflow["stage"].(string)
 	if scope == nil || (selected.kind == "arm" || selected.kind == "approach" || selected.kind == "attack") &&
-		s.now().After(scope.started.Add(time.Duration(selected.validForMs)*time.Millisecond)) {
+		!s.now().Before(scope.started.Add(time.Duration(selected.validForMs)*time.Millisecond)) {
 		return false
 	}
 	elapsed := s.now().Sub(scope.started).Milliseconds()
