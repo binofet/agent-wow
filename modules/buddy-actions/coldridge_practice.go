@@ -19,23 +19,6 @@ func coldridge(p position) bool {
 	return finite(p) && p.x >= -6399 && p.x <= -6000 && p.y >= 0 && p.y <= 700 && p.z >= 320 && p.z <= 450
 }
 
-func ownColdridgeQuest(w *worldv1.SnapshotResponse, self uint64) (active, incomplete bool) {
-	if w == nil || w.Self == nil || w.Self.Guid != self || !w.Self.ClassKnown || w.Self.ClassId != 9 || !w.Self.LevelKnown || w.Self.Level < 1 || w.Self.Level > 5 || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
-		return false, false
-	}
-	var slots [25]bool
-	for _, q := range w.SelfQuestLog {
-		if q == nil || q.Slot >= 25 || slots[q.Slot] {
-			return false, false
-		}
-		slots[q.Slot] = true
-		if q.QuestId == 179 && !q.Failed && q.State&2 == 0 {
-			active, incomplete = true, !q.Complete && q.State&1 == 0
-		}
-	}
-	return active, incomplete
-}
-
 func planColdridgeNavigation(ctx context.Context, root string, from, to position) ([]position, error) {
 	return planColdridgeRegion(ctx, root, buddynav.RegionColdridge, from, to)
 }
@@ -93,10 +76,6 @@ func (s *Service) coldridgeGoalNavigationPath(ctx context.Context, goal coldridg
 		return nil, errors.New("Coldridge route exceeds240yd budget")
 	}
 	return path, nil
-}
-
-func eligibleColdridgeWolf(c *worldv1.CreatureState) bool {
-	return c != nil && c.Guid>>48 == 0xf130 && c.Guid&0xffffff != 0 && uint32(c.Guid>>24&0xffffff) == 705 && c.Entry == 705 && c.Present && c.MapKnown && c.MapId == 0 && c.LevelKnown && c.Level == 1 && c.HealthKnown && c.MaxHealth > 0 && c.Health > 0 && c.AliveKnown && c.Alive && c.NpcFlags == 0 && c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) == 0 && c.UnitFlags_2&1 == 0
 }
 
 func unclaimedColdridgePull(c *worldv1.CreatureState) bool {
@@ -201,7 +180,7 @@ func (s *Service) coldridgeObservedPracticeTickLocked(ctx context.Context, w *wo
 	target = practiceTargetObservation(w, s.practiceTarget)
 	goal.applyLifecycle(lifecycle)
 	finishing := lifecycle.Finishing
-	if finishing && (!s.practicePullStarted || self.UnitFlags&0x80000 == 0 || !goal.eligible(target, self) || !target.AttackVictimKnown || target.AttackVictimGuid != s.selfGUID || target.AttackAgeMs > 30000) {
+	if finishing && (!s.practicePullStarted || self.UnitFlags&0x80000 == 0 || !coldridgeCreatureAvailable(target, self) || !target.AttackVictimKnown || target.AttackVictimGuid != s.selfGUID || target.AttackAgeMs > 30000) {
 		s.pauseColdridgeLifecycleLocked(ctx, lifecycle.binding)
 		return
 	}
@@ -320,7 +299,7 @@ func (s *Service) coldridgeObservedPracticeTickLocked(ctx context.Context, w *wo
 		}
 		guid, _ := strconv.ParseUint(selected.TargetGUID, 10, 64)
 		target = practiceTargetObservation(w, guid)
-		if target == nil || !goal.eligible(target, self) || !goal.positionEvidenceWithin(target) || !goal.targetNeeded(target.Entry) || !unclaimedColdridgePull(target) {
+		if target == nil || !coldridgeCreatureAvailable(target, self) || !goal.positionEvidenceWithin(target) || !goal.targetNeeded(target.Entry) || !unclaimedColdridgePull(target) {
 			s.pauseColdridgeLifecycleLocked(ctx, selected.binding)
 			return
 		}
@@ -332,7 +311,7 @@ func (s *Service) coldridgeObservedPracticeTickLocked(ctx context.Context, w *wo
 		s.practiceTarget, s.state.PracticeTargetGuid = target.Guid, target.Guid
 		s.practiceRoute, s.practicePullStarted, s.practiceReplans, s.practiceKillCredited = nil, false, 0, false
 	}
-	if !goal.eligible(target, self) || !s.practicePullStarted && !unclaimedColdridgePull(target) || target.AttackVictimKnown && target.AttackVictimGuid != s.selfGUID || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 || s.failedAssistTarget == s.practiceTarget || self.UnitFlags&0x80000 != 0 && !s.practicePullStarted {
+	if !coldridgeCreatureAvailable(target, self) || !s.practicePullStarted && !unclaimedColdridgePull(target) || target.AttackVictimKnown && target.AttackVictimGuid != s.selfGUID || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 || s.failedAssistTarget == s.practiceTarget || self.UnitFlags&0x80000 != 0 && !s.practicePullStarted {
 		s.stopPracticeLocked(ctx, "coldridge_target_claimed_unsafe_or_cast_failed")
 		return
 	}
@@ -449,15 +428,18 @@ func (s *Service) coldridgeCastObservationsLocked(ctx context.Context, original 
 		return reject("own_combat_prerequisites_changed")
 	}
 	source := s.starterSpells.revision
-	active, needed := s.observeColdridgeGoalLocked(ctx, w)
+	lifecycle, fresh, owned := s.coldridgeLifecycleLocked(ctx, w, "tick")
 	if !current() || source != s.starterSpells.revision {
 		return nil, nil, position{}, false
 	}
-	if !active {
-		return reject("bound_goal_absent_or_invalid")
+	if !owned || !lifecycle.Valid || lifecycle.Kind != "continue" || !lifecycle.Active || lifecycle.TargetGUID != strconv.FormatUint(s.practiceTarget, 10) {
+		return reject("bound_goal_or_target_profile_absent_or_invalid")
 	}
+	goal.applyLifecycle(lifecycle)
+	needed := lifecycle.Needed
+	w, self = fresh, fresh.Self
 	target := practiceTargetObservation(w, s.practiceTarget)
-	if !goal.eligible(target, self) || len(w.NearbyCreatures) > 32 {
+	if !coldridgeCreatureAvailable(target, self) || len(w.NearbyCreatures) > 32 {
 		return reject("target_observations_unavailable_or_unsafe")
 	}
 	if !s.practicePullStarted {

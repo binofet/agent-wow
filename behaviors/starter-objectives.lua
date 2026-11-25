@@ -152,7 +152,36 @@ function M.practice_lifecycle(input)
 end
 
 M.coldridge_practice={priority={179,170,183,182},max_range=120,lease_ms=600000,
-    objectives={[179]={{entry=705,count=0}},[170]={{entry=707,count=6},{entry=724,count=6}},[183]={{entry=708,count=12}},[182]={{entry=706,count=10}}}}
+    objectives={[179]={{entry=705,count=0}},[170]={{entry=707,count=6},{entry=724,count=6}},[183]={{entry=708,count=12}},[182]={{entry=706,count=10}}},
+    profiles={[179]={{entry=705,level=1}},[170]={{entry=707,level=2,maxHealth=55,faction=36},{entry=724,level=2,maxHealth=55,faction=36}},
+        [183]={{entry=708,level=3,maxHealth=71,faction=189}},[182]={{entry=706,level=3,maxHealth=71,faction=190},{entry=706,level=4,maxHealth=86,faction=190}}}}
+-- Defaults retain the recorded public creature tuples. They describe this
+-- scenario's filter, never alter the actual native creature/quest observations.
+-- Quest182 proof SHA256:84e76d3570162b8fabc05a98bd3cf8d7991293d3d433fb6d18a740cd628821bb.
+-- Quest170 tuples SHA256:f63a45043ec5a13631fefb6a57a6f7ad8d1e3cdf2d44d7730c1533da3e64dcad;
+-- quest183 tuple SHA256:e6cc24cbbe8df941fecc0e65d76a1dc86fab2e3907980d2803d1197437432409.
+function M.coldridge_supports_entry(id,entry)
+    local profiles=type(M.coldridge_practice)=="table" and type(M.coldridge_practice.profiles)=="table" and M.coldridge_practice.profiles[id]
+    if not array(profiles,4) then return false end
+    for _,profile in ipairs(profiles) do if type(profile)=="table" and profile.entry==entry and uint(entry) and entry>0 then return true end end
+    return false
+end
+function M.coldridge_profile(c,id)
+    if type(c)~="table" or c.mapKnown~=true or (c.mapId or 0)~=0 or c.levelKnown~=true or not uint(c.level) then return false end
+    local profiles=type(M.coldridge_practice)=="table" and type(M.coldridge_practice.profiles)=="table" and M.coldridge_practice.profiles[id]
+    if not array(profiles,4) then return false end
+    for _,profile in ipairs(profiles) do
+        if type(profile)~="table" or not uint(profile.entry) or profile.entry==0 or not uint(profile.level) or profile.level==0 or
+           profile.maxHealth~=nil and (not uint(profile.maxHealth) or profile.maxHealth==0) or profile.faction~=nil and not uint(profile.faction) then return false end
+        if c.entry==profile.entry and c.level==profile.level and (profile.maxHealth==nil or c.maxHealth==profile.maxHealth) and
+           (profile.faction==nil or c.factionTemplate==profile.faction) then return true end
+    end
+    return false
+end
+function M.coldridge_eligible(c,self,id)
+    return type(c)=="table" and c.physicalAvailable==true and M.coldridge_profile(c,id) and
+        (id==179 or type(self)=="table" and self.mapKnown==true and (self.mapId or 0)==0 and self.levelKnown==true and self.level>=c.level)
+end
 function M.coldridge_lifecycle(input)
     local g=type(input)=="table" and type(input.goal)=="table" and input.goal or {}
     local function out(kind,phase,quest,counts,active,needed,entries,target,finishing,lease,valid)
@@ -187,7 +216,7 @@ function M.coldridge_lifecycle(input)
         local objectives=tuning.objectives[id]
         if not array(objectives,2) or #objectives==0 then return end
         for i,o in ipairs(objectives) do
-            if type(o)~="table" or not uint(o.entry) or not uint(o.count) then return end
+            if type(o)~="table" or not uint(o.entry) or not uint(o.count) or not M.coldridge_supports_entry(id,o.entry) then return end
             if needed and (id==179 or counts[i]<o.count) then entries[#entries+1]=o.entry end
         end
         return counts,#entries>0,entries
@@ -210,10 +239,13 @@ function M.coldridge_lifecycle(input)
     local targetNeeded=false
     for _,entry in ipairs(entries) do if type(target)=="table" and target.entry==entry then targetNeeded=true end end
     local finishing=(not needed or not targetNeeded) and input.pullStarted==true and bit(input.self.unitFlags,0x80000) and type(target)=="table" and
-        target.eligible==true and target.attackVictimKnown==true and target.attackVictimGuid==input.selfGuid and recent_age(target.attackAgeMs or 0)
+        M.coldridge_eligible(target,input.self,id) and target.attackVictimKnown==true and target.attackVictimGuid==input.selfGuid and recent_age(target.attackAgeMs or 0)
     if not needed and not finishing then return out("stop",id==179 and "quest_179_complete_absent_or_level_limit" or "quest_"..tostring(id).."_complete_absent_or_invalid",id,counts,true,false,entries) end
     if needed and not targetNeeded and input.pullStarted==true and not finishing then return out("stop","selected_quest_objective_complete_without_owned_fight",id,counts,true,needed,entries) end
     if type(target)=="table" and target.healthKnown==true and (target.health or 0)==0 and target.aliveKnown==true and target.alive~=true then return out("target_dead","target_death_observed",id,counts,true,needed,entries) end
+    if type(target)=="table" and not M.coldridge_eligible(target,input.self,id) then
+        return out("stop","coldridge_target_claimed_unsafe_or_cast_failed",id,counts,true,needed,entries)
+    end
     if type(target)=="table" and input.pullStarted~=true and not targetNeeded then return out("clear_target","selected_quest_objective_already_satisfied",id,counts,true,needed,entries) end
     if input.stage=="tick" then return out("continue",finishing and "finishing_current_fight_to_goal" or "",id,counts,true,needed,entries,input.targetGuid,finishing) end
     if input.stage~="targets" then return bad end
@@ -222,7 +254,7 @@ function M.coldridge_lifecycle(input)
         local neededEntry=false
         for _,entry in ipairs(entries) do if type(c)=="table" and c.entry==entry then neededEntry=true end end
         local p=type(c)=="table" and motion_point(c)
-        if neededEntry and c.eligible==true and c.positionWithin==true and c.unclaimed==true and p then
+        if neededEntry and M.coldridge_eligible(c,input.self,id) and c.positionWithin==true and c.unclaimed==true and p then
             local d=distance2(input.clientPosition,p)
             if d<best then selected,best=c,d end
         end
