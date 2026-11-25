@@ -16,22 +16,44 @@ import (
 // Lua selects the exact item and legal destination. Native Inventory owns fresh
 // gates, the finite interaction lease, idempotency and observed swap proof.
 func (p *SessionPolicy) resolveGearEquip(action map[string]any) (PolicyDispatch, error) {
+	return p.resolveOwnedEquipment(action, "equip_gear")
+}
+func (p *SessionPolicy) resolveAmmoSelection(action map[string]any) (PolicyDispatch, error) {
+	return p.resolveOwnedEquipment(action, "select_ammo")
+}
+func (p *SessionPolicy) resolveOwnedEquipment(action map[string]any, capability string) (PolicyDispatch, error) {
 	if action["sessionId"] != p.vm.Status().SessionID || action["selfGuid"] != p.body {
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "current equipment body required")
 	}
 	params := map[string]any{}
-	for _, key := range []string{"sessionId", "requestId", "expectedRevision", "expectedInventoryRevision", "source", "equipmentSlot", "expectedEquipmentRevision", "expectedEquippedItemGuid"} {
+	keys := []string{"sessionId", "requestId", "expectedRevision", "expectedInventoryRevision", "source", "expectedEquipmentRevision"}
+	if capability == "select_ammo" {
+		keys = append(keys, "expectedAmmoRevision", "expectedAmmoEntry", "expectedRangedItemGuid")
+	} else {
+		keys = append(keys, "equipmentSlot", "expectedEquippedItemGuid")
+	}
+	for _, key := range keys {
 		params[key] = action[key]
 	}
 	raw, err := json.Marshal(params)
 	if err != nil {
 		return PolicyDispatch{}, err
 	}
-	selected := &inventoryv1.EquipGearRequest{}
-	if err = protojson.Unmarshal(raw, selected); err != nil || selected.Source == nil || selected.Source.ItemGuid == 0 || selected.Source.StackCount != 1 || selected.RequestId == "" || selected.ExpectedRevision == 0 || selected.ExpectedInventoryRevision == 0 || selected.ExpectedEquipmentRevision == 0 {
-		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact equipment request required")
+	var requestID string
+	if capability == "select_ammo" {
+		value := &inventoryv1.SelectAmmoRequest{}
+		if err = protojson.Unmarshal(raw, value); err != nil || value.Source == nil || value.Source.ItemGuid == 0 || value.Source.StackCount == 0 || value.RequestId == "" || value.ExpectedRevision == 0 || value.ExpectedInventoryRevision == 0 || value.ExpectedEquipmentRevision == 0 || value.ExpectedRangedItemGuid == 0 || value.ExpectedAmmoRevision == 0 {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact ammo selection request required")
+		}
+		requestID = value.RequestId
+	} else {
+		value := &inventoryv1.EquipGearRequest{}
+		if err = protojson.Unmarshal(raw, value); err != nil || value.Source == nil || value.Source.ItemGuid == 0 || value.Source.StackCount != 1 || value.RequestId == "" || value.ExpectedRevision == 0 || value.ExpectedInventoryRevision == 0 || value.ExpectedEquipmentRevision == 0 {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact equipment request required")
+		}
+		requestID = value.RequestId
 	}
-	inst, method, err := p.manager.lookup("buddy-inventory", "equip_gear", true)
+	inst, method, err := p.manager.lookup("buddy-inventory", capability, true)
 	if err != nil {
 		return PolicyDispatch{}, err
 	}
@@ -40,7 +62,7 @@ func (p *SessionPolicy) resolveGearEquip(action map[string]any) (PolicyDispatch,
 		return PolicyDispatch{}, err
 	}
 	return PolicyDispatch{Module: "buddy-inventory", Send: func(ctx context.Context) (behavior.ActionOutcome, map[string]any) {
-		payload := map[string]any{"capability": "equip_gear", "requestId": selected.RequestId, "reconciliationRequired": true}
+		payload := map[string]any{"capability": capability, "requestId": requestID, "reconciliationRequired": true}
 		origin := modsession.WriteOriginFromContext(ctx)
 		if origin.Writer != "lua" || origin.Module != "buddy-inventory" || origin.ActionID == "" {
 			return behavior.ActionNotDispatched, payload

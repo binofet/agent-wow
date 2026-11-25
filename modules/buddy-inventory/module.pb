@@ -77,7 +77,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-Ò•
+Ô¶
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -580,7 +580,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"é
+permanent_bonus (RpermanentBonus"å
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -638,7 +638,10 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 self_spline_facts1 (2&.warcraftbuddy.world.v1.OwnSplineFactsRselfSplineFacts^
 self_motion_authority2 (2*.warcraftbuddy.world.v1.OwnMotionAuthorityRselfMotionAuthority`
 spline_completion3 (23.warcraftbuddy.world.v1.SplineCompletionObservationRsplineCompletionW
-world_transfer4 (20.warcraftbuddy.world.v1.WorldTransferObservationRworldTransfer"q
+world_transfer4 (20.warcraftbuddy.world.v1.WorldTransferObservationRworldTransfer&
+self_ammo_known5 (RselfAmmoKnown&
+self_ammo_entry6 (RselfAmmoEntry,
+self_ammo_revision7 (RselfAmmoRevision"q
 CombatEventsRequest
 
 session_id (	R	sessionId%
@@ -2374,7 +2377,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 CastBuff).warcraftbuddy.actions.v1.CastBuffRequest.warcraftbuddy.actions.v1.StateP
 Melee&.warcraftbuddy.actions.v1.MeleeRequest.warcraftbuddy.actions.v1.Stated
 SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
-ﬂ]
+≈e
 'modules/buddy-inventory/inventory.protowarcraftbuddy.inventory.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto"É
 ItemRef
 bag (Rbag
@@ -2382,7 +2385,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 	item_guid (RitemGuid
 entry (Rentry
 stack_count (R
-stackCount"¸
+stackCount"ﬁ
 ItemEligibility7
 item (2#.warcraftbuddy.inventory.v1.ItemRefRitem%
 metadata_known (RmetadataKnown5
@@ -2403,8 +2406,9 @@ normal_bag (R	normalBag'
 consumable (2..warcraftbuddy.inventory.v1.ConsumableMetadataR
 consumableH
 
-gear_facts (2).warcraftbuddy.inventory.v1.GearItemFactsR	gearFacts"ë
-
+gear_facts (2).warcraftbuddy.inventory.v1.GearItemFactsR	gearFacts0
+ammo_select_eligible (RammoSelectEligible.
+ammo_blocked_reason (	RammoBlockedReason"Û
 	Operation
 
 request_id (	R	requestId
@@ -2436,7 +2440,13 @@ vendorGuid3
 observed_copper (RobservedCopper>
 baseline_equipment_revision (RbaselineEquipmentRevision>
 observed_equipment_revision (RobservedEquipmentRevision.
-displaced_item_guid (RdisplacedItemGuid"ë
+displaced_item_guid (RdisplacedItemGuid4
+baseline_ammo_revision (RbaselineAmmoRevision4
+observed_ammo_revision (RobservedAmmoRevision
+
+ammo_entry (R	ammoEntry.
+baseline_ammo_entry  (RbaselineAmmoEntry%
+ammo_confirmed! (RammoConfirmed"Ù
 State
 
 session_id (	R	sessionId
@@ -2469,7 +2479,12 @@ limitation
 mana_drink_count (H RmanaDrinkCountàY
 last_consumable_use( (2).warcraftbuddy.inventory.v1.ConsumableUseRlastConsumableUse\
 consumable_context) (2-.warcraftbuddy.inventory.v1.ConsumableContextRconsumableContextJ
-gear_context* (2'.warcraftbuddy.inventory.v1.GearContextRgearContextB
+gear_context* (2'.warcraftbuddy.inventory.v1.GearContextRgearContext
+
+ammo_known+ (R	ammoKnown
+
+ammo_entry, (R	ammoEntry#
+ammo_revision- (RammoRevisionB
 _mana_drink_count"4
 GearStat
 type (Rtype
@@ -2644,7 +2659,19 @@ request_id (	R	requestId+
 equipment_slot (RequipmentSlot>
 expected_equipment_revision (RexpectedEquipmentRevision=
 expected_equipped_item_guid (RexpectedEquippedItemGuid@
-require_conservative_upgrade	 (RrequireConservativeUpgrade"Å
+require_conservative_upgrade	 (RrequireConservativeUpgrade"‹
+SelectAmmoRequest
+
+session_id (	R	sessionId
+
+request_id (	R	requestId+
+expected_revision (RexpectedRevision>
+expected_inventory_revision (RexpectedInventoryRevision;
+source (2#.warcraftbuddy.inventory.v1.ItemRefRsource4
+expected_ammo_revision (RexpectedAmmoRevision.
+expected_ammo_entry (RexpectedAmmoEntry>
+expected_equipment_revision (RexpectedEquipmentRevision9
+expected_ranged_item_guid	 (RexpectedRangedItemGuid"Å
 DrinkRequest
 
 session_id (	R	sessionId
@@ -2694,14 +2721,16 @@ item_entry (R	itemEntry
 request_id (	R	requestIdG
 	operation	 (2).warcraftbuddy.inventory.v1.ConsumableUseR	operation
 reason
- (	Rreason2Ø
+ (	Rreason2è
 BuddyInventoryE
 GetState.google.protobuf.Empty!.warcraftbuddy.inventory.v1.StateI
 RawGearFacts.google.protobuf.Empty!.warcraftbuddy.inventory.v1.State^
 Discover+.warcraftbuddy.inventory.v1.DiscoverRequest%.warcraftbuddy.inventory.v1.DiscoveryR
 Move'.warcraftbuddy.inventory.v1.MoveRequest!.warcraftbuddy.inventory.v1.StateT
 Equip(.warcraftbuddy.inventory.v1.EquipRequest!.warcraftbuddy.inventory.v1.State\
-	EquipGear,.warcraftbuddy.inventory.v1.EquipGearRequest!.warcraftbuddy.inventory.v1.StateR
+	EquipGear,.warcraftbuddy.inventory.v1.EquipGearRequest!.warcraftbuddy.inventory.v1.State^
+
+SelectAmmo-.warcraftbuddy.inventory.v1.SelectAmmoRequest!.warcraftbuddy.inventory.v1.StateR
 Sell'.warcraftbuddy.inventory.v1.SellRequest!.warcraftbuddy.inventory.v1.State[
 Drink(.warcraftbuddy.inventory.v1.DrinkRequest(.warcraftbuddy.inventory.v1.DrinkReceiptm
 EatBuffFood..warcraftbuddy.inventory.v1.EatBuffFoodRequest..warcraftbuddy.inventory.v1.EatBuffFoodReceiptC
