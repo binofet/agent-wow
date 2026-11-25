@@ -840,9 +840,47 @@ class LocalPromptBudgetTests(unittest.TestCase):
         # Even an already-projected caller cannot smuggle the older markers
         # through the budget stage in place of canonical protected evidence.
         payload,audit=client._local_prompt('System',ordinary,[],{'observe'},{},None,canonical=rows,aggressive=True)
-        self.assertEqual(payload['messages'][1:],rows)
+        semantics=copy.deepcopy(rows)
+        for message in semantics:
+            if message['role']=='assistant':message.pop('reasoning_content',None)
+        self.assertEqual(payload['messages'][1:],semantics)
         self.assertEqual(audit['archivedReadResults'],[])
         self.assertEqual(rows,original)
+
+    def test_protected_mixed_batches_drop_only_auxiliary_keys_and_pass_real_sdk_input(self):
+        if shutil.which('node') is None:self.skipTest('Node required for SDK input converter')
+        client=self.Transport([],local_prompt_budget_bytes=200000);client.last_receipt={}
+        rows=[dict(role='user',content='Exact latest owner goal')]
+        for group in ('old','recent1','recent2'):
+            native=chat((group+'-read','observe',dict(key='receipt')),
+                (group+'-write','mutate',dict(key='exact-'+group)))['choices'][0]['message']
+            native.update(content='Exact visible text '+group,reasoning_content='Private auxiliary thinking '*100,
+                reasoning='Other auxiliary provider thinking')
+            rows.extend([native,
+                dict(role='tool',tool_call_id=group+'-read',content=json.dumps(dict(receipt=dict(phase='completed',spellId=9474)))),
+                dict(role='tool',tool_call_id=group+'-write',content=json.dumps(dict(commandWritten=True,
+                    operationId='exact-'+group,replayAllowed=False)))])
+        original=copy.deepcopy(rows)
+        active=client._active_conversation(rows,{'observe'},{},None,protect_local=True)
+        self.assertEqual(active,rows)
+        payload,audit=client._local_prompt('Exact SYSTEM',active,ActiveContextTests.tools('observe','mutate'),
+            {'observe'},{},None,canonical=rows,aggressive=True)
+        expected=copy.deepcopy(rows)
+        for message in expected:
+            if message['role']=='assistant':
+                message.pop('reasoning_content');message.pop('reasoning')
+        self.assertEqual(payload['messages'][1:],expected)
+        self.assertEqual(rows,original)
+        self.assertEqual(audit['archivedReadResults'],[])
+        self.assertEqual(len(audit['archivedAssistantReasoning']),6)
+        for reference in audit['archivedAssistantReasoning']:
+            raw=rows[reference['transcriptMessage']][reference['field']].encode()
+            self.assertEqual((reference['bytes'],reference['sha256']),(len(raw),hashlib.sha256(raw).hexdigest()))
+        script="import {sdkInput} from './dev/local_prompt_meter.mjs';import fs from 'node:fs';sdkInput(JSON.parse(fs.readFileSync(0,'utf8')));console.log('compatible');"
+        checked=subprocess.run(['node','--input-type=module','-e',script],input=json.dumps(payload).encode(),
+            cwd=Path(__file__).resolve().parent.parent,capture_output=True,timeout=5)
+        self.assertEqual(checked.returncode,0,checked.stderr.decode())
+        self.assertEqual(checked.stdout.strip(),b'compatible')
 
 
 if __name__=="__main__":unittest.main()

@@ -666,7 +666,10 @@ class DirectModel:
             projected[index] = copy.deepcopy(canonical[index])
         auxiliary = []
         for index, message in enumerate(projected):
-            if index in protected or message.get('role') != 'assistant': continue
+            # Auxiliary provider thinking is not visible content or tool custody.
+            # Restore protected semantics first, then omit these API-only keys
+            # on every local assistant row. Canonical bytes remain untouched.
+            if message.get('role') != 'assistant': continue
             for key in ('reasoning_content','reasoning'):
                 if isinstance(message.get(key),str):
                     raw=message.pop(key).encode()
@@ -692,8 +695,9 @@ class DirectModel:
         before_bytes, before_tokens = measure()
         size, tokens = before_bytes, before_tokens
         changed = []
-        # A whole recent assistant/tool batch remains verbatim, including mixed
-        # read/mutation batches. No partial pair or altered call ID is produced.
+        # Recent batches retain exact visible content, calls and results,
+        # including mixed read/mutation batches. Only auxiliary thinking keys
+        # above are omitted; no partial pair or altered call ID is produced.
         groups, current = [], None
         for index, message in enumerate(active):
             if message.get("role") == "assistant":
