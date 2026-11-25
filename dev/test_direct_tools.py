@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from direct_model import ModelError, _schema
 from direct_tools import DirectTools, ToolOutcomeUnknown, load_helper, context_page, context_tool_schema, packed, READ_PAGE_BYTES, GM_INSPECT_BYTES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1679,6 +1680,17 @@ class OwnerControlToolTests(unittest.TestCase):
         schema=next(r['function'] for r in self.tools.tool_schemas() if r['function']['name']=='gameplay_command')
         props=schema['parameters']['properties']['value']['properties']
         self.assertTrue(set(value)<=set(props))
+        _schema(dict(value=value), schema['parameters'])
+        for field in ('minRangeYards', 'maxRangeYards', 'durationMs'):
+            with self.subTest(field=field):
+                _schema(0.25, props[field])
+                for invalid in (0, -0.25, False):
+                    with self.assertRaisesRegex(ModelError, 'json_schema_mismatch'):
+                        _schema(invalid, props[field])
+        _schema(0, props['clearanceYards'])
+        for malformed in (False, '0', float('nan')):
+            with self.assertRaisesRegex(ModelError, 'unsupported_json_schema'):
+                _schema(1, dict(type='number', exclusiveMinimum=malformed))
         for phrase in ('ranged_only','latestDecision.output.rangedStance','queued input is delivery only','equipped wand'):
             self.assertIn(phrase,schema['description'])
 
