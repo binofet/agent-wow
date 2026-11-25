@@ -855,11 +855,51 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
     status.phase=unsafe and "withdrawing_ground_input" or facingOnly and "facing_ground_input" or "approaching_ground_input"
 end
 
-local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell)
+-- Only the automatic default yields to explicit travel. Unknown geometry or an
+-- engaged matching hazard cannot establish the harmless, distant exception.
+local function ranged_travel_safe(obs,row,in_combat)
+    if not row or row.origin~="learned_prior" or in_combat then return false end
+    local self=(obs.players or {})[obs.selfGuid]
+    if not self or self.combatKnown~=true or self.inCombat==true or self.mapKnown~=true or
+       self.mapId~=obs.mapId or self.positionKnown~=true or self.positionInferred==true then return false end
+    for _,key in ipairs({"x","y","z"}) do
+        local value=self[key] or 0
+        if type(value)~="number" or value~=value or value==math.huge or value==-math.huge then return false end
+    end
+    local ids,nearest,distance,complete=ranged_targets(obs,row)
+    if not complete then return false end
+    if #ids>0 and (not distance or distance<=row.maxRangeYards+row.clearanceYards) then return false end
+    for _,id in ipairs(ids) do
+        local npc=(obs.targets or {})[id]
+        if npc.positionInferred==true or npc.positionEstimated==true or npc.engaged==true or
+           (obs.engagement or {})[id] then return false end
+        for _,key in ipairs({"x","y","z"}) do
+            local value=npc[key] or 0
+            if type(value)~="number" or value~=value or value==math.huge or value==-math.huge then return false end
+        end
+        local attack=npc.attackObservation
+        if attack and attack.victimKnown==true and guid(attack.victimGuid) then return false end
+    end
+    return true
+end
+
+local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task_view)
     out.rangedStance=status
     if not row then
         if #frame.pending==0 then ranged_hold(obs,frame,out,nil,status,false) end
         return
+    end
+    local task=task_view and task_view.task
+    if row.origin=="learned_prior" and task and task.kind=="rally_to" then
+        if task_view.rangedTravelSafe then
+            status.phase="yielding_to_explicit_rally"
+            if #frame.pending==0 then ranged_hold(obs,frame,out,row,status,false) end
+            return
+        end
+        -- Let the rally settle its own movement/token before the default tries
+        -- to acquire. These exact proposals still commit through task custody.
+        if task.pausedForEncounter and task_view.action==out.action and out.action and
+           (out.action.capability=="stop_movement" or out.action.capability=="movement_owner") then return end
     end
     local ids,nearest,distance,complete=ranged_targets(obs,row)
     status.matchedTargets=#ids
@@ -884,7 +924,11 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell)
             status.phase="stationary_friendly_support";status.positionReady=false;return
         end
         if not complete then out.action=nil;status.phase="clearance_facts_unavailable";return end
-        ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choose_spell);return
+        ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choose_spell)
+        if task and task.pausedForEncounter and status.phase=="withdrawing_ground_input" then
+            task_view.rangedWithdrawal=out.action
+        end
+        return
     end
     if (obs.navigation or {}).motionUnconfirmed==true then out.action=nil;status.phase="waiting_for_native_custody";status.positionReady=false;return end
     if action and (action.capability=="heal" or action.capability=="buff") and action.targetGuid==obs.selfGuid then return end
@@ -892,7 +936,9 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell)
     if distance and distance<row.minRangeYards+row.clearanceYards then
         local options=ranged_options(obs,row,nearest,{rangeYards=row.maxRangeYards,requireLos=false})
         local result=options and movement and movement.decide(obs,sequence,nearest,options)
-        out.action=result and result.action;status.phase=result and result.phase or "withdrawal_unavailable";status.positionReady=false;return
+        out.action=result and result.action;status.phase=result and result.phase or "withdrawal_unavailable";status.positionReady=false
+        if task and task.pausedForEncounter then task_view.rangedWithdrawal=out.action end
+        return
     end
     if action and action.capability=="approach_target" then
         local options=ranged_options(obs,row,action.targetGuid,action)
@@ -932,4 +978,4 @@ local function ranged_finish(selected)
 end
 
 return {on_event=on_event, export_state=export_state, import_state=import_state,
-        queue_intent=queue_intent, control_action=control_action, ranged_stance=ranged_stance, ranged_options=ranged_options, ranged_filter=ranged_filter, ranged_finish=ranged_finish}
+        queue_intent=queue_intent, control_action=control_action, ranged_stance=ranged_stance, ranged_options=ranged_options, ranged_travel_safe=ranged_travel_safe,ranged_filter=ranged_filter, ranged_finish=ranged_finish}

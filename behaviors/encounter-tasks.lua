@@ -117,7 +117,7 @@ end
 
 -- Called once per current observation. Proposals do not reserve an operation:
 -- commit() is called only if the encounter scheduler actually selects it.
-function M.step(obs,frame,sequence,targets,in_combat,can_act)
+function M.step(obs,frame,sequence,targets,in_combat,can_act,pause_rally)
     if not state.current and state.next then state.current,state.next=state.next,nil end
     local task=state.current
     if not task then return {status=state.inputError and {phase=state.inputError} or state.last} end
@@ -153,7 +153,11 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act)
         end
         task.uncertain,task.uncertainUntil,task.token,task.granted=nil,nil,nil,nil
     end
-    if task.released then pop(task);return {status=state.last} end
+    if task.released then
+        if task.pausedForEncounter and not task.finishing then
+            task.released,task.granted,task.approached,task.stopIssued=nil,nil,nil,nil
+        else pop(task);return {status=state.last} end
+    end
     if task.operation then return {status=status(task,"waiting_for_movement_ownership"),hold=true,task=task} end
     if task.token and (owner.active~=true or owner.owner~="task:"..task.id) then
         task.token,task.granted=nil,nil
@@ -175,7 +179,8 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act)
             finish(task,"rendezvous_observed")
         end
     end
-    if task.finishing then
+    if rally and not task.finishing then task.pausedForEncounter=pause_rally==true or nil end
+    if task.finishing or task.pausedForEncounter then
         if task.token and owner.active==true and owner.owner=="task:"..task.id then
             if rally and bound and bound.visitId==obs.visitId and bound.mapId==obs.mapId then
                 if nav.motionUnconfirmed==true or not self or self.movementKnown~=true then
@@ -194,6 +199,9 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act)
         if owner.active==true and owner.owner=="task:"..task.id then
             return {status=status(task,"waiting_for_owned_lease_expiry"),task=task}
         end
+        if task.pausedForEncounter and not task.finishing then
+            return {status=status(task,"paused_for_nearby_hazard"),task=task,hold=true}
+        end
         pop(task);return {status=state.last}
     end
     if not alive(self) or not position(self,obs.mapId) then
@@ -210,7 +218,7 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act)
         task.responseYards=task.responseYards or M.tuning.response_yards
     end
     if owner.active==true and owner.owner~="task:"..task.id then
-        return {status=status(task,"movement_owned_elsewhere")}
+        return {status=status(task,"movement_owned_elsewhere"),task=task}
     end
     if rally and (not alive(players[task.guideGuid]) or not witnessed_position(players[task.guideGuid],obs.mapId)) then
         if task.token then finish(task,"guide_lost") end
@@ -269,7 +277,8 @@ end
 function M.allow(view,obs,proposed)
     if not proposed or not view or not view.hold then return true end
     local cap=proposed.capability
-    if view.task and view.task.kind=="rally_to" and view.action==proposed then return true end
+    if view.task and view.task.kind=="rally_to" and
+       (view.action==proposed or view.task.pausedForEncounter and view.rangedWithdrawal==proposed) then return true end
     if view.task and view.task.kind=="enter_instance" then
         if view.action==proposed then return true end
         -- Entry owns voluntary travel only; current defense and healing retain
@@ -314,6 +323,7 @@ function M.import_state(checkpoint)
             (task.destinationGuid==nil or guid(task.destinationGuid)) and number(task.responseYards) and
             task.responseYards>0 and number(task.deadline)
         if type(task)~="table" or not id(task.id) or (task.kind~="wait_for_pull" and not rally and (not instance_entry or not instance_entry.validate(task))) or
+           task.pausedForEncounter~=nil and type(task.pausedForEncounter)~="boolean" or
            task.token~=nil and (type(task.token)~="string" or #task.token==0) or
            task.deadline~=nil and (not number(task.deadline) or task.deadline<0) then return false end
     end

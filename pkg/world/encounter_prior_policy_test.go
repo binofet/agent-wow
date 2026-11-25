@@ -613,3 +613,181 @@ func TestStandingPriorRealOldNativeEntryRetreatsAfterTenMinuteBoundary(t *testin
 		t.Fatal("source tuning or standing refresh changed retained UNKNOWN custody", d.Output, pending)
 	}
 }
+
+func TestStandingPriorYieldsToDistantRallyAndPausesForNearbyHazard(t *testing.T) {
+	for _, unknown := range []bool{false, true} {
+		t.Run(map[bool]string{false: "confirmed_resume", true: "unknown_hold"}[unknown], func(t *testing.T) {
+			p := newFallbackPolicyTest(t, "")
+			o := sludgePriorObservation()
+			o.Navigation.BodyMovementSupported = true
+			self := o.Players["4"]
+			self.CombatKnown = true
+			self.X, self.Y, self.Z = 0, 0, 0
+			o.Players["3"].X = 100
+			o.Players["87"] = fallbackPlayer(87)
+			guide := o.Players["87"]
+			guide.MapId = proto.Uint32(349)
+			guide.PositionKnown = true
+			guide.MovementKnown = true
+			guide.X, guide.Y, guide.Z = 54, 0, 0
+			npc := o.Targets[fallbackGUID(fallbackNPC)]
+			npc.X, npc.Y, npc.Z = 80, 0, 0
+			// A previously confirmed default lease must be released, never discarded.
+			settlePriorLease(t, p, o, false)
+			waitTaskCommand(t, p, map[string]any{"task": "rally_to", "id": "travel", "guideGuid": "87", "deadlineMonotonicMs": 999999999999})
+			d := p.decide(observeRanged(t, p, o, false))
+			a, _ := d.Output["action"].(map[string]any)
+			if a["mode"] != "release" || a["owner"] != "ranged:maraudon_sludge_backline" {
+				t.Fatal("remote harmless pack starved explicit rally", d.Output)
+			}
+			releaseID, err := p.host.ReserveAction(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: releaseID, Outcome: behavior.ActionConfirmed, Payload: map[string]any{"capability": "movement_owner", "mode": "release", "owner": "ranged:maraudon_sludge_backline", "result": map[string]any{"sessionId": fallbackSession, "selfGuid": "4"}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{}
+			d = p.decide(observeRanged(t, p, o, false))
+			a, _ = d.Output["action"].(map[string]any)
+			if a["mode"] != "acquire" || a["owner"] != "task:travel" {
+				t.Fatal("rally did not acquire after exact release", d.Output)
+			}
+			settleWaitOwnership(t, p, d, behavior.ActionConfirmed, "acquire", "task:travel", "rally-token")
+			o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: "task:travel", RemainingMs: 3000}
+			d = p.decide(observeRanged(t, p, o, false))
+			a, _ = d.Output["action"].(map[string]any)
+			if a["capability"] != "approach_target" || a["targetGuid"] != "87" {
+				t.Fatal("rally failed at observed 54-yard guide gap", d.Output)
+			}
+			// Still OOC, but the hazard is now genuinely close. Preserve the rally order
+			// and settle its exact token before any default withdrawal can take custody.
+			npc.X = 3
+			self.Moving = true
+			o.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: 87, VisitId: 1}
+			d = p.decide(observeRanged(t, p, o, false))
+			a, _ = d.Output["action"].(map[string]any)
+			if a["capability"] != "stop_movement" || a["targetGuid"] != "87" {
+				t.Fatal("close hazard did not stop own entered rally motion", d.Output)
+			}
+			stopID, stopErr := p.host.ReserveAction(d)
+			if stopErr != nil {
+				t.Fatal(stopErr)
+			}
+			_, stopErr = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: stopID, Outcome: behavior.ActionConfirmed, Payload: map[string]any{"capability": "stop_movement"}}})
+			if stopErr != nil {
+				t.Fatal(stopErr)
+			}
+			self.Moving = false
+			d = p.decide(observeRanged(t, p, o, false))
+			a, _ = d.Output["action"].(map[string]any)
+			if a["mode"] != "release" || a["owner"] != "task:travel" {
+				t.Fatal("near hazard did not pause and release stopped rally", d.Output)
+			}
+			settleWaitOwnership(t, p, d, behavior.ActionConfirmed, "release", "task:travel", "")
+			o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{}
+			d = p.decide(observeRanged(t, p, o, false))
+			a, _ = d.Output["action"].(map[string]any)
+			if a["mode"] != "acquire" || a["owner"] != "ranged:maraudon_sludge_backline" {
+				t.Fatal("close danger lost withdrawal custody", d.Output)
+			}
+			if !unknown {
+				id, err := p.host.ReserveAction(d)
+				if err != nil {
+					t.Fatal(err)
+				}
+				owner := "ranged:maraudon_sludge_backline"
+				_, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionConfirmed, Payload: map[string]any{"capability": "movement_owner", "mode": "acquire", "owner": owner, "result": map[string]any{"token": "new-prior", "state": map[string]any{"sessionId": fallbackSession, "selfGuid": "4", "movementOwner": map[string]any{"active": true, "owner": owner}}}}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: owner}
+				d = p.decide(observeRanged(t, p, o, false))
+				a, _ = d.Output["action"].(map[string]any)
+				if a["capability"] != "move_body" {
+					t.Fatal("paused rally blocked proven close-hazard withdrawal", d.Output)
+				}
+				moveID, moveErr := p.host.ReserveAction(d)
+				if moveErr != nil {
+					t.Fatal(moveErr)
+				}
+				_, moveErr = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: moveID, Outcome: behavior.ActionNotDispatched, Payload: map[string]any{"capability": "move_body"}}})
+				if moveErr != nil {
+					t.Fatal(moveErr)
+				}
+				npc.X = 80
+				d = p.decide(observeRanged(t, p, o, false))
+				a, _ = d.Output["action"].(map[string]any)
+				if a["mode"] != "release" || a["owner"] != owner {
+					t.Fatal("safe return failed to yield default lease", d.Output)
+				}
+				id, err = p.host.ReserveAction(d)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionConfirmed, Payload: map[string]any{"capability": "movement_owner", "mode": "release", "owner": owner, "result": map[string]any{"sessionId": fallbackSession, "selfGuid": "4"}}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{}
+				d = p.decide(observeRanged(t, p, o, false))
+				a, _ = d.Output["action"].(map[string]any)
+				task, _ := d.Output["task"].(map[string]any)
+				if a["mode"] != "acquire" || a["owner"] != "task:travel" || task["deadlineMonotonicMs"] != float64(999999999999) {
+					t.Fatal("paused rally failed to resume unchanged request/deadline", d.Output)
+				}
+				return
+			}
+			// An entered unknown acquisition is never bypassed by a later safe sample.
+			settleWaitOwnership(t, p, d, behavior.ActionUnknown, "acquire", "ranged:maraudon_sludge_backline", "")
+			npc.X = 80
+			d = p.decide(observeRanged(t, p, o, false))
+			if d.Output["action"] != nil {
+				t.Fatal("safe travel replayed unresolved prior acquire", d.Output)
+			}
+			task, _ := d.Output["task"].(map[string]any)
+			if task["id"] != "travel" {
+				t.Fatal("pause discarded explicit rally", d.Output)
+			}
+		})
+	}
+}
+
+func TestStandingPriorRallyExceptionRequiresHarmlessFactsAndAutomaticOrigin(t *testing.T) {
+	for _, condition := range []string{"unknown_combat", "unknown_hazard", "engaged_hazard", "explicit_finite"} {
+		t.Run(condition, func(t *testing.T) {
+			p := newFallbackPolicyTest(t, "")
+			o := sludgePriorObservation()
+			self := o.Players["4"]
+			self.CombatKnown = true
+			self.X, self.Y, self.Z = 0, 0, 0
+			o.Players["3"].X = 100
+			o.Players["87"] = fallbackPlayer(87)
+			guide := o.Players["87"]
+			guide.MapId = proto.Uint32(349)
+			guide.PositionKnown = true
+			guide.MovementKnown = true
+			guide.X, guide.Y, guide.Z = 54, 0, 0
+			npc := o.Targets[fallbackGUID(fallbackNPC)]
+			npc.X, npc.Y, npc.Z = 80, 0, 0
+			settlePriorLease(t, p, o, false)
+			switch condition {
+			case "unknown_combat":
+				self.CombatKnown = false
+			case "unknown_hazard":
+				npc.PositionKnown = false
+			case "engaged_hazard":
+				npc.AttackObservation = &actionsv1.EncounterAttackObservation{VictimKnown: true, VictimGuid: 3}
+			case "explicit_finite":
+				waitTaskCommand(t, p, map[string]any{"task": "ranged_only", "id": "maraudon_sludge_backline", "creatureEntry": 12222, "mapId": 349, "visitId": "1", "minRangeYards": 14, "maxRangeYards": 36, "clearanceYards": 2, "durationMs": 600000})
+			}
+			waitTaskCommand(t, p, map[string]any{"task": "rally_to", "id": "travel", "guideGuid": "87", "deadlineMonotonicMs": 999999999999})
+			out := p.decide(observeRanged(t, p, o, false)).Output
+			a, _ := out["action"].(map[string]any)
+			if a["mode"] == "release" && a["owner"] == "ranged:maraudon_sludge_backline" || a["owner"] == "task:travel" || a["targetGuid"] == "87" {
+				t.Fatal("unproven harmlessness or explicit finite order incorrectly yielded", out)
+			}
+		})
+	}
+}
