@@ -200,7 +200,7 @@ func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, targe
 		}
 		if selection == starterWeaponSelection && kind == spellcatalog.Stealth {
 			view.Capability = string(kind)
-			view.Ready = view.Ready && view.SelfCastSupported && self.UnitFlagsKnown && self.UnitFlags&0x80000 == 0 && s.starterSpells.uncertainStrike == nil
+			view.Ready = view.Ready && view.SelfCastSupported && s.starterSelfSpellAvailableLocked(w)
 		} else if selection == starterWeaponSelection {
 			s.reflectWeaponStrike(view, rank, self)
 			view.Ready = s.starterSpells.uncertainStrike == nil && s.offenseRankReadyLocked(self, rank)

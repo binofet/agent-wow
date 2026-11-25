@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	"context"
+	"encoding/binary"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,148 @@ func starterStealthRig(t *testing.T) (*Service, *fakeSession, *worldv1.CreatureS
 		t.Fatal(accepted, err)
 	}
 	return s, f, target, source, advance
+}
+
+func TestStarterStealthFactsAdvertiseOnlyItsNativeTaskScope(t *testing.T) {
+	s, f, target, _ := starterWeaponNativeRig(t, "fargodeep")
+	f.world.Self.UnitFlags &^= 0x80000
+	target.X = f.world.Self.X + 8
+	learnSpells(s, autoAttack, sinisterStrike, 1785)
+	point, _, _ := creaturePosition(target)
+	input, _, valid := s.starterSelectionFactsLocked(f.world, target, point, starterWeaponSelection)
+	if !valid {
+		t.Fatal("missing current shared selector facts")
+	}
+	row := input["observation"].(map[string]any)["spells"].(map[string]any)["1785"].(map[string]any)
+	if row["known"] != true || row["capability"] != "stealth" || row["ready"] != false {
+		t.Fatal("shared caller advertised an unavailable native self-cast", row)
+	}
+	assertStarterLuaChoice(t, starterLuaRuntime(t, behaviors.StarterSpellSource), input, "melee", 0)
+	if countPackets(f, opcode.CMSGCastSpell) != 0 {
+		t.Fatal("scope reflection dispatched a spell", f.packets)
+	}
+}
+
+func TestStarterStealthExactRejectionSettlesOnlyPreGONoEffectCustody(t *testing.T) {
+	for _, mode := range []string{"rejected", "GO already known", "aura already observed"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, target, _, advance := starterStealthRig(t)
+			s.session = starterWeaponAmbiguousSession{f}
+			s.Tick(context.Background())
+			op := s.starterSpells.uncertainStrike
+			if op == nil || op != s.supportOp || op.view.TransportWritten {
+				t.Fatal("fixture did not enter ambiguous Stealth", s.stateLocked())
+			}
+			if mode == "GO already known" {
+				emitPolymorph(s, opcode.SMSGSpellGo, starterWeaponObservedGo(s, s.selfGUID, s.castCount))
+			} else if mode == "aura already observed" {
+				emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(s.selfGUID, s.selfGUID, 2, 1785, 0))
+			}
+			failure := binary.LittleEndian.AppendUint32([]byte{op.count}, op.view.SpellId)
+			failure = append(failure, 12)
+			emitPolymorph(s, opcode.SMSGCastFailed, failure)
+			if mode == "rejected" {
+				if s.starterSpells.uncertainStrike != nil || s.state.CastPending || op.view.Phase != "server_rejected_no_replay" || op.view.ServerCastGo || op.view.EffectObserved {
+					t.Fatal("exact pre-GO refusal left false uncertainty or lost the terminal receipt", op.view, s.stateLocked())
+				}
+				advance(2 * time.Second)
+				target.X = -8930
+				s.refreshPositionLocked(f.world)
+				point, _, _ := creaturePosition(target)
+				selected := s.starterWeaponDecisionLocked(context.Background(), f.world, target, point)
+				if !selected.valid || selected.kind != "cast" || selected.spell.ID != sinisterStrike {
+					t.Fatal("known refusal permanently blocked ordinary offense", selected, s.starterSpells.failure())
+				}
+			} else if s.starterSpells.uncertainStrike != op {
+				t.Fatal("failure after possible effect cleared ambiguous custody", op.view)
+			}
+			if countPackets(f, opcode.CMSGCastSpell) != 1 {
+				t.Fatal("native rejection reconciliation replayed Stealth", f.packets)
+			}
+		})
+	}
+}
+
+func TestStarterStealthLostReplyReconcilesOnlyAnExactCurrentNativeGO(t *testing.T) {
+	for _, mode := range []string{"confirm", "aura first", "newer Heal", "newer Heal aura first", "no GO", "wrong count", "wrong spell", "wrong target", "wrong caster", "replaced body", "replaced visit"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, source, advance := starterStealthRig(t)
+			s.session = starterWeaponAmbiguousSession{f}
+			s.Tick(context.Background())
+			op := s.starterSpells.uncertainStrike
+			if op == nil || op != s.supportOp || op.view.TransportWritten || op.view.ServerCastGo || countPackets(f, opcode.CMSGCastSpell) != 1 {
+				t.Fatal("fixture did not retain entered lost-reply custody", s.stateLocked())
+			}
+			count, target := s.castCount, s.selfGUID
+			switch mode {
+			case "wrong count":
+				count++
+			case "wrong target":
+				target++
+			case "replaced body":
+				s.sessionID += "-replacement"
+			case "replaced visit":
+				emitPolymorph(s, opcode.SMSGNewWorld, make([]byte, 20))
+			}
+			goFrame := starterWeaponObservedGo(s, target, count)
+			if mode == "wrong spell" {
+				binary.LittleEndian.PutUint32(goFrame[2*len(packedGUID(s.selfGUID))+1:], 1784)
+			}
+			if mode == "wrong caster" {
+				copy(goFrame, packedGUID(s.selfGUID+1))
+			}
+			var newer *supportAttempt
+			var newerView *actionsv1.SpellOperation
+			if strings.HasPrefix(mode, "newer Heal") {
+				advance(6 * time.Second)
+				s.Tick(context.Background())
+				heal, _ := s.spellData.Lookup(lesserHeal)
+				s.castCount++
+				s.castUntil = s.now().Add(5 * time.Second)
+				s.pendingSpell, s.pendingTarget, s.state.CastPending = heal.ID, s.selfGUID, true
+				newer = s.reserveHealReceiptLocked("", heal, s.selfGUID)
+				newerView = proto.Clone(&newer.view).(*actionsv1.SpellOperation)
+			}
+			positive := mode == "confirm" || mode == "aura first" || newer != nil
+			if positive {
+				_, err := reloadStarterSemanticBehavior(t, s, context.Background(), &actionsv1.BehaviorReloadRequest{
+					SessionId: s.sessionID, SelfGuid: s.selfGUID, ExpectedRevision: s.behavior.Status().Revision,
+					Source: strings.Replace(source, "enabled=true, rank_order=", "enabled=false, rank_order=", 1)})
+				if err != nil || s.starterSpells.uncertainStrike != op {
+					t.Fatal("source edit changed an entered operation's custody", err)
+				}
+			}
+			auraFirst := strings.Contains(mode, "aura first")
+			if auraFirst {
+				emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(s.selfGUID, s.selfGUID, 2, 1785, 0))
+				if s.starterSpells.uncertainStrike != op || op.view.ServerCastGo {
+					t.Fatal("aura alone settled an entered operation", op.view)
+				}
+			}
+			if mode != "no GO" {
+				// A wrong complete target is rejected by the existing packet parser;
+				// its error must not become a positive cast receipt.
+				_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: goFrame})
+			}
+			if !auraFirst {
+				emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(s.selfGUID, s.selfGUID, 2, 1785, 0))
+			}
+			if positive {
+				if s.starterSpells.uncertainStrike != nil || !op.view.ServerCastGo || !op.view.EffectObserved || op.view.Phase != "confirmed_aura" {
+					t.Fatal("late exact native evidence could not settle entered uncertainty", op.view)
+				}
+				if newer != nil && (s.supportOp != newer || !proto.Equal(newerView, &newer.view) ||
+					!s.state.CastPending || s.pendingSpell != newer.view.SpellId || s.pendingTarget != newer.view.TargetGuid || s.castCount != newer.count) {
+					t.Fatal("old GO/Aura changed a newer Heal's receipt or pending identity", newer.view, s.stateLocked())
+				}
+			} else if s.starterSpells.uncertainStrike != op || op.view.ServerCastGo {
+				t.Fatal("unmatched late packet admitted an old uncertain self cast", op.view)
+			}
+			if countPackets(f, opcode.CMSGCastSpell) != 1 || countPackets(f, opcode.CMSGAttackswing) != 0 {
+				t.Fatal("late native reconciliation replayed a mutation", f.packets)
+			}
+		})
+	}
 }
 
 func TestStarterStealthAcceptedSameSessionChoiceAndRankReachActualSelfPacket(t *testing.T) {
