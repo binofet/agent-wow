@@ -18,6 +18,7 @@ type equipmentItemView struct {
 	slotKnown, metadata, durabilityKnown bool
 	entry, count, durability, maximum    uint32
 	enhancementsKnown, enhancements      bool
+	enhancementDetails                   itemEnhancementView
 }
 
 type equipmentView struct {
@@ -51,6 +52,7 @@ func (s *observations) equipmentView() equipmentView {
 			v.durability, v.maximum = item.fields[0x3c], item.fields[0x3d]
 			v.durabilityKnown = item.known[0x3c] && item.known[0x3d] && v.durability <= v.maximum
 			v.enhancementsKnown, v.enhancements = itemEnhancements(item)
+			v.enhancementDetails = observedEnhancementDetails(item)
 		}
 	}
 	return r
@@ -63,7 +65,7 @@ func (s *observations) appendEquipment(r *worldv1.SnapshotResponse) {
 		return
 	}
 	for slot, p := range v.slots {
-		r.SelfEquipment = append(r.SelfEquipment, &worldv1.EquipmentSlotState{Slot: uint32(slot), SlotKnown: p.slotKnown, ItemGuid: p.guid, MetadataKnown: p.metadata, Entry: p.entry, StackCount: p.count, DurabilityKnown: p.durabilityKnown, Durability: p.durability, MaxDurability: p.maximum, EnhancementsKnown: p.enhancementsKnown, HasEnhancements: p.enhancements})
+		r.SelfEquipment = append(r.SelfEquipment, &worldv1.EquipmentSlotState{Slot: uint32(slot), SlotKnown: p.slotKnown, ItemGuid: p.guid, MetadataKnown: p.metadata, Entry: p.entry, StackCount: p.count, DurabilityKnown: p.durabilityKnown, Durability: p.durability, MaxDurability: p.maximum, EnhancementsKnown: p.enhancementsKnown, HasEnhancements: p.enhancements, EnhancementDetails: p.enhancementDetails.message()})
 	}
 }
 
@@ -75,4 +77,72 @@ func itemEnhancements(p *observed) (known, present bool) {
 		present = present || p.fields[f] != 0
 	}
 	return true, present
+}
+
+// Fixed comparable facts participate in the existing age-free revision view.
+// Missing fields remain unknown independently; zero is a known native value.
+type itemEnchantmentView struct {
+	idKnown, durationKnown, chargesKnown bool
+	id, duration, charges                uint32
+}
+type itemEnhancementView struct {
+	slots                  [12]itemEnchantmentView
+	seedKnown, randomKnown bool
+	seed                   uint32
+	random                 int32
+}
+
+func observedEnhancementDetails(p *observed) itemEnhancementView {
+	var v itemEnhancementView
+	for i := range v.slots {
+		at := itemEnhancementFirst + i*3
+		v.slots[i] = itemEnchantmentView{p.known[at], p.known[at+1], p.known[at+2], p.fields[at], p.fields[at+1], p.fields[at+2]}
+	}
+	v.seedKnown, v.randomKnown = p.known[0x3a], p.known[0x3b]
+	v.seed, v.random = p.fields[0x3a], int32(p.fields[0x3b])
+	return v
+}
+func (v itemEnhancementView) message() *worldv1.ItemEnhancementState {
+	out := &worldv1.ItemEnhancementState{PropertySeedKnown: v.seedKnown, RandomPropertyIdKnown: v.randomKnown}
+	if v.seedKnown {
+		out.PropertySeed = v.seed
+	}
+	if v.randomKnown {
+		out.RandomPropertyId = v.random
+	}
+	// No details means no current owned metadata, not a complete empty item.
+	any := v.seedKnown || v.randomKnown
+	for _, s := range v.slots {
+		any = any || s.idKnown || s.durationKnown || s.chargesKnown
+	}
+	if !any {
+		return nil
+	}
+	for i, s := range v.slots {
+		bit := uint32(1) << uint(i)
+		if s.idKnown {
+			out.IdKnownMask |= bit
+		}
+		if s.durationKnown {
+			out.DurationKnownMask |= bit
+		}
+		if s.chargesKnown {
+			out.ChargesKnownMask |= bit
+		}
+		// Never serialize an unknown backing value as observed data.
+		row := &worldv1.ItemEnchantmentSlot{Slot: uint32(i)}
+		if s.idKnown {
+			row.Id = s.id
+		}
+		if s.durationKnown {
+			row.DurationRaw = s.duration
+		}
+		if s.chargesKnown {
+			row.Charges = s.charges
+		}
+		if row.Id != 0 || row.DurationRaw != 0 || row.Charges != 0 {
+			out.Enchantments = append(out.Enchantments, row)
+		}
+	}
+	return out
 }
