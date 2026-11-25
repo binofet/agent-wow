@@ -182,6 +182,18 @@ class CaveCohortDefaultFrameTests(unittest.TestCase):
         self.assertEqual(self.evaluate(party, frame), expected)
         self.assertEqual(party.events, [])
 
+    def test_complete_non_npc_rows_reach_the_actual_encounter_planner(self):
+        party,worker,scenes,_=full_frame('encounter')
+        for scene in scenes.values():
+            for row in scene['world']['nearbyCreatures']:row['npcFlags']=0
+        row=final_candidate(scenes)
+        frame=worker.policy_facts(scenes,'encounter')
+        self.assertEqual(self.evaluate(party,frame),{'status':'ready','choice':{'kind':'arm',
+            'targetGuid':row['guid'],'entry':475,'engagerGuid':'4','order':['1','5','4']}})
+        self.assertEqual(sum(len(actor['c']) for actor in frame['actors'].values()),96)
+        self.assertEqual(sum(len(actor['q']) for actor in frame['actors'].values()),75)
+        self.assertEqual(party.events,[])
+
     def test_late_invalid_requested_row_quest_slot_and_reference_reject_the_complete_frame(self):
         party, _, _, frame = full_frame()
         cases = []

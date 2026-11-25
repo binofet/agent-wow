@@ -251,7 +251,7 @@ class Catchup:
             approaches = row.get('lootApproaches', [])
             if not isinstance(approaches, list) or len(approaches) > 3: raise Error('Corpse approach history exceeds its bound')
             for leg in approaches:
-                if (not isinstance(leg, dict) or leg.get('phase') not in ('reserved', 'arrived', 'preempted', 'yielded')
+                if (not isinstance(leg, dict) or leg.get('phase') not in ('reserved', 'arrived', 'preempted', 'yielded','not_dispatched')
                         or leg.get('targetGuid') != row['target'] or not isinstance(leg.get('bodySessions'), dict)
                         or set(leg['bodySessions']) != set(self.sessions)
                         or any(not session(v) for v in leg['bodySessions'].values())
@@ -273,7 +273,7 @@ class Catchup:
                 raise Error('Saved corridor search is invalid')
             for leg in search['legs']:
                 if (not isinstance(leg, dict) or type(leg.get('station')) is not int or not 0 <= leg['station'] < SEARCH_HISTORY
-                        or leg.get('phase') not in ('reserved', 'arrived', 'yielded', 'preempted')
+                        or leg.get('phase') not in ('reserved', 'arrived', 'yielded', 'preempted','not_dispatched')
                         or type(leg.get('cleanupResolved', False)) is not bool
                         or leg.get('phase') == 'arrived' and leg.get('cleanupResolved') is not True
                         or type(leg.get('started')) not in (int, float) or not math.isfinite(leg['started']) or leg['started'] < 0):
@@ -604,6 +604,9 @@ class Catchup:
             leg['routeResults'] = summaries
             leg['cleanup'] = releases
             leg['cleanupResolved'] = len(tokens) == 3 and all(v['custodyResolved'] for v in releases)
+        if leg.get('notDispatched') is True and not tokens and not futures:
+            leg['cleanupResolved']=True
+            return 'not_dispatched',None,'cave_policy_preflight_not_dispatched'
         after = None
         try:
             after = observe(cleanup=True)
@@ -634,7 +637,7 @@ class Catchup:
     def search(self, scenes):
         """One journaled, physically planned cohort leg; no same-goal retries."""
         saved = self.data.get('search')
-        if saved and saved['legs'][-1]['phase'] not in ('arrived', 'preempted'):
+        if saved and saved['legs'][-1]['phase'] not in ('arrived', 'preempted','not_dispatched'):
             # An interrupted process cannot reissue a reserved movement leg.
             self.done = True; self.status['phase'] = 'corridor_previous_leg_requires_reconciliation'; return
         choice,binding=self.decide(scenes,'search')
@@ -665,6 +668,9 @@ class Catchup:
         saved['legs'].append(leg); self.search_legs += 1; self.persist()
         outcome, after, cause = self.move_cohort(leg, goal, self.search_read,
             lambda fresh,tokens=None,rpc=None:self.safe_search(fresh,tokens,binding,rpc))
+        if outcome=='not_dispatched':
+            leg.update(phase=outcome,outcome=cause);self.persist();self.idle_polls=0
+            self.status['phase']=cause;return
         if outcome == 'arrived':
             saved.update(cursor=goal_index, direction=direction)
             leg['phase'] = 'arrived'; self.persist(); self.idle_polls = 0
@@ -942,7 +948,7 @@ class Catchup:
             self.done = True; return
         search = self.data.get('search')
         last_leg = search['legs'][-1] if search else None
-        if last_leg and last_leg['phase'] not in ('arrived', 'preempted') and not self.stopped_arrival_evidence(last_leg):
+        if last_leg and last_leg['phase'] not in ('arrived', 'preempted','not_dispatched') and not self.stopped_arrival_evidence(last_leg):
             self.done = True; self.status['phase'] = 'corridor_previous_leg_requires_reconciliation'; return
         self.status['observationsCurrent'] = False
         scenes = self.read(row['target'] if row else 0)

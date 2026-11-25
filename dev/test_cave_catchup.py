@@ -719,6 +719,28 @@ class SearchParty(Party):
 
 
 class CorridorSearchTests(unittest.TestCase):
+    def test_local_final_preflight_refusal_has_no_native_entry_and_fresh_policy_can_plan(self):
+        for mode in ('health','source'):
+            with self.subTest(mode=mode):
+                p=SearchParty();w=p.worker();reads=[0];changed=[False]
+                def change(actor,method,params):
+                    search=w.data.get('search')
+                    if changed[0] or not search or not search['legs'][-1].get('entered'):return
+                    if mode=='source' and method=='session.policy_source':
+                        p.source+='\n-- new accepted same-body revision\n';p.generation+=1;changed[0]=True
+                    if mode=='health' and actor.guid==1 and method=='buddy-world.snapshot':
+                        reads[0]+=1
+                        if reads[0]==2:p.rpcs[4].self['health']=94;changed[0]=True
+                p.hook=change;p.scan(w)
+                self.assertEqual(p.movement,[]);self.assertFalse(w.done)
+                leg=w.data['search']['legs'][-1]
+                self.assertEqual(leg['phase'],'not_dispatched');self.assertFalse(leg['entered'])
+                self.assertTrue(leg['notDispatched']);self.assertEqual(leg['cleanup'],[])
+                self.assertEqual(p.events,[])
+                p.hook=None;p.rpcs[4].self['health']=100
+                restored=p.worker(stored=copy.deepcopy(w.data));p.scan(restored)
+                self.assertEqual(len(p.routes()),3)
+
     def test_idle_three_polls_then_cohort_precise_route_and_original_encounters_unchanged(self):
         p = SearchParty(); w = p.worker(); raw = [copy.deepcopy(a.self) for a in p.rpcs.values()]
         w.tick(); w.tick(); self.assertEqual(p.movement, [])
