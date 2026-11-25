@@ -191,6 +191,19 @@ def _not_dispatched(state,reason):
     state['last']=dict(id=state['last']['id'],outcome='not_dispatched',reason=reason)
 
 
+def _create_item_refusal(error,port,method):
+    # The public Actions CreateItem handler returns FailedPrecondition only
+    # before castSupportLocked. Other methods/statuses carry no such proof.
+    if not isinstance(error,runtime.RPCRejected) or method!='buddy-actions.create_item':return None
+    data=error.data
+    if (error.method!=method or error.url!=f'http://127.0.0.1:{port}/rpc' or error.code!=-32000
+            or not isinstance(data,dict) or data.get('module')!='buddy-actions'
+            or data.get('method')!='create_item' or data.get('grpc_status')!='FailedPrecondition'
+            or not isinstance(data.get('grpc_message'),str)):
+        return None
+    return {key:copy.deepcopy(data[key]) for key in ('module','method','grpc_status','grpc_message')}
+
+
 def _persist(persist,state):
     if persist is None:return # Existing in-memory callers retain their API.
     try:
@@ -246,7 +259,18 @@ def maintain_supply(rpc,observations,state,*,bridge=None,now_ms=None,persist=Non
             if current.get('sessionId')!=identities[port]['sessionId'] or str(current.get('selfGuid'))!=identities[port]['characterGuid']:
                 raise NotDispatched('supply_body_changed_before_dispatch')
             rpc_entered=True
-            reply=rpc(int(action['port']),action['method'],action['params'])
+            try:
+                reply=rpc(int(action['port']),action['method'],action['params'])
+            except runtime.RPCRejected as error:
+                refusal=_create_item_refusal(error,port,action['method'])
+                if refusal is None:raise
+                settled=copy.deepcopy(state)
+                settled['last']=dict(id=action['id'],outcome='not_dispatched',
+                    reason='create_item_failed_precondition',rejection=refusal)
+                settled['phase']='water_supply_not_dispatched'
+                _persist(persist,settled) # Failed storage retains original UNKNOWN.
+                state.clear();state.update(settled)
+                return state['phase']
             settled=copy.deepcopy(state)
             settled['last']=dict(id=action['id'],outcome='rpc_result',result=reply)
             _persist(persist,settled) # Never use an unpersisted reply next turn.

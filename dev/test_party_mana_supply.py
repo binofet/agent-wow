@@ -1,11 +1,16 @@
 """Exercise the accepted Lua supply policy and real adapter, with fake game RPCs."""
 import copy
 import hashlib
+import io
+import importlib.machinery
+import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import party_mana_supply as supply
 
@@ -262,6 +267,93 @@ class SupplyTest(unittest.TestCase):
         self.assertEqual(self.turn(),'conjure_requested');self.assertEqual(self.calls[-1][2]['spellId'],5505)
         self.calls.clear();self.mira['actions']['lastSpellOperation']=dict(capability='create_item',phase='waiting_created_item')
         self.assertEqual(self.turn(),'conjure_pending');self.assertEqual(self.calls,[])
+
+    def rejected_create_rpc(self, changes=None, *, response_id=1, code=-32000, request_method=None, data_override=...):
+        ordinary=self.rpc
+        def call(port,method,params):
+            if method!='buddy-actions.create_item':return ordinary(port,method,params)
+            self.calls.append((port,method,params))
+            data=dict(module='buddy-actions',method='create_item',grpc_status='FailedPrecondition',
+                      grpc_message='stationary caster required')
+            if changes:data.update(changes)
+            if data_override is not ...:data=data_override
+            client=supply.runtime.RPC(f'http://127.0.0.1:{port}/rpc')
+            response=io.BytesIO(json.dumps(dict(jsonrpc='2.0',id=response_id,error=dict(
+                code=code,message='native rejection',data=data))).encode())
+            with patch.object(client.opener,'open',return_value=response):
+                return client.call(request_method or method,params)
+        return call
+
+    def test_create_refusal_keeps_same_id_durable_reason_and_cooldown_without_replay(self):
+        self.rpc=self.rejected_create_rpc();state={};saved=[]
+        persist=lambda value:saved.append(copy.deepcopy(value))
+        self.assertEqual(self.turn(state,persist=persist),'water_supply_not_dispatched')
+        first=state['last']['id']
+        self.assertEqual(saved[0]['last']['outcome'],'transport_unconfirmed')
+        self.assertEqual(saved[-1]['last'],dict(id=first,outcome='not_dispatched',
+            reason='create_item_failed_precondition',rejection=dict(module='buddy-actions',method='create_item',
+            grpc_status='FailedPrecondition',grpc_message='stationary caster required')))
+        self.assertEqual(self.turn(state,now=1001),'create_item_failed_precondition')
+        self.assertNotIn('pending',state['memory'])
+        for now in (1002,2000,5000):self.turn(state,now=now)
+        self.assertEqual(len(self.calls),1)
+        self.assertEqual(self.turn(state,now=5001),'water_supply_not_dispatched')
+        self.assertNotEqual(state['last']['id'],first)
+        self.turn(state,now=5002);self.turn(state,now=9001)
+        self.assertEqual(len(self.calls),2)
+
+    def test_only_exact_create_precondition_provenance_can_settle_unknown(self):
+        for options in (dict(changes=dict(module='buddy-world')),dict(changes=dict(method='cast')),
+                        dict(changes=dict(grpc_status='Internal')),dict(changes=dict(grpc_message=None)),
+                        dict(code=9),dict(response_id=2),dict(request_method='buddy-actions.cast'),
+                        dict(data_override=None),dict(data_override=[]),dict(data_override='FailedPrecondition')):
+            with self.subTest(options=options):
+                ordinary=self.rpc;self.rpc=self.rejected_create_rpc(**options)
+                state={}
+                self.assertEqual(self.turn(state),'water_supply_rpc_unconfirmed')
+                self.assertEqual(state['last']['outcome'],'transport_unconfirmed')
+                self.turn(state,now=50000)
+                self.assertEqual(state['last']['outcome'],'transport_unconfirmed')
+                self.rpc=ordinary
+
+    def test_standalone_worker_preserves_create_refusal_but_keeps_read_error_handling(self):
+        loader=importlib.machinery.SourceFileLoader('supply_worker_refusal_test',str(self.root/'dev/party-mana'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        worker=importlib.util.module_from_spec(spec);loader.exec_module(worker)
+        bound=self.rejected_create_rpc()
+        class Client:
+            def __init__(self,port):self.port=port
+            def call(self,method,params,timeout):return bound(self.port,method,params)
+        worker._RPC_CLIENTS={port:Client(port) for port in self.observations}
+        state={}
+        self.assertEqual(supply.maintain_supply(worker.rpc,self.observations,state,
+            bridge=self.bridge,now_ms=1000),'water_supply_not_dispatched')
+        self.assertEqual(state['last']['rejection']['grpc_status'],'FailedPrecondition')
+        self.assertEqual(len(self.calls),1)
+        error=supply.runtime.RPCRejected('buddy-world.snapshot','http://127.0.0.1:8087/rpc',1,
+            -32000,'read unavailable',dict(module='buddy-world',method='snapshot'))
+        with patch.object(worker._RPC_CLIENTS[8087],'call',side_effect=error):
+            with self.assertRaises(worker.RPCError):worker.rpc(8087,'buddy-world.snapshot')
+            self.assertIsNone(worker.observe(8087))
+
+    def test_error_text_alone_and_refusal_persistence_failure_remain_unknown(self):
+        ordinary=self.rpc
+        def text_error(port,method,params):
+            if method=='buddy-actions.create_item':
+                raise supply.runtime.Error('rpc_rejected(-32000): FailedPrecondition create_item')
+            return ordinary(port,method,params)
+        self.rpc=text_error;state={}
+        self.assertEqual(self.turn(state),'water_supply_rpc_unconfirmed')
+        self.assertEqual(state['last']['outcome'],'transport_unconfirmed')
+        self.rpc=ordinary;self.rpc=self.rejected_create_rpc();state={};saved=[]
+        def persist(value):
+            if value.get('last',{}).get('outcome')=='not_dispatched':raise OSError('disk failed')
+            saved.append(copy.deepcopy(value))
+        self.assertEqual(self.turn(state,persist=persist),'water_supply_persistence_unconfirmed')
+        self.assertEqual(state['last']['outcome'],'transport_unconfirmed')
+        self.assertEqual(saved[-1]['last']['outcome'],'transport_unconfirmed')
+        self.assertEqual(self.turn(state,now=50000),'conjure_outcome_unconfirmed')
+        self.assertEqual(len(self.calls),1)
 
     def test_conjure_unknown_survives_same_body_policy_tuning_without_replay(self):
         state={};self.fail_method='buddy-actions.create_item'

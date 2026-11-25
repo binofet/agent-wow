@@ -179,6 +179,22 @@ class BridgeDiagnosticsTests(unittest.TestCase):
             with self.assertRaisesRegex(m.Error,'^rpc_result_unconfirmed$'):
                 rpc.call('buddy-actions.plan_route_leg',{})
 
+    def test_rpc_rejection_preserves_structured_same_request_provenance(self):
+        rpc=m.RPC('http://127.0.0.1:8090/rpc')
+        data=dict(module='buddy-actions',method='create_item',grpc_status='FailedPrecondition',
+                  grpc_message='stationary caster required',grpc_details=[])
+        response=io.BytesIO(json.dumps(dict(jsonrpc='2.0',id=1,error=dict(
+            code=-32000,message='native rejection',data=data))).encode())
+        with patch.object(rpc.opener,'open',return_value=response):
+            with self.assertRaises(m.RPCRejected) as caught:
+                rpc.call('buddy-actions.create_item',{})
+        error=caught.exception
+        self.assertIsInstance(error,m.Error)
+        self.assertEqual((error.method,error.url,error.request_id,error.code),
+            ('buddy-actions.create_item',rpc.url,1,-32000))
+        self.assertEqual(error.data,data)
+        self.assertEqual(str(error),'rpc_rejected(-32000): native rejection')
+
     def test_rpc_does_not_trust_rejection_for_a_different_request(self):
         rpc=m.RPC('http://127.0.0.1:8090/rpc')
         response=io.BytesIO(b'{"jsonrpc":"2.0","id":2,"error":{"code":9,"message":"wrong reply"}}')

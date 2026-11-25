@@ -381,6 +381,9 @@ function M.plan(frame,disposal,gear)
     local p=m.pending;local last=frame.last or {}
     if p then
         if last.id==p.actionId and last.outcome=='not_dispatched' then
+            if p.kind=='conjure' and last.reason=='create_item_failed_precondition' then
+                m.nextAtMs=now+M.poll_ms
+            end
             m.pending=nil;return result(m,last.reason or 'supply_not_dispatched')
         end
         if p.kind=='cleanup' then
