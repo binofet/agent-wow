@@ -13,7 +13,6 @@ import (
 
 const (
 	thermapluggMap         = 90
-	thermapluggEntry       = 7800
 	thermapluggButtonReach = 4.9
 )
 

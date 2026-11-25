@@ -236,7 +236,7 @@ func realGatherStopFixture(t *testing.T) (*gatherStopEnvironment, *buddyactions.
 	if _, err = actions.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLoginVerifyWorld, Payload: entry}); err != nil {
 		t.Fatal(err)
 	}
-	loot := buddyloot.NewService(&gatherStopCallback{env: e, module: "buddy-loot"}, gatherStopSelf, gatherStopSession)
+	loot := buddyloot.NewAutomaticService(&gatherStopCallback{env: e, module: "buddy-loot"}, gatherStopSelf, gatherStopSession)
 	server := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, request any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if info.FullMethod == lootv1.BuddyLoot_OpenGather_FullMethodName {
 			e.mu.Lock()
