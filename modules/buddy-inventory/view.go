@@ -135,6 +135,9 @@ func expectedAfter(before view, r *inventoryv1.Operation, bag itemMetadata) (vie
 	if r.Kind == "equip_gear" {
 		return expectedGearAfter(before, r)
 	}
+	if r.Kind == "select_ammo" {
+		return validateWorld(proto.Clone(before.w).(*worldv1.SnapshotResponse), before.w.Self.Guid)
+	}
 	w := proto.Clone(before.w).(*worldv1.SnapshotResponse)
 	v, e := validateWorld(w, w.Self.Guid)
 	if e != nil {
