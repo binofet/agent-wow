@@ -412,3 +412,56 @@ func TestEncounterBuffFollowDoesNotApproachDistantOptionalRecipient(t *testing.T
 		})
 	}
 }
+
+func TestFollowingInRangeBuffDoesNotBorrowFailedHealApproach(t *testing.T) {
+	for _, following := range []bool{false, true} {
+		t.Run(fmt.Sprint(following), func(t *testing.T) {
+			p := newFallbackPolicyTest(t, "")
+			obs := positionedHealObservation()
+			obs.Navigation = &actionsv1.NavigationObservation{Following: following}
+			d := p.decide(observeRanged(t, p, obs, false))
+			a, _ := d.Output["action"].(map[string]any)
+			if a["capability"] != "heal" || a["targetGuid"] != "8" {
+				t.Fatal("seed not an actual heal", d.Output)
+			}
+			id, err := p.host.ReserveAction(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionFailed, Payload: map[string]any{"capability": "heal", "target_guid": "8", "spell_id": 6063}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			obs.Healing.Patients = nil
+			obs.Healing.Spells = nil
+			buff := &actionsv1.EncounterSpell{Known: true, Ready: true, Available: true, MetadataKnown: true, Capability: "buff", TargetRule: "ally", FamilyId: 5697, Rank: 1, Cost: 10, MaxRange: 30, AuraEffects: []*actionsv1.EncounterAuraEffect{{Kind: 6, Aura: 82}}}
+			obs.Spells = map[string]*actionsv1.EncounterSpell{"5697": buff}
+			obs.Support = &actionsv1.EncounterSupport{AuraSpells: map[uint32]*actionsv1.EncounterSpell{5697: proto.Clone(buff).(*actionsv1.EncounterSpell)}}
+			for guid, player := range obs.Players {
+				player.HealthKnown = true
+				player.Health = 100
+				player.MaxHealth = 100
+				player.PowerKnown = true
+				player.PowerType = 0
+				player.Power = 100
+				player.MaxPower = 100
+				player.CombatKnown = true
+				player.InCombat = false
+				if guid != "8" {
+					var n uint64
+					fmt.Sscan(guid, &n)
+					obs.Support.PlayerAuras = append(obs.Support.PlayerAuras, &actionsv1.PlayerAuras{TargetGuid: n, Auras: []*actionsv1.ObservedAura{{SpellId: 5697, Positive: true}}})
+				}
+			}
+			out := p.decide(observeRanged(t, p, obs, false)).Output
+			a, _ = out["action"].(map[string]any)
+			if following {
+				if a["capability"] != "buff" || a["targetGuid"] != "8" {
+					t.Fatal("in-range optional buff borrowed failed heal movement", out)
+				}
+			} else if a["capability"] != "approach_target" || a["targetGuid"] != "8" {
+				t.Fatal("nonfollow cached heal positioning changed", out)
+			}
+		})
+	}
+}
