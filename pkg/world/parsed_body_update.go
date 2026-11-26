@@ -21,6 +21,13 @@ type parsedBodyUpdates struct {
 	self, follow, settled bodyUpdateRange
 	scope                 *modv1.TransportScope
 	changed               chan struct{}
+	ownerBarrier          uint64
+	ownerPositions        []observedOwnerPosition
+}
+
+type observedOwnerPosition struct {
+	through uint64
+	point   movementinfo.FollowPosition
 }
 
 type bodyUpdateRange struct {
@@ -54,7 +61,7 @@ func (u *parsedBodyUpdates) signal() {
 	}
 }
 
-func (s *Session) recordParsedBodyUpdate(scope *modv1.TransportScope, result string) {
+func (s *Session) recordParsedBodyUpdate(scope *modv1.TransportScope, result string, positions ...movementinfo.FollowPosition) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, current := &s.bodyUpdates, s.transportScopeSnapshot
@@ -69,6 +76,16 @@ func (s *Session) recordParsedBodyUpdate(scope *modv1.TransportScope, result str
 		u.self, u.follow, u.settled = bodyUpdateRange{}, bodyUpdateRange{}, bodyUpdateRange{}
 	}
 	continuous := same && u.through == scope.MotionRevision-1
+	if !continuous {
+		u.ownerPositions = u.ownerPositions[:0]
+		u.ownerBarrier = scope.MotionRevision - 1
+	}
+	if modcb.BodyUpdateIsOwnerOnly(result) {
+		u.recordOwnerMotion(scope.MotionRevision, result, positions)
+		if result == modcb.BodyUpdateOwnerTravel {
+			result = modcb.BodyUpdateOwnerMovement
+		}
+	}
 	u.follow.observe(scope.MotionRevision, continuous, result)
 	if modcb.BodyUpdateIsOwnerOnly(result) {
 		result = modcb.BodyUpdateHarmless
@@ -80,6 +97,49 @@ func (s *Session) recordParsedBodyUpdate(scope *modv1.TransportScope, result str
 	u.settled.observe(scope.MotionRevision, continuous, result)
 	u.scope, u.through = cloneTransportScope(scope), scope.MotionRevision
 	u.signal()
+}
+
+// Preserve every distinct witnessed position since the candidate's own last
+// write. Moving away and back must revoke that candidate. Identical stationary
+// heartbeats need only their latest revision. Missing history stays a barrier.
+func (u *parsedBodyUpdates) recordOwnerMotion(rev uint64, class string, points []movementinfo.FollowPosition) {
+	if class != modcb.BodyUpdateOwnerTravel || len(points) == 0 || len(points) > modcb.MaxOwnerPositions {
+		u.ownerBarrier = rev
+		return
+	}
+	for _, p := range points {
+		if !p.Valid() {
+			u.ownerBarrier = rev
+			return
+		}
+		n := len(u.ownerPositions)
+		if n != 0 && u.ownerPositions[n-1].point == p {
+			u.ownerPositions[n-1].through = rev
+			continue
+		}
+		if n == modcb.MaxOwnerPositions {
+			u.ownerBarrier = max(u.ownerBarrier, u.ownerPositions[0].through)
+			copy(u.ownerPositions, u.ownerPositions[1:])
+			u.ownerPositions = u.ownerPositions[:n-1]
+		}
+		u.ownerPositions = append(u.ownerPositions, observedOwnerPosition{rev, p})
+	}
+}
+
+func (u *parsedBodyUpdates) ownerStayedNear(after uint64, anchor movementinfo.FollowPosition) bool {
+	if u.ownerBarrier > after {
+		return false
+	}
+	observed := false
+	for _, p := range u.ownerPositions {
+		if p.through > after {
+			if !p.point.WithinDestination(anchor) {
+				return false
+			}
+			observed = true
+		}
+	}
+	return observed
 }
 
 // An empty reason qualifies the original physical source. A pending callback
@@ -98,6 +158,8 @@ func (s *Session) bodyProofLocked(ctx context.Context, before, current *modv1.Tr
 	if modsession.IsSettledBodySource(ctx) {
 		r = &u.settled
 	} else if modsession.IsSelfBodyInput(ctx) {
+		r = &u.self
+	} else if anchor, ok := modsession.FollowPosition(ctx); ok && u.ownerStayedNear(before.MotionRevision, anchor) {
 		r = &u.self
 	}
 	if same && r.barrier > before.MotionRevision {

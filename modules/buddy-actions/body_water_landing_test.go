@@ -276,7 +276,7 @@ func TestMaraudonFollowWaterExecutionFromMeasuredLedge(t *testing.T) {
 // The package CI runs these normal owner/transport checks even without copied
 // client assets. The planner's measured trajectory is supplied by a fixture.
 func TestOrdinaryDestinationUsesMeasuredFallUnderExistingOwner(t *testing.T) {
-	for _, mode := range []string{"follow", "travel", "no_entry", "cannot_swim", "unknown"} {
+	for _, mode := range []string{"follow", "travel", "no_entry", "cannot_swim", "unknown", "owner_diversion", "diversion_stop_unknown"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _, _, advance := targetMovementFixture(t)
 			seedSyntheticPortalWorldScope(f, 9)
@@ -298,7 +298,19 @@ func TestOrdinaryDestinationUsesMeasuredFallUnderExistingOwner(t *testing.T) {
 				contact.X, contact.Z = a.X+3.15, a.Z-1.95
 				return buddynav.DestinationRoute{Approach: []buddynav.Point{a}, RunSpeed: speed, Fall: []buddynav.BodyMotionSample{{Point: a}, {Point: air, At: 100 * time.Millisecond, FallTime: 100 * time.Millisecond}, {Point: contact, At: 450 * time.Millisecond, FallTime: 450 * time.Millisecond, Swimming: true}}, Onward: []buddynav.SwimPoint{{Point: contact, Swimming: true}, {Point: b, Swimming: true}}}, nil
 			}
-			s.bodyMotionWait = func(ctx context.Context, dt time.Duration) error { advance(dt); return ctx.Err() }
+			diverted := false
+			s.bodyMotionWait = func(ctx context.Context, dt time.Duration) error {
+				advance(dt)
+				if !diverted && (mode == "owner_diversion" || mode == "diversion_stop_unknown") && s.bodyMoving && s.state.Moving {
+					dest.X += 4
+					dest.PositionRevision++
+					diverted = true
+					if mode == "diversion_stop_unknown" {
+						f.failSend, f.failSendOpcode = true, opcode.MSGMoveStop
+					}
+				}
+				return ctx.Err()
+			}
 			s.approachDelay = s.bodyMotionWait
 			if mode == "cannot_swim" {
 				me.UnitFlags |= 0x4000
@@ -323,9 +335,31 @@ func TestOrdinaryDestinationUsesMeasuredFallUnderExistingOwner(t *testing.T) {
 				for i := 0; i < 8; i++ {
 					advance(200 * time.Millisecond)
 					s.runTick(ctx)
+					if diverted {
+						break
+					}
 				}
 			}
 			switch mode {
+			case "owner_diversion", "diversion_stop_unknown":
+				if !diverted || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 ||
+					countPackets(f, opcode.MSGMoveHeartbeat) != 0 || countPackets(f, opcode.MSGMoveStartSwim) != 0 {
+					t.Fatal("diversion did not settle its own grounded START", f.packets, s.stateLocked())
+				}
+				stop := f.packets[len(f.packets)-1]
+				info, ok := movementinfo.OwnFrame(stop.Payload, s.selfGUID)
+				if stop.Opcode != opcode.MSGMoveStop || !ok || info.Flags != 0 || info.FallTime != 0 || info.X != me.X || info.Y != me.Y || info.Z != me.Z {
+					t.Fatal("unwritten fall leaked into the ground STOP", stop, info)
+				}
+				if mode == "diversion_stop_unknown" {
+					n := len(f.packets)
+					s.runTick(ctx)
+					if !s.state.MotionUnconfirmed || len(f.packets) != n {
+						t.Fatal("uncertain ground STOP replayed", s.stateLocked(), f.packets)
+					}
+				} else if s.state.Moving || s.state.MotionUnconfirmed || !s.state.Following {
+					t.Fatal("confirmed ground STOP lost standing follow", s.stateLocked())
+				}
 			case "no_entry", "cannot_swim":
 				if len(f.packets) != 0 {
 					t.Fatal("unverified water route wrote packets", len(f.packets))

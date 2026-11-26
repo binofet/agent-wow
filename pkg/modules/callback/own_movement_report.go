@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -19,6 +21,8 @@ const SelfBodyInputReportMethod = "self_body_input_movement_report"
 const BodyInputUpdateTrailer = "agentwow-parsed-body-input-update"
 const BodyInputBarrierTrailer = "agentwow-body-input-barrier"
 const BodyInputFieldTrailer = "agentwow-body-input-field"
+const OwnerPositionTrailer = "agentwow-observed-owner-position-bin"
+const MaxOwnerPositions = 32
 const MaxBodyInputFields = 3
 
 // A row carries only a parsed field index and optionally its public numeric
@@ -66,12 +70,20 @@ const (
 	BodyUpdateSelfField      = "own_restricted_field"
 	BodyUpdateOwnerField     = "owner_restricted_field"
 	BodyUpdateOwnerMovement  = "owner_movement"
+	BodyUpdateOwnerTravel    = "owner_route_position"
 	BodyUpdateOwnerLifecycle = "owner_lifecycle"
 	BodyUpdateUnknownSubject = "unknown_update_subject"
 )
 
 func BodyUpdateIsOwnerOnly(class string) bool {
-	return class == BodyUpdateOwnerField || class == BodyUpdateOwnerMovement || class == BodyUpdateOwnerLifecycle
+	return class == BodyUpdateOwnerField || class == BodyUpdateOwnerMovement || class == BodyUpdateOwnerLifecycle || class == BodyUpdateOwnerTravel
+}
+
+// Only the physical writer's definite refusal for the followed owner permits
+// an independent ground STOP. A lost reply can never authorize that cleanup.
+func RouteOwnerChangeBeforeWrite(err error) bool {
+	reason, ok := strings.CutPrefix(status.Convert(err).Message(), "body input before write: ")
+	return ok && PacketWasNotDispatched(err) && BodyUpdateIsOwnerOnly(reason)
 }
 
 // Only fixed diagnostics cross the World callback boundary.
@@ -81,11 +93,28 @@ func BodyUpdateResult(positive, reason []string) string {
 	}
 	if len(positive) == 0 && len(reason) == 1 {
 		switch reason[0] {
-		case BodyUpdatePosture, BodyUpdateMalformed, BodyUpdateUnbound, BodyUpdateMovement, BodyUpdateLifecycle, BodyUpdateSelfField, BodyUpdateOwnerField, BodyUpdateOwnerMovement, BodyUpdateOwnerLifecycle, BodyUpdateUnknownSubject:
+		case BodyUpdatePosture, BodyUpdateMalformed, BodyUpdateUnbound, BodyUpdateMovement, BodyUpdateLifecycle, BodyUpdateSelfField, BodyUpdateOwnerField, BodyUpdateOwnerMovement, BodyUpdateOwnerTravel, BodyUpdateOwnerLifecycle, BodyUpdateUnknownSubject:
 			return reason[0]
 		}
 	}
 	return BodyUpdateMissing
+}
+
+// The complete World parser supplies every ordinary owner position in a
+// committed object batch. An absent or malformed list supplies no geometry.
+func ObservedOwnerPositions(class string, rows []string) []movementinfo.FollowPosition {
+	if class != BodyUpdateOwnerTravel || len(rows) == 0 || len(rows) > MaxOwnerPositions {
+		return nil
+	}
+	points := make([]movementinfo.FollowPosition, 0, len(rows))
+	for _, row := range rows {
+		p, ok := movementinfo.ReadFollowPosition(row)
+		if !ok {
+			return nil
+		}
+		points = append(points, p)
+	}
+	return points
 }
 
 // ReadOwnMovementReport reads the module's own session socket, not a public

@@ -3,6 +3,7 @@ package modrt
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
@@ -151,6 +152,7 @@ func TestRouteBodyFramesUseTheAuthenticatedNativeAndLeasedCallbacks(t *testing.T
 	calls := 0
 	var saved modsession.WriteOrigin
 	var selfOnly bool
+	anchor := movementinfo.FollowPosition{17, 23, -12}
 	uncertain := false
 	x.m.session.SendScopedPacket = func(ctx context.Context, op uint32, body []byte, got *modv1.TransportScope) error {
 		if !modsession.IsRouteBodyInput(ctx) || !proto.Equal(got, scope) || op != opcode.MSGMoveHeartbeat {
@@ -158,6 +160,9 @@ func TestRouteBodyFramesUseTheAuthenticatedNativeAndLeasedCallbacks(t *testing.T
 		}
 		calls++
 		saved, selfOnly = modsession.WriteOriginFromContext(ctx), modsession.IsSelfBodyInput(ctx)
+		if p, bound := modsession.FollowPosition(ctx); bound == selfOnly || bound && p != anchor {
+			t.Fatal("wrong pre-takeoff owner destination", p, bound, selfOnly)
+		}
 		if saved.MovementAttempt != attempt || saved.Module != actionsModule || saved.SessionID != friendlyEncounterSession {
 			t.Fatal(saved)
 		}
@@ -167,7 +172,7 @@ func TestRouteBodyFramesUseTheAuthenticatedNativeAndLeasedCallbacks(t *testing.T
 		return nil
 	}
 	route := func(ctx context.Context, follow bool) context.Context {
-		return instanceEntryIncoming(modcb.WithMovementAttempt(modcb.WithRouteBodyInput(ctx, follow), attempt))
+		return instanceEntryIncoming(modcb.WithMovementAttempt(modcb.WithRouteBodyInput(ctx, follow, anchor), attempt))
 	}
 	native := x.m.moduleScopedPacketWriter(friendlyEncounterSession, actionsModule)
 	for _, follows := range []bool{true, false} {
@@ -178,6 +183,7 @@ func TestRouteBodyFramesUseTheAuthenticatedNativeAndLeasedCallbacks(t *testing.T
 	}
 	before := calls
 	rejected := []error{
+		native(instanceEntryIncoming(modcb.WithMovementAttempt(modcb.WithRouteBodyInput(context.Background(), true, movementinfo.FollowPosition{float32(math.Inf(1)), 1, 2}), attempt)), opcode.MSGMoveHeartbeat, wire, scope),
 		native(instanceEntryIncoming(modcb.WithRouteBodyInput(context.Background(), true)), opcode.MSGMoveHeartbeat, wire, scope),
 		native(route(context.Background(), true), opcode.MSGMoveHeartbeat, append(wire, 0), scope),
 		x.m.moduleScopedPacketWriter("other session", actionsModule)(route(context.Background(), true), opcode.MSGMoveHeartbeat, wire, scope),

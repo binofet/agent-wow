@@ -292,6 +292,11 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 				if reason == modcb.BodyUpdateSelfField {
 					trailer.Append(modcb.BodyInputFieldTrailer, next.bodyInputFields...)
 				}
+				if reason == modcb.BodyUpdateOwnerTravel {
+					for _, p := range next.bodyOwnerPositions {
+						trailer.Append(modcb.OwnerPositionTrailer, p.Wire())
+					}
+				}
 				_ = grpc.SetTrailer(ctx, trailer)
 			}
 		}

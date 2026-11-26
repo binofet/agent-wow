@@ -22,6 +22,7 @@ import (
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -99,9 +100,104 @@ func (c *bodyContinuitySession) observe(op uint16, wire []byte) (string, *modv1.
 	}
 	result := modcb.BodyUpdateResult(tr.md.Get(modcb.BodyInputUpdateTrailer), tr.md.Get(modcb.BodyInputBarrierTrailer))
 	if op == opcode.SMSGUpdateObject || op == opcode.SMSGCompressedUpdateObject {
-		c.e.s.recordParsedBodyUpdate(p.TransportScope, modcb.BodyUpdateDetail(result, tr.md.Get(modcb.BodyInputFieldTrailer)))
+		positions := modcb.ObservedOwnerPositions(result, tr.md.Get(modcb.OwnerPositionTrailer))
+		c.e.s.recordParsedBodyUpdate(p.TransportScope, modcb.BodyUpdateDetail(result, tr.md.Get(modcb.BodyInputFieldTrailer)), positions...)
 	}
 	return result, p
+}
+
+func TestFollowTakeoffChecksAllObservedOwnerPositionsAtTheSocket(t *testing.T) {
+	const owner, self = 3, 99
+	anchor := movementinfo.FollowPosition{100, 23, -10}
+	for _, tc := range []struct {
+		change string
+		admit  bool
+	}{
+		{"same_heartbeat", true}, {"swim_in_band", true}, {"batch_at_radius", true},
+		{"batch_out_and_back", false}, {"vertical_diversion", false}, {"owner_death_and_move", false},
+		{"own_death_and_owner_move", false}, {"owner_destroy", false}, {"incomplete", false},
+		{"no_route_anchor", false}, {"self_control", false}, {"same_map_new_visit", false},
+	} {
+		t.Run(tc.change, func(t *testing.T) {
+			c, conn := newBodyContinuitySession(t)
+			c.observe(opcode.SMSGLoginVerifyWorld, positionBody(349, 7, 8, 9, 0))
+			c.observe(opcode.SMSGUpdateObject, bodyPlayerCreate(self, 7, 8, 9, 0))
+			c.observe(opcode.SMSGUpdateObject, bodyPlayerCreate(owner, anchor[0], anchor[1], anchor[2], 0))
+			route := modsession.WithRouteBodyInput(context.Background(), true)
+			if tc.change != "no_route_anchor" {
+				route = modsession.WithFollowPosition(route, anchor)
+			}
+			scope := c.e.transport.snapshot()
+			ground, err := movementinfo.MoverFrame(self, movementinfo.Info{Flags: 1, X: 7, Y: 8, Z: 9})
+			if err != nil {
+				t.Fatal(err)
+			}
+			air, err := movementinfo.MoverFrame(self, movementinfo.Info{Flags: 0x1001, X: 7.7, Y: 8, Z: 8.9,
+				FallTime: 100, JumpPresent: true, Jump: movementinfo.Jump{CosAngle: 1, XYSpeed: 7}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := c.e.writeContext(route, opcode.MSGMoveStartForward, ground, scope); err != nil {
+				t.Fatal(err)
+			}
+			source := c.e.transport.snapshot()
+			ownerFrame := func(dx, dz float32) []byte {
+				wire, err := movementinfo.MoverFrame(owner, movementinfo.Info{Time: 1234, Flags: movementinfo.SwimmingFlag,
+					PitchPresent: true, X: anchor[0] + dx, Y: anchor[1], Z: anchor[2] + dz, Orientation: .7})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return wire
+			}
+			ownerBlock := func(dx float32) []byte {
+				wire := ownerFrame(dx, 0)
+				block := append([]byte{1, 1, owner, 0x20, 0}, wire[2:]...)
+				for _, speed := range []float32{2.5, 7, 4.5, 4.7, 2.5, 7, 4.5, 3.14, 3.14} {
+					block = binary.LittleEndian.AppendUint32(block, math.Float32bits(speed))
+				}
+				return block
+			}
+			c.e.beforeScopedWrite = func() error {
+				c.e.beforeScopedWrite = nil
+				switch tc.change {
+				case "same_heartbeat", "no_route_anchor":
+					c.observe(opcode.MSGMoveHeartbeat, ownerFrame(0, 0))
+				case "swim_in_band":
+					c.observe(opcode.MSGMoveHeartbeat, ownerFrame(.7, .3))
+				case "vertical_diversion":
+					c.observe(opcode.MSGMoveHeartbeat, ownerFrame(0, 1.51))
+				case "batch_at_radius":
+					c.observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, ownerBlock(.3), ownerBlock(1.5)))
+				case "batch_out_and_back":
+					c.observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, ownerBlock(1.51), ownerBlock(0)))
+				case "owner_death_and_move":
+					c.observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, bodyValuesBlock(owner, 0x18, 0), ownerBlock(0)))
+				case "own_death_and_owner_move":
+					c.observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, ownerBlock(0), bodyValuesBlock(self, 0x18, 0), bodyValuesBlock(self, 0x18, 100)))
+				case "owner_destroy":
+					c.observe(opcode.SMSGDestroyObject, append(binary.LittleEndian.AppendUint64(nil, owner), 0))
+				case "incomplete":
+					c.observe(opcode.MSGMoveHeartbeat, ownerFrame(0, 0)[:13])
+				case "self_control":
+					c.observe(opcode.SMSGClientControlUpdate, []byte{1, self, 0})
+					c.observe(opcode.MSGMoveHeartbeat, ownerFrame(0, 0))
+				case "same_map_new_visit":
+					c.observe(opcode.SMSGNewWorld, positionBody(349, 7, 8, 9, 0))
+					c.observe(opcode.MSGMoveHeartbeat, ownerFrame(0, 0))
+				}
+				return nil
+			}
+			before := conn.writes
+			_, _, err = c.e.writeContext(route, opcode.MSGMoveHeartbeat, air, source)
+			if tc.admit {
+				if err != nil || conn.writes != before+1 {
+					t.Fatalf("valid takeoff refused: %v, writes %d to %d", err, before, conn.writes)
+				}
+			} else if !modcb.PacketWasNotDispatched(err) || conn.writes != before {
+				t.Fatalf("diverted takeoff escaped: %v, writes %d to %d", err, before, conn.writes)
+			}
+		})
+	}
 }
 
 func (c *bodyContinuitySession) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 )
 
 const (
@@ -34,6 +35,7 @@ const (
 type observations struct {
 	bodyInputBarrier      string
 	bodyInputFields       []string
+	bodyOwnerPositions    []movementinfo.FollowPosition
 	players               [2]observed
 	visitRevision         uint64
 	nearbyPlayers         map[uint64]*observed

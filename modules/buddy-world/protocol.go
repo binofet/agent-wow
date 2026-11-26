@@ -319,7 +319,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		guid := c.guid()
 		c.skip(4)
 		p := state.target(guid)
-		if err := movement(c, p, now); err != nil {
+		if err := movement(c, p, now, nil); err != nil {
 			return true, err
 		}
 		if p != nil && p.isSelf {
@@ -400,7 +400,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		// The realm forwards the acknowledging player's MovementInfo to
 		// their peers, followed by sin, cos, horizontal and vertical speeds.
 		p := state.target(c.guid())
-		if err := movement(c, p, now); err != nil {
+		if err := movement(c, p, now, nil); err != nil {
 			return true, err
 		}
 		for i := 0; i < 4; i++ {
@@ -436,7 +436,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 	if movementOpcode(op) {
 		guid := c.guid()
 		p := state.target(guid)
-		if err := movement(c, p, now); err != nil {
+		if err := movement(c, p, now, nil); err != nil {
 			return true, err
 		}
 		if err := c.done(); err != nil {
@@ -466,7 +466,7 @@ func movementOpcode(op uint32) bool {
 	return false
 }
 
-func movement(c *cursor, p *observed, now time.Time) error {
+func movement(c *cursor, p *observed, now time.Time, received *movementinfo.Info) error {
 	if c.err != nil {
 		return c.err
 	}
@@ -476,6 +476,9 @@ func movement(c *cursor, p *observed, now time.Time) error {
 		return errShort
 	}
 	c.skip(consumed)
+	if received != nil {
+		*received = info
+	}
 	// Preserve the existing World base-pose policy. Optional floats were
 	// previously skipped, so their validity qualifies only the new own facts.
 	if err := position(p, info.X, info.Y, info.Z, info.Orientation, now); err != nil {
@@ -500,7 +503,7 @@ func movement(c *cursor, p *observed, now time.Time) error {
 func updates(c *cursor, state *observations, now time.Time) error {
 	players := &state.players
 	count := c.u32()
-	state.bodyInputBarrier, state.bodyInputFields = "", nil
+	state.bodyInputBarrier, state.bodyInputFields, state.bodyOwnerPositions = "", nil, nil
 	if count > maxBlocks {
 		return errBounds
 	}
@@ -515,7 +518,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 			// normally; their movement and lifecycle do not move this body.
 			if guid == 0 {
 				state.bodyInputBarrier = modcb.BodyUpdateUnknownSubject
-			} else if protected && typ != 0 {
+			} else if protected && typ != 0 && (typ != 1 || guid == players[0].guid) {
 				state.blockBodyRecord(guid, typ)
 			}
 			p := state.target(guid)
@@ -641,7 +644,11 @@ func updates(c *cursor, state *observations, now time.Time) error {
 				}
 			}
 			if typ != 0 {
-				if err := movementUpdate(c, p, now); err != nil {
+				var ownerMovement *observations
+				if typ == 1 && guid != 0 && guid == players[1].guid && guid != players[0].guid {
+					ownerMovement = state
+				}
+				if err := movementUpdate(c, p, now, ownerMovement); err != nil {
 					return err
 				}
 			}
@@ -715,18 +722,35 @@ func updates(c *cursor, state *observations, now time.Time) error {
 	return c.done()
 }
 
-func movementUpdate(c *cursor, p *observed, now time.Time) error {
+func movementUpdate(c *cursor, p *observed, now time.Time, owner *observations) error {
 	flags := c.u16()
 	if flags&^uint16(0x3ff) != 0 {
 		return errLayout
+	}
+	if owner != nil && (flags&0x20 == 0 || p == nil || !p.present || !p.mapKnown) {
+		owner.blockBody(modcb.BodyUpdateOwnerMovement)
 	}
 	if flags&0x20 != 0 {
 		if len(c.b)-c.off < 4 {
 			return errShort
 		}
-		moveFlags := binary.LittleEndian.Uint32(c.b[c.off:])
-		if err := movement(c, p, now); err != nil {
+		var info movementinfo.Info
+		if err := movement(c, p, now, &info); err != nil {
 			return err
+		}
+		if owner != nil {
+			point, ok := info.FollowPosition()
+			n := len(owner.bodyOwnerPositions)
+			if !ok {
+				owner.blockBody(modcb.BodyUpdateOwnerMovement)
+			} else if n == 0 || owner.bodyOwnerPositions[n-1] != point {
+				if n == modcb.MaxOwnerPositions {
+					owner.blockBody(modcb.BodyUpdateOwnerMovement)
+				} else {
+					owner.blockBody(modcb.BodyUpdateOwnerTravel)
+					owner.bodyOwnerPositions = append(owner.bodyOwnerPositions, point)
+				}
+			}
 		}
 		speeds := [9]float32{}
 		for i := range speeds {
@@ -739,7 +763,7 @@ func movementUpdate(c *cursor, p *observed, now time.Time) error {
 			p.walkSpeed, p.runSpeed = speeds[0], speeds[1]
 			p.speedsKnown = true
 		}
-		if moveFlags&0x08000000 != 0 {
+		if info.Flags&0x08000000 != 0 {
 			if err := splineCreate(c, p, now); err != nil {
 				return err
 			}
@@ -842,7 +866,7 @@ func splineCreate(c *cursor, p *observed, now time.Time) error {
 // Preserve the first physical cause. A later correction of the selected body
 // takes precedence over a change to the optional followed destination.
 func (s *observations) blockBody(reason string) {
-	if s.bodyInputBarrier == "" || modcb.BodyUpdateIsOwnerOnly(s.bodyInputBarrier) && !modcb.BodyUpdateIsOwnerOnly(reason) ||
+	if s.bodyInputBarrier == "" || s.bodyInputBarrier == modcb.BodyUpdateOwnerTravel || modcb.BodyUpdateIsOwnerOnly(s.bodyInputBarrier) && !modcb.BodyUpdateIsOwnerOnly(reason) ||
 		s.bodyInputBarrier == modcb.BodyUpdatePosture && !modcb.BodyUpdateIsOwnerOnly(reason) && reason != modcb.BodyUpdatePosture {
 		s.bodyInputBarrier = reason
 	}
