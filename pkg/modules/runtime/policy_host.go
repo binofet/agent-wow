@@ -26,6 +26,7 @@ type SessionPolicy struct {
 	lifetime            context.Context
 	advance             sync.Mutex
 	dispatchDone        chan struct{}
+	dispatchAwaiting    atomic.Bool    // true only while the admitted Send is awaiting transport completion
 	movementPointsScope map[string]any // guarded by advance; declarative clear on reload
 	encounterLeaseHeld  bool           // guarded by advance
 	followFallback      atomic.Pointer[policyFollowFallback]
@@ -131,6 +132,13 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 		p.advance.Unlock()
 		return nil, nil, err
 	}
+	// Finish this bounded ingress prefix before selecting from the captured
+	// observation set. A scheduling yield must not make the driver collect a
+	// new feed set ahead of the one whose decision is still outstanding.
+	if err := p.vm.Drain(ctx); err != nil {
+		p.advance.Unlock()
+		return nil, nil, err
+	}
 	decision, err := p.vm.Decide(ctx, input)
 	if err != nil {
 		p.advance.Unlock()
@@ -171,6 +179,7 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 		return decision.Output, nil, err
 	}
 	defer func() {
+		p.dispatchAwaiting.Store(false)
 		p.advance.Lock()
 		close(p.dispatchDone)
 		p.dispatchDone = nil
@@ -181,7 +190,9 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	defer cancel()
 	stop := context.AfterFunc(p.lifetime, cancel)
 	defer stop()
+	p.dispatchAwaiting.Store(true)
 	outcome, payload := dispatch.Send(modsession.WithWriteOrigin(dispatchCtx, origin))
+	p.dispatchAwaiting.Store(false)
 	p.publishDispatch(s, id, dispatch.Module, outcome, payload)
 	receipt := &behavior.ActionReceipt{SessionID: s.SessionID, ActionID: id, Outcome: outcome, Payload: payload}
 	if dispatch.spell != nil {

@@ -95,7 +95,7 @@ type movementPointsTestRig struct {
 func newMovementPointsRig(t *testing.T, source string) *movementPointsTestRig {
 	return newMovementPointsActorRig(t, source, "4")
 }
-func newMovementPointsActorRig(t *testing.T, source, body string) *movementPointsTestRig {
+func newMovementPointsActorRig(t *testing.T, source, body string, options ...behavior.SessionOptions) *movementPointsTestRig {
 	t.Helper()
 	m := New(movementPointsRegistry(t), nil, nil)
 	m.started = true
@@ -198,7 +198,11 @@ func newMovementPointsActorRig(t *testing.T, source, body string) *movementPoint
 	}
 	m.instances[actionsModule].conn = conn
 	m.instances[actionsModule].launch.Environment = map[string]string{modcb.PolicyEncounterKeyEnv: strings.Repeat("a", 64)}
-	host, err := m.StartPolicy(context.Background(), source)
+	var configured behavior.SessionOptions
+	if len(options) > 0 {
+		configured = options[0]
+	}
+	host, err := m.StartPolicyWithOptions(context.Background(), source, configured)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,9 +260,11 @@ func TestMovementPointsPersistentAdvisoryDuringActualBlockedSend(t *testing.T) {
 func TestMovementPointsReloadFencesOldObservationAndClearsInput(t *testing.T) {
 	r := newMovementPointsRig(t, movementPointsTestSource)
 	r.host.dispatchDone = make(chan struct{})
+	r.host.dispatchAwaiting.Store(true)
 	if err := r.host.stepMovementPointsObservation(context.Background(), "points"); err != nil {
 		t.Fatal(err)
 	}
+	r.host.dispatchAwaiting.Store(false)
 	r.host.dispatchDone = nil // no actual Send in this source-fence fixture
 	revision := r.host.vm.Status().Revision
 	source := strings.Replace(movementPointsTestSource, "movement_points=function()return {}end,", "", 1)
@@ -284,7 +290,8 @@ func TestMovementPointsAdvisoryCannotDispatchGameplay(t *testing.T) {
 	source := strings.Replace(movementPointsTestSource, `return {encounterOwnership=`, `return {action={kind="forbidden"},encounterOwnership=`, 1)
 	r := newMovementPointsRig(t, source)
 	r.host.dispatchDone = make(chan struct{})
-	defer func() { r.host.dispatchDone = nil }()
+	r.host.dispatchAwaiting.Store(true)
+	defer func() { r.host.dispatchAwaiting.Store(false); r.host.dispatchDone = nil }()
 	if err := r.host.stepMovementPointsObservation(context.Background(), "points"); err == nil {
 		t.Fatal("advisory accepted a gameplay action")
 	}
@@ -296,7 +303,8 @@ func TestMovementPointsAdvisoryCannotDispatchGameplay(t *testing.T) {
 func TestMovementPointsLateSourceReadCannotCrossReload(t *testing.T) {
 	r := newMovementPointsRig(t, movementPointsTestSource)
 	r.host.dispatchDone = make(chan struct{})
-	defer func() { r.host.dispatchDone = nil }()
+	r.host.dispatchAwaiting.Store(true)
+	defer func() { r.host.dispatchAwaiting.Store(false); r.host.dispatchDone = nil }()
 	r.onRead = func() {
 		r.onRead = nil
 		_, err := r.host.Reload(context.Background(), strings.Replace(movementPointsTestSource, "events=0", "events=10", 1), r.host.vm.Status().Revision)

@@ -31,6 +31,16 @@ func (p *SessionPolicy) movementPointsAvailable() bool {
 // This is an observation-only pass through the SAME persistent VM. Ingress
 // and receipts retain their original order; no action is resolved or reserved.
 func (p *SessionPolicy) stepMovementPointsObservation(ctx context.Context, sid string) error {
+	// inFlight includes read/decide work, not just external Send. Do not
+	// fetch another large observation or wait behind that ordinary VM work.
+	if !p.dispatchAwaiting.Load() || !p.advance.TryLock() {
+		return nil
+	}
+	waiting := p.dispatchDone != nil && p.dispatchAwaiting.Load()
+	p.advance.Unlock()
+	if !waiting {
+		return nil
+	}
 	if !p.vm.HasExport(movementPointsHook) {
 		return nil
 	}
@@ -50,7 +60,7 @@ func (p *SessionPolicy) stepMovementPointsObservation(ctx context.Context, sid s
 	}
 	// Only an actual in-flight dispatch needs the advisory pass. Normal Step
 	// publishes the same data with its ordinary decision.
-	if p.dispatchDone == nil {
+	if p.dispatchDone == nil || !p.dispatchAwaiting.Load() {
 		return nil
 	}
 	sequence, err := p.Enqueue(behavior.Event{Kind: "encounter_observation", Value: observed})
