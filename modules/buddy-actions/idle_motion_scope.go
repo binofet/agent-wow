@@ -48,17 +48,63 @@ func idleMotionPacketPose(payload []byte, self uint64) (position, bool) {
 	return position{i.X, i.Y, i.Z, i.Orientation}, true
 }
 
-func (s *Service) idleMotionCurrentLocked(b *idleMotionScope, w *worldv1.SnapshotResponse, now time.Time) bool {
-	if b == nil || b.broken || s.closed || s.sessionID != b.binding.sessionID || s.selfGUID != b.binding.selfGUID || s.idleInteraction != b.binding ||
-		s.state.InteractionOwner != "exploration" || s.interactionToken != b.binding.token || s.state.InteractionHarvest ||
-		!s.encounterVisit.bound || s.encounterVisit.revision != b.binding.visit || !s.matchesCurrentEncounterVisitLocked(w) || w.GetVisitRevision() != b.binding.visit ||
-		!b.cleanupOnly && s.interactionUntil.Sub(now) < time.Second || s.clientControlLost || s.clientControlRestoring || s.state.MotionUnconfirmed ||
-		!s.posKnown || !finite(s.pos) || s.pos != b.pose || s.posRevision != b.clientRevision || s.positionRevision != b.rawRevision || s.posMap != b.mapID ||
-		w.GetSelf().GetPositionRevision() != b.rawRevision || playerPosition(w.GetSelf()) != b.rawPose || safeSelfCombat(w, s.selfGUID) != "" {
-		return false
+// A transient failed read is known not to have dispatched this packet. It
+// cannot authorize progress; a later STOP must still pass every fresh guard.
+var errIdleMotionReadUnavailable = modcb.PacketNotDispatchedError("idle motion observation read unavailable before write")
+
+func (s *Service) idleMotionLocalFailureLocked(b *idleMotionScope, now time.Time) string {
+	if b == nil {
+		return "scope_missing"
+	}
+	if b.broken {
+		return "scope_broken"
+	}
+	if s.closed || s.sessionID != b.binding.sessionID || s.selfGUID != b.binding.selfGUID {
+		return "body_changed"
+	}
+	if s.idleInteraction != b.binding || s.state.InteractionOwner != "exploration" || s.interactionToken != b.binding.token || s.state.InteractionHarvest {
+		return "lease_changed"
+	}
+	if !s.encounterVisit.bound || s.encounterVisit.revision != b.binding.visit {
+		return "visit_changed"
+	}
+	if !b.cleanupOnly && s.interactionUntil.Sub(now) < time.Second {
+		return "lease_expiring"
+	}
+	if s.clientControlLost || s.clientControlRestoring {
+		return "control_changed"
+	}
+	if s.state.MotionUnconfirmed {
+		return "motion_unconfirmed"
+	}
+	if !s.posKnown || !finite(s.pos) || s.pos != b.pose || s.posRevision != b.clientRevision || s.positionRevision != b.rawRevision || s.posMap != b.mapID {
+		return "client_pose_changed"
+	}
+	return ""
+}
+
+func (s *Service) idleMotionCurrentFailureLocked(b *idleMotionScope, w *worldv1.SnapshotResponse, now time.Time) string {
+	if reason := s.idleMotionLocalFailureLocked(b, now); reason != "" {
+		return reason
+	}
+	if !s.matchesCurrentEncounterVisitLocked(w) || w.GetVisitRevision() != b.binding.visit {
+		return "observed_body_or_visit_changed"
+	}
+	if w.GetSelf().GetPositionRevision() != b.rawRevision || playerPosition(w.GetSelf()) != b.rawPose {
+		return "observed_pose_changed"
+	}
+	if safeSelfCombat(w, s.selfGUID) != "" {
+		return "observed_body_unsafe"
 	}
 	observed := portalObservedWorldScope(w, s.selfGUID)
-	return samePortalCoreVisit(b.initial, observed) && samePortalCoreVisit(b.initial, b.current) && observed.MotionRevision >= b.initial.MotionRevision && observed.MotionRevision <= b.current.MotionRevision
+	if !samePortalCoreVisit(b.initial, observed) || !samePortalCoreVisit(b.initial, b.current) || observed.MotionRevision < b.initial.MotionRevision || observed.MotionRevision > b.current.MotionRevision {
+		return "transport_source_changed"
+	}
+	return ""
+}
+
+func (s *Service) idleMotionCurrentLocked(b *idleMotionScope, w *worldv1.SnapshotResponse, now time.Time) bool {
+	return s.idleMotionCurrentFailureLocked(b, w, now) == ""
 }
 
 func (s *Service) newIdleMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly bool) (*idleMotionScope, error) {
@@ -98,8 +144,23 @@ func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotion
 	}
 	w, err := s.readWorldSnapshot(ctx)
 	now := s.now()
-	if err != nil || ctx.Err() != nil || b.clientRevision == ^uint64(0) || !s.idleMotionCurrentLocked(b, w, now) {
-		return nil, modcb.PacketNotDispatchedError("idle motion custody or source changed before write")
+	if reason := s.idleMotionLocalFailureLocked(b, now); reason != "" {
+		return nil, modcb.PacketNotDispatchedError("idle motion before write: " + reason)
+	}
+	if ctx.Err() != nil {
+		return nil, modcb.PacketNotDispatchedError("idle motion call canceled before write")
+	}
+	if err != nil {
+		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
+			return nil, errIdleMotionReadUnavailable
+		}
+		return nil, modcb.PacketNotDispatchedError("idle motion unclassified observation read failure before write")
+	}
+	if b.clientRevision == ^uint64(0) {
+		return nil, modcb.PacketNotDispatchedError("idle motion client revision exhausted before write")
+	}
+	if reason := s.idleMotionCurrentFailureLocked(b, w, now); reason != "" {
+		return nil, modcb.PacketNotDispatchedError("idle motion before write: " + reason)
 	}
 	// This is the final read before a scoped packet. Only this speed-only
 	// refusal, after full custody validation, leaves the current STOP scope intact.
