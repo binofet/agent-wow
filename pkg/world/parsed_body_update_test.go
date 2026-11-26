@@ -136,7 +136,13 @@ func (c *bodyContinuitySession) InvokeModule(ctx context.Context, r *modv1.Invok
 		if err = r.Request.UnmarshalTo(q); err == nil {
 			response, err = c.w.ObserveClientMovement(ctx, q)
 		}
-	case r.Module == "session" && r.Method == modcb.BodyInputReportMethod:
+	case r.Module == "session" && (r.Method == modcb.BodyInputReportMethod || r.Method == modcb.SelfBodyInputReportMethod || r.Method == modcb.SettledBodyInputReportMethod):
+		if r.Method == modcb.SettledBodyInputReportMethod {
+			ctx = modsession.WithSettledBodySource(ctx)
+		}
+		if r.Method == modcb.SelfBodyInputReportMethod {
+			ctx = modsession.WithSelfBodyInput(ctx)
+		}
 		q := &structpb.Struct{}
 		if err = r.Request.UnmarshalTo(q); err != nil {
 			break
@@ -246,6 +252,16 @@ func bodyPlayerCreate(guid byte, x, y, z, o float32) []byte {
 	return b
 }
 
+func busyBodyUpdate(t *testing.T) []byte {
+	foreignMove := []byte{1, 1, 23, 0x40, 0}
+	for _, v := range []float32{30, 33, 20, 1} {
+		foreignMove = binary.LittleEndian.AppendUint32(foreignMove, math.Float32bits(v))
+	}
+	return compressedBodyUpdates(t, bodyPlayerCreate(23, 30, 33, 20, 1)[4:], foreignMove,
+		bodyValuesBlock(99, 0x18, 87), bodyValuesBlock(99, 0x18, 100), bodyValuesBlock(99, 0x3b, 8), bodyValuesBlock(99, 0x53, 7),
+		bodyValuesBlock(99, 0x162, 0), bodyValuesBlock(23, 0x19, 17), []byte{4, 1, 0, 0, 0, 1, 23})
+}
+
 func TestCopiedMaraudonNativeFollowThroughParsedWorldAndCore(t *testing.T) {
 	root := os.Getenv("BUDDY_NAV_POOL_TEST_DATA_DIR")
 	if root == "" {
@@ -284,7 +300,7 @@ func TestCopiedMaraudonNativeFollowThroughParsedWorldAndCore(t *testing.T) {
 					c.observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, bodyValuesBlock(99, 0x18, 0), bodyValuesBlock(99, 0x18, 100)))
 				} else {
 					c.observe(opcode.SMSGStandstateUpdate, []byte{0})
-					c.observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, bodyValuesBlock(23, 0x19, 17)))
+					c.observe(opcode.SMSGCompressedUpdateObject, busyBodyUpdate(t))
 				}
 			}
 			md, _ := metadata.FromOutgoingContext(modcb.WithPolicySpell(ctx, strings.Repeat("b", 64)))
@@ -305,6 +321,27 @@ func TestCopiedMaraudonNativeFollowThroughParsedWorldAndCore(t *testing.T) {
 			stopped, err := a.Follow(ctx, &actionsv1.ToggleRequest{Enabled: false})
 			if err != nil || stopped.MotionUnconfirmed || stopped.Moving || stopped.Reason != "follow_disabled" || conn.opcodes[len(conn.opcodes)-1] != opcode.MSGMoveStop || body.Phase != "body_scope_unconfirmed_no_retry" {
 				t.Fatal("distinct explicit stop did not settle physical motion", stopped, err, conn.opcodes)
+			}
+			// A later action can start at this exact settled STOP through
+			// returning peers, health changes, emotes and unrelated updates.
+			// The interrupted sequence cannot send another frame.
+			c.afterWrite = nil
+			c.observe(opcode.SMSGStandstateUpdate, []byte{1})
+			c.observe(opcode.SMSGStandstateUpdate, []byte{0})
+			c.observe(opcode.SMSGCompressedUpdateObject, busyBodyUpdate(t))
+			if _, err := a.Follow(ctx, &actionsv1.ToggleRequest{Enabled: true}); err != nil {
+				t.Fatal(err)
+			}
+			before := conn.writes
+			same := &actionsv1.BodyMovementRequest{SessionId: "continuity-fixture", SelfGuid: 99, VisitId: 1, SequenceId: 23, DurationMs: 500, Landing: "follow_water"}
+			freshCtx := metadata.NewIncomingContext(ctx, md)
+			if old, err := a.MoveBody(freshCtx, same); err != nil || old.GetBodyMovement().GetPhase() != "body_scope_unconfirmed_no_retry" || conn.writes != before {
+				t.Fatal("replayed failed input", err, old)
+			}
+			same.SequenceId++
+			next, err := a.MoveBody(freshCtx, same)
+			if err != nil || next.GetBodyMovement().GetPhase() != "body_input_written" || next.MotionUnconfirmed || !slices.Contains(conn.opcodes[before:], opcode.MSGMoveStartSwim) {
+				t.Fatal("new selection failed from settled STOP", err, next, conn.opcodes[before:])
 			}
 		})
 	}
@@ -331,7 +368,7 @@ func TestBodyProofDistinguishesEqualLengthPacketsAndStandingChanges(t *testing.T
 		value  uint32
 		reason string
 	}{
-		{1, modcb.BodyUpdateSelfField},          // sit
+		{1, modcb.BodyUpdatePosture},            // sit
 		{0, modcb.BodyUpdateHarmless},           // normal stand-up during a forward input
 		{0x01000000, modcb.BodyUpdateSelfField}, // changed animation tier
 		{0x01000007, modcb.BodyUpdateSelfField}, // dead stand state
@@ -399,10 +436,10 @@ func TestBodyRefusalReportsParsedOwnFieldsInOriginalOrder(t *testing.T) {
 	}{
 		{"stand_and_health", [][]byte{bodyValuesBlock(99, 0x4a, 1), bodyValuesBlock(99, 0x18, 0), bodyValuesBlock(99, 0x18, 100)},
 			"own_restricted_field 0x004a=0x00000000>0x00000001 0x0018=0x00000064>0x00000000 0x0018=0x00000000>0x00000064"},
-		{"unknown_prior_and_private", [][]byte{bodyValuesBlock(99, 0x53, 7), bodyValuesBlock(99, 0x162, 0xabcdef99)},
-			"own_restricted_field 0x0053=?>0x00000007 0x0162"},
-		{"bounded", [][]byte{bodyValuesBlock(99, 0x18, 3), bodyValuesBlock(99, 0x18, 4), bodyValuesBlock(99, 0x18, 5), bodyValuesBlock(99, 0x18, 6), bodyValuesBlock(99, 0x18, 7)},
-			"own_restricted_field 0x0018=0x00000064>0x00000003 0x0018=0x00000003>0x00000004 0x0018=0x00000004>0x00000005 more"},
+		{"unknown_prior_and_private", [][]byte{bodyValuesBlock(99, 0x41, 7), bodyValuesBlock(99, 0x0c, 0xabcdef99)},
+			"own_restricted_field 0x0041=?>0x00000007 0x000c"},
+		{"bounded", [][]byte{bodyValuesBlock(99, 0x4a, 7), bodyValuesBlock(99, 0x4a, 8), bodyValuesBlock(99, 0x4a, 9), bodyValuesBlock(99, 0x4a, 10), bodyValuesBlock(99, 0x4a, 11)},
+			"own_restricted_field 0x004a=0x00000000>0x00000007 0x004a=0x00000007>0x00000008 0x004a=0x00000008>0x00000009 more"},
 		{"owner", [][]byte{bodyValuesBlock(3, 0x18, 0)}, modcb.BodyUpdateOwnerField},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -418,7 +455,7 @@ func TestBodyRefusalReportsParsedOwnFieldsInOriginalOrder(t *testing.T) {
 			}
 		})
 	}
-	for _, fields := range [][]string{{"malformed"}, {"0x2100"}, {"0x0018=not-a-value"}, {strings.Repeat("0", 512)}, {"more"}, {"0x0018", "0x0018", "0x0018", "0x0018"}} {
+	for _, fields := range [][]string{{"malformed"}, {"0x2100"}, {"0x1fe0"}, {"0x0162=0x00000000>0x00000001"}, {"0x0012=?>0x00000001"}, {"0x0018=not-a-value"}, {strings.Repeat("0", 512)}, {"more"}, {"0x0018", "0x0018", "0x0018", "0x0018"}} {
 		if got := modcb.BodyUpdateDetail(modcb.BodyUpdateSelfField, fields); got != modcb.BodyUpdateSelfField {
 			t.Fatal("unexpected diagnostic", got)
 		}

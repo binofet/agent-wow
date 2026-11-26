@@ -10,6 +10,7 @@ import (
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/buddyidentity"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
@@ -22,7 +23,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-const OwnerGUID uint64 = 3
+const OwnerGUID = buddyidentity.CompanionOwnerGUID
 
 type observed struct {
 	guid                                                         uint64

@@ -32,18 +32,34 @@ type BodyMotionSample struct {
 // of FindPath and the full route's ledge/step checks. It requires real physical
 // support and body clearance at every sample, including a supported landing.
 func PlanBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, speed float64, duration time.Duration, jump bool) ([]BodyMotionSample, error) {
-	return planBodyMotionContext(ctx, dataDir, mapID, start, bearing, speed, duration, jump, false)
+	return planBodyMotionContext(ctx, dataDir, mapID, start, bearing, speed, duration, jump, false, nil)
 }
 
 // PlanBodyLandingContext checks a deliberate forward input all the way to its
 // first physical landing, including a verified ordinary swimmable surface.
 func PlanBodyLandingContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, speed float64, duration time.Duration, jump bool) ([]BodyMotionSample, error) {
-	return planBodyMotionContext(ctx, dataDir, mapID, start, bearing, speed, duration, jump, true)
+	return planBodyMotionContext(ctx, dataDir, mapID, start, bearing, speed, duration, jump, true, nil)
 }
 
-func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, speed float64, duration time.Duration, jump, allowDrop bool) ([]BodyMotionSample, error) {
-	if !worldPoint(start) || math.IsNaN(bearing) || math.IsInf(bearing, 0) || speed < .1 || speed > 14 || math.IsNaN(speed) ||
-		!jump && (duration < time.Millisecond || duration > 500*time.Millisecond) {
+type bodyFallSource struct {
+	elapsed time.Duration
+	initial float64
+}
+
+// PlanBodyGravityContext measures gravity from an unsupported observed pose
+// after forward input has stopped. At is time from here; FallTime includes the
+// supplied age of a known fall. A fresh stationary body can begin with age zero.
+func PlanBodyGravityContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing float64, elapsedFall time.Duration, initialJumpVelocity float64) ([]BodyMotionSample, error) {
+	if elapsedFall < 0 || initialJumpVelocity != 0 && math.Abs(initialJumpVelocity-BodyJumpVelocity) > .0001 ||
+		math.IsNaN(initialJumpVelocity) || !BodyFlightInRange(elapsedFall, 0, initialJumpVelocity) {
+		return nil, errors.New("invalid observed fall source")
+	}
+	return planBodyMotionContext(ctx, dataDir, mapID, start, bearing, 0, 0, false, true, &bodyFallSource{elapsedFall, initialJumpVelocity})
+}
+
+func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, speed float64, duration time.Duration, jump, allowDrop bool, gravity *bodyFallSource) ([]BodyMotionSample, error) {
+	if !worldPoint(start) || math.IsNaN(bearing) || math.IsInf(bearing, 0) || gravity == nil && (speed < .1 || speed > 14 || math.IsNaN(speed) ||
+		!jump && (duration < time.Millisecond || duration > 500*time.Millisecond)) {
 		return nil, errors.New("finite current pose, observed speed and bounded body input required")
 	}
 	if !allowDrop {
@@ -98,9 +114,27 @@ func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, st
 		return p.floors.lineOfSight(ctx, a, b)
 	}
 	if allowDrop {
-		return planBodyInput(ctx, start, bearing, speed, duration, jump, floor, clear, func(q Point, top, bottom float32) (float32, bool, error) {
+		water := func(q Point, top, bottom float32) (float32, bool, error) {
 			return p.deepWaterBetween(ctx, q, top, bottom)
-		})
+		}
+		if gravity != nil {
+			feet := bodyFootprintFloor(floor)
+			if h, supported, err := feet(start, .025, .025); err != nil || supported && finite(h) {
+				if err != nil {
+					return nil, err
+				}
+				return nil, errors.New("observed body is already on measured support")
+			}
+			if _, wet, err := water(start, start.Z+swimImmersion+.025, start.Z+swimImmersion-.025); err != nil || wet {
+				if err != nil {
+					return nil, err
+				}
+				return nil, errors.New("observed body is already at measured water contact")
+			}
+			points := []BodyMotionSample{{Point: start, Settling: true, FallTime: gravity.elapsed}}
+			return traceBodyFall(ctx, points, bearing, 0, gravity.initial, gravity.elapsed, true, feet, clear, water)
+		}
+		return planBodyInput(ctx, start, bearing, speed, duration, jump, floor, clear, water)
 	}
 	return planBodyMotion(ctx, start, bearing, speed, duration, jump, floor, clear)
 }
@@ -114,11 +148,43 @@ type bodyFloor func(Point, float32, float32) (float32, bool, error)
 type bodyClear func(Point, Point) (bool, error)
 type bodyWater func(Point, float32, float32) (float32, bool, error)
 
+// A circular foot corridor has the same support after changing facing.
+// Its first supported point can touch a slope before the center ray does.
+func bodyFootprintFloor(floor bodyFloor) bodyFloor {
+	return func(q Point, above, below float32) (float32, bool, error) {
+		h, found, err := floor(q, above, below)
+		if err != nil {
+			return 0, false, err
+		}
+		for i := 0; i < 8; i++ {
+			angle := float64(i) * math.Pi / 4
+			probe := q
+			probe.X += float32(.25 * math.Cos(angle))
+			probe.Y += float32(.25 * math.Sin(angle))
+			other, ok, err := floor(probe, above, below)
+			if err != nil {
+				return 0, false, err
+			}
+			if ok && (!found || other > h) {
+				h, found = other, true
+			}
+		}
+		return h, found, nil
+	}
+}
+
 func planBodyInput(ctx context.Context, start Point, bearing, speed float64, duration time.Duration, jump bool,
 	floor bodyFloor, clear bodyClear, water bodyWater) ([]BodyMotionSample, error) {
 	seconds := BodyMotionHorizon.Seconds()
 	maxDrop := BodyGravity * seconds * seconds / 2
 	h, known, err := floor(start, .5, float32(maxDrop))
+	if err == nil && water != nil && (!known || math.Abs(float64(h-start.Z)) > .025) {
+		if foot, ok, e := bodyFootprintFloor(floor)(start, .025, .025); e != nil {
+			err = e
+		} else if ok {
+			h, known = foot, true
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("body start support query: start_z=%g measured_z=%g known=%t: %w", start.Z, h, known, err)
 	}

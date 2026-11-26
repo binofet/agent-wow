@@ -12,6 +12,7 @@ import (
 	"time"
 
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
@@ -485,22 +486,23 @@ func updates(c *cursor, state *observations, now time.Time) error {
 	players := &state.players
 	count := c.u32()
 	state.bodyInputBarrier, state.bodyInputFields = "", nil
-	if count == 0 {
-		state.bodyInputBarrier = modcb.BodyUpdateUnknownSubject
-	}
 	if count > maxBlocks {
 		return errBounds
 	}
 	for i := uint32(0); i < count; i++ {
 		typ := c.u8()
-		if typ == 1 {
-			state.bodyInputBarrier = modcb.BodyUpdateMovement
-		} else if typ != 0 {
-			state.bodyInputBarrier = modcb.BodyUpdateLifecycle
-		}
 		switch typ {
 		case 0, 1, 2, 3:
 			guid := c.guid()
+			protected := guid != 0 && (guid == players[0].guid || guid == players[1].guid)
+			// Only the selected body and its observed destination can be
+			// superseded by these keyed records. Other entities are decoded
+			// normally; their movement and lifecycle do not move this body.
+			if guid == 0 {
+				state.bodyInputBarrier = modcb.BodyUpdateUnknownSubject
+			} else if protected && typ != 0 {
+				state.blockBodyRecord(guid, typ)
+			}
 			p := state.target(guid)
 			newCreature, newItem, newGameObject, newPlayer, newCorpse := false, false, false, false, false
 			newGroundEffect := false
@@ -632,10 +634,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 				// Classify each VALUES block before mutation. A later block can
 				// restore a field without undoing an intervening death or control change.
 				var restricted *observations
-				if !publicPlayerGUID(guid) && !creatureGUID(guid) {
-					state.bodyInputBarrier = modcb.BodyUpdateUnknownSubject
-				} else if state.bodyInputBarrier == "" && (guid == players[0].guid || guid == players[1].guid) ||
-					state.bodyInputBarrier == modcb.BodyUpdateSelfField && guid == players[0].guid {
+				if typ == 0 && protected {
 					restricted = state
 				}
 				if err := values(c, p, now, typ == 2 || typ == 3, restricted); err != nil {
@@ -680,6 +679,11 @@ func updates(c *cursor, state *observations, now time.Time) error {
 			}
 			for j := uint32(0); j < n; j++ {
 				guid := c.guid()
+				if guid == 0 {
+					state.bodyInputBarrier = modcb.BodyUpdateUnknownSubject
+				} else if typ == 4 && (guid == players[0].guid || guid == players[1].guid) {
+					state.blockBodyRecord(guid, typ)
+				}
 				if typ == 4 {
 					state.remove(guid, now)
 				} else {
@@ -820,14 +824,78 @@ func splineCreate(c *cursor, p *observed, now time.Time) error {
 	return c.err
 }
 
-// A walking player can stand from a normal seated state. Only accept the
-// decoded stand byte with its other three already-known packed bytes unchanged.
+// Preserve the first physical cause. A later correction of the selected body
+// takes precedence over a change to the optional followed destination.
+func (s *observations) blockBody(reason string) {
+	if s.bodyInputBarrier == "" || modcb.BodyUpdateIsOwnerOnly(s.bodyInputBarrier) && !modcb.BodyUpdateIsOwnerOnly(reason) ||
+		s.bodyInputBarrier == modcb.BodyUpdatePosture && !modcb.BodyUpdateIsOwnerOnly(reason) && reason != modcb.BodyUpdatePosture {
+		s.bodyInputBarrier = reason
+	}
+}
+
+func (s *observations) blockBodyRecord(guid uint64, typ uint8) {
+	if guid == s.players[0].guid {
+		if typ == 1 {
+			s.blockBody(modcb.BodyUpdateMovement)
+		} else {
+			s.blockBody(modcb.BodyUpdateLifecycle)
+		}
+	} else if typ == 1 {
+		s.blockBody(modcb.BodyUpdateOwnerMovement)
+	} else {
+		s.blockBody(modcb.BodyUpdateOwnerLifecycle)
+	}
+}
+
+// Compare the actual physical constraint affected by a decoded build-12340
+// player field before changing it. Numeric vitals, inventory, appearance and
+// other ordinary game state can change without changing the body's movement.
+// Walking authority, body identity, collision geometry, life and control cannot.
 func bodyInputValueUnchanged(p *observed, field int, value uint32) bool {
-	if field >= unitPower1 && field < unitPower1+7 || field >= unitMaxPower1 && field < unitMaxPower1+7 {
+	const playerEnd = 0x94 + 0x49a // UNIT_END + player update fields in build 12340
+	if p == nil || field < 0 || field >= playerEnd {
+		return false
+	}
+	var mask uint32
+	switch field {
+	case unitHealth, unitMaxHealth:
+		if !p.known[unitHealth] || !p.known[unitMaxHealth] {
+			return false
+		}
+		health, maxHealth := p.fields[unitHealth], p.fields[unitMaxHealth]
+		alive := health > 0 && health <= maxHealth
+		if field == unitHealth {
+			health = value
+		} else {
+			maxHealth = value
+		}
+		return alive && health > 0 && health <= maxHealth
+	case unitBytes0:
+		mask = 0x00ffffff // race, class and gender; the high byte is power type
+	case unitFlags:
+		// Movement/control flags used by normal Actions, plus ability to swim.
+		mask = movementflags.UnsafeUnitFlags | movementflags.CannotSwim
+	case 0x3c: // FEIGN_DEATH, FORCE_MOVEMENT, CANNOT_TURN
+		mask = movementflags.ForcedOrFeign | movementflags.CannotTurn
+	case unitDynamicFlags:
+		mask = 0x20 // DEAD
+	case playerFlags:
+		mask = 0x10 // GHOST
+	case unitBytes1:
+		if !p.known[field] {
+			return false
+		}
+		old := p.fields[field]
+		return old == value || byte(old) <= 6 && byte(value) == 0 && old>>8 == value>>8
+	case unitShapeshiftBytes:
+		mask = 0xff000000 // the form, independently of sheathing/PvP
+	case 0, 1, 2, 3, 4, 6, 7, 0xc, 0xd, unitChannelObject, unitChannelObject + 1, unitChannelSpell,
+		0x41, 0x43, 0x45, 0x92: // identity, scale, charm, channel, radius, model, mount, hover height
+		mask = ^uint32(0)
+	default:
 		return true
 	}
-	return field == unitBytes1 && p != nil && p.known[field] && byte(p.fields[field]) <= 6 &&
-		byte(value) == 0 && p.fields[field]>>8 == value>>8
+	return p.known[field] && (p.fields[field]^value)&mask == 0
 }
 
 // Field indices are bounded by the packet's one-byte mask count. Public
@@ -841,9 +909,7 @@ func (s *observations) recordBodyField(p *observed, field int, value uint32) {
 		return
 	}
 	row := fmt.Sprintf("0x%04x", field)
-	switch field {
-	case unitBytes0, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags, unitBytes1, unitShapeshiftBytes, unitChannelSpell,
-		0x36, 0x37, 0x3c, 0x3d, 0x3e, 0x3f, 0x41, 0x42, 0x43, 0x44, 0x45, unitNPCFlags, 0x53: // level, faction, flags2, aura, attack times, size, displays, emote
+	if modcb.PublicBodyDiagnosticField(field) {
 		old := "?"
 		if p.known[field] {
 			old = fmt.Sprintf("0x%08x", p.fields[field])
@@ -872,10 +938,15 @@ func values(c *cursor, p *observed, now time.Time, create bool, restricted *obse
 			v := c.u32()
 			field := block*32 + bit
 			if restricted != nil && !bodyInputValueUnchanged(p, field, v) {
-				restricted.bodyInputBarrier = modcb.BodyUpdateOwnerField
 				if p != nil && p.isSelf {
-					restricted.bodyInputBarrier = modcb.BodyUpdateSelfField
-					restricted.recordBodyField(p, field, v)
+					if field == unitBytes1 && p.known[field] && byte(p.fields[field]) <= 6 && byte(v) <= 6 && p.fields[field]>>8 == v>>8 {
+						restricted.blockBody(modcb.BodyUpdatePosture)
+					} else {
+						restricted.blockBody(modcb.BodyUpdateSelfField)
+						restricted.recordBodyField(p, field, v)
+					}
+				} else {
+					restricted.blockBody(modcb.BodyUpdateOwnerField)
 				}
 			}
 			if p != nil && p.isContainer && field == containerSlots && v > maxBagSlots {

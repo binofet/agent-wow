@@ -115,7 +115,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	var motion *idleMotionScope
 	if r.IdleToken != "" || r.Landing != "" {
 		ctx = modcb.ForwardPolicySpell(ctx)
-		motion, err = s.newBodyMotionScopeLocked(ctx, r.IdleToken, w, false, r.Landing != "")
+		motion, err = s.newBodyMotionScopeLocked(ctx, r.IdleToken, w, false, r.Landing)
 		if err != nil {
 			view.Phase, view.Detail = "body_scope_not_dispatched", boundedPolicyDiagnostic(err.Error(), 240)
 			return s.stateLocked(), nil
@@ -204,6 +204,16 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		}
 		return s.stateLocked(), nil
 	}
+	needsWater := r.Landing == "follow_water" || points[len(points)-1].Swimming
+	allowsInput := func(p *worldv1.PlayerState) bool {
+		return p != nil && p.UnitFlags_2&movementflags.ForcedOrFeign == 0 && p.DynamicFlags&0x20 == 0 && p.PlayerFlags&ghostFlag == 0 &&
+			(!needsWater || p.UnitFlags&movementflags.CannotSwim == 0) &&
+			(points[0].Settling || p.UnitFlags_2&movementflags.CannotTurn == 0 || math.Abs(math.Remainder(float64(from.o)-bearing, 2*math.Pi)) < .00001)
+	}
+	if !allowsInput(w.Self) {
+		view.Phase, view.Detail = "body_scope_not_dispatched", "observed body cannot perform the selected turn or movement mode"
+		return s.stateLocked(), nil
+	}
 	if deadline, bounded := ctx.Deadline(); r.Landing != "" && bounded && time.Until(deadline) < points[len(points)-1].At {
 		view.Phase, view.Detail = "body_scope_not_dispatched", "remaining RPC deadline cannot cover the measured landing"
 		return s.stateLocked(), nil
@@ -241,7 +251,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 			now := s.now()
 			leaseCurrent = s.bodyIdleLeaseCurrentLocked(r, now) && s.idleMotionCurrentLocked(motion, fresh, now)
 		}
-		if e != nil || s.closed || !owner || !leaseCurrent || r.Landing == "follow_water" && !followWaterCurrent(fresh, landingStarted) || r.Landing != "" && fresh.GetSelf().GetMovementFlags()&movementflags.PassiveModifiers != 0 ||
+		if e != nil || s.closed || !owner || !leaseCurrent || !allowsInput(fresh.GetSelf()) || r.Landing == "follow_water" && !followWaterCurrent(fresh, landingStarted) || r.Landing != "" && fresh.GetSelf().GetMovementFlags()&movementflags.PassiveModifiers != 0 ||
 			!s.matchesCurrentEncounterVisitLocked(fresh) || fresh.VisitRevision != r.VisitId ||
 			fresh.Self.PositionRevision != revision || fresh.Self.MapId != mapID ||
 			safeSelfMovement(fresh, s.selfGUID, compatible) != "" || s.clientControlLost || s.clientControlRestoring {

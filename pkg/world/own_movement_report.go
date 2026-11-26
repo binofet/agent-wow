@@ -9,13 +9,13 @@ import (
 )
 
 func ownMovementReportOpcode(op uint32) bool {
-	return bodyMovementScopeOpcode(op) || op == opcode.MSGMoveStop
+	return bodyMovementScopeOpcode(op) || op == opcode.MSGMoveStop || op == opcode.MSGMoveStopSwim
 }
 
 // Called only after a successful transport write and its scope advancement.
 // Keep the exact original packet, including packed-GUID encoding and clock;
 // never seed this report from an incoming pose or canonical re-encoding.
-func (e *engine) retainOwnMovementReport(op uint32, body []byte) {
+func (e *engine) retainOwnMovementReport(op uint32, body []byte, route bool) {
 	if !ownMovementReportOpcode(op) {
 		return
 	}
@@ -35,7 +35,7 @@ func (e *engine) retainOwnMovementReport(op uint32, body []byte) {
 	legacyGround := (op == opcode.MSGMoveStartForward || op == opcode.MSGMoveHeartbeat || op == opcode.MSGMoveStop) &&
 		movementflags.GroundCompatible(info.Flags, uint32(info.ExtraFlags))
 	waterStop := op == opcode.MSGMoveStop && info.BodyWaterEntry(false)
-	if !legacyGround && !waterStop && !normalBodyMovementImage(op, body, scope.SelfGuid) {
+	if !(route && movementinfo.RouteBodyFrame(op, body, scope.SelfGuid)) && !legacyGround && !waterStop && !normalBodyMovementImage(op, body, scope.SelfGuid) {
 		return
 	}
 	e.ownMovementReport = &modv1.WorldPacket{Opcode: op, Payload: append([]byte(nil), body...), TransportScope: cloneTransportScope(scope)}

@@ -32,8 +32,45 @@ func WriteOriginFromContext(ctx context.Context) WriteOrigin {
 // Only Runtime's authenticated measured body-input callback marks a write for
 // complete-World-parser continuity. This marker grants no write by itself.
 type bodyInputKey struct{}
+type selfBodyInputKey struct{}
+
+// Independent forward input and an already committed fall have no remaining
+// destination dependency. Physical changes to this body still fence them.
+func WithSelfBodyInput(ctx context.Context) context.Context {
+	return context.WithValue(WithBodyInput(ctx), selfBodyInputKey{}, true)
+}
+func IsSelfBodyInput(ctx context.Context) bool {
+	self, _ := ctx.Value(selfBodyInputKey{}).(bool)
+	return self
+}
 
 func WithBodyInput(ctx context.Context) context.Context {
 	return context.WithValue(ctx, bodyInputKey{}, true)
 }
 func IsBodyInput(ctx context.Context) bool { yes, _ := ctx.Value(bodyInputKey{}).(bool); return yes }
+
+type routeBodyInputKey struct{}
+
+// Only the authenticated native route callback enables full surface travel.
+func WithRouteBodyInput(ctx context.Context, followsOwner bool) context.Context {
+	if followsOwner {
+		ctx = WithBodyInput(ctx)
+	} else {
+		ctx = WithSelfBodyInput(ctx)
+	}
+	return context.WithValue(ctx, routeBodyInputKey{}, true)
+}
+func IsRouteBodyInput(ctx context.Context) bool {
+	route, _ := ctx.Value(routeBodyInputKey{}).(bool)
+	return route
+}
+
+type settledBodySourceKey struct{}
+
+func WithSettledBodySource(ctx context.Context) context.Context {
+	return context.WithValue(ctx, settledBodySourceKey{}, true)
+}
+func IsSettledBodySource(ctx context.Context) bool {
+	enabled, _ := ctx.Value(settledBodySourceKey{}).(bool)
+	return enabled
+}

@@ -14,6 +14,8 @@ import (
 
 const OwnMovementReportMethod = "own_movement_report"
 const BodyInputReportMethod = "body_input_movement_report"
+const SettledBodyInputReportMethod = "settled_body_input_movement_report"
+const SelfBodyInputReportMethod = "self_body_input_movement_report"
 const BodyInputUpdateTrailer = "agentwow-parsed-body-input-update"
 const BodyInputBarrierTrailer = "agentwow-body-input-barrier"
 const BodyInputFieldTrailer = "agentwow-body-input-field"
@@ -22,6 +24,17 @@ const MaxBodyInputFields = 3
 // A row carries only a parsed field index and optionally its public numeric
 // values. The World parser never emits actor identifiers or private values.
 var bodyFieldDetail = regexp.MustCompile(`^0x[01][0-9a-f]{3}(=(0x[0-9a-f]{8}|[?])>0x[0-9a-f]{8})?$`)
+
+// Build-12340 public, non-identity scalars. Both module boundaries apply
+// the same policy. An index outside this set carries no previous/new value.
+func PublicBodyDiagnosticField(field int) bool {
+	switch field {
+	case 0x16, 0x17, 0x18, 0x20, 0x36, 0x37, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+		0x41, 0x42, 0x43, 0x44, 0x45, 0x4a, 0x4f, 0x52, 0x53, 0x7a, 0x96:
+		return true
+	}
+	return false
+}
 
 func BodyUpdateDetail(class string, fields []string) string {
 	if class != BodyUpdateSelfField || len(fields) == 0 || len(fields) > MaxBodyInputFields+1 {
@@ -34,6 +47,10 @@ func BodyUpdateDetail(class string, fields []string) string {
 		if i == MaxBodyInputFields || !bodyFieldDetail.MatchString(field) {
 			return class
 		}
+		index, err := strconv.ParseUint(field[2:6], 16, 16)
+		if err != nil || index >= 255*32 || len(field) > 6 && !PublicBodyDiagnosticField(int(index)) {
+			return class
+		}
 	}
 	return class + " " + strings.Join(fields, " ")
 }
@@ -41,14 +58,21 @@ func BodyUpdateDetail(class string, fields []string) string {
 const (
 	BodyUpdateHarmless       = "harmless_values"
 	BodyUpdateMissing        = "world_proof_missing"
+	BodyUpdatePosture        = "own_stand_state"
 	BodyUpdateMalformed      = "malformed_object_update"
 	BodyUpdateUnbound        = "unbound_object_update"
 	BodyUpdateMovement       = "object_movement"
 	BodyUpdateLifecycle      = "object_lifecycle"
 	BodyUpdateSelfField      = "own_restricted_field"
 	BodyUpdateOwnerField     = "owner_restricted_field"
+	BodyUpdateOwnerMovement  = "owner_movement"
+	BodyUpdateOwnerLifecycle = "owner_lifecycle"
 	BodyUpdateUnknownSubject = "unknown_update_subject"
 )
+
+func BodyUpdateIsOwnerOnly(class string) bool {
+	return class == BodyUpdateOwnerField || class == BodyUpdateOwnerMovement || class == BodyUpdateOwnerLifecycle
+}
 
 // Only fixed diagnostics cross the World callback boundary.
 func BodyUpdateResult(positive, reason []string) string {
@@ -57,7 +81,7 @@ func BodyUpdateResult(positive, reason []string) string {
 	}
 	if len(positive) == 0 && len(reason) == 1 {
 		switch reason[0] {
-		case BodyUpdateMalformed, BodyUpdateUnbound, BodyUpdateMovement, BodyUpdateLifecycle, BodyUpdateSelfField, BodyUpdateOwnerField, BodyUpdateUnknownSubject:
+		case BodyUpdatePosture, BodyUpdateMalformed, BodyUpdateUnbound, BodyUpdateMovement, BodyUpdateLifecycle, BodyUpdateSelfField, BodyUpdateOwnerField, BodyUpdateOwnerMovement, BodyUpdateOwnerLifecycle, BodyUpdateUnknownSubject:
 			return reason[0]
 		}
 	}
@@ -77,11 +101,21 @@ func ReadOwnMovementAttempt(ctx context.Context, client FollowPolicyClient, sid 
 	}
 	return readOwnMovementReport(ctx, client, sid, self, id, OwnMovementReportMethod)
 }
-func ReadBodyInputReport(ctx context.Context, client FollowPolicyClient, sid string, self uint64, id string) (*modv1.WorldPacket, error) {
+func ReadBodyInputReport(ctx context.Context, client FollowPolicyClient, sid string, self uint64, id string, selfOnly ...bool) (*modv1.WorldPacket, error) {
 	if id != "" && !ValidMovementAttempt(id) {
 		return nil, errors.New("exact body input attempt required")
 	}
-	return readOwnMovementReport(ctx, client, sid, self, id, BodyInputReportMethod)
+	method := BodyInputReportMethod
+	if len(selfOnly) == 1 && selfOnly[0] {
+		method = SelfBodyInputReportMethod
+	}
+	return readOwnMovementReport(ctx, client, sid, self, id, method)
+}
+
+// ReadSettledBodySource reads the last actual stationary STOP only for the
+// source of a newly selected input. It cannot continue an interrupted frame.
+func ReadSettledBodySource(ctx context.Context, client FollowPolicyClient, sid string, self uint64) (*modv1.WorldPacket, error) {
+	return readOwnMovementReport(ctx, client, sid, self, "", SettledBodyInputReportMethod)
 }
 func readOwnMovementReport(ctx context.Context, client FollowPolicyClient, sid string, self uint64, id, method string) (*modv1.WorldPacket, error) {
 	if sid == "" || len(sid) > 128 || self == 0 {

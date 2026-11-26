@@ -138,3 +138,82 @@ func TestPolicyMeasuredWaterBindingAndUncertainStop(t *testing.T) {
 		})
 	}
 }
+
+func TestRouteBodyFramesUseTheAuthenticatedNativeAndLeasedCallbacks(t *testing.T) {
+	x := newInstanceEntryFixture(t)
+	scope := instanceEntryScope()
+	attempt := fmt.Sprintf("%064x", 718)
+	payload, err := movementinfo.Encode(movementinfo.Info{Flags: movementinfo.SwimmingFlag | 1, PitchPresent: true, Pitch: .3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := append([]byte{1, 22}, payload...)
+	calls := 0
+	var saved modsession.WriteOrigin
+	var selfOnly bool
+	uncertain := false
+	x.m.session.SendScopedPacket = func(ctx context.Context, op uint32, body []byte, got *modv1.TransportScope) error {
+		if !modsession.IsRouteBodyInput(ctx) || !proto.Equal(got, scope) || op != opcode.MSGMoveHeartbeat {
+			t.Fatal("lost route source")
+		}
+		calls++
+		saved, selfOnly = modsession.WriteOriginFromContext(ctx), modsession.IsSelfBodyInput(ctx)
+		if saved.MovementAttempt != attempt || saved.Module != actionsModule || saved.SessionID != friendlyEncounterSession {
+			t.Fatal(saved)
+		}
+		if uncertain {
+			return status.Error(codes.Unknown, "wet route heartbeat result lost")
+		}
+		return nil
+	}
+	route := func(ctx context.Context, follow bool) context.Context {
+		return instanceEntryIncoming(modcb.WithMovementAttempt(modcb.WithRouteBodyInput(ctx, follow), attempt))
+	}
+	native := x.m.moduleScopedPacketWriter(friendlyEncounterSession, actionsModule)
+	for _, follows := range []bool{true, false} {
+		ctx := route(context.Background(), follows)
+		if err := native(ctx, opcode.MSGMoveHeartbeat, wire, scope); err != nil || saved.Writer != "module" || selfOnly == follows || saved.ActionID != "" {
+			t.Fatal("native route", follows, err, saved, selfOnly)
+		}
+	}
+	before := calls
+	rejected := []error{
+		native(instanceEntryIncoming(modcb.WithRouteBodyInput(context.Background(), true)), opcode.MSGMoveHeartbeat, wire, scope),
+		native(route(context.Background(), true), opcode.MSGMoveHeartbeat, append(wire, 0), scope),
+		x.m.moduleScopedPacketWriter("other session", actionsModule)(route(context.Background(), true), opcode.MSGMoveHeartbeat, wire, scope),
+		x.m.moduleScopedPacketWriter(friendlyEncounterSession, "buddy-world")(route(context.Background(), true), opcode.MSGMoveHeartbeat, wire, scope),
+		x.m.modulePacketWriter(friendlyEncounterSession, actionsModule)(route(context.Background(), true), opcode.MSGMoveHeartbeat, wire),
+	}
+	for _, err := range rejected {
+		if !modcb.PacketWasNotDispatched(err) {
+			t.Fatal("route source admitted", err)
+		}
+	}
+	if calls != before {
+		t.Fatal(calls, before)
+	}
+	x.handle = func(ctx context.Context, method string, req, res proto.Message) error {
+		if method != actionsv1.BuddyActions_TravelTo_FullMethodName {
+			t.Fatal(method)
+		}
+		if err := native(route(ctx, true), opcode.MSGMoveHeartbeat, wire, scope); !modcb.PacketWasNotDispatched(err) {
+			t.Fatal("borrowed follow", err)
+		}
+		if err := native(route(ctx, false), opcode.MSGMoveHeartbeat, wire, scope); err != nil || !selfOnly || saved.Writer != "lua" || saved.ActionID == "" {
+			t.Fatal("leased scope", err, saved)
+		}
+		uncertain = true
+		if err := native(route(ctx, false), opcode.MSGMoveHeartbeat, wire, scope); status.Code(err) != codes.Unknown {
+			t.Fatal("missing uncertain route result", err)
+		}
+		if err := native(route(ctx, false), opcode.MSGMoveHeartbeat, wire, scope); !modcb.PacketWasNotDispatched(err) {
+			t.Fatal("unknown route replay", err)
+		}
+		proto.Merge(res, &actionsv1.State{SessionId: friendlyEncounterSession, SelfGuid: 22, MotionUnconfirmed: true})
+		return nil
+	}
+	receipt := x.step(t, instanceEntryAction("travel_to"))
+	if calls != before+2 || receipt.Payload["reconciliationRequired"] != true {
+		t.Fatal(calls, receipt)
+	}
+}
