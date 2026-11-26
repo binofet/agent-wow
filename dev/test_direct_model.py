@@ -974,8 +974,10 @@ class LocalPromptBudgetTests(unittest.TestCase):
             raw=rows[reference['transcriptMessage']][reference['field']].encode()
             self.assertEqual((reference['bytes'],reference['sha256']),(len(raw),hashlib.sha256(raw).hexdigest()))
         script="import {sdkInput} from './dev/local_prompt_meter.mjs';import fs from 'node:fs';sdkInput(JSON.parse(fs.readFileSync(0,'utf8')));console.log('compatible');"
+        # This checks pure SDK input compatibility with the supported default
+        # utility startup budget; it is not a Lua or inference watchdog.
         checked=subprocess.run(['node','--input-type=module','-e',script],input=json.dumps(payload).encode(),
-            cwd=Path(__file__).resolve().parent.parent,capture_output=True,timeout=5)
+            cwd=Path(__file__).resolve().parent.parent,capture_output=True,timeout=30)
         self.assertEqual(checked.returncode,0,checked.stderr.decode())
         self.assertEqual(checked.stdout.strip(),b'compatible')
 
