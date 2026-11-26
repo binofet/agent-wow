@@ -36,6 +36,7 @@ type observations struct {
 	visitRevision         uint64
 	nearbyPlayers         map[uint64]*observed
 	creatures             map[uint64]*observed
+	creatureCacheOverflow bool
 	items                 map[uint64]*observed
 	gameObjects           map[uint64]*observed
 	groundEffects         map[uint64]*observed
@@ -154,6 +155,7 @@ func interesting(p *observed) bool {
 }
 func (s *observations) putCreature(p *observed) {
 	if s.creatures[p.guid] == nil && len(s.creatures) >= maxCreatures {
+		s.creatureCacheOverflow = true
 		var worst *observed
 		ref := s.reference()
 		for _, candidate := range s.creatures {
@@ -299,8 +301,13 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 			r.OwnerTarget = creatureSnapshot(p, s, now)
 		}
 	}
+	r.NearbyCreaturesComplete = r.VisitRevision != 0 && !s.creatureCacheOverflow
 	for _, p := range s.creatures {
-		if !p.present || !p.known[objectEntry] || p.fields[objectEntry] == 0 {
+		if !p.present {
+			continue
+		}
+		if !p.known[objectEntry] || p.fields[objectEntry] == 0 {
+			r.NearbyCreaturesComplete = false
 			continue
 		}
 		r.NearbyCreatures = append(r.NearbyCreatures, creatureSnapshot(p, s, now))
@@ -327,6 +334,7 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 	}
 	if len(r.NearbyCreatures) > 32 {
 		r.NearbyCreatures = r.NearbyCreatures[:32]
+		r.NearbyCreaturesComplete = false
 	}
 	if len(r.QuestGivers) > maxCreatureResults {
 		r.QuestGivers = r.QuestGivers[:maxCreatureResults]

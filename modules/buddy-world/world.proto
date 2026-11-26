@@ -702,6 +702,9 @@ message SnapshotResponse {
   bool ground_effects_supported = 62;
   // At least one area observation was omitted by the bounded cache this visit.
   bool ground_effects_overflow = 63;
+  // All currently observed creatures fit the nearby list and its backing cache.
+  // An evicted creature can remain visible until this visit ends.
+  bool nearby_creatures_complete = 64;
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.

@@ -7322,8 +7322,10 @@ type EncounterObservationResponse struct {
 	GroundEffects            []*api.SpellGroundEffect        `protobuf:"bytes,29,rep,name=ground_effects,json=groundEffects,proto3" json:"ground_effects,omitempty"`
 	GroundEffectsSupported   bool                            `protobuf:"varint,30,opt,name=ground_effects_supported,json=groundEffectsSupported,proto3" json:"ground_effects_supported,omitempty"`
 	GroundEffectsOverflow    bool                            `protobuf:"varint,31,opt,name=ground_effects_overflow,json=groundEffectsOverflow,proto3" json:"ground_effects_overflow,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// All creatures observed in this visit were accounted for in this projection.
+	NearbyCreaturesComplete bool `protobuf:"varint,32,opt,name=nearby_creatures_complete,json=nearbyCreaturesComplete,proto3" json:"nearby_creatures_complete,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *EncounterObservationResponse) Reset() {
@@ -7569,6 +7571,13 @@ func (x *EncounterObservationResponse) GetGroundEffectsSupported() bool {
 func (x *EncounterObservationResponse) GetGroundEffectsOverflow() bool {
 	if x != nil {
 		return x.GroundEffectsOverflow
+	}
+	return false
+}
+
+func (x *EncounterObservationResponse) GetNearbyCreaturesComplete() bool {
+	if x != nil {
+		return x.NearbyCreaturesComplete
 	}
 	return false
 }
@@ -8575,8 +8584,10 @@ type EncounterPlayer struct {
 	PositionAgeKnown  bool                   `protobuf:"varint,38,opt,name=position_age_known,json=positionAgeKnown,proto3" json:"position_age_known,omitempty"`
 	CombatReachKnown  bool                   `protobuf:"varint,39,opt,name=combat_reach_known,json=combatReachKnown,proto3" json:"combat_reach_known,omitempty"`
 	CombatReach       float32                `protobuf:"fixed32,40,opt,name=combat_reach,json=combatReach,proto3" json:"combat_reach,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Current self ground run speed in yards/second, when observed.
+	GroundRunSpeed *float32 `protobuf:"fixed32,41,opt,name=ground_run_speed,json=groundRunSpeed,proto3,oneof" json:"ground_run_speed,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *EncounterPlayer) Reset() {
@@ -8889,6 +8900,13 @@ func (x *EncounterPlayer) GetCombatReach() float32 {
 	return 0
 }
 
+func (x *EncounterPlayer) GetGroundRunSpeed() float32 {
+	if x != nil && x.GroundRunSpeed != nil {
+		return *x.GroundRunSpeed
+	}
+	return 0
+}
+
 type EncounterCreature struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Guid        uint64                 `protobuf:"varint,1,opt,name=guid,proto3" json:"guid,omitempty"`
@@ -8924,8 +8942,10 @@ type EncounterCreature struct {
 	OwnDamageFamilies []uint32                    `protobuf:"varint,24,rep,packed,name=own_damage_families,json=ownDamageFamilies,proto3" json:"own_damage_families,omitempty"`
 	Orientation       float32                     `protobuf:"fixed32,25,opt,name=orientation,proto3" json:"orientation,omitempty"`
 	AttackObservation *EncounterAttackObservation `protobuf:"bytes,26,opt,name=attack_observation,json=attackObservation,proto3" json:"attack_observation,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Observed unit field in yards, including large creature hitboxes.
+	CombatReach   *float32 `protobuf:"fixed32,27,opt,name=combat_reach,json=combatReach,proto3,oneof" json:"combat_reach,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EncounterCreature) Reset() {
@@ -9139,6 +9159,13 @@ func (x *EncounterCreature) GetAttackObservation() *EncounterAttackObservation {
 		return x.AttackObservation
 	}
 	return nil
+}
+
+func (x *EncounterCreature) GetCombatReach() float32 {
+	if x != nil && x.CombatReach != nil {
+		return *x.CombatReach
+	}
+	return 0
 }
 
 // Raw cached ATTACKSTART and selected-target observations. A present empty
@@ -14493,7 +14520,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x06threat\x18\x06 \x01(\v2(.warcraftbuddy.actions.v1.SelfManaThreatR\x06threat\x12?\n" +
 	"\x06spells\x18\a \x03(\v2'.warcraftbuddy.actions.v1.SelfManaSpellR\x06spells\x12\x1d\n" +
 	"\n" +
-	"host_owned\x18\b \x01(\bR\thostOwned\"\xa2\x13\n" +
+	"host_owned\x18\b \x01(\bR\thostOwned\"\xde\x13\n" +
 	"\x1cEncounterObservationResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -14533,7 +14560,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\vinteraction\x18\x1c \x01(\v20.warcraftbuddy.actions.v1.InteractionObservationR\vinteraction\x12P\n" +
 	"\x0eground_effects\x18\x1d \x03(\v2).warcraftbuddy.world.v1.SpellGroundEffectR\rgroundEffects\x128\n" +
 	"\x18ground_effects_supported\x18\x1e \x01(\bR\x16groundEffectsSupported\x126\n" +
-	"\x17ground_effects_overflow\x18\x1f \x01(\bR\x15groundEffectsOverflow\x1ae\n" +
+	"\x17ground_effects_overflow\x18\x1f \x01(\bR\x15groundEffectsOverflow\x12:\n" +
+	"\x19nearby_creatures_complete\x18  \x01(\bR\x17nearbyCreaturesComplete\x1ae\n" +
 	"\fPlayersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12?\n" +
 	"\x05value\x18\x02 \x01(\v2).warcraftbuddy.actions.v1.EncounterPlayerR\x05value:\x028\x01\x1ag\n" +
@@ -14658,7 +14686,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0eEncounterParty\x123\n" +
 	"\x05group\x18\x01 \x01(\v2\x1d.warcraftbuddy.party.v1.GroupR\x05group\x12J\n" +
 	"\fraid_targets\x18\x02 \x01(\v2'.warcraftbuddy.party.v1.RaidTargetStateR\vraidTargets\x12\x1a\n" +
-	"\brevision\x18\x03 \x01(\x04R\brevision\"\xa1\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\"\xe5\n" +
 	"\n" +
 	"\x0fEncounterPlayer\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
@@ -14709,9 +14737,11 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x12position_estimated\x18% \x01(\bR\x11positionEstimated\x12,\n" +
 	"\x12position_age_known\x18& \x01(\bR\x10positionAgeKnown\x12,\n" +
 	"\x12combat_reach_known\x18' \x01(\bR\x10combatReachKnown\x12!\n" +
-	"\fcombat_reach\x18( \x01(\x02R\vcombatReachB\t\n" +
+	"\fcombat_reach\x18( \x01(\x02R\vcombatReach\x12-\n" +
+	"\x10ground_run_speed\x18) \x01(\x02H\x02R\x0egroundRunSpeed\x88\x01\x01B\t\n" +
 	"\a_map_idB\b\n" +
-	"\x06_alive\"\xad\a\n" +
+	"\x06_aliveB\x13\n" +
+	"\x11_ground_run_speed\"\xe6\a\n" +
 	"\x11EncounterCreature\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x18\n" +
@@ -14747,9 +14777,11 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"meleeReady\x12.\n" +
 	"\x13own_damage_families\x18\x18 \x03(\rR\x11ownDamageFamilies\x12 \n" +
 	"\vorientation\x18\x19 \x01(\x02R\vorientation\x12c\n" +
-	"\x12attack_observation\x18\x1a \x01(\v24.warcraftbuddy.actions.v1.EncounterAttackObservationR\x11attackObservationB\t\n" +
+	"\x12attack_observation\x18\x1a \x01(\v24.warcraftbuddy.actions.v1.EncounterAttackObservationR\x11attackObservation\x12&\n" +
+	"\fcombat_reach\x18\x1b \x01(\x02H\x02R\vcombatReach\x88\x01\x01B\t\n" +
 	"\a_map_idB\b\n" +
-	"\x06_alive\"\xbb\x01\n" +
+	"\x06_aliveB\x0f\n" +
+	"\r_combat_reach\"\xbb\x01\n" +
 	"\x1aEncounterAttackObservation\x12!\n" +
 	"\fvictim_known\x18\x01 \x01(\bR\vvictimKnown\x12\x1f\n" +
 	"\vvictim_guid\x18\x02 \x01(\x04R\n" +

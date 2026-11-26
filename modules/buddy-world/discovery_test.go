@@ -94,6 +94,37 @@ func TestDiscoveryCacheAdmissionAndAttackersCannotBeHidden(t *testing.T) {
 	}
 }
 
+func TestNearbyCreatureCoverageReflectsMissingRowsAndCacheEviction(t *testing.T) {
+	s, _ := discoveryRig(t)
+	complete := func(want bool) {
+		t.Helper()
+		w, err := s.Snapshot(context.Background(), nil)
+		if err != nil || w.GetNearbyCreaturesComplete() != want {
+			t.Fatalf("want complete=%t, got %t (%d rows), err=%v", want, w.GetNearbyCreaturesComplete(), len(w.GetNearbyCreatures()), err)
+		}
+	}
+	for i := 1; i <= 32; i++ {
+		discoveryNPC(s, i, float32(i))
+	}
+	complete(true)
+	last := discoveryNPC(s, 33, 33)
+	complete(false)
+	s.state.remove(last.guid, s.now())
+	complete(true)
+	last = discoveryNPC(s, 33, 33)
+	last.known[objectEntry] = false
+	complete(false)
+	for i := 34; i <= maxCreatures+1; i++ {
+		discoveryNPC(s, i, float32(i))
+	}
+	for guid := range s.state.creatures {
+		s.state.remove(guid, s.now())
+	}
+	complete(false) // The evicted observation can still be in this visit.
+	packet(t, s, opcode.SMSGNewWorld, login())
+	complete(true)
+}
+
 func TestDiscoveryRejectsStaleForeignInvalidAndOutOfOrderReports(t *testing.T) {
 	s, req := discoveryRig(t)
 	publishDiscovery(t, s, req)

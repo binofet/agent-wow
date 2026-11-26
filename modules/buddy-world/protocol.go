@@ -183,6 +183,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		markAbsent(&players[1], now)
 		state.nearbyPlayers = make(map[uint64]*observed)
 		state.creatures = make(map[uint64]*observed)
+		state.creatureCacheOverflow = false
 		state.gameObjects = make(map[uint64]*observed)
 		state.groundEffects = nil
 		state.groundEffectsOverflow = false
@@ -200,6 +201,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		markAbsent(&players[1], now)
 		state.nearbyPlayers = make(map[uint64]*observed)
 		state.creatures = make(map[uint64]*observed)
+		state.creatureCacheOverflow = false
 		state.gameObjects = make(map[uint64]*observed)
 		state.groundEffects = nil
 		state.groundEffectsOverflow = false
