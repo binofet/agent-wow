@@ -445,6 +445,34 @@ class ManaDriverTests(unittest.TestCase):
         self.assertEqual(len(self.brain.calls), 1)
         self.assertEqual(self.controls.lua_water_supply, {})
 
+    def test_selected_owner_keeps_priority_while_its_actual_model_is_waiting(self):
+        self.owner_text = "Mira, wait for my direction before making more water."
+        self.owner_pending = True
+        entered, polled = threading.Event(), threading.Event()
+        chat = self.rpc.call
+        def current_chat(method, params, timeout=None):
+            result = chat(method, params, timeout)
+            if method == "buddy-chat.poll" and timeout == 1.5 and entered.is_set():
+                polled.set()
+            return result
+        def model_wait(_):
+            entered.set()
+            polled.wait(5)
+            return spoken("I will wait here.")
+        self.refresh_rpc = lambda method, params, timeout: self.fixture.rpc(8087, method, params)
+        with FakeHTTP([model_wait]) as provider, patch.object(converse, "RPC", return_value=self.rpc), \
+             patch.object(self.rpc, "call", side_effect=current_chat):
+            self.loop.brain = converse.DirectBrain(self.profile_dir, character_name="Mira",
+                character_class="mage", provider="local", model="fixture-mage", base_url=provider.base)
+            self.loop.tick()
+        self.assertTrue(polled.is_set())
+        self.assertEqual(self.loop.cursor, 1)
+        self.assertTrue(any(method == "buddy-chat.send" and params["text"] == "I will wait here."
+            for method, params, _ in self.chat_requests))
+        self.assertEqual(self.requests, [])
+        self.assertEqual(self.fixture.calls, [])
+        self.assertFalse((self.profile_dir / "mana-supply.json").exists())
+
     def test_owner_arriving_between_observations_sends_nothing_and_keeps_cursor(self):
         def owner_after_first_read(port, method, params):
             if port == 8087 and method == "buddy-world.snapshot":
