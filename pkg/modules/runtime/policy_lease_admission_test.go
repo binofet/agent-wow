@@ -134,9 +134,15 @@ func TestLeaseRejectionsKeepPreflightAndBackpressureTruth(t *testing.T) {
 				t.Fatal("prerequisite timeout falsely called effect-free", receipt)
 			}
 			if kind == "queue_full_canceled" {
-				if r.host.rejectedReceipt != receipt || r.host.vm.Status().Buffered != 256 {
+				if r.host.rejectedReceipt == receipt || r.host.rejectedReceipt == nil || r.host.rejectedReceipt.ActionID != receipt.ActionID || r.host.vm.Status().Buffered != 256 {
 					t.Fatal("backpressure lost exact receipt", r.host.vm.Status())
 				}
+				// Returned values belong to the caller, not the retained canonical receipt.
+				receipt.ActionID = 999
+				receipt.Outcome = behavior.ActionUnknown
+				receipt.Payload["owner"] = "foreign-mutated"
+				receipt.Payload["mode"] = "release"
+				receipt.NeverDispatched = false
 				if _, _, e = r.host.Step(context.Background(), input, nil); e != nil {
 					t.Fatal("receipt could not progress without replay", e)
 				}

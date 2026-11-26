@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"maps"
 )
 
 // Only the intended lease action is known unsent. An earlier prerequisite RPC
@@ -16,6 +17,7 @@ func (p *SessionPolicy) rejectUnenteredLease(ctx context.Context, decision behav
 	}
 	// Preserve the original typed error while naming the exact no-Send gate.
 	mode, _ := action["mode"].(string)
+	owner, _ := action["owner"].(string)
 	cause = fmt.Errorf("unentered movement_owner %s admission (%s): %w", mode, phase, cause)
 	id, err := p.vm.RejectAction(decision)
 	if err != nil {
@@ -26,11 +28,14 @@ func (p *SessionPolicy) rejectUnenteredLease(ctx context.Context, decision behav
 		message = message[:2048]
 	}
 	receipt := &behavior.ActionReceipt{SessionID: p.vm.Status().SessionID, ActionID: id, Outcome: behavior.ActionNotDispatched, NeverDispatched: true, Payload: map[string]any{
-		"capability": "movement_owner", "mode": action["mode"], "owner": action["owner"],
+		"capability": "movement_owner", "mode": mode, "owner": owner,
 		"error": message, "admissionPhase": phase, "admissionRejected": true, "transport_written": false,
 		"prerequisiteOutcomeUnverified": phase == "encounter_admission" || phase == "point_delivery",
 	}}
-	p.rejectedReceipt = receipt
+	// Own both the record and its scalar payload; a caller may mutate its return.
+	retained := *receipt
+	retained.Payload = maps.Clone(receipt.Payload)
+	p.rejectedReceipt = &retained
 	err = p.flushRejectedReceipt(ctx)
 	return decision.Output, receipt, errors.Join(cause, err)
 }
