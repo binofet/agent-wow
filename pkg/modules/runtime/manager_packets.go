@@ -112,7 +112,8 @@ func (m *Manager) packetWorker(name string, inst *instance) {
 				return
 			}
 			if name == "buddy-world" && (packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject) && m.session.ParsedBodyUpdate != nil {
-				m.session.ParsedBodyUpdate(packet.TransportScope, modcb.BodyUpdateResult(trailers.Get(modcb.BodyInputUpdateTrailer), trailers.Get(modcb.BodyInputBarrierTrailer)))
+				class := modcb.BodyUpdateResult(trailers.Get(modcb.BodyInputUpdateTrailer), trailers.Get(modcb.BodyInputBarrierTrailer))
+				m.session.ParsedBodyUpdate(packet.TransportScope, modcb.BodyUpdateDetail(class, trailers.Get(modcb.BodyInputFieldTrailer)))
 			}
 			m.recordSpellEffect(name, trailers)
 			m.mu.Lock()

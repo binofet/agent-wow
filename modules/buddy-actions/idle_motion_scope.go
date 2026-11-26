@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"time"
@@ -28,7 +29,7 @@ type idleMotionScope struct {
 	rawPose, pose                                    position
 	rawRevision, clientRevision, rawMovementRevision uint64
 	mapID                                            uint32
-	cleanupOnly, broken, landing                     bool
+	cleanupOnly, broken, landing, selfOnly           bool
 	writes                                           uint64
 	lastAttempt                                      string
 	lastOpcode                                       uint32
@@ -132,22 +133,23 @@ func (s *Service) idleMotionCurrentLocked(b *idleMotionScope, w *worldv1.Snapsho
 }
 
 func (s *Service) newIdleMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly bool) (*idleMotionScope, error) {
-	return s.newBodyMotionScopeLocked(ctx, token, w, cleanupOnly, false)
+	return s.newBodyMotionScopeLocked(ctx, token, w, cleanupOnly, "")
 }
 
 // Finite landings pin every successful frame to the attempt that wrote it.
 // Core can return its original bytes across a contiguous run of parsed VALUES.
 func (s *Service) readBodyMotionReport(ctx context.Context, b *idleMotionScope) (*modv1.WorldPacket, error) {
 	if b.landing {
-		return modcb.ReadBodyInputReport(ctx, s.session, s.sessionID, s.selfGUID, b.lastAttempt)
+		return modcb.ReadBodyInputReport(ctx, s.session, s.sessionID, s.selfGUID, b.lastAttempt, b.selfOnly)
 	}
 	return modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
 }
 
-func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly, landing bool) (*idleMotionScope, error) {
+func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly bool, landingMode string) (*idleMotionScope, error) {
+	landing := landingMode != ""
 	b := &idleMotionScope{binding: s.idleInteraction, initial: clonePortalScope(portalObservedWorldScope(w, s.selfGUID)),
 		rawPose: playerPosition(w.GetSelf()), pose: s.pos, rawRevision: s.positionRevision, clientRevision: s.posRevision,
-		rawMovementRevision: w.GetSelfMovementFacts().GetRevision(), mapID: s.posMap, cleanupOnly: cleanupOnly, landing: landing}
+		rawMovementRevision: w.GetSelfMovementFacts().GetRevision(), mapID: s.posMap, cleanupOnly: cleanupOnly, landing: landing, selfOnly: landingMode == "ground_or_water"}
 	if landing && token == "" {
 		b.binding = idleInteractionBinding{sessionID: s.sessionID, selfGUID: s.selfGUID, visit: w.GetVisitRevision()}
 	}
@@ -161,14 +163,24 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 	}
 	prior, err := s.readBodyMotionReport(ctx, b)
 	needPose := s.posEstimated || w.GetSelf().GetPositionInferred()
+	settled := false
+	if err != nil && status.Code(err) == codes.FailedPrecondition && landing && needPose {
+		// For a genuinely new selection, a stationary STOP still supplies its
+		// exact pose across a destination or ordinary posture change. Start any
+		// new control decision at the newly parsed World source instead.
+		prior, err = modcb.ReadSettledBodySource(ctx, s.session, s.sessionID, s.selfGUID)
+		settled = err == nil
+	}
 	if err == nil {
 		p, valid := idleMotionPacketPose(prior.Payload, s.selfGUID)
 		if !valid || !idleMotionOpcode(prior.Opcode) || !samePortalCoreVisit(b.initial, prior.TransportScope) || !landing && prior.TransportScope.MotionRevision < b.initial.MotionRevision || needPose && p != b.pose {
 			return nil, modcb.PacketNotDispatchedError("idle motion prior report no longer matches the captured body")
 		}
-		b.current = clonePortalScope(prior.TransportScope)
+		if !settled || prior.TransportScope.MotionRevision > b.initial.MotionRevision {
+			b.current = clonePortalScope(prior.TransportScope)
+		}
 	} else if status.Code(err) != codes.FailedPrecondition || needPose {
-		return nil, modcb.PacketNotDispatchedError("idle motion current prior report unavailable")
+		return nil, modcb.PacketNotDispatchedError("idle motion current prior report unavailable: " + status.Convert(err).Message())
 	}
 	fresh, err := s.readWorldSnapshot(ctx)
 	now := s.now()
@@ -224,6 +236,11 @@ func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotion
 
 func (s *Service) idleMotionAfterWriteLocked(ctx context.Context, b *idleMotionScope, op uint32, payload []byte) error {
 	b.writes++
+	if b.landing && (op == opcode.MSGMoveHeartbeat || op == opcode.MSGMoveJump) {
+		if _, n, e := readGUID(payload); e == nil && len(payload) >= n+4 && binary.LittleEndian.Uint32(payload[n:])&0x1000 != 0 {
+			b.selfOnly = true
+		}
+	}
 	b.lastOpcode, b.lastPayload = op, append([]byte(nil), payload...)
 	w, worldErr := s.readWorldSnapshot(ctx)
 	// A competing same-wire write may arrive during the World read. Read our

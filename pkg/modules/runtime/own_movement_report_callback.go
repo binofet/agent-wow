@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -50,7 +51,19 @@ func (m *Manager) readOwnMovementReport(ctx context.Context, caller string, requ
 		}
 	}
 	reason := "successful own movement report is no longer current"
-	qualified := request.GetMethod() == modcb.BodyInputReportMethod
+	selfOnly := request.GetMethod() == modcb.SelfBodyInputReportMethod
+	settled := request.GetMethod() == modcb.SettledBodyInputReportMethod
+	if settled && hasAttempt {
+		m.mu.Unlock()
+		return nil, status.Error(codes.InvalidArgument, "initial settled source cannot select a previous attempt")
+	}
+	qualified := request.GetMethod() == modcb.BodyInputReportMethod || selfOnly || settled
+	if settled {
+		ctx = modsession.WithSettledBodySource(ctx)
+	}
+	if selfOnly {
+		ctx = modsession.WithSelfBodyInput(ctx)
+	}
 	if qualified {
 		reader := m.session.BodyInputReport
 		read = nil

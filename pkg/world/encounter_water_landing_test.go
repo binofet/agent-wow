@@ -1,14 +1,17 @@
 package world
 
 import (
+	"bytes"
 	"context"
-	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
@@ -103,4 +106,42 @@ func TestScopedWaterStopRequiresExactKnownEntry(t *testing.T) {
 	if err := stop(-30); !modcb.PacketWasNotDispatched(err) {
 		t.Fatal("water STOP replay", err)
 	}
+}
+
+func TestOwnedRouteWetHeartbeatRetainsExactPhysicalStopAndShore(t *testing.T) {
+	e := scopedBodyEngine(t, &scopeWriteConn{})
+	send := func(op uint32, i movementinfo.Info, allow bool) {
+		t.Helper()
+		raw, err := movementinfo.Encode(i)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire := append([]byte{1, 99}, raw...)
+		attempt := fmt.Sprintf("%064x", e.writeSerial+10)
+		ctx := modsession.WithRouteBodyInput(modsession.WithWriteOrigin(context.Background(), modsession.WriteOrigin{MovementAttempt: attempt}), false)
+		_, _, err = e.writeContext(ctx, op, wire, e.transport.snapshot())
+		if !allow {
+			if !modcb.PacketWasNotDispatched(err) {
+				t.Fatal("unexpected route write", op, err)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatal(op, err)
+		}
+		report, reason := e.s.bodyInputReport(ctx, attempt)
+		if reason != "" || report.GetOpcode() != op || !bytes.Equal(report.Payload, wire) {
+			t.Fatal("route lost physical receipt", op, reason, report)
+		}
+	}
+	wet := movementinfo.Info{Flags: movementinfo.SwimmingFlag | 1, PitchPresent: true, Pitch: .32, X: 3, Y: 4, Z: -32}
+	send(opcode.MSGMoveStartSwim, wet, true)
+	wet.X, wet.Pitch = 4, -.5
+	send(opcode.MSGMoveHeartbeat, wet, true)
+	stationary := wet
+	stationary.Flags, stationary.Pitch = movementinfo.SwimmingFlag, 0
+	send(opcode.MSGMoveStop, stationary, true)
+	send(opcode.MSGMoveStop, stationary, false)
+	send(opcode.MSGMoveStartForward, wet, true)
+	send(opcode.MSGMoveStopSwim, movementinfo.Info{Flags: 1, X: 5, Y: 4, Z: -31}, true)
 }

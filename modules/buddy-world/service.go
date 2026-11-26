@@ -10,6 +10,7 @@ import (
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/buddyidentity"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
@@ -22,7 +23,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-const OwnerGUID uint64 = 3
+const OwnerGUID = buddyidentity.CompanionOwnerGUID
 
 type observed struct {
 	guid                                                         uint64
@@ -274,7 +275,11 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 			if reason == "" {
 				_ = grpc.SetTrailer(ctx, metadata.Pairs(modcb.BodyInputUpdateTrailer, "1"))
 			} else {
-				_ = grpc.SetTrailer(ctx, metadata.Pairs(modcb.BodyInputBarrierTrailer, reason))
+				trailer := metadata.Pairs(modcb.BodyInputBarrierTrailer, reason)
+				if reason == modcb.BodyUpdateSelfField {
+					trailer.Append(modcb.BodyInputFieldTrailer, next.bodyInputFields...)
+				}
+				_ = grpc.SetTrailer(ctx, trailer)
 			}
 		}
 	} else {

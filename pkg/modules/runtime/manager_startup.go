@@ -15,6 +15,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/modules/runner"
 	"github.com/agent-wow/agent-wow/pkg/modules/session"
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
@@ -130,6 +131,10 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 		if scope == nil || m.session.SendScopedPacket == nil {
 			return modcb.PacketNotDispatchedError("transport scope is unsupported by this host")
 		}
+		followsOwner, route, marked := modcb.IncomingRouteBodyInput(ctx)
+		if marked && (!route || module != actionsModule || modcb.IncomingMovementAttempt(ctx) == "" || ctx.Err() != nil || !movementinfo.RouteBodyFrame(opcode, payload, scope.SelfGuid)) {
+			return modcb.PacketNotDispatchedError("invalid scoped route body frame")
+		}
 		if token, supplied := modcb.IncomingPolicySpell(ctx); supplied {
 			if handled, err := m.writePolicyScopedMovement(ctx, token, sessionID, module, opcode, payload, scope); handled {
 				return err
@@ -140,12 +145,26 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 			return m.writePolicyInstanceEntryScoped(ctx, token, sessionID, module, opcode, payload, scope)
 		}
 		origin := modsession.WriteOrigin{SessionID: sessionID, Module: module, Writer: "module"}
+		if marked {
+			m.mu.Lock()
+			current := m.ctx.Err() == nil && !m.closing && !m.preparing && !m.prepared && m.err == nil &&
+				filepath.Base(m.dir) == sessionID && scope.SelfGuid == m.session.Identity.CharacterGUID
+			m.mu.Unlock()
+			if !current || !routeScopeBound(scope) {
+				return modcb.PacketNotDispatchedError("native route body or visit unavailable")
+			}
+			origin.MovementAttempt = modcb.IncomingMovementAttempt(ctx)
+			ctx = modsession.WithRouteBodyInput(ctx, followsOwner)
+		}
 		return m.session.SendScopedPacket(modsession.WithWriteOrigin(ctx, origin), opcode, append([]byte(nil), payload...), proto.Clone(scope).(*modv1.TransportScope))
 	}
 }
 
 func (m *Manager) modulePacketWriter(sessionID, module string) func(context.Context, uint32, []byte) error {
 	return func(ctx context.Context, opcode uint32, payload []byte) error {
+		if _, _, marked := modcb.IncomingRouteBodyInput(ctx); marked {
+			return modcb.PacketNotDispatchedError("route body input requires its physical source scope")
+		}
 		if token, supplied := modcb.IncomingPolicySpell(ctx); supplied {
 			return m.writePolicySpell(ctx, token, sessionID, module, opcode, payload)
 		}

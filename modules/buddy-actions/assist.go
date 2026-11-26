@@ -28,7 +28,7 @@ func safeSelfMovement(w *worldv1.SnapshotResponse, selfGUID uint64, compatible f
 	if !p.MovementFlagsKnown || !compatible(p.MovementFlags, p.ExtraMovementFlags) {
 		return "unsupported_movement_state"
 	}
-	const unsafe = uint32(0x1 | 0x4 | 0x00040000 | 0x00100000 | 0x00400000 | 0x00800000 | 0x01000000 | 0x02000000 | 0x08000000)
+	const unsafe = movementflags.UnsafeUnitFlags
 	if !p.UnitFlagsKnown || p.UnitFlags&unsafe != 0 {
 		return "unsafe_unit_state"
 	}

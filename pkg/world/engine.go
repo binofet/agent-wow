@@ -113,7 +113,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	}
 	e.movement.sent(op, body, e.s.state.Character.GUID)
 	e.transport.sent(op)
-	e.retainOwnMovementReport(op, body)
+	e.retainOwnMovementReport(op, body, modsession.IsRouteBodyInput(ctx))
 	if ownMovementReportOpcode(op) {
 		e.ownMovementAttempt = modsession.WriteOriginFromContext(ctx).MovementAttempt
 	}

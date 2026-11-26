@@ -5,7 +5,11 @@ import (
 	"time"
 
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -13,10 +17,23 @@ import (
 // object update. A skipped revision, physical write, or other incoming movement
 // can never join this interval. The session mutex protects these fields.
 type parsedBodyUpdates struct {
-	from, through, pending, barrier uint64
-	scope                           *modv1.TransportScope
-	reason                          string
-	changed                         chan struct{}
+	through, pending      uint64
+	self, follow, settled bodyUpdateRange
+	scope                 *modv1.TransportScope
+	changed               chan struct{}
+}
+
+type bodyUpdateRange struct {
+	from, barrier uint64
+	reason        string
+}
+
+func (r *bodyUpdateRange) observe(revision uint64, continuous bool, result string) {
+	if result != modcb.BodyUpdateHarmless {
+		r.from, r.barrier, r.reason = revision, revision, result
+	} else if !continuous {
+		r.from = revision - 1
+	}
 }
 
 const bodyUpdateWait = 200 * time.Millisecond
@@ -49,20 +66,25 @@ func (s *Session) recordParsedBodyUpdate(scope *modv1.TransportScope, result str
 		return
 	}
 	if !same {
-		u.barrier, u.reason = 0, ""
+		u.self, u.follow, u.settled = bodyUpdateRange{}, bodyUpdateRange{}, bodyUpdateRange{}
 	}
-	if result != modcb.BodyUpdateHarmless {
-		u.from, u.barrier, u.reason = scope.MotionRevision, scope.MotionRevision, result
-	} else if !same || u.through != scope.MotionRevision-1 {
-		u.from = scope.MotionRevision - 1
+	continuous := same && u.through == scope.MotionRevision-1
+	u.follow.observe(scope.MotionRevision, continuous, result)
+	if modcb.BodyUpdateIsOwnerOnly(result) {
+		result = modcb.BodyUpdateHarmless
 	}
+	u.self.observe(scope.MotionRevision, continuous, result)
+	if result == modcb.BodyUpdatePosture {
+		result = modcb.BodyUpdateHarmless
+	}
+	u.settled.observe(scope.MotionRevision, continuous, result)
 	u.scope, u.through = cloneTransportScope(scope), scope.MotionRevision
 	u.signal()
 }
 
 // An empty reason qualifies the original physical source. A pending callback
 // may justify waiting before the final socket drain, never after that drain.
-func (s *Session) bodyProofLocked(before, current *modv1.TransportScope) (reason string, pending bool) {
+func (s *Session) bodyProofLocked(ctx context.Context, before, current *modv1.TransportScope) (reason string, pending bool) {
 	if s.state.Status != InWorld || current.GetSelfGuid() != s.state.Character.GUID || !sameBodyScope(before, current) ||
 		!proto.Equal(s.transportScopeSnapshot, current) || before.MotionRevision > current.MotionRevision {
 		return "body_or_visit_changed", false
@@ -72,10 +94,16 @@ func (s *Session) bodyProofLocked(before, current *modv1.TransportScope) (reason
 	}
 	u := &s.bodyUpdates
 	same := sameBodyScope(u.scope, current)
-	if same && u.barrier > before.MotionRevision {
-		return u.reason, false
+	r := &u.follow
+	if modsession.IsSettledBodySource(ctx) {
+		r = &u.settled
+	} else if modsession.IsSelfBodyInput(ctx) {
+		r = &u.self
 	}
-	if same && u.through == current.MotionRevision && u.from <= before.MotionRevision {
+	if same && r.barrier > before.MotionRevision {
+		return r.reason, false
+	}
+	if same && u.through == current.MotionRevision && r.from <= before.MotionRevision {
 		return "", false
 	}
 	if u.pending == current.MotionRevision && (!same || u.through < current.MotionRevision) {
@@ -84,17 +112,17 @@ func (s *Session) bodyProofLocked(before, current *modv1.TransportScope) (reason
 	return "intervening_motion_or_unobserved_update", false
 }
 
-func (s *Session) bodyProof(before, current *modv1.TransportScope) string {
+func (s *Session) bodyProof(ctx context.Context, before, current *modv1.TransportScope) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	reason, _ := s.bodyProofLocked(before, current)
+	reason, _ := s.bodyProofLocked(ctx, before, current)
 	return reason
 }
 
 func (s *Session) waitBodyProof(ctx context.Context, before, current *modv1.TransportScope, deadline time.Time) (waited bool) {
 	for time.Now().Before(deadline) {
 		s.mu.Lock()
-		_, pending := s.bodyProofLocked(before, current)
+		_, pending := s.bodyProofLocked(ctx, before, current)
 		if !pending {
 			s.mu.Unlock()
 			return waited
@@ -131,7 +159,14 @@ func (s *Session) bodyInputReport(ctx context.Context, id string) (*modv1.WorldP
 			s.mu.RUnlock()
 			return nil, "exact_write_unavailable"
 		}
-		reason, pending := s.bodyProofLocked(report.TransportScope, scope)
+		if modsession.IsSettledBodySource(ctx) {
+			i, ok := movementinfo.OwnFrame(report.Payload, scope.GetSelfGuid())
+			if id != "" || report.Opcode != opcode.MSGMoveStop || !ok || !(i.BodyWaterEntry(false) || movementflags.GroundCompatible(i.Flags, uint32(i.ExtraFlags)) && i.Flags&0x1ff == 0) {
+				s.mu.RUnlock()
+				return nil, "settled_stop_unavailable"
+			}
+		}
+		reason, pending := s.bodyProofLocked(ctx, report.TransportScope, scope)
 		if reason == "" {
 			packet := proto.Clone(report).(*modv1.WorldPacket)
 			s.mu.RUnlock()
