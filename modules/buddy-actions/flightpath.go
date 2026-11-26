@@ -5,12 +5,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"math/bits"
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -58,7 +61,7 @@ func (s *Service) flightpathOperationCurrentLocked(op *actionsv1.FlightpathOpera
 		s.encounterVisit.bound && op.VisitId != 0 && op.VisitId == s.encounterVisit.revision
 }
 
-func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.FlightpathQueryRequest, w *worldv1.SnapshotResponse, now time.Time) string {
+func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.FlightpathQueryRequest, w *worldv1.SnapshotResponse, now time.Time, stop *modv1.WorldPacket) string {
 	if ctx.Err() != nil {
 		return "flightpath_query_canceled"
 	}
@@ -84,12 +87,25 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 		return "flightpath_" + reason
 	}
 	self := w.Self
-	if self.PositionAgeMs > 2000 || self.MovementFlags&0xff != 0 || !self.ChannelSpellKnown ||
+	if stop == nil && self.PositionAgeMs > 2000 || self.MovementFlags&0xff != 0 || !self.ChannelSpellKnown ||
 		!self.ChannelObjectKnown || self.ChannelSpellId != 0 || self.ChannelObjectGuid != 0 {
 		return "flightpath_stationary_current_unchanneled_body_required"
 	}
 	if !s.posKnown || !finite(s.pos) || s.posMap != self.MapId || s.positionRevision != self.PositionRevision {
 		return "flightpath_client_position_changed"
+	}
+	if stop != nil {
+		npc := w.GetRequestedCreature()
+		if w.Self.PositionInferred || (r.Mode != "status" && r.Mode != "discover") ||
+			stop.Opcode != opcode.MSGMoveStop || !samePortalCoreVisit(stop.TransportScope, portalObservedWorldScope(w, r.SelfGuid)) ||
+			npc.GetGuid() != r.NpcGuid || !w.GetRequestedCreatureStationaryPositionKnown() {
+			return "flightpath_ground_arrival_or_flightmaster_changed"
+		}
+		i, ok := movementinfo.OwnFrame(stop.Payload, r.SelfGuid)
+		if !ok || !movementflags.GroundCompatible(i.Flags, uint32(i.ExtraFlags)) || i.Flags&0xff != 0 ||
+			i.FallTime != 0 || (position{i.X, i.Y, i.Z, i.Orientation}) != s.pos {
+			return "flightpath_written_ground_stop_does_not_match_client_position"
+		}
 	}
 	if len(w.NearbyCreatures) > 32 || len(w.QuestGivers) > 64 || len(w.LootableCorpses) > 64 {
 		return "flightpath_world_observation_bounds"
@@ -103,7 +119,7 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 			}
 			p := position{npc.X, npc.Y, npc.Z, npc.Orientation}
 			if npc.Entry != entry || !npc.Present || !npc.MapKnown || npc.MapId != self.MapId || !npc.PositionKnown ||
-				npc.PositionAgeMs > 2000 || npc.ObservationAgeMs > 2000 || npc.PositionRevision == 0 || !finite(p) ||
+				stop == nil && (npc.PositionAgeMs > 2000 || npc.ObservationAgeMs > 2000) || npc.PositionRevision == 0 || !finite(p) ||
 				!npc.AliveKnown || !npc.Alive || !npc.HealthKnown || npc.Health == 0 || !npc.UnitFlagsKnown ||
 				npc.NpcFlags&0x2000 == 0 || npc.UnitFlags&0x80000 != 0 || npc.MovementFlags&0x080000ff != 0 ||
 				npc.Trajectory != nil && npc.Trajectory.Known && (!npc.Trajectory.Stopped || npc.Trajectory.TransportRelative) {
@@ -199,6 +215,30 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	if err != nil {
 		return refuse("flightpath world observations unavailable: " + err.Error())
 	}
+	// The realm typically does not echo our ordinary steps or republish an
+	// unchanged stationary spawn. For menu/status queries, obtain the last
+	// actual STOP, then reread that specific NPC and the current body.
+	var stop *modv1.WorldPacket
+	var sendScope *modv1.TransportScope
+	npc := w.GetRequestedCreature()
+	if (r.Mode == "status" || r.Mode == "discover") && npc.GetGuid() == r.NpcGuid && w.GetRequestedCreatureStationaryPositionKnown() &&
+		(w.GetSelf().GetPositionAgeMs() > 2000 || npc.PositionAgeMs > 2000 || npc.ObservationAgeMs > 2000) {
+		stop, err = modcb.ReadSettledBodySource(ctx, s.session, r.SessionId, r.SelfGuid)
+		if err != nil {
+			return refuse("flightpath_written_ground_stop_unavailable")
+		}
+		w, err = s.snapshot(ctx, r.NpcGuid)
+		if err != nil {
+			return refuse("flightpath final world observation unavailable")
+		}
+		n, overflow := bits.Add64(w.ObservedPackets, w.IgnoredPackets, 0)
+		n, overflow2 := bits.Add64(n, w.MalformedPackets, 0)
+		if overflow != 0 || overflow2 != 0 || n == 0 || n == math.MaxUint64 {
+			return refuse("flightpath_world_packet_sequence_unavailable")
+		}
+		ctx = modcb.WithFlightpathWorldPackets(ctx, n)
+		sendScope = stop.TransportScope
+	}
 	if reason := safeQuestCharacter(w, r.SelfGuid); reason != "" {
 		return refuse("flightpath_" + reason)
 	}
@@ -206,7 +246,7 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 		return refuse("flightpath_client_position_changed")
 	}
 	now := s.now()
-	if reason := s.flightpathQueryGuardLocked(ctx, r, w, now); reason != "" {
+	if reason := s.flightpathQueryGuardLocked(ctx, r, w, now, stop); reason != "" {
 		return refuse(reason)
 	}
 	if r.Mode == "arrival" {
@@ -228,7 +268,7 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	if r.Mode == "discover" || r.Mode == "arrival" {
 		opcodeID = opcode.CMSGTaxiqueryavailablenodes
 	}
-	if err := s.sendPacketLocked(ctx, opcodeID, payload); err != nil {
+	if err := s.sendPacketLocked(ctx, opcodeID, payload, sendScope); err != nil {
 		op.Error = boundedPolicyDiagnostic(err.Error(), 240)
 		if modcb.PacketWasNotDispatched(err) {
 			op.Pending = false

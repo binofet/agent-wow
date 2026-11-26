@@ -89,3 +89,16 @@ func IsSettledBodySource(ctx context.Context) bool {
 	enabled, _ := ctx.Value(settledBodySourceKey{}).(bool)
 	return enabled
 }
+
+type flightpathWorldCheckKey struct{}
+
+// The Runtime binds the count from World to this session's ordered input.
+// Only its in-process writer can supply the final socket check.
+func WithFlightpathWorldCheck(ctx context.Context, current func() bool) context.Context {
+	return context.WithValue(ctx, flightpathWorldCheckKey{}, current)
+}
+
+func FlightpathWorldCurrent(ctx context.Context) bool {
+	current, ok := ctx.Value(flightpathWorldCheckKey{}).(func() bool)
+	return ok && current != nil && current()
+}
