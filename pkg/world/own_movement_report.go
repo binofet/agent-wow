@@ -43,9 +43,21 @@ func (e *engine) retainOwnMovementReport(op uint32, body []byte) {
 // OwnMovementReport is an exact known written client packet, not an observed
 // server pose, permission to move, or proof of trigger admission. Scope changes
 // make it unavailable until another successful own normal movement write.
-func (s *Session) OwnMovementReport() *modv1.WorldPacket {
+func (s *Session) OwnMovementReport() *modv1.WorldPacket { return s.ownMovementResult("") }
+
+// OwnMovementAttempt requires the exact diagnostic ID supplied on that write.
+func (s *Session) OwnMovementAttempt(id string) *modv1.WorldPacket {
+	if id == "" {
+		return nil
+	}
+	return s.ownMovementResult(id)
+}
+func (s *Session) ownMovementResult(id string) *modv1.WorldPacket {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if id != "" && id != s.ownMovementAttemptSnapshot {
+		return nil
+	}
 	r, scope := s.ownMovementReportSnapshot, s.transportScopeSnapshot
 	if s.state.Status != InWorld || r == nil || scope == nil || !scope.VisitBound || scope.VisitRevision == 0 ||
 		scope.SelfGuid != s.state.Character.GUID || !proto.Equal(r.TransportScope, scope) {
