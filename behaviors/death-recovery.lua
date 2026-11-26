@@ -1,10 +1,33 @@
 -- One shared editable death lifecycle: release, own-corpse query, ghost route,
 -- reclaim timing and continuation. Go supplies facts and exact physical inputs.
-local M={tuning={release_delay_ms=0,route_retry_ms=1000,reclaim_range=35,
+local M={tuning={release_delay_ms=0,resurrection_wait_ms=60000,route_retry_ms=1000,reclaim_range=35,
     unknown_reclaim_delay_ms=120000,deadline_ms=0,offer_max_age_ms=60000,offer_scope='party',trusted_offer_casters={}}}
 local state={}
 local function valid_id(v)return type(v)=='string' and v~='' and v~='0' end
 local function alive(p)return p and p.present==true and p.aliveKnown==true and p.alive==true end
+-- These classes can learn a player resurrection in Wrath. An observed ally
+-- earns a little time to finish combat or approach; only an offer permits acceptance.
+local resurrection_class={[2]=true,[5]=true,[7]=true,[11]=true}
+local function observed_rescuer(obs,self)
+    local players=obs.players or {}
+    local function eligible(guid)
+        local ally=players[guid]
+        return guid~=obs.selfGuid and alive(ally) and ally.guid==guid and
+            self.mapKnown==true and type(self.mapId)=='number' and ally.mapKnown==true and ally.mapId==self.mapId and
+            ally.classKnown==true and resurrection_class[ally.classId]
+    end
+    local group=(obs.party or {}).group or {}
+    if group.known==true and group.inGroup==true then
+        for _,member in ipairs(group.members or {}) do
+            if member.online==true and eligible(member.guid) then return member.guid end
+        end
+    end
+    if type(M.tuning.trusted_offer_casters)=='table' then
+        for guid,trusted in pairs(M.tuning.trusted_offer_casters) do
+            if trusted==true and eligible(guid) then return guid end
+        end
+    end
+end
 local function distance(a,b)
     if not a or not b then return end
     local dx,dy,dz=(a.x or 0)-(b.x or 0),(a.y or 0)-(b.y or 0),(a.z or 0)-(b.z or 0)
@@ -51,7 +74,12 @@ function M.decide(frame,obs,sequence)
     if state.session~=obs.sessionId or state.self~=obs.selfGuid or state.epoch~=r.deathEpoch then
         state={session=obs.sessionId,self=obs.selfGuid,epoch=r.deathEpoch,observedAt=now}
     end
-    if now and state.now and now<state.now then state.observedAt=now;state.ghostAt=now;state.retryAt=nil end
+    -- Keep time since this death across reloads and repeated recovery requests.
+    state.deathAt=state.deathAt or state.observedAt or now
+    if now and state.now and now<state.now then
+        state.deathAt=now-math.max(0,state.now-state.deathAt)
+        state.observedAt=now;state.ghostAt=now;state.retryAt=nil
+    end
     state.now=now
     if state.ensureRequested then state.observedAt=now;state.retryAt=nil;state.ensureRequested=nil end
     if #frame.pending~=0 then return {phase='waiting_for_existing_action_custody'} end
@@ -103,6 +131,13 @@ function M.decide(frame,obs,sequence)
         if r.releaseAttempted==true or state.release_spirit then return {phase='waiting_for_actual_ghost'} end
         if self.health~=0 then return {phase='waiting_for_zero_health'} end
         if M.tuning.release_delay_ms>0 and (not now or not state.observedAt or now-state.observedAt<M.tuning.release_delay_ms) then return {phase='release_delay'} end
+        if now and state.deathAt then
+            local remaining=(tonumber(M.tuning.resurrection_wait_ms) or 0)-(now-state.deathAt)
+            if remaining>0 then
+                local guid=observed_rescuer(obs,self)
+                if guid then return {phase='waiting_for_resurrection_offer',rescuerGuid=guid,remainingMs=remaining} end
+            end
+        end
         return {phase='release_spirit',action=action('release_spirit')}
     end
     state.ghostAt=state.ghostAt or now
