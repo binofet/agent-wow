@@ -214,7 +214,7 @@ func (s *Service) destinationFallLocked(ctx context.Context, route *swimFollowRo
 		motion = route.motion
 	}
 	if motion == nil || !motion.landing {
-		motion, err = s.newBodyMotionScopeLocked(ctx, owner.token, snapshot, false, true)
+		motion, err = s.newBodyMotionScopeLocked(ctx, owner.token, snapshot, false, "destination")
 		if err != nil {
 			s.state.Reason = "destination_fall_source_unavailable"
 			s.state.NavReason = navigationDiagnostic(err, s.navDataDir)

@@ -230,7 +230,7 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 	}
 	if mixed != nil && s.idleInteraction.token != "" {
 		scoped := context.WithValue(call, destinationOwnerKey{}, mixed.owner)
-		motion, e := s.newBodyMotionScopeLocked(scoped, token, s.lastWorld, false, true)
+		motion, e := s.newBodyMotionScopeLocked(scoped, token, s.lastWorld, false, "destination")
 		if e != nil {
 			s.state.Reason = "exploration_idle_scope_unavailable"
 			s.mu.Unlock()

@@ -847,6 +847,7 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 				if d := motion.destination; d != nil {
 					f := s.destinationFlight
 					followsOwner := d.token == "" && !d.lastSeen && (f == nil || !f.airborne && !f.release)
+					motion.selfOnly = !followsOwner
 					sendCtx = modcb.WithRouteBodyInput(sendCtx, followsOwner)
 				}
 			}

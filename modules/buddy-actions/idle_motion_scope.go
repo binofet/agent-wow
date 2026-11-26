@@ -155,6 +155,7 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 	}
 	if owner, ok := ctx.Value(destinationOwnerKey{}).(destinationOwner); ok && landing {
 		b.destination = &owner
+		b.selfOnly = owner.token != "" || owner.lastSeen
 		b.binding = idleInteractionBinding{sessionID: s.sessionID, selfGUID: s.selfGUID, visit: w.GetVisitRevision(), token: token}
 	}
 	b.current = clonePortalScope(b.initial)
