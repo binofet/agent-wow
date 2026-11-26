@@ -609,13 +609,15 @@ end
 local function ranged_targets(obs,row)
     local ids,nearest,nearest_distance={},nil,nil
     local self=(obs.players or {})[obs.selfGuid]
+    local from=movement and movement.current_pose and movement.current_pose(self)
     local complete=true
     for id,target in pairs(obs.targets or {}) do
         if target.entry==row.creatureEntry and target.present==true and target.alive~=false then
-            if target.aliveKnown~=true or target.positionKnown~=true or target.mapKnown~=true or target.mapId~=obs.mapId or not self or self.positionKnown~=true then complete=false
+            local point=movement and movement.current_pose and movement.current_pose(target)
+            if target.aliveKnown~=true or target.mapKnown~=true or target.mapId~=obs.mapId or not from or not point then complete=false
             else
                 ids[#ids+1]=id
-                local dx,dy,dz=(self.x or 0)-(target.x or 0),(self.y or 0)-(target.y or 0),(self.z or 0)-(target.z or 0)
+                local dx,dy,dz=from.x-point.x,from.y-point.y,from.z-point.z
                 local d=math.sqrt(dx*dx+dy*dy+dz*dz)
                 if not nearest_distance or d<nearest_distance then nearest,nearest_distance=id,d end
             end
@@ -1001,6 +1003,7 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
         return
     end
     if row.origin=="learned_prior" and encounter_priors and encounter_priors.positioning and
+       complete and (not distance or distance>=row.minRangeYards+row.clearanceYards) and
        not encounter_priors.positioning(obs,row) then
         status.phase="passive_distant_prior";status.active=false;status.positionReady=false
         if nav.motionUnconfirmed==true or hold and (hold.operation or hold.uncertain or
@@ -1076,6 +1079,22 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
         return
     end
     if ranged_hold(obs,frame,out,row,status,true,nearest) then return end
+    if not complete then out.action=nil;status.phase="clearance_facts_unavailable";return end
+    -- An acknowledged lease is not permission to keep casting inside a
+    -- current moving hazard. Plan the existing outward input before the
+    -- stationary-support exceptions; no cast/UNKNOWN is interrupted here.
+    if complete and distance and distance<row.minRangeYards+row.clearanceYards and
+       (obs.hostTargetRangeBandSupported==true or nav.bodyMovementSupported==true) then
+        if obs.hostTargetRangeBandSupported~=true then
+            ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choose_spell)
+        else
+            local options=ranged_options(obs,row,nearest,{rangeYards=row.maxRangeYards,requireLos=false})
+            local result=options and movement and movement.decide(obs,sequence,nearest,options)
+            out.action=result and result.action;status.phase=result and result.phase or "withdrawal_unavailable";status.positionReady=false
+        end
+        if task and task.pausedForEncounter then task_view.rangedWithdrawal=out.action end
+        return
+    end
     if obs.hostTargetRangeBandSupported~=true then
         if action and (action.capability=="heal" or action.capability=="buff") and action.targetGuid==obs.selfGuid then return end
         if status.stationaryObserved==true and ranged_friendly_support(obs,action) then
