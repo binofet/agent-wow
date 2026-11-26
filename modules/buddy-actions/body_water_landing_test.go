@@ -203,7 +203,7 @@ func TestMaraudonFollowWaterExecutionFromMeasuredLedge(t *testing.T) {
 			s.Tick(context.Background())
 		}
 		if !s.state.Following || s.state.MotionUnconfirmed || s.state.Reason != "following_mixed_swim_route" || distance(s.pos, playerPosition(leader)) >= atContact-.5 {
-			t.Fatal("ordinary follow did not advance in the pool", s.state, s.pos, atContact)
+			t.Fatal("ordinary follow did not advance in the pool", s.stateLocked(), s.pos, atContact)
 		}
 	}
 }
