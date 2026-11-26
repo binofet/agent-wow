@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -28,6 +29,7 @@ type idleMotionScope struct {
 	mapID                                            uint32
 	cleanupOnly, broken, landing                     bool
 	writes                                           uint64
+	lastAttempt                                      string
 	lastOpcode                                       uint32
 	lastPayload                                      []byte
 }
@@ -104,11 +106,11 @@ func (s *Service) idleMotionCurrentFailureLocked(b *idleMotionScope, w *worldv1.
 			return movementflags.GroundCompatible(flags, extra) || extra == 0 && (flags == 0x1000 || flags == 0x1001 || flags == swimMovementFlag || flags == swimMovementFlag|1)
 		}
 	}
-	if safeSelfMovement(w, s.selfGUID, compatible) != "" {
-		return "observed_body_unsafe"
+	if why := safeSelfMovement(w, s.selfGUID, compatible); why != "" {
+		return "observed_body_unsafe: " + why
 	}
 	observed := portalObservedWorldScope(w, s.selfGUID)
-	if !samePortalCoreVisit(b.initial, observed) || !samePortalCoreVisit(b.initial, b.current) || observed.MotionRevision < b.initial.MotionRevision || observed.MotionRevision > b.current.MotionRevision {
+	if !samePortalCoreVisit(b.initial, observed) || !samePortalCoreVisit(b.initial, b.current) || observed.MotionRevision < b.initial.MotionRevision || (!b.landing && observed.MotionRevision > b.current.MotionRevision) {
 		return "transport_source_changed"
 	}
 	return ""
@@ -122,6 +124,15 @@ func (s *Service) newIdleMotionScopeLocked(ctx context.Context, token string, w 
 	return s.newBodyMotionScopeLocked(ctx, token, w, cleanupOnly, false)
 }
 
+// Finite landings pin every successful frame to the attempt that wrote it.
+// Core can return its original bytes across a contiguous run of parsed VALUES.
+func (s *Service) readBodyMotionReport(ctx context.Context, b *idleMotionScope) (*modv1.WorldPacket, error) {
+	if b.landing {
+		return modcb.ReadBodyInputReport(ctx, s.session, s.sessionID, s.selfGUID, b.lastAttempt)
+	}
+	return modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
+}
+
 func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly, landing bool) (*idleMotionScope, error) {
 	b := &idleMotionScope{binding: s.idleInteraction, initial: clonePortalScope(portalObservedWorldScope(w, s.selfGUID)),
 		rawPose: playerPosition(w.GetSelf()), pose: s.pos, rawRevision: s.positionRevision, clientRevision: s.posRevision,
@@ -133,11 +144,11 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 	if token == "" && !landing || token != b.binding.token || b.clientRevision == 0 || b.initial == nil {
 		return nil, modcb.PacketNotDispatchedError("idle motion source mapping unavailable")
 	}
-	prior, err := modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
+	prior, err := s.readBodyMotionReport(ctx, b)
 	needPose := s.posEstimated || w.GetSelf().GetPositionInferred()
 	if err == nil {
 		p, valid := idleMotionPacketPose(prior.Payload, s.selfGUID)
-		if !valid || !idleMotionOpcode(prior.Opcode) || !samePortalCoreVisit(b.initial, prior.TransportScope) || prior.TransportScope.MotionRevision < b.initial.MotionRevision || needPose && p != b.pose {
+		if !valid || !idleMotionOpcode(prior.Opcode) || !samePortalCoreVisit(b.initial, prior.TransportScope) || !landing && prior.TransportScope.MotionRevision < b.initial.MotionRevision || needPose && p != b.pose {
 			return nil, modcb.PacketNotDispatchedError("idle motion prior report no longer matches the captured body")
 		}
 		b.current = clonePortalScope(prior.TransportScope)
@@ -199,8 +210,10 @@ func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotion
 func (s *Service) idleMotionAfterWriteLocked(ctx context.Context, b *idleMotionScope, op uint32, payload []byte) error {
 	b.writes++
 	b.lastOpcode, b.lastPayload = op, append([]byte(nil), payload...)
-	r, err := modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
 	w, worldErr := s.readWorldSnapshot(ctx)
+	// A competing same-wire write may arrive during the World read. Read our
+	// exact receipt last, before publishing a successful terminal STOP.
+	r, err := s.readBodyMotionReport(ctx, b)
 	now := s.now()
 	post := *b
 	post.current = r.GetTransportScope()
@@ -208,10 +221,13 @@ func (s *Service) idleMotionAfterWriteLocked(ctx context.Context, b *idleMotionS
 		!samePortalCoreVisit(b.initial, r.GetTransportScope()) || r.GetTransportScope().GetMotionRevision() <= b.current.MotionRevision ||
 		!s.idleMotionCurrentLocked(&post, w, now) {
 		b.broken = true
+		if err != nil {
+			return fmt.Errorf("idle motion known write lacks its exact current post-write report: %w", err)
+		}
 		return errors.New("idle motion known write lacks its exact current post-write source report")
 	}
 	observed := portalObservedWorldScope(w, s.selfGUID)
-	if observed.MotionRevision > r.TransportScope.MotionRevision {
+	if !b.landing && observed.MotionRevision > r.TransportScope.MotionRevision {
 		b.broken = true
 		return errors.New("idle motion parsed source superseded the written report")
 	}
@@ -247,8 +263,8 @@ func (s *Service) observeIdleMotionStoppedLocked(ctx context.Context) bool {
 		return true
 	}
 	if b.lastOpcode == opcode.MSGMoveStop && len(b.lastPayload) > 0 {
-		r, err := modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
 		fresh, freshErr := s.readWorldSnapshot(ctx)
+		r, err := s.readBodyMotionReport(ctx, b)
 		if err == nil && freshErr == nil && ctx.Err() == nil && s.idleInteraction == b.binding && s.interactionToken == b.binding.token &&
 			r.Opcode == opcode.MSGMoveStop && bytes.Equal(r.Payload, b.lastPayload) && samePortalCoreVisit(b.initial, r.TransportScope) &&
 			samePortalCoreVisit(b.initial, portalObservedWorldScope(fresh, s.selfGUID)) {

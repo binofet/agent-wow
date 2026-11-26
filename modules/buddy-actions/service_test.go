@@ -15,11 +15,13 @@ import (
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
@@ -38,6 +40,7 @@ type fakeSession struct {
 	lookups                           []uint64
 	failSend, failClock, failSnapshot bool
 	failSendOpcode                    uint32
+	ownMovementAttempt                string
 	ownMovementReport                 *modv1.WorldPacket
 	portalCoreScope                   *modv1.TransportScope
 	onOwnMovementReport               func(*modv1.WorldPacket)
@@ -58,6 +61,8 @@ func (f *fakeSession) SendPacket(ctx context.Context, r *modv1.SendPacketRequest
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	md, _ := metadata.FromOutgoingContext(ctx)
+	f.ownMovementAttempt = modcb.IncomingMovementAttempt(metadata.NewIncomingContext(ctx, md))
 	f.retainSyntheticOwnMovementReport(r)
 	return &emptypb.Empty{}, nil
 }
@@ -76,7 +81,7 @@ func (f *fakeSession) GetClock(ctx context.Context, _ *emptypb.Empty, _ ...grpc.
 func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, _ ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if r.Module == "session" && r.Method == "own_movement_report" {
+	if r.Module == "session" && (r.Method == modcb.OwnMovementReportMethod || r.Method == modcb.BodyInputReportMethod) {
 		return f.readSyntheticOwnMovementReport(ctx, r)
 	}
 	if r.Module == "buddy-world" && r.Method == "observe_client_movement" && r.Request.MessageIs(&worldv1.ClientMovementRequest{}) {

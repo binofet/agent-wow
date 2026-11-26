@@ -10,6 +10,7 @@ import (
 	"math/bits"
 	"time"
 
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
@@ -26,6 +27,7 @@ const (
 	unitMaxHealth    = 0x20
 	unitMaxPower1    = 0x21
 	unitFlags        = 0x3b
+	unitBytes1       = 0x4a
 	unitDynamicFlags = 0x4f
 	playerFlags      = 0x96
 )
@@ -221,13 +223,14 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		if declared > maxPayload || declared < 4 {
 			return true, errBounds
 		}
-		r, err := zlib.NewReader(bytes.NewReader(payload[4:]))
+		stream := bytes.NewReader(payload[4:])
+		r, err := zlib.NewReader(stream)
 		if err != nil {
 			return true, errCompressed
 		}
 		data, err := io.ReadAll(io.LimitReader(r, int64(declared)+1))
 		closeErr := r.Close()
-		if err != nil || closeErr != nil || len(data) != int(declared) {
+		if err != nil || closeErr != nil || len(data) != int(declared) || stream.Len() != 0 {
 			return true, errCompressed
 		}
 		return true, updates(&cursor{b: data}, state, now)
@@ -480,11 +483,20 @@ func movement(c *cursor, p *observed, now time.Time) error {
 func updates(c *cursor, state *observations, now time.Time) error {
 	players := &state.players
 	count := c.u32()
+	state.bodyInputBarrier = ""
+	if count == 0 {
+		state.bodyInputBarrier = modcb.BodyUpdateUnknownSubject
+	}
 	if count > maxBlocks {
 		return errBounds
 	}
 	for i := uint32(0); i < count; i++ {
 		typ := c.u8()
+		if typ == 1 {
+			state.bodyInputBarrier = modcb.BodyUpdateMovement
+		} else if typ != 0 {
+			state.bodyInputBarrier = modcb.BodyUpdateLifecycle
+		}
 		switch typ {
 		case 0, 1, 2, 3:
 			guid := c.guid()
@@ -518,7 +530,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 						}
 					}
 					setMap(p, selfMap)
-					for _, f := range []int{unitBytes0, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags, 0x12, 0x13, 0x37, 0x3c, 0x36, 0x78, 0x42, 0x3e} {
+					for _, f := range []int{unitBytes0, unitBytes1, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags, 0x12, 0x13, 0x37, 0x3c, 0x36, 0x78, 0x42, 0x3e} {
 						p.known[f] = true
 					}
 					for f := 0; f < 7; f++ {
@@ -616,7 +628,15 @@ func updates(c *cursor, state *observations, now time.Time) error {
 				}
 			}
 			if typ != 1 {
-				if err := values(c, p, now, typ == 2 || typ == 3); err != nil {
+				// Classify each VALUES block before mutation. A later block can
+				// restore a field without undoing an intervening death or control change.
+				var restricted *string
+				if !publicPlayerGUID(guid) && !creatureGUID(guid) {
+					state.bodyInputBarrier = modcb.BodyUpdateUnknownSubject
+				} else if state.bodyInputBarrier == "" && (guid == players[0].guid || guid == players[1].guid) {
+					restricted = &state.bodyInputBarrier
+				}
+				if err := values(c, p, now, typ == 2 || typ == 3, restricted); err != nil {
 					return err
 				}
 				if p != nil && p.cast.spell != 0 && observedCreatureDead(p) {
@@ -798,7 +818,17 @@ func splineCreate(c *cursor, p *observed, now time.Time) error {
 	return c.err
 }
 
-func values(c *cursor, p *observed, now time.Time, create bool) error {
+// A walking player can stand from a normal seated state. Only accept the
+// decoded stand byte with its other three already-known packed bytes unchanged.
+func bodyInputValueUnchanged(p *observed, field int, value uint32) bool {
+	if field >= unitPower1 && field < unitPower1+7 || field >= unitMaxPower1 && field < unitMaxPower1+7 {
+		return true
+	}
+	return field == unitBytes1 && p != nil && p.known[field] && byte(p.fields[field]) <= 6 &&
+		byte(value) == 0 && p.fields[field]>>8 == value>>8
+}
+
+func values(c *cursor, p *observed, now time.Time, create bool, bodyInputBarrier *string) error {
 	n := int(c.u8())
 	masks := make([]uint32, n)
 	total := 0
@@ -816,6 +846,12 @@ func values(c *cursor, p *observed, now time.Time, create bool) error {
 			}
 			v := c.u32()
 			field := block*32 + bit
+			if bodyInputBarrier != nil && !bodyInputValueUnchanged(p, field, v) {
+				*bodyInputBarrier = modcb.BodyUpdateOwnerField
+				if p != nil && p.isSelf {
+					*bodyInputBarrier = modcb.BodyUpdateSelfField
+				}
+			}
 			if p != nil && p.isContainer && field == containerSlots && v > maxBagSlots {
 				return errBounds
 			}

@@ -49,6 +49,21 @@ func (m *Manager) readOwnMovementReport(ctx context.Context, caller string, requ
 			read = func() *modv1.WorldPacket { return exact(attempt) }
 		}
 	}
+	reason := "successful own movement report is no longer current"
+	qualified := request.GetMethod() == modcb.BodyInputReportMethod
+	if qualified {
+		reader := m.session.BodyInputReport
+		read = nil
+		if reader != nil {
+			read = func() *modv1.WorldPacket {
+				packet, detail := reader(ctx, attempt)
+				if detail != "" {
+					reason = "body input report: " + detail
+				}
+				return packet
+			}
+		}
+	}
 	m.mu.Unlock()
 	if !valid || read == nil || scope == nil {
 		return nil, status.Error(codes.FailedPrecondition, "current own movement-report transport unavailable")
@@ -56,8 +71,8 @@ func (m *Manager) readOwnMovementReport(ctx context.Context, caller string, requ
 	packet := read()
 	if packet == nil || packet.TransportScope == nil || packet.TransportScope.SelfGuid != guid ||
 		packet.TransportScope.ConnectionId == "" || !packet.TransportScope.VisitBound || packet.TransportScope.VisitRevision == 0 ||
-		len(packet.Payload) == 0 || len(packet.Payload) > 256 || !proto.Equal(packet.TransportScope, scope()) {
-		return nil, status.Error(codes.FailedPrecondition, "successful own movement report is no longer current")
+		len(packet.Payload) == 0 || len(packet.Payload) > 256 || (!qualified && !proto.Equal(packet.TransportScope, scope())) {
+		return nil, status.Error(codes.FailedPrecondition, reason)
 	}
 	m.mu.Lock()
 	current := m.ctx.Err() == nil && !m.closing && !m.preparing && !m.prepared && m.err == nil &&

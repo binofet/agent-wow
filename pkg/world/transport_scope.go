@@ -149,6 +149,14 @@ func (t *transportScopeState) observe(op uint16, body []byte) {
 		t.observeSummon(op, body)
 		return
 	}
+	// Ordinary forward input can stand the player up. A different or
+	// incomplete stand state can invalidate an in-flight normal body frame.
+	if op == opcode.SMSGStandstateUpdate && t.scope != nil {
+		if len(body) != 1 || body[0] != 0 {
+			t.advance(&t.scope.MotionRevision)
+		}
+		return
+	}
 	t.observeTransferBefore(op, body)
 	if t.scope == nil || !transportMotionBarrier(uint32(op)) || transportClearlyForeign(op, body, t.scope.SelfGuid) {
 		return
@@ -279,7 +287,7 @@ func (t *transportScopeState) reserve(op uint32, payload []byte, requested *modv
 		return nil
 	}
 	if op == opcode.MSGMoveStop && requested != nil {
-		return t.reserveMovementStop(payload, requested, nil)
+		return t.reserveMovementStop(payload, requested, nil, false)
 	}
 	if requested != nil && bodyMovementScopeOpcode(op) {
 		return t.reserveBodyMovement(op, payload, requested)
@@ -350,6 +358,9 @@ func (e *engine) publishTransportScope() {
 		return
 	}
 	e.s.mu.Lock()
+	if e.s.transportScopeSnapshot.GetMotionRevision() != e.transport.scope.GetMotionRevision() {
+		e.s.bodyUpdates.signal()
+	}
 	e.s.transportScopeSnapshot = e.transport.snapshot()
 	e.s.ownMovementReportSnapshot = e.ownMovementReport
 	e.s.ownMovementAttemptSnapshot = e.ownMovementAttempt
@@ -360,8 +371,22 @@ func (e *engine) observeTransportScope(op uint16, body []byte) {
 	if e.s == nil {
 		return
 	}
+	before := e.transport.scope.GetMotionRevision()
 	e.transport.observe(op, body)
+	objectUpdate := op == opcode.SMSGUpdateObject || op == opcode.SMSGCompressedUpdateObject
+	if objectUpdate {
+		e.s.mu.Lock()
+		e.s.bodyUpdates.pending = e.transport.scope.GetMotionRevision()
+		e.s.mu.Unlock()
+	}
 	e.publishTransportScope()
+	if e.transport.scope.GetMotionRevision() != before && !objectUpdate {
+		reason := "own_motion_or_control"
+		if op == opcode.SMSGStandstateUpdate {
+			reason = "own_stand_state"
+		}
+		e.s.recordParsedBodyUpdate(e.transport.scope, reason)
+	}
 }
 
 func (e *engine) publishObserved(op uint16, body []byte) error {

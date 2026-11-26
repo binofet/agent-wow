@@ -201,7 +201,8 @@ func (m *Manager) writePolicyScopedMovement(ctx context.Context, token, sessionI
 	movement := op.movement
 	allowed := (movement.idleBound || movement.landing) && op.capability == "move_body" && movement.body || movement.idleBound && op.capability == "travel_to" && !movement.body ||
 		op.capability == "release_interaction" && movement.stop
-	if !op.admitted || !allowed ||
+	attempt := modcb.IncomingMovementAttempt(ctx)
+	if !op.admitted || !allowed || movement.landing && attempt == "" ||
 		op.origin.Writer != "lua" || op.origin.ActionID == "" || op.origin.SessionID != sessionID || op.origin.Module != module || module != actionsModule ||
 		movement.unknown || scope == nil || scope.ConnectionId == "" || !scope.VisitBound || scope.VisitRevision == 0 || scope.MotionRevision == 0 || scope.SelfGuid != movement.self ||
 		!op.matchesMovementPacket(code, payload) || ctx.Err() != nil || m.session.SendScopedPacket == nil {
@@ -210,6 +211,10 @@ func (m *Manager) writePolicyScopedMovement(ctx context.Context, token, sessionI
 	}
 	op.attempted = true
 	origin := op.origin
+	if movement.landing {
+		ctx = modsession.WithBodyInput(ctx)
+		origin.MovementAttempt = attempt
+	}
 	registry.mu.Unlock()
 	err := m.session.SendScopedPacket(modsession.WithWriteOrigin(ctx, origin), code, append([]byte(nil), payload...), proto.Clone(scope).(*modv1.TransportScope))
 	registry.mu.Lock()

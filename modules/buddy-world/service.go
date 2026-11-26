@@ -10,10 +10,13 @@ import (
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -201,7 +204,7 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 
 // Callback failures are deliberately local: a malformed gameplay observation
 // must not terminate the authenticated session. Changes commit per whole packet.
-func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
+func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if packet == nil {
@@ -209,6 +212,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		s.lastError = "missing packet"
 		return &emptypb.Empty{}, nil
 	}
+	objectUpdate := packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject
 	s.lastOpcode = packet.Opcode
 	s.observeCombatPacketLocked(packet.Opcode, packet.Payload, s.now())
 	next := s.state.clone()
@@ -216,7 +220,8 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	transferBefore := s.captureWorldTransferBeforeLocked(packet, observedAt)
 	handled, err := parsePacket(packet.Opcode, packet.Payload, &next, observedAt)
 	if err != nil {
-		if packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject {
+		if objectUpdate {
+			_ = grpc.SetTrailer(ctx, metadata.Pairs(modcb.BodyInputBarrierTrailer, modcb.BodyUpdateMalformed))
 			// The rejected batch could contain a new or moved unit.
 			s.state.creatureCoverageLost = true
 		}
@@ -261,6 +266,17 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		s.state = next
 		s.observeWorldTransferLocked(packet, current, &next, transferBefore, observedAt)
 		s.observed++
+		if objectUpdate {
+			reason := next.bodyInputBarrier
+			if !scopeMatchesSelf(packet.TransportScope, current, next.visitRevision) || !current.positionKnown {
+				reason = modcb.BodyUpdateUnbound
+			}
+			if reason == "" {
+				_ = grpc.SetTrailer(ctx, metadata.Pairs(modcb.BodyInputUpdateTrailer, "1"))
+			} else {
+				_ = grpc.SetTrailer(ctx, metadata.Pairs(modcb.BodyInputBarrierTrailer, reason))
+			}
+		}
 	} else {
 		s.invalidateWorldTransferPacketLocked(packet)
 		s.observeUnsupportedMotionLocked(packet)

@@ -114,7 +114,7 @@ func (m *Manager) invokeJSON(ctx context.Context, full string, params json.RawMe
 }
 
 func (m *Manager) invokeModule(ctx context.Context, callerName string, req *modv1.InvokeModuleRequest) (*modv1.InvokeModuleResponse, error) {
-	if req.GetModule() == "session" && req.GetMethod() == modcb.OwnMovementReportMethod {
+	if req.GetModule() == "session" && (req.GetMethod() == modcb.OwnMovementReportMethod || req.GetMethod() == modcb.BodyInputReportMethod) {
 		return m.readOwnMovementReport(ctx, callerName, req)
 	}
 	if req.GetModule() == modcb.FollowPolicyModule && req.GetMethod() == modcb.FollowPolicyMethod {

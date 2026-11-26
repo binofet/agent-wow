@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -108,6 +110,9 @@ func (m *Manager) packetWorker(name string, inst *instance) {
 			if err != nil {
 				m.fail(name, fmt.Errorf("packet 0x%x: %w", packet.Opcode, err))
 				return
+			}
+			if name == "buddy-world" && (packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject) && m.session.ParsedBodyUpdate != nil {
+				m.session.ParsedBodyUpdate(packet.TransportScope, modcb.BodyUpdateResult(trailers.Get(modcb.BodyInputUpdateTrailer), trailers.Get(modcb.BodyInputBarrierTrailer)))
 			}
 			m.recordSpellEffect(name, trailers)
 			m.mu.Lock()

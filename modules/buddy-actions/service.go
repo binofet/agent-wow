@@ -831,6 +831,14 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 	motion, _ := ctx.Value(idleMotionScopeKey{}).(*idleMotionScope)
 	if motion != nil {
 		scope, err := s.idleMotionBeforeWriteLocked(ctx, motion, op, payload)
+		if err == nil && motion.landing {
+			motion.lastAttempt, err = newMovementAttemptID()
+			if err != nil {
+				err = modcb.PacketNotDispatchedError("body input attempt identity unavailable")
+			} else {
+				sendCtx = modcb.WithMovementAttempt(sendCtx, motion.lastAttempt)
+			}
+		}
 		if err != nil {
 			if motion.writes > 0 && errors.Is(err, errIdleMotionReadUnavailable) {
 				// The unsent checkpoint cannot be retried through this captured scope.
