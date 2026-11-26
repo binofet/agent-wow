@@ -73,7 +73,9 @@ end
 local function caster_standoff(obs)
     local self=(obs.players or {})[obs.selfGuid]
     if tank or obs.mapId~=sonic.mapId or obs.hostTargetRangeBandSupported~=true or
-       not self or self.classKnown~=true or self.classId~=5 and self.classId~=8 and self.classId~=9 or
+       (obs.navigation or {}).motionUnconfirmed==true or not self or
+       self.movementKnown~=true or self.swimming==true or type(self.groundRunSpeed)~="number" or self.groundRunSpeed<=0 or
+       self.classKnown~=true or self.classId~=5 and self.classId~=8 and self.classId~=9 or
        self.aliveKnown~=true or self.alive~=true or self.mapKnown~=true or self.mapId~=obs.mapId or
        self.positionInferred==true or not encounter_movement or not encounter_movement.current_pose(self) then return end
     local fighting=false
@@ -92,18 +94,19 @@ local function caster_standoff(obs)
     -- party's anchor when its roster carries no tank assignment.
     local group=(obs.party or {}).group or {}
     if group.known~=true or group.inGroup~=true then return end
-    local anchor,owner
+    local anchor,owner,assigned
     for _,member in ipairs(group.members or {}) do
+        -- Both the dungeon role and the raid main-tank assignment use bit 2.
+        local isTank=math.floor((member.roles or 0)/2)%2==1 or math.floor((member.flags or 0)/2)%2==1
+        if isTank then assigned=true end
         local p=(obs.players or {})[member.guid]
         if member.online==true and member.guid~=obs.selfGuid and p and p.aliveKnown==true and p.alive==true and
            p.mapKnown==true and p.mapId==obs.mapId and p.positionInferred~=true and encounter_movement.current_pose(p) then
             if member.guid==(obs.navigation or {}).ownerGuid then owner=member.guid end
-            if math.floor((member.roles or 0)/2)%2==1 or (member.flags or 0)%2==1 then
-                if not anchor or member.guid==owner then anchor=member.guid end
-            end
+            if isTank and (not anchor or member.guid==owner) then anchor=member.guid end
         end
     end
-    anchor=anchor or owner
+    if not assigned then anchor=owner end
     if anchor and reach>0 then return sonic,anchor,reach end
 end
 -- Pull admission is standing knowledge; positioning is needed only for an

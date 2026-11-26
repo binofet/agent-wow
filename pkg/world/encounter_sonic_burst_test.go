@@ -1,6 +1,7 @@
 package world
 
 import (
+	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"reflect"
 	"testing"
@@ -14,6 +15,7 @@ func sonicEncounter(class uint32) *actionsv1.EncounterObservationResponse {
 	o := sludgePriorObservation()
 	self, tank := o.Players["4"], o.Players["3"]
 	self.ClassId = class
+	self.GroundRunSpeed = proto.Float32(7)
 	self.CombatKnown, tank.CombatKnown, tank.InCombat = true, true, true
 	o.Navigation.OwnerGuid = 3
 	tank.X = 11
@@ -151,5 +153,80 @@ func TestSonicBurstLeavesOrdinaryRolesAndPassiveSightingsAlone(t *testing.T) {
 				t.Fatal(mode, out)
 			}
 		})
+	}
+}
+
+func TestSonicBurstGroundCustodyPreservesStationarySwimmingCare(t *testing.T) {
+	for _, held := range []bool{false, true} {
+		for _, body := range []string{"swimming", "unconfirmed", "ground_unavailable"} {
+			p, o := newFallbackPolicyTest(t, ""), sonicEncounter(5)
+			if held {
+				sonicLease(t, p, o)
+			}
+			switch body {
+			case "swimming":
+				o.Players["4"].Swimming = true
+				o.Players["4"].GroundRunSpeed = nil
+			case "unconfirmed":
+				o.Navigation.MotionUnconfirmed = true
+			case "ground_unavailable":
+				o.Players["4"].GroundRunSpeed = nil
+			}
+			d := p.decide(observeRanged(t, p, o, true))
+			a, _ := d.Output["action"].(map[string]any)
+			if a["capability"] == "approach_target" || a["capability"] == "movement_owner" && a["mode"] != "release" {
+				t.Fatalf("%s, held %v requested new ground control: %v", body, held, d.Output)
+			}
+			if body == "unconfirmed" {
+				continue
+			}
+			if held {
+				if a["mode"] != "release" {
+					t.Fatal("missing cleanup of owned ground lease", d.Output)
+				}
+				id, err := p.host.ReserveAction(d)
+				if err != nil {
+					t.Fatal(err)
+				}
+				o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{}
+				_, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionConfirmed, Payload: map[string]any{"capability": "movement_owner", "owner": a["owner"], "mode": "release", "result": map[string]any{"sessionId": fallbackSession, "selfGuid": "4"}}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				d = p.decide(observeRanged(t, p, o, true))
+				a, _ = d.Output["action"].(map[string]any)
+			}
+			if a["capability"] != "heal" || a["targetGuid"] != "3" {
+				t.Fatal("stationary care displaced by dry-only positioning", d.Output)
+			}
+		}
+	}
+}
+func TestSonicBurstUsesObservedTankAssignment(t *testing.T) {
+	for _, assignment := range []string{"raid", "dungeon", "absent"} {
+		p, o := newFallbackPolicyTest(t, ""), sonicEncounter(5)
+		o.Party.Group.Members[1].Flags = 1
+		m := &partyv1.Member{Guid: 7, Online: true, Flags: 2}
+		if assignment == "dungeon" {
+			m.Flags = 0
+			m.Roles = 2
+		}
+		o.Party.Group.Members = append(o.Party.Group.Members, m)
+		o.Players["7"] = proto.Clone(o.Players["3"]).(*actionsv1.EncounterPlayer)
+		o.Players["7"].Guid = 7
+		if assignment == "absent" {
+			delete(o.Players, "7")
+			out := p.decide(observeRanged(t, p, o, true)).Output
+			if out["rangedStance"].(map[string]any)["active"] == true {
+				t.Fatal("unlocated tank replaced by assistant", out)
+			}
+			continue
+		}
+		sonicLease(t, p, o)
+		out := p.decide(observeRanged(t, p, o, true)).Output
+		a, _ := out["action"].(map[string]any)
+		if a["capability"] != "approach_target" || a["targetGuid"] != "7" {
+			t.Fatal("lost assigned tank", assignment, out)
+		}
 	}
 }
