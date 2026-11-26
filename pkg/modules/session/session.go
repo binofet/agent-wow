@@ -19,5 +19,6 @@ type Session struct {
 	TransportScope   func() *modv1.TransportScope
 	// OwnMovementReport returns the exact known written normal-movement packet
 	// only while its original scope remains current. It is not a server pose.
-	OwnMovementReport func() *modv1.WorldPacket
+	OwnMovementReport  func() *modv1.WorldPacket
+	OwnMovementAttempt func(string) *modv1.WorldPacket
 }

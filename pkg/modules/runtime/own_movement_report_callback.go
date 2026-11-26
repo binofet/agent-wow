@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -29,14 +30,25 @@ func (m *Manager) readOwnMovementReport(ctx context.Context, caller string, requ
 	fields := input.AsMap()
 	sid, a := fields["sessionId"].(string)
 	self, b := fields["selfGuid"].(string)
+	attempt, hasAttempt := fields["attemptId"].(string)
+	if len(fields) == 3 && (!hasAttempt || !modcb.ValidMovementAttempt(attempt)) {
+		return nil, status.Error(codes.InvalidArgument, "exact movement attempt required")
+	}
 	guid, err := strconv.ParseUint(self, 10, 64)
-	if !a || !b || len(fields) != 2 || sid == "" || len(sid) > 128 || err != nil || guid == 0 || strconv.FormatUint(guid, 10) != self {
+	if !a || !b || (len(fields) != 2 && len(fields) != 3) || sid == "" || len(sid) > 128 || err != nil || guid == 0 || strconv.FormatUint(guid, 10) != self {
 		return nil, status.Error(codes.InvalidArgument, "exact canonical movement-report body required")
 	}
 	m.mu.Lock()
 	valid := m.ctx.Err() == nil && !m.closing && !m.preparing && !m.prepared && m.err == nil &&
 		sid == filepath.Base(m.dir) && guid == m.session.Identity.CharacterGUID
 	read, scope := m.session.OwnMovementReport, m.session.TransportScope
+	exact := m.session.OwnMovementAttempt
+	if hasAttempt {
+		read = nil
+		if exact != nil {
+			read = func() *modv1.WorldPacket { return exact(attempt) }
+		}
+	}
 	m.mu.Unlock()
 	if !valid || read == nil || scope == nil {
 		return nil, status.Error(codes.FailedPrecondition, "current own movement-report transport unavailable")

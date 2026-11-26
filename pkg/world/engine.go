@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	"time"
 
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
@@ -37,6 +38,7 @@ type engine struct {
 	writeSerial           uint64
 	beforeScopedWrite     func() error
 	ownMovementReport     *modv1.WorldPacket
+	ownMovementAttempt    string
 }
 
 func (e *engine) write(op uint32, body []byte) error {
@@ -49,6 +51,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 		// A failed or unsupported new write must not leave the prior report
 		// available as the most recent known own movement during transport.
 		e.ownMovementReport = nil
+		e.ownMovementAttempt = ""
 		e.publishTransportScope()
 	}
 	deadline := time.Now().Add(e.timing.write)
@@ -100,6 +103,9 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	e.movement.sent(op, body, e.s.state.Character.GUID)
 	e.transport.sent(op)
 	e.retainOwnMovementReport(op, body)
+	if ownMovementReportOpcode(op) {
+		e.ownMovementAttempt = modsession.WriteOriginFromContext(ctx).MovementAttempt
+	}
 	e.publishTransportScope()
 	logPacket(e.s.logger, "write", op, len(body))
 	return GameplayWritten, anyBytes, nil

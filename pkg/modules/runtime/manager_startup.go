@@ -149,6 +149,9 @@ func (m *Manager) modulePacketWriter(sessionID, module string) func(context.Cont
 		// The callback server supplies module identity. A callback without a
 		// matched policy dispatch cannot claim a Lua generation or action ID.
 		origin := modsession.WriteOrigin{SessionID: sessionID, Module: module, Writer: "module"}
+		if module == actionsModule {
+			origin.MovementAttempt = modcb.IncomingMovementAttempt(ctx)
+		}
 		return m.session.SendPacket(modsession.WithWriteOrigin(ctx, origin), opcode, payload)
 	}
 }

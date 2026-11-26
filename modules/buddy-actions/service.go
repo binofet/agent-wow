@@ -45,7 +45,8 @@ type sessionAPI interface {
 }
 
 type Service struct {
-	movementPoints movementPointInput
+	ordinaryMovement *ordinaryMovementAttempt
+	movementPoints   movementPointInput
 
 	clientControlLost, clientControlRestoring bool
 
@@ -1097,6 +1098,21 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		}
 		scopes = []*modv1.TransportScope{admission.scope}
 	}
+	var attempt *ordinaryMovementAttempt
+	// Only ordinary follow uses this recovery; leased/finite operations retain
+	// their existing receipt and cleanup custody.
+	if ctx.Value(ordinaryFollowMovementKey{}) == true && len(scopes) == 0 && !s.bodyMoving && swim == nil && ctx.Value(idleMotionScopeKey{}) == nil && s.state.Following && s.state.InteractionOwner == "" {
+		attempt = s.newOrdinaryMovementAttemptLocked(w, op, payload, p, moving, isSwimming)
+		if attempt != nil {
+			ctx = modcb.WithMovementAttempt(ctx, attempt.id)
+		}
+	}
+	// Refuse before callback entry while retaining the prior physical state and
+	// receipt. Errors from a callback already entered keep UNKNOWN handling.
+	if ctx.Value(ordinaryFollowMovementKey{}) == true && ctx.Err() != nil {
+		s.state.Reason = "ordinary_follow_context_ended_before_packet"
+		return false
+	}
 	before := s.transportSequence
 	if s.sendPacketLocked(ctx, op, payload, scopes...) != nil {
 		if failure := s.state.LastTransportFailure; failure != nil && failure.Sequence > before && !failure.OutcomeUnknown {
@@ -1104,6 +1120,10 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 			return false
 		}
 		s.state.MotionUnconfirmed = true
+		if attempt != nil {
+			attempt.sequence = s.transportSequence
+			s.ordinaryMovement = attempt
+		}
 		s.publishClientMovementLocked(ctx, nil, p, false)
 		return false
 	}
@@ -1292,6 +1312,9 @@ func (s *Service) Tick(ctx context.Context) {
 		// A new authoritative stationary pose can settle an ambiguous stop.
 		if world, err := s.snapshot(ctx); err == nil && safeSelfCombat(world, s.selfGUID) == "" {
 			s.refreshPositionLocked(world)
+			if s.state.MotionUnconfirmed {
+				s.reconcileOrdinaryMovementLocked(ctx, world)
+			}
 		}
 	}
 	if s.state.MotionUnconfirmed {
@@ -1430,6 +1453,9 @@ func (s *Service) Tick(ctx context.Context) {
 		goal := s.followGoal
 		s.followGoalExecuting = &goal
 		defer func() { s.followGoalExecuting = nil }()
+	}
+	if !ownedFollow && !swimFollow {
+		ctx = context.WithValue(ctx, ordinaryFollowMovementKey{}, true)
 	}
 	if s.navDataDir != "" {
 		formationUsed = true

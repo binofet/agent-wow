@@ -324,6 +324,7 @@ func (e *engine) publishTransportScope() {
 	e.s.mu.Lock()
 	e.s.transportScopeSnapshot = e.transport.snapshot()
 	e.s.ownMovementReportSnapshot = e.ownMovementReport
+	e.s.ownMovementAttemptSnapshot = e.ownMovementAttempt
 	e.s.mu.Unlock()
 }
 

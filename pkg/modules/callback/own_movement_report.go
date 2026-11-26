@@ -16,10 +16,24 @@ const OwnMovementReportMethod = "own_movement_report"
 // JSON method or a gameplay mutation. The bytes and their original transport
 // correlation are inseparable; this must never freshen an old World image.
 func ReadOwnMovementReport(ctx context.Context, client FollowPolicyClient, sid string, self uint64) (*modv1.WorldPacket, error) {
+	return readOwnMovementReport(ctx, client, sid, self, "")
+}
+
+func ReadOwnMovementAttempt(ctx context.Context, client FollowPolicyClient, sid string, self uint64, id string) (*modv1.WorldPacket, error) {
+	if !ValidMovementAttempt(id) {
+		return nil, errors.New("exact movement attempt required")
+	}
+	return readOwnMovementReport(ctx, client, sid, self, id)
+}
+func readOwnMovementReport(ctx context.Context, client FollowPolicyClient, sid string, self uint64, id string) (*modv1.WorldPacket, error) {
 	if sid == "" || len(sid) > 128 || self == 0 {
 		return nil, errors.New("current movement-report body required")
 	}
-	value, err := structpb.NewStruct(map[string]any{"sessionId": sid, "selfGuid": strconv.FormatUint(self, 10)})
+	fields := map[string]any{"sessionId": sid, "selfGuid": strconv.FormatUint(self, 10)}
+	if id != "" {
+		fields["attemptId"] = id
+	}
+	value, err := structpb.NewStruct(fields)
 	if err != nil {
 		return nil, err
 	}
