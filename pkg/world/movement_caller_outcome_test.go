@@ -1,20 +1,24 @@
 package world
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/worldconn"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"io"
 	"net"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 func TestReviewMovementCanceledCallerHasLaterKnownWrite(t *testing.T) {
-	body := ownReportPacket(t, 0)
+	body := ownReportPacket(t, 1)
 	trace := NewGameplayTrace(1)
 	readPrefix, resume := make(chan struct{}), make(chan struct{})
 	conn := peerConnection(t, func(peer *testPeer) {
@@ -35,14 +39,26 @@ func TestReviewMovementCanceledCallerHasLaterKnownWrite(t *testing.T) {
 	timing.write = 2 * time.Second
 	s := enterTracedTestSession(t, conn, timing, 99, trace)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	id := strings.Repeat("a", 64)
+	ctx = modsession.WithWriteOrigin(ctx, modsession.WriteOrigin{Module: "buddy-actions", Writer: "module", MovementAttempt: id})
+	var release sync.Once
+	releaseWrite := func() { release.Do(func() { close(resume) }) }
+	t.Cleanup(releaseWrite)
 	returned := make(chan error, 1)
 	go func() {
 		returned <- s.SendPacket(ctx, opcode.MSGMoveStartForward, body)
 	}()
-	<-readPrefix
+	select {
+	case <-readPrefix:
+	case err := <-returned:
+		t.Fatalf("movement never entered fixture write: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("movement fixture write did not begin")
+	}
 	cancel()
 	err := <-returned
-	close(resume)
+	releaseWrite()
 	if status.Code(err) != codes.Canceled {
 		t.Fatalf("caller should have canceled while write was in flight: %v", err)
 	}
@@ -61,6 +77,9 @@ func TestReviewMovementCanceledCallerHasLaterKnownWrite(t *testing.T) {
 	if len(got.Attempts) != 1 || got.Dropped != 0 ||
 		got.Attempts[0].Outcome != GameplayWritten || !got.Attempts[0].AnyBytes {
 		t.Fatalf("in-flight movement write lost to caller cancellation: %+v", got)
+	}
+	if r := s.OwnMovementAttempt(id); r == nil || r.Opcode != opcode.MSGMoveStartForward || !bytes.Equal(r.Payload, body) || got.Attempts[0].Origin.MovementAttempt != id {
+		t.Fatal("queued canceled caller lost exact successful movement result", r, got)
 	}
 }
 
@@ -92,15 +111,29 @@ func TestReviewMovementDeadlineReturnsBeforeKnownStopResult(t *testing.T) {
 	t.Cleanup(func() { left.Close(); right.Close(); <-peerDone })
 	trace := NewGameplayTrace(1)
 	s := enterTracedTestSession(t, worldconn.New(wrapped), quietTimings(), 99, trace)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	// The deadline starts after login; the fixture delays only returning an
+	// already completed socket write, never the actual kernel acceptance.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	id := strings.Repeat("d", 64)
+	ctx = modsession.WithWriteOrigin(ctx, modsession.WriteOrigin{Module: "buddy-actions", Writer: "module", MovementAttempt: id})
+	var release sync.Once
+	releaseWrite := func() { release.Do(func() { close(wrapped.resume) }) }
+	t.Cleanup(releaseWrite)
+	body := ownReportPacket(t, 0)
 	returned := make(chan error, 1)
-	go func() { returned <- s.SendPacket(ctx, opcode.MSGMoveStop, ownReportPacket(t, 0)) }()
-	<-wrapped.written
+	go func() { returned <- s.SendPacket(ctx, opcode.MSGMoveStop, body) }()
+	select {
+	case <-wrapped.written:
+	case err := <-returned:
+		t.Fatalf("STOP never entered fixture write: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("STOP fixture write did not begin")
+	}
 	if err := <-returned; status.Code(err) != codes.DeadlineExceeded {
 		t.Fatalf("caller: %v", err)
 	}
-	close(wrapped.resume)
+	releaseWrite()
 	reply := make(chan error, 1)
 	select {
 	case s.writes <- writeRequest{ctx: ctx, op: opcode.MSGMoveStop, reply: reply}:
@@ -111,5 +144,8 @@ func TestReviewMovementDeadlineReturnsBeforeKnownStopResult(t *testing.T) {
 	got := trace.Snapshot()
 	if len(got.Attempts) != 1 || got.Attempts[0].Outcome != GameplayWritten || !got.Attempts[0].AnyBytes {
 		t.Fatalf("known STOP lost: %+v", got)
+	}
+	if r := s.OwnMovementAttempt(id); r == nil || r.Opcode != opcode.MSGMoveStop || !bytes.Equal(r.Payload, body) || got.Attempts[0].Origin.MovementAttempt != id || s.OwnMovementAttempt(strings.Repeat("e", 64)) != nil {
+		t.Fatal("queued deadline caller lost exact successful STOP result", r, got)
 	}
 }
