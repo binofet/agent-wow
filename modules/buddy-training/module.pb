@@ -79,7 +79,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-во
+▐о
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"г
 PlayerState
 guid (Rguid
@@ -598,7 +598,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"Є
+permanent_bonus (RpermanentBonus"о 
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -667,7 +667,8 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 self_xp_revision< (RselfXpRevisionP
 ground_effects= (2).warcraftbuddy.world.v1.SpellGroundEffectRgroundEffects8
 ground_effects_supported> (RgroundEffectsSupported6
-ground_effects_overflow? (RgroundEffectsOverflowT
+ground_effects_overflow? (RgroundEffectsOverflow:
+nearby_creatures_complete@ (RnearbyCreaturesCompleteT
 summoning_objectsA (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjects"q
 CombatEventsRequest
 

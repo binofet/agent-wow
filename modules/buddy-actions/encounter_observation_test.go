@@ -50,7 +50,10 @@ func TestEncounterObservationWaitsForBothSameMapVisitWitnesses(t *testing.T) {
 	entry := make([]byte, 20)
 	binary.LittleEndian.PutUint32(entry, mapID)
 	f.world.Self.MapId, f.world.Owner.MapId = mapID, mapID
+	f.world.Self.MovementFlagsKnown, f.world.Self.SpeedsKnown, f.world.Self.RunSpeed = true, true, 7
 	f.world.NearbyCreatures = []*worldv1.CreatureState{encounterTestCreature(sheepTarget, mapID)}
+	f.world.NearbyCreaturesComplete = true
+	f.world.NearbyCreatures[0].CombatReachKnown, f.world.NearbyCreatures[0].CombatReach = true, 2.5
 	f.world.GroundEffectsSupported, f.world.GroundEffectsOverflow = true, true
 	f.world.GroundEffects = []*worldv1.SpellGroundEffect{{Guid: 0xf100000000000031, SpellId: 21070, RadiusYards: 5, X: 2.5}}
 	key := strconv.FormatUint(sheepTarget, 10)
@@ -61,6 +64,9 @@ func TestEncounterObservationWaitsForBothSameMapVisitWitnesses(t *testing.T) {
 			t.Fatalf("want visit %d, got %v", visit, out)
 		}
 		if visit == 0 {
+			if out.NearbyCreaturesComplete {
+				t.Fatal("unbound visit reported complete creature coverage")
+			}
 			if out.GroundEffectsSupported || out.GroundEffectsOverflow || len(out.GroundEffects) != 0 {
 				t.Fatal("ground geometry escaped visit binding", out)
 			}
@@ -68,6 +74,12 @@ func TestEncounterObservationWaitsForBothSameMapVisitWitnesses(t *testing.T) {
 				t.Fatalf("unbound visit exposed encounter facts: %v", out)
 			}
 			return
+		}
+		if !out.NearbyCreaturesComplete || out.Targets[key].GetCombatReach() != 2.5 {
+			t.Fatal("bound creature coverage or combat reach missing", out.Targets[key])
+		}
+		if out.Players[encounterGUID(s.selfGUID)].GetGroundRunSpeed() != 7 {
+			t.Fatal("observed ground run speed missing", out.Players)
 		}
 		if !out.GroundEffectsSupported || !out.GroundEffectsOverflow || len(out.GroundEffects) != 1 ||
 			out.GroundEffects[0].Guid != 0xf100000000000031 || out.GroundEffects[0].X != 2.5 || out.GroundEffects[0].RadiusYards != 5 {

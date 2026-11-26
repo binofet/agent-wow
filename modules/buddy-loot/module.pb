@@ -79,7 +79,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-¢®
+Þ®
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -598,7 +598,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"ò
+permanent_bonus (RpermanentBonus"® 
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -667,7 +667,8 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 self_xp_revision< (RselfXpRevisionP
 ground_effects= (2).warcraftbuddy.world.v1.SpellGroundEffectRgroundEffects8
 ground_effects_supported> (RgroundEffectsSupported6
-ground_effects_overflow? (RgroundEffectsOverflowT
+ground_effects_overflow? (RgroundEffectsOverflow:
+nearby_creatures_complete@ (RnearbyCreaturesCompleteT
 summoning_objectsA (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjects"q
 CombatEventsRequest
 
@@ -812,7 +813,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-É³
+‚µ
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1622,7 +1623,7 @@ session_id (	R	sessionId
 threat (2(.warcraftbuddy.actions.v1.SelfManaThreatRthreat?
 spells (2'.warcraftbuddy.actions.v1.SelfManaSpellRspells
 
-host_owned (R	hostOwned"Æ
+host_owned (R	hostOwned"‚
 EncounterObservationResponse
 
 session_id (	R	sessionId
@@ -1662,7 +1663,8 @@ navigation`
 interaction (20.warcraftbuddy.actions.v1.InteractionObservationRinteractionP
 ground_effects (2).warcraftbuddy.world.v1.SpellGroundEffectRgroundEffects8
 ground_effects_supported (RgroundEffectsSupported6
-ground_effects_overflow (RgroundEffectsOverflowL
+ground_effects_overflow (RgroundEffectsOverflow:
+nearby_creatures_complete  (RnearbyCreaturesCompleteL
 	summoning! (2..warcraftbuddy.actions.v1.SummoningObservationR	summoningT
 summoning_objects" (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjectse
 PlayersEntry
@@ -1789,8 +1791,7 @@ candidates"­
 EncounterParty3
 group (2.warcraftbuddy.party.v1.GroupRgroupJ
 raid_targets (2'.warcraftbuddy.party.v1.RaidTargetStateRraidTargets
-revision (Rrevision"ñ
-
+revision (Rrevision"µ
 EncounterPlayer
 guid (Rguid
 present (Rpresent
@@ -1840,11 +1841,13 @@ comboKnown*
 position_estimated% (RpositionEstimated,
 position_age_known& (RpositionAgeKnown,
 combat_reach_known' (RcombatReachKnown!
-combat_reach( (RcombatReach5
-selected_target_guid* (HRselectedTargetGuidˆB	
+combat_reach( (RcombatReach-
+ground_run_speed) (HRgroundRunSpeedˆ5
+selected_target_guid* (HRselectedTargetGuidˆB	
 _map_idB
-_aliveB
-_selected_target_guid"­
+_aliveB
+_ground_run_speedB
+_selected_target_guid"æ
 EncounterCreature
 guid (Rguid
 entry (Rentry
@@ -1880,9 +1883,11 @@ unit_flags (R	unitFlags)
 meleeReady.
 own_damage_families (RownDamageFamilies 
 orientation (Rorientationc
-attack_observation (24.warcraftbuddy.actions.v1.EncounterAttackObservationRattackObservationB	
+attack_observation (24.warcraftbuddy.actions.v1.EncounterAttackObservationRattackObservation&
+combat_reach (HRcombatReachˆB	
 _map_idB
-_alive"»
+_aliveB
+_combat_reach"»
 EncounterAttackObservation!
 victim_known (RvictimKnown
 victim_guid (R

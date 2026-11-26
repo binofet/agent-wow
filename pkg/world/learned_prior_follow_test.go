@@ -10,7 +10,7 @@ import (
 
 func nativeFollowPrior(t *testing.T) (*fallbackPolicyTest, *actionsv1.EncounterObservationResponse, string) {
 	t.Helper()
-	source := readEncounterBundle(t)
+	source := withStandingRange(readEncounterBundle(t))
 	if path := os.Getenv("BUDDY_TEST_ENCOUNTER_BUNDLE"); path != "" {
 		b, e := os.ReadFile(path)
 		if e != nil {
@@ -167,5 +167,62 @@ func TestNativeFollowLeaseReleaseUnknownSurvivesReloadAndInactiveSample(t *testi
 	pending := p.host.Outstanding()
 	if len(pending) != 1 || pending[0].ActionID != id || pending[0].Outcome != behavior.ActionUnknown {
 		t.Fatal("lost exact entered custody", pending)
+	}
+}
+
+func TestRetiredSludgeLeaseReleasesFromEstimatedFollowWithoutLosingCustody(t *testing.T) {
+	for _, kind := range []string{"owned", "release_unknown", "foreign", "motion_unknown", "explicit"} {
+		t.Run(kind, func(t *testing.T) {
+			p, o, _ := nativeFollowPrior(t)
+			// Start from a genuinely acquired, acknowledged legacy checkpoint.
+			if _, err := p.host.Reload(context.Background(), readEncounterBundle(t), p.host.Status().Revision); err != nil {
+				t.Fatal(err)
+			}
+			o.Navigation.Following = true
+			o.Players["3"].X = 130
+			o.Players["4"].PositionEstimated = true
+			o.Targets[fallbackGUID(fallbackNPC)].X = 150
+			if kind == "foreign" {
+				o.Navigation.MovementOwner.Owner = "consumable:drink"
+			}
+			if kind == "motion_unknown" {
+				o.Navigation.MotionUnconfirmed = true
+			}
+			if kind == "explicit" {
+				waitTaskCommand(t, p, map[string]any{"task": "ranged_only", "id": "maraudon_sludge_backline", "creatureEntry": 12222, "mapId": 349, "visitId": "1", "minRangeYards": 14, "maxRangeYards": 36, "clearanceYards": 2, "durationMs": 600000})
+			}
+			d := p.decide(observeRanged(t, p, o, false))
+			a, _ := d.Output["action"].(map[string]any)
+			if kind == "foreign" || kind == "motion_unknown" || kind == "explicit" {
+				if a["mode"] == "release" || a["mode"] == "acquire" {
+					t.Fatal("changed protected ownership", d.Output)
+				}
+				if kind == "explicit" && d.Output["rangedStance"].(map[string]any)["origin"] != "explicit" {
+					t.Fatal(d.Output)
+				}
+				return
+			}
+			if a["mode"] != "release" || a["owner"] != "ranged:maraudon_sludge_backline" || a["token"] != "prior-fixture" {
+				t.Fatal("did not release its own known lease at the estimated pose", d.Output)
+			}
+			outcome := behavior.ActionConfirmed
+			if kind == "release_unknown" {
+				outcome = behavior.ActionUnknown
+			}
+			id := settleFollowPrior(t, p, d, "release", outcome)
+			o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{}
+			o.Targets[fallbackGUID(fallbackNPC)].X = 3
+			next := p.decide(observeRanged(t, p, o, false)).Output
+			act, _ := next["action"].(map[string]any)
+			if act["capability"] == "movement_owner" || act["capability"] == "move_body" || next["rangedStance"].(map[string]any)["active"] == true {
+				t.Fatal("sighting reacquired movement", next)
+			}
+			if kind == "release_unknown" {
+				pending := p.host.Outstanding()
+				if len(pending) != 1 || pending[0].ActionID != id || pending[0].Outcome != behavior.ActionUnknown {
+					t.Fatal(pending)
+				}
+			}
+		})
 	}
 }

@@ -1,1 +1,2 @@
 modules/**/module.pb binary
+internal/modulefixture/fixture.pb binary

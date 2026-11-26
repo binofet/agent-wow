@@ -32,7 +32,7 @@ func TestExpiredLearnedPriorKeepsComposedFriendlyActions(t *testing.T) {
 				case "explicit":
 					setup += `s.rangedOnly={id="explicit",sessionId=frame.session_id,selfGuid="4",mapId=349,visitId="1",creatureEntry=12222,minRangeYards=14,maxRangeYards=36,clearanceYards=2,durationMs=600000,expiresAt=9999999999999,expiresUnixMs=9999999999999}`
 				}
-				source := strings.Replace(readEncounterBundle(t), "local function decide(frame)", "local function decide(frame)\n"+setup+"\n", 1)
+				source := strings.Replace(withStandingRange(readEncounterBundle(t)), "local function decide(frame)", "local function decide(frame)\n"+setup+"\n", 1)
 				source = strings.Replace(source, "commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status,out.rangedOffenseEligible and damage_spell or nil,task_view)", "commands.ranged_filter(current,frame,state.sequence,out,ranged_config,ranged_status,out.rangedOffenseEligible and damage_spell or nil,task_view)\nout.fixtureHoldRetained=commands.export_state().data.rangedHold~=nil", 1)
 				h, e := behavior.NewSession(context.Background(), fallbackSession, source)
 				if e != nil {

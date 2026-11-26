@@ -704,6 +704,9 @@ message SnapshotResponse {
   bool ground_effects_supported = 62;
   // At least one area observation was omitted by the bounded cache this visit.
   bool ground_effects_overflow = 63;
+  // All currently observed creatures fit the nearby list and its backing cache.
+  // An evicted creature can remain visible until this visit ends.
+  bool nearby_creatures_complete = 64;
   // At most 32 actually observed summoning rituals (18) and meeting stones (23).
   repeated GameObjectState summoning_objects = 65;
 }

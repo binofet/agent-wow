@@ -362,27 +362,155 @@ func TestMovementPointsCoincidentVisibleObjectsKeepDistinctLifetimes(t *testing.
 	obs["groundEffects"] = []any{older, newer}
 	decision := pointObserve(t, vm, obs, "movement_points")
 	points := decision.Output["movementPoints"].(map[string]any)["points"].([]any)
-	latest := float64(0)
+	want := map[string]float64{"999": float64(now + 1000), "1000": float64(now + 15000)}
+	if len(points) != len(want) {
+		t.Fatalf("expected both objects, got %v", points)
+	}
 	for _, raw := range points {
 		p := raw.(map[string]any)
-		if p["expiresAtUnixMs"].(float64) > latest {
-			latest = p["expiresAtUnixMs"].(float64)
+		guid := p["groundEffectGuid"].(string)
+		if expires, ok := want[guid]; !ok || p["radiusYards"] != float64(5) || p["expiresAtUnixMs"] != expires {
+			t.Fatalf("ground object lost its identity or individual lifetime: %v", p)
 		}
-		if p["radiusYards"] != float64(5) {
-			t.Fatal("mixed witness radius", p)
-		}
-	}
-	if latest != float64(now+15000) {
-		t.Fatal("coincident later ground object was clipped to the older expiry", points)
+		delete(want, guid)
 	}
 	obs["groundEffects"] = []any{newer}
 	again := pointObserve(t, vm, obs, "movement_points")
 	for _, raw := range again.Output["movementPoints"].(map[string]any)["points"].([]any) {
-		if raw.(map[string]any)["expiresAtUnixMs"] != latest {
+		if raw.(map[string]any)["expiresAtUnixMs"] != float64(now+15000) {
 			t.Fatal("remaining object's lifetime changed", again.Output)
 		}
 	}
 }
+func TestStationaryPoisonShockTracksNewWitnessWithoutRefreshingOldSamples(t *testing.T) {
+	source := strings.Replace(acceptedMovementPointsSource(t), "local function decide(frame)", "local function decide(frame)\nframe.clock.unixMs=frame.input.testUnixMs", 1)
+	vm, err := behavior.NewSession(context.Background(), "point-actor-4", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vm.Close()
+	obs := pointActorObservation("4")
+	n := obs["targets"].(map[string]any)["100"].(map[string]any)
+	n["entry"], n["x"], n["attackObservation"] = 12222, 3, map[string]any{"victimKnown": true, "victimGuid": "4", "ageMs": "0"}
+	points := func(now int, repeat bool) []any {
+		t.Helper()
+		var seq uint64
+		if !repeat {
+			seq, err = vm.Enqueue(behavior.Event{Kind: "encounter_observation", Value: obs})
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			seq = vm.Status().Cursor
+		}
+		d, err := vm.Decide(context.Background(), map[string]any{"kind": "movement_points", "observationSequence": strconv.FormatUint(seq, 10), "testUnixMs": now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		points, _ := d.Output["movementPoints"].(map[string]any)["points"].([]any)
+		return points
+	}
+	if p := points(10000, false); len(p) != 1 {
+		t.Fatal(p)
+	}
+	obs["worldObservationRevision"] = "2"
+	n["attackObservation"].(map[string]any)["ageMs"] = "1209"
+	if p := points(12700, false); len(p) != 1 || p[0].(map[string]any)["expiresAtUnixMs"] != float64(13491) {
+		t.Fatal("new attack at unchanged pose lost stationary carrier", p)
+	}
+	if p := points(13500, true); len(p) != 0 {
+		t.Fatal("reread extended cached witness", p)
+	}
+	if p := points(14000, false); len(p) != 0 {
+		t.Fatal("duplicate observation rearmed stale position", p)
+	}
+	obs["worldObservationRevision"] = "3"
+	n["x"], n["positionRevision"] = 12, "2"
+	n["attackObservation"].(map[string]any)["ageMs"] = "50"
+	if p := points(14500, false); len(p) != 1 || p[0].(map[string]any)["x"] != float64(12) {
+		t.Fatal("old position survived movement", p)
+	}
+	n["present"] = false
+	if p := points(14520, false); len(p) != 0 {
+		t.Fatal("unseen carrier left a trail", p)
+	}
+}
+func TestSludgeObservationActivePulseAndGroundClouds(t *testing.T) {
+	vm, err := behavior.NewSession(context.Background(), "point-actor-4", acceptedMovementPointsSource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vm.Close()
+	obs := pointActorObservation("4")
+	self := obs["players"].(map[string]any)["4"].(map[string]any)
+	self["positionEstimated"] = true
+	nav := obs["navigation"].(map[string]any)
+	nav["following"], nav["ownerGuid"] = true, "3"
+	carrier := obs["targets"].(map[string]any)["100"].(map[string]any)
+	carrier["entry"], carrier["x"], carrier["attackObservation"] = 12222, 3, map[string]any{}
+	// Empty attack evidence on a seen creature must not take movement.
+	noAction := pointObserve(t, vm, obs, "encounter")
+	if a, _ := noAction.Output["action"].(map[string]any); a["capability"] == "movement_owner" || a["capability"] == "movement_points_step" ||
+		noAction.Output["rangedStance"].(map[string]any)["active"] != false {
+		t.Fatal(noAction.Output)
+	}
+	if points, _ := noAction.Output["movementPoints"].(map[string]any)["points"].([]any); len(points) != 0 {
+		t.Fatal(points)
+	}
+
+	carrier["attackObservation"] = map[string]any{"victimKnown": true, "victimGuid": "4", "ageMs": "2"}
+	now := time.Now().UnixMilli()
+	cloud := pointObject(now - 1000)
+	cloud["x"] = float64(-1)
+	obs["groundEffects"] = []any{cloud}
+	occupied := pointObserve(t, vm, obs, "encounter")
+	a, _ := occupied.Output["action"].(map[string]any)
+	if a["capability"] != "movement_points_step" || a["movementOwner"] != nil {
+		t.Fatal("active hazards did not use free bounded movement", occupied.Output)
+	}
+	points := occupied.Output["movementPoints"].(map[string]any)["points"].([]any)
+	if len(points) != 2 {
+		t.Fatal(points)
+	}
+	for _, val := range points {
+		p := val.(map[string]any)
+		if p["radiusYards"] != float64(5) {
+			t.Fatal(p)
+		}
+		if p["x"] == float64(3) {
+			if p["groundEffectGuid"] != nil || p["expiresAtUnixMs"].(float64) > float64(now+3000) {
+				t.Fatal("carrier became a persistent cloud", p)
+			}
+		} else if p["groundEffectGuid"] != "999" || p["expiresAtUnixMs"] != float64(now+19000) {
+			t.Fatal(p)
+		}
+	}
+	obs["groundEffects"] = []any{}
+	carrier["x"], carrier["positionRevision"] = float64(18), "2"
+	clear := pointObserve(t, vm, obs, "encounter")
+	points = clear.Output["movementPoints"].(map[string]any)["points"].([]any)
+	a, _ = clear.Output["action"].(map[string]any)
+	if len(points) != 1 || points[0].(map[string]any)["x"] != float64(18) || a["capability"] == "movement_points_step" || a["capability"] == "movement_owner" {
+		t.Fatal("moving carrier left an old center", clear.Output)
+	}
+	carrier["attackObservation"] = map[string]any{"victimKnown": true, "victimGuid": "4", "ageMs": "6000"}
+	stale := pointObserve(t, vm, obs, "movement_points")
+	if points, _ := stale.Output["movementPoints"].(map[string]any)["points"].([]any); len(points) != 0 {
+		t.Fatal("stale attack created a pulse", points)
+	}
+	carrier["alive"] = false
+	carrier["attackObservation"] = map[string]any{"victimKnown": true, "victimGuid": "4"}
+	dead := pointObserve(t, vm, obs, "movement_points")
+	if points, _ := dead.Output["movementPoints"].(map[string]any)["points"].([]any); len(points) != 0 {
+		t.Fatal("dead carrier left geometry", points)
+	}
+	carrier["alive"], carrier["entry"] = true, 12221
+	slime := pointObserve(t, vm, obs, "movement_points")
+	if points, _ := slime.Output["movementPoints"].(map[string]any)["points"].([]any); len(points) != 0 {
+		t.Fatal("seen Noxious Slime invented a ground cloud", points)
+	}
+}
+
 func TestMovementPointsUrgentHealApproachKeepsItsExistingSupportPriority(t *testing.T) {
 	for _, kind := range []string{"urgent_heal", "ordinary_dps"} {
 		t.Run(kind, func(t *testing.T) {

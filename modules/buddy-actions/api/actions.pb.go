@@ -7339,10 +7339,12 @@ type EncounterObservationResponse struct {
 	GroundEffects            []*api.SpellGroundEffect        `protobuf:"bytes,29,rep,name=ground_effects,json=groundEffects,proto3" json:"ground_effects,omitempty"`
 	GroundEffectsSupported   bool                            `protobuf:"varint,30,opt,name=ground_effects_supported,json=groundEffectsSupported,proto3" json:"ground_effects_supported,omitempty"`
 	GroundEffectsOverflow    bool                            `protobuf:"varint,31,opt,name=ground_effects_overflow,json=groundEffectsOverflow,proto3" json:"ground_effects_overflow,omitempty"`
-	Summoning                *SummoningObservation           `protobuf:"bytes,33,opt,name=summoning,proto3" json:"summoning,omitempty"`
-	SummoningObjects         []*api.GameObjectState          `protobuf:"bytes,34,rep,name=summoning_objects,json=summoningObjects,proto3" json:"summoning_objects,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// All creatures observed in this visit were accounted for in this projection.
+	NearbyCreaturesComplete bool                   `protobuf:"varint,32,opt,name=nearby_creatures_complete,json=nearbyCreaturesComplete,proto3" json:"nearby_creatures_complete,omitempty"`
+	Summoning               *SummoningObservation  `protobuf:"bytes,33,opt,name=summoning,proto3" json:"summoning,omitempty"`
+	SummoningObjects        []*api.GameObjectState `protobuf:"bytes,34,rep,name=summoning_objects,json=summoningObjects,proto3" json:"summoning_objects,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *EncounterObservationResponse) Reset() {
@@ -7588,6 +7590,13 @@ func (x *EncounterObservationResponse) GetGroundEffectsSupported() bool {
 func (x *EncounterObservationResponse) GetGroundEffectsOverflow() bool {
 	if x != nil {
 		return x.GroundEffectsOverflow
+	}
+	return false
+}
+
+func (x *EncounterObservationResponse) GetNearbyCreaturesComplete() bool {
+	if x != nil {
+		return x.NearbyCreaturesComplete
 	}
 	return false
 }
@@ -8567,48 +8576,50 @@ func (x *EncounterParty) GetRevision() uint64 {
 }
 
 type EncounterPlayer struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	Guid               uint64                 `protobuf:"varint,1,opt,name=guid,proto3" json:"guid,omitempty"`
-	Present            bool                   `protobuf:"varint,2,opt,name=present,proto3" json:"present,omitempty"`
-	MapKnown           bool                   `protobuf:"varint,3,opt,name=map_known,json=mapKnown,proto3" json:"map_known,omitempty"`
-	MapId              *uint32                `protobuf:"varint,4,opt,name=map_id,json=mapId,proto3,oneof" json:"map_id,omitempty"`
-	AliveKnown         bool                   `protobuf:"varint,5,opt,name=alive_known,json=aliveKnown,proto3" json:"alive_known,omitempty"`
-	Alive              *bool                  `protobuf:"varint,6,opt,name=alive,proto3,oneof" json:"alive,omitempty"`
-	HealthKnown        bool                   `protobuf:"varint,7,opt,name=health_known,json=healthKnown,proto3" json:"health_known,omitempty"`
-	Health             uint32                 `protobuf:"varint,8,opt,name=health,proto3" json:"health,omitempty"`
-	MaxHealth          uint32                 `protobuf:"varint,9,opt,name=max_health,json=maxHealth,proto3" json:"max_health,omitempty"`
-	FactionTemplate    uint32                 `protobuf:"varint,10,opt,name=faction_template,json=factionTemplate,proto3" json:"faction_template,omitempty"`
-	PositionKnown      bool                   `protobuf:"varint,11,opt,name=position_known,json=positionKnown,proto3" json:"position_known,omitempty"`
-	PositionRevision   uint64                 `protobuf:"varint,12,opt,name=position_revision,json=positionRevision,proto3" json:"position_revision,omitempty"`
-	X                  float32                `protobuf:"fixed32,13,opt,name=x,proto3" json:"x,omitempty"`
-	Y                  float32                `protobuf:"fixed32,14,opt,name=y,proto3" json:"y,omitempty"`
-	Z                  float32                `protobuf:"fixed32,15,opt,name=z,proto3" json:"z,omitempty"`
-	Orientation        float32                `protobuf:"fixed32,16,opt,name=orientation,proto3" json:"orientation,omitempty"`
-	ClassKnown         bool                   `protobuf:"varint,17,opt,name=class_known,json=classKnown,proto3" json:"class_known,omitempty"`
-	ClassId            uint32                 `protobuf:"varint,18,opt,name=class_id,json=classId,proto3" json:"class_id,omitempty"`
-	RaceKnown          bool                   `protobuf:"varint,19,opt,name=race_known,json=raceKnown,proto3" json:"race_known,omitempty"`
-	RaceId             uint32                 `protobuf:"varint,20,opt,name=race_id,json=raceId,proto3" json:"race_id,omitempty"`
-	LevelKnown         bool                   `protobuf:"varint,21,opt,name=level_known,json=levelKnown,proto3" json:"level_known,omitempty"`
-	Level              uint32                 `protobuf:"varint,22,opt,name=level,proto3" json:"level,omitempty"`
-	PowerKnown         bool                   `protobuf:"varint,23,opt,name=power_known,json=powerKnown,proto3" json:"power_known,omitempty"`
-	PowerType          uint32                 `protobuf:"varint,24,opt,name=power_type,json=powerType,proto3" json:"power_type,omitempty"`
-	Power              uint32                 `protobuf:"varint,25,opt,name=power,proto3" json:"power,omitempty"`
-	MaxPower           uint32                 `protobuf:"varint,26,opt,name=max_power,json=maxPower,proto3" json:"max_power,omitempty"`
-	MovementKnown      bool                   `protobuf:"varint,27,opt,name=movement_known,json=movementKnown,proto3" json:"movement_known,omitempty"`
-	Moving             bool                   `protobuf:"varint,28,opt,name=moving,proto3" json:"moving,omitempty"`
-	CombatKnown        bool                   `protobuf:"varint,29,opt,name=combat_known,json=combatKnown,proto3" json:"combat_known,omitempty"`
-	InCombat           bool                   `protobuf:"varint,30,opt,name=in_combat,json=inCombat,proto3" json:"in_combat,omitempty"`
-	ComboKnown         bool                   `protobuf:"varint,31,opt,name=combo_known,json=comboKnown,proto3" json:"combo_known,omitempty"`
-	ComboTargetGuid    uint64                 `protobuf:"varint,32,opt,name=combo_target_guid,json=comboTargetGuid,proto3" json:"combo_target_guid,omitempty"`
-	ComboPoints        uint32                 `protobuf:"varint,33,opt,name=combo_points,json=comboPoints,proto3" json:"combo_points,omitempty"`
-	PlayerFlags        uint32                 `protobuf:"varint,34,opt,name=player_flags,json=playerFlags,proto3" json:"player_flags,omitempty"`
-	PositionAgeMs      uint64                 `protobuf:"varint,35,opt,name=position_age_ms,json=positionAgeMs,proto3" json:"position_age_ms,omitempty"`
-	PositionInferred   bool                   `protobuf:"varint,36,opt,name=position_inferred,json=positionInferred,proto3" json:"position_inferred,omitempty"`
-	PositionEstimated  bool                   `protobuf:"varint,37,opt,name=position_estimated,json=positionEstimated,proto3" json:"position_estimated,omitempty"`
-	PositionAgeKnown   bool                   `protobuf:"varint,38,opt,name=position_age_known,json=positionAgeKnown,proto3" json:"position_age_known,omitempty"`
-	CombatReachKnown   bool                   `protobuf:"varint,39,opt,name=combat_reach_known,json=combatReachKnown,proto3" json:"combat_reach_known,omitempty"`
-	CombatReach        float32                `protobuf:"fixed32,40,opt,name=combat_reach,json=combatReach,proto3" json:"combat_reach,omitempty"`
-	SelectedTargetGuid *uint64                `protobuf:"varint,42,opt,name=selected_target_guid,json=selectedTargetGuid,proto3,oneof" json:"selected_target_guid,omitempty"`
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Guid              uint64                 `protobuf:"varint,1,opt,name=guid,proto3" json:"guid,omitempty"`
+	Present           bool                   `protobuf:"varint,2,opt,name=present,proto3" json:"present,omitempty"`
+	MapKnown          bool                   `protobuf:"varint,3,opt,name=map_known,json=mapKnown,proto3" json:"map_known,omitempty"`
+	MapId             *uint32                `protobuf:"varint,4,opt,name=map_id,json=mapId,proto3,oneof" json:"map_id,omitempty"`
+	AliveKnown        bool                   `protobuf:"varint,5,opt,name=alive_known,json=aliveKnown,proto3" json:"alive_known,omitempty"`
+	Alive             *bool                  `protobuf:"varint,6,opt,name=alive,proto3,oneof" json:"alive,omitempty"`
+	HealthKnown       bool                   `protobuf:"varint,7,opt,name=health_known,json=healthKnown,proto3" json:"health_known,omitempty"`
+	Health            uint32                 `protobuf:"varint,8,opt,name=health,proto3" json:"health,omitempty"`
+	MaxHealth         uint32                 `protobuf:"varint,9,opt,name=max_health,json=maxHealth,proto3" json:"max_health,omitempty"`
+	FactionTemplate   uint32                 `protobuf:"varint,10,opt,name=faction_template,json=factionTemplate,proto3" json:"faction_template,omitempty"`
+	PositionKnown     bool                   `protobuf:"varint,11,opt,name=position_known,json=positionKnown,proto3" json:"position_known,omitempty"`
+	PositionRevision  uint64                 `protobuf:"varint,12,opt,name=position_revision,json=positionRevision,proto3" json:"position_revision,omitempty"`
+	X                 float32                `protobuf:"fixed32,13,opt,name=x,proto3" json:"x,omitempty"`
+	Y                 float32                `protobuf:"fixed32,14,opt,name=y,proto3" json:"y,omitempty"`
+	Z                 float32                `protobuf:"fixed32,15,opt,name=z,proto3" json:"z,omitempty"`
+	Orientation       float32                `protobuf:"fixed32,16,opt,name=orientation,proto3" json:"orientation,omitempty"`
+	ClassKnown        bool                   `protobuf:"varint,17,opt,name=class_known,json=classKnown,proto3" json:"class_known,omitempty"`
+	ClassId           uint32                 `protobuf:"varint,18,opt,name=class_id,json=classId,proto3" json:"class_id,omitempty"`
+	RaceKnown         bool                   `protobuf:"varint,19,opt,name=race_known,json=raceKnown,proto3" json:"race_known,omitempty"`
+	RaceId            uint32                 `protobuf:"varint,20,opt,name=race_id,json=raceId,proto3" json:"race_id,omitempty"`
+	LevelKnown        bool                   `protobuf:"varint,21,opt,name=level_known,json=levelKnown,proto3" json:"level_known,omitempty"`
+	Level             uint32                 `protobuf:"varint,22,opt,name=level,proto3" json:"level,omitempty"`
+	PowerKnown        bool                   `protobuf:"varint,23,opt,name=power_known,json=powerKnown,proto3" json:"power_known,omitempty"`
+	PowerType         uint32                 `protobuf:"varint,24,opt,name=power_type,json=powerType,proto3" json:"power_type,omitempty"`
+	Power             uint32                 `protobuf:"varint,25,opt,name=power,proto3" json:"power,omitempty"`
+	MaxPower          uint32                 `protobuf:"varint,26,opt,name=max_power,json=maxPower,proto3" json:"max_power,omitempty"`
+	MovementKnown     bool                   `protobuf:"varint,27,opt,name=movement_known,json=movementKnown,proto3" json:"movement_known,omitempty"`
+	Moving            bool                   `protobuf:"varint,28,opt,name=moving,proto3" json:"moving,omitempty"`
+	CombatKnown       bool                   `protobuf:"varint,29,opt,name=combat_known,json=combatKnown,proto3" json:"combat_known,omitempty"`
+	InCombat          bool                   `protobuf:"varint,30,opt,name=in_combat,json=inCombat,proto3" json:"in_combat,omitempty"`
+	ComboKnown        bool                   `protobuf:"varint,31,opt,name=combo_known,json=comboKnown,proto3" json:"combo_known,omitempty"`
+	ComboTargetGuid   uint64                 `protobuf:"varint,32,opt,name=combo_target_guid,json=comboTargetGuid,proto3" json:"combo_target_guid,omitempty"`
+	ComboPoints       uint32                 `protobuf:"varint,33,opt,name=combo_points,json=comboPoints,proto3" json:"combo_points,omitempty"`
+	PlayerFlags       uint32                 `protobuf:"varint,34,opt,name=player_flags,json=playerFlags,proto3" json:"player_flags,omitempty"`
+	PositionAgeMs     uint64                 `protobuf:"varint,35,opt,name=position_age_ms,json=positionAgeMs,proto3" json:"position_age_ms,omitempty"`
+	PositionInferred  bool                   `protobuf:"varint,36,opt,name=position_inferred,json=positionInferred,proto3" json:"position_inferred,omitempty"`
+	PositionEstimated bool                   `protobuf:"varint,37,opt,name=position_estimated,json=positionEstimated,proto3" json:"position_estimated,omitempty"`
+	PositionAgeKnown  bool                   `protobuf:"varint,38,opt,name=position_age_known,json=positionAgeKnown,proto3" json:"position_age_known,omitempty"`
+	CombatReachKnown  bool                   `protobuf:"varint,39,opt,name=combat_reach_known,json=combatReachKnown,proto3" json:"combat_reach_known,omitempty"`
+	CombatReach       float32                `protobuf:"fixed32,40,opt,name=combat_reach,json=combatReach,proto3" json:"combat_reach,omitempty"`
+	// Current self ground run speed in yards/second, when observed.
+	GroundRunSpeed     *float32 `protobuf:"fixed32,41,opt,name=ground_run_speed,json=groundRunSpeed,proto3,oneof" json:"ground_run_speed,omitempty"`
+	SelectedTargetGuid *uint64  `protobuf:"varint,42,opt,name=selected_target_guid,json=selectedTargetGuid,proto3,oneof" json:"selected_target_guid,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -8923,6 +8934,13 @@ func (x *EncounterPlayer) GetCombatReach() float32 {
 	return 0
 }
 
+func (x *EncounterPlayer) GetGroundRunSpeed() float32 {
+	if x != nil && x.GroundRunSpeed != nil {
+		return *x.GroundRunSpeed
+	}
+	return 0
+}
+
 func (x *EncounterPlayer) GetSelectedTargetGuid() uint64 {
 	if x != nil && x.SelectedTargetGuid != nil {
 		return *x.SelectedTargetGuid
@@ -8965,8 +8983,10 @@ type EncounterCreature struct {
 	OwnDamageFamilies []uint32                    `protobuf:"varint,24,rep,packed,name=own_damage_families,json=ownDamageFamilies,proto3" json:"own_damage_families,omitempty"`
 	Orientation       float32                     `protobuf:"fixed32,25,opt,name=orientation,proto3" json:"orientation,omitempty"`
 	AttackObservation *EncounterAttackObservation `protobuf:"bytes,26,opt,name=attack_observation,json=attackObservation,proto3" json:"attack_observation,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Observed unit field in yards, including large creature hitboxes.
+	CombatReach   *float32 `protobuf:"fixed32,27,opt,name=combat_reach,json=combatReach,proto3,oneof" json:"combat_reach,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EncounterCreature) Reset() {
@@ -9180,6 +9200,13 @@ func (x *EncounterCreature) GetAttackObservation() *EncounterAttackObservation {
 		return x.AttackObservation
 	}
 	return nil
+}
+
+func (x *EncounterCreature) GetCombatReach() float32 {
+	if x != nil && x.CombatReach != nil {
+		return *x.CombatReach
+	}
+	return 0
 }
 
 // Raw cached ATTACKSTART and selected-target observations. A present empty
@@ -14992,7 +15019,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x06threat\x18\x06 \x01(\v2(.warcraftbuddy.actions.v1.SelfManaThreatR\x06threat\x12?\n" +
 	"\x06spells\x18\a \x03(\v2'.warcraftbuddy.actions.v1.SelfManaSpellR\x06spells\x12\x1d\n" +
 	"\n" +
-	"host_owned\x18\b \x01(\bR\thostOwned\"\xc6\x14\n" +
+	"host_owned\x18\b \x01(\bR\thostOwned\"\x82\x15\n" +
 	"\x1cEncounterObservationResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -15032,7 +15059,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\vinteraction\x18\x1c \x01(\v20.warcraftbuddy.actions.v1.InteractionObservationR\vinteraction\x12P\n" +
 	"\x0eground_effects\x18\x1d \x03(\v2).warcraftbuddy.world.v1.SpellGroundEffectR\rgroundEffects\x128\n" +
 	"\x18ground_effects_supported\x18\x1e \x01(\bR\x16groundEffectsSupported\x126\n" +
-	"\x17ground_effects_overflow\x18\x1f \x01(\bR\x15groundEffectsOverflow\x12L\n" +
+	"\x17ground_effects_overflow\x18\x1f \x01(\bR\x15groundEffectsOverflow\x12:\n" +
+	"\x19nearby_creatures_complete\x18  \x01(\bR\x17nearbyCreaturesComplete\x12L\n" +
 	"\tsummoning\x18! \x01(\v2..warcraftbuddy.actions.v1.SummoningObservationR\tsummoning\x12T\n" +
 	"\x11summoning_objects\x18\" \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x10summoningObjects\x1ae\n" +
 	"\fPlayersEntry\x12\x10\n" +
@@ -15159,8 +15187,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0eEncounterParty\x123\n" +
 	"\x05group\x18\x01 \x01(\v2\x1d.warcraftbuddy.party.v1.GroupR\x05group\x12J\n" +
 	"\fraid_targets\x18\x02 \x01(\v2'.warcraftbuddy.party.v1.RaidTargetStateR\vraidTargets\x12\x1a\n" +
-	"\brevision\x18\x03 \x01(\x04R\brevision\"\xf1\n" +
-	"\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\"\xb5\v\n" +
 	"\x0fEncounterPlayer\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
 	"\apresent\x18\x02 \x01(\bR\apresent\x12\x1b\n" +
@@ -15210,11 +15237,13 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x12position_estimated\x18% \x01(\bR\x11positionEstimated\x12,\n" +
 	"\x12position_age_known\x18& \x01(\bR\x10positionAgeKnown\x12,\n" +
 	"\x12combat_reach_known\x18' \x01(\bR\x10combatReachKnown\x12!\n" +
-	"\fcombat_reach\x18( \x01(\x02R\vcombatReach\x125\n" +
-	"\x14selected_target_guid\x18* \x01(\x04H\x02R\x12selectedTargetGuid\x88\x01\x01B\t\n" +
+	"\fcombat_reach\x18( \x01(\x02R\vcombatReach\x12-\n" +
+	"\x10ground_run_speed\x18) \x01(\x02H\x02R\x0egroundRunSpeed\x88\x01\x01\x125\n" +
+	"\x14selected_target_guid\x18* \x01(\x04H\x03R\x12selectedTargetGuid\x88\x01\x01B\t\n" +
 	"\a_map_idB\b\n" +
-	"\x06_aliveB\x17\n" +
-	"\x15_selected_target_guid\"\xad\a\n" +
+	"\x06_aliveB\x13\n" +
+	"\x11_ground_run_speedB\x17\n" +
+	"\x15_selected_target_guid\"\xe6\a\n" +
 	"\x11EncounterCreature\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x18\n" +
@@ -15250,9 +15279,11 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"meleeReady\x12.\n" +
 	"\x13own_damage_families\x18\x18 \x03(\rR\x11ownDamageFamilies\x12 \n" +
 	"\vorientation\x18\x19 \x01(\x02R\vorientation\x12c\n" +
-	"\x12attack_observation\x18\x1a \x01(\v24.warcraftbuddy.actions.v1.EncounterAttackObservationR\x11attackObservationB\t\n" +
+	"\x12attack_observation\x18\x1a \x01(\v24.warcraftbuddy.actions.v1.EncounterAttackObservationR\x11attackObservation\x12&\n" +
+	"\fcombat_reach\x18\x1b \x01(\x02H\x02R\vcombatReach\x88\x01\x01B\t\n" +
 	"\a_map_idB\b\n" +
-	"\x06_alive\"\xbb\x01\n" +
+	"\x06_aliveB\x0f\n" +
+	"\r_combat_reach\"\xbb\x01\n" +
 	"\x1aEncounterAttackObservation\x12!\n" +
 	"\fvictim_known\x18\x01 \x01(\bR\vvictimKnown\x12\x1f\n" +
 	"\vvictim_guid\x18\x02 \x01(\x04R\n" +
