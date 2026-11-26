@@ -21,18 +21,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyInventory_GetState_FullMethodName     = "/warcraftbuddy.inventory.v1.BuddyInventory/GetState"
-	BuddyInventory_RawGearFacts_FullMethodName = "/warcraftbuddy.inventory.v1.BuddyInventory/RawGearFacts"
-	BuddyInventory_Discover_FullMethodName     = "/warcraftbuddy.inventory.v1.BuddyInventory/Discover"
-	BuddyInventory_Move_FullMethodName         = "/warcraftbuddy.inventory.v1.BuddyInventory/Move"
-	BuddyInventory_Equip_FullMethodName        = "/warcraftbuddy.inventory.v1.BuddyInventory/Equip"
-	BuddyInventory_EquipGear_FullMethodName    = "/warcraftbuddy.inventory.v1.BuddyInventory/EquipGear"
-	BuddyInventory_SelectAmmo_FullMethodName   = "/warcraftbuddy.inventory.v1.BuddyInventory/SelectAmmo"
-	BuddyInventory_Sell_FullMethodName         = "/warcraftbuddy.inventory.v1.BuddyInventory/Sell"
-	BuddyInventory_Drink_FullMethodName        = "/warcraftbuddy.inventory.v1.BuddyInventory/Drink"
-	BuddyInventory_EatBuffFood_FullMethodName  = "/warcraftbuddy.inventory.v1.BuddyInventory/EatBuffFood"
-	BuddyInventory_OnPacket_FullMethodName     = "/warcraftbuddy.inventory.v1.BuddyInventory/OnPacket"
-	BuddyInventory_BeforeLogout_FullMethodName = "/warcraftbuddy.inventory.v1.BuddyInventory/BeforeLogout"
+	BuddyInventory_GetState_FullMethodName             = "/warcraftbuddy.inventory.v1.BuddyInventory/GetState"
+	BuddyInventory_RawGearFacts_FullMethodName         = "/warcraftbuddy.inventory.v1.BuddyInventory/RawGearFacts"
+	BuddyInventory_Discover_FullMethodName             = "/warcraftbuddy.inventory.v1.BuddyInventory/Discover"
+	BuddyInventory_Move_FullMethodName                 = "/warcraftbuddy.inventory.v1.BuddyInventory/Move"
+	BuddyInventory_Equip_FullMethodName                = "/warcraftbuddy.inventory.v1.BuddyInventory/Equip"
+	BuddyInventory_EquipGear_FullMethodName            = "/warcraftbuddy.inventory.v1.BuddyInventory/EquipGear"
+	BuddyInventory_ApplyItemEnhancement_FullMethodName = "/warcraftbuddy.inventory.v1.BuddyInventory/ApplyItemEnhancement"
+	BuddyInventory_SelectAmmo_FullMethodName           = "/warcraftbuddy.inventory.v1.BuddyInventory/SelectAmmo"
+	BuddyInventory_Sell_FullMethodName                 = "/warcraftbuddy.inventory.v1.BuddyInventory/Sell"
+	BuddyInventory_Drink_FullMethodName                = "/warcraftbuddy.inventory.v1.BuddyInventory/Drink"
+	BuddyInventory_EatBuffFood_FullMethodName          = "/warcraftbuddy.inventory.v1.BuddyInventory/EatBuffFood"
+	BuddyInventory_OnPacket_FullMethodName             = "/warcraftbuddy.inventory.v1.BuddyInventory/OnPacket"
+	BuddyInventory_BeforeLogout_FullMethodName         = "/warcraftbuddy.inventory.v1.BuddyInventory/BeforeLogout"
 )
 
 // BuddyInventoryClient is the client API for BuddyInventory service.
@@ -45,6 +46,7 @@ type BuddyInventoryClient interface {
 	Move(ctx context.Context, in *MoveRequest, opts ...grpc.CallOption) (*State, error)
 	Equip(ctx context.Context, in *EquipRequest, opts ...grpc.CallOption) (*State, error)
 	EquipGear(ctx context.Context, in *EquipGearRequest, opts ...grpc.CallOption) (*State, error)
+	ApplyItemEnhancement(ctx context.Context, in *ApplyItemEnhancementRequest, opts ...grpc.CallOption) (*State, error)
 	SelectAmmo(ctx context.Context, in *SelectAmmoRequest, opts ...grpc.CallOption) (*State, error)
 	Sell(ctx context.Context, in *SellRequest, opts ...grpc.CallOption) (*State, error)
 	Drink(ctx context.Context, in *DrinkRequest, opts ...grpc.CallOption) (*DrinkReceipt, error)
@@ -121,6 +123,16 @@ func (c *buddyInventoryClient) EquipGear(ctx context.Context, in *EquipGearReque
 	return out, nil
 }
 
+func (c *buddyInventoryClient) ApplyItemEnhancement(ctx context.Context, in *ApplyItemEnhancementRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyInventory_ApplyItemEnhancement_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyInventoryClient) SelectAmmo(ctx context.Context, in *SelectAmmoRequest, opts ...grpc.CallOption) (*State, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
@@ -191,6 +203,7 @@ type BuddyInventoryServer interface {
 	Move(context.Context, *MoveRequest) (*State, error)
 	Equip(context.Context, *EquipRequest) (*State, error)
 	EquipGear(context.Context, *EquipGearRequest) (*State, error)
+	ApplyItemEnhancement(context.Context, *ApplyItemEnhancementRequest) (*State, error)
 	SelectAmmo(context.Context, *SelectAmmoRequest) (*State, error)
 	Sell(context.Context, *SellRequest) (*State, error)
 	Drink(context.Context, *DrinkRequest) (*DrinkReceipt, error)
@@ -224,6 +237,9 @@ func (UnimplementedBuddyInventoryServer) Equip(context.Context, *EquipRequest) (
 }
 func (UnimplementedBuddyInventoryServer) EquipGear(context.Context, *EquipGearRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EquipGear not implemented")
+}
+func (UnimplementedBuddyInventoryServer) ApplyItemEnhancement(context.Context, *ApplyItemEnhancementRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApplyItemEnhancement not implemented")
 }
 func (UnimplementedBuddyInventoryServer) SelectAmmo(context.Context, *SelectAmmoRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SelectAmmo not implemented")
@@ -372,6 +388,24 @@ func _BuddyInventory_EquipGear_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyInventory_ApplyItemEnhancement_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApplyItemEnhancementRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyInventoryServer).ApplyItemEnhancement(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyInventory_ApplyItemEnhancement_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyInventoryServer).ApplyItemEnhancement(ctx, req.(*ApplyItemEnhancementRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyInventory_SelectAmmo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SelectAmmoRequest)
 	if err := dec(in); err != nil {
@@ -510,6 +544,10 @@ var BuddyInventory_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EquipGear",
 			Handler:    _BuddyInventory_EquipGear_Handler,
+		},
+		{
+			MethodName: "ApplyItemEnhancement",
+			Handler:    _BuddyInventory_ApplyItemEnhancement_Handler,
 		},
 		{
 			MethodName: "SelectAmmo",

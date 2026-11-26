@@ -53,7 +53,7 @@ func (s *Service) ammoStateLocked(v view) {
 	s.state.AmmoEntry = v.w.SelfAmmoEntry
 	s.state.AmmoRevision = v.w.SelfAmmoRevision
 }
-func (s *Service) ammoGateLocked(r *inventoryv1.Operation, source *worldv1.BackpackSlot) string {
+func (s *Service) unsettledSpellLocked() string {
 	if op := s.actions.GetLastSpellOperation(); op != nil {
 		if op.CancelOutcomeUnknown {
 			return "prior_spell_cancel_outcome_unconfirmed"
@@ -65,6 +65,12 @@ func (s *Service) ammoGateLocked(r *inventoryv1.Operation, source *worldv1.Backp
 	}
 	if op := s.actions.GetLastBuff(); op != nil && (op.Phase == "waiting_server" || op.Phase == "outcome_unconfirmed") {
 		return "prior_buff_operation_unsettled"
+	}
+	return ""
+}
+func (s *Service) ammoGateLocked(r *inventoryv1.Operation, source *worldv1.BackpackSlot) string {
+	if reason := s.unsettledSpellLocked(); reason != "" {
+		return reason
 	}
 	w := s.view.w
 	if !w.SelfAmmoKnown || w.SelfAmmoRevision != r.BaselineAmmoRevision || w.SelfAmmoEntry != r.BaselineAmmoEntry {
@@ -89,5 +95,5 @@ func ammoPacket(entry uint32) []byte {
 	return binary.LittleEndian.AppendUint32(nil, entry)
 }
 func passiveInventoryOperation(kind string) bool {
-	return kind == "equip_gear" || kind == "select_ammo"
+	return kind == "equip_gear" || kind == "select_ammo" || kind == "apply_item_enhancement"
 }

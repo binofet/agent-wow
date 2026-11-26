@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	inventoryv1 "github.com/agent-wow/agent-wow/modules/buddy-inventory/api"
+	"github.com/agent-wow/agent-wow/pkg/spellcast"
 )
 
 var malformed = errors.New("malformed inventory packet")
@@ -30,6 +31,15 @@ func itemUsePayload(item *inventoryv1.ItemRef, spell uint32, count byte) []byte 
 	binary.LittleEndian.PutUint32(p[3:], spell)
 	binary.LittleEndian.PutUint64(p[7:], item.ItemGuid)
 	return p
+}
+
+func equippedItemUsePayload(item *inventoryv1.ItemRef, spell uint32, count byte, target uint64) []byte {
+	p := itemUsePayload(item, spell, count)
+	if p == nil || !itemGUID(target) || target == item.ItemGuid {
+		return nil
+	}
+	binary.LittleEndian.PutUint32(p[20:], 0x10) // TARGET_FLAG_ITEM, never a trade slot.
+	return spellcast.AppendPackedGUID(p, target)
 }
 func wireSlot(bag, slot uint32) (byte, byte, bool) {
 	if bag == 0 && slot < 16 {

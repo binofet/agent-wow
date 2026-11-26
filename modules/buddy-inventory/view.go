@@ -148,6 +148,10 @@ func expectedAfter(before view, r *inventoryv1.Operation, bag itemMetadata) (vie
 		return v, fail("baseline_source_missing")
 	}
 	saved := proto.Clone(source).(*worldv1.BackpackSlot)
+	if r.Kind == "apply_item_enhancement" && source.StackCount > 1 {
+		source.StackCount--
+		return v, nil
+	}
 	source.ItemGuid = 0
 	source.Entry = 0
 	source.StackCount = 0

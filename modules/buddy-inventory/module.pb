@@ -2509,7 +2509,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 ObserveSummoning.google.protobuf.Empty..warcraftbuddy.actions.v1.SummoningObservationy
 UseSummoningObject3.warcraftbuddy.actions.v1.UseSummoningObjectRequest..warcraftbuddy.actions.v1.SummoningObservations
 RespondToSummon0.warcraftbuddy.actions.v1.RespondToSummonRequest..warcraftbuddy.actions.v1.SummoningObservationBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
-≈e
+‚q
 'modules/buddy-inventory/inventory.protowarcraftbuddy.inventory.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto"É
 ItemRef
 bag (Rbag
@@ -2517,7 +2517,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 	item_guid (RitemGuid
 entry (Rentry
 stack_count (R
-stackCount"ﬁ
+stackCount"∑
 ItemEligibility7
 item (2#.warcraftbuddy.inventory.v1.ItemRefRitem%
 metadata_known (RmetadataKnown5
@@ -2540,7 +2540,8 @@ consumableH
 
 gear_facts (2).warcraftbuddy.inventory.v1.GearItemFactsR	gearFacts0
 ammo_select_eligible (RammoSelectEligible.
-ammo_blocked_reason (	RammoBlockedReason"Û
+ammo_blocked_reason (	RammoBlockedReasonW
+enhancement_use (2..warcraftbuddy.inventory.v1.ItemEnhancementUseRenhancementUse"Õ
 	Operation
 
 request_id (	R	requestId
@@ -2578,7 +2579,8 @@ vendorGuid3
 
 ammo_entry (R	ammoEntry.
 baseline_ammo_entry  (RbaselineAmmoEntry%
-ammo_confirmed! (RammoConfirmed"Ù
+ammo_confirmed! (RammoConfirmedX
+enhancement" (26.warcraftbuddy.inventory.v1.ItemEnhancementApplicationRenhancement"¶
 State
 
 session_id (	R	sessionId
@@ -2616,8 +2618,42 @@ limitation
 ammo_known+ (R	ammoKnown
 
 ammo_entry, (R	ammoEntry#
-ammo_revision- (RammoRevisionB
-_mana_drink_count"4
+ammo_revision- (RammoRevision0
+world_visit_revision. (RworldVisitRevisionB
+_mana_drink_count"Å
+ItemEnhancementUse
+spell_id (RspellId)
+enchantment_slot (RenchantmentSlot%
+enchantment_id (RenchantmentId"¡
+ItemEnhancementApplication%
+visit_revision (RvisitRevision,
+equipped_item_guid (RequippedItemGuid%
+equipped_entry (RequippedEntry
+spell_id (RspellId)
+enchantment_slot (RenchantmentSlot%
+enchantment_id (RenchantmentId6
+previous_enchantment_id (RpreviousEnchantmentId;
+observed_enchantment_id (H RobservedEnchantmentIdà)
+effect_confirmed	 (ReffectConfirmedB
+_observed_enchantment_id"˘
+ApplyItemEnhancementRequest
+
+session_id (	R	sessionId
+
+request_id (	R	requestId
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision+
+expected_revision (RexpectedRevision>
+expected_inventory_revision (RexpectedInventoryRevision;
+source (2#.warcraftbuddy.inventory.v1.ItemRefRsource
+spell_id (RspellId>
+expected_equipment_revision	 (RexpectedEquipmentRevision%
+equipment_slot
+ (RequipmentSlot,
+equipped_item_guid (RequippedItemGuid%
+equipped_entry (RequippedEntry;
+expected_enchantment_id (H RexpectedEnchantmentIdàB
+_expected_enchantment_id"4
 GearStat
 type (Rtype
 value (Rvalue"X
@@ -2853,14 +2889,15 @@ item_entry (R	itemEntry
 request_id (	R	requestIdG
 	operation	 (2).warcraftbuddy.inventory.v1.ConsumableUseR	operation
 reason
- (	Rreason2è
+ (	Rreason2É	
 BuddyInventoryE
 GetState.google.protobuf.Empty!.warcraftbuddy.inventory.v1.StateI
 RawGearFacts.google.protobuf.Empty!.warcraftbuddy.inventory.v1.State^
 Discover+.warcraftbuddy.inventory.v1.DiscoverRequest%.warcraftbuddy.inventory.v1.DiscoveryR
 Move'.warcraftbuddy.inventory.v1.MoveRequest!.warcraftbuddy.inventory.v1.StateT
 Equip(.warcraftbuddy.inventory.v1.EquipRequest!.warcraftbuddy.inventory.v1.State\
-	EquipGear,.warcraftbuddy.inventory.v1.EquipGearRequest!.warcraftbuddy.inventory.v1.State^
+	EquipGear,.warcraftbuddy.inventory.v1.EquipGearRequest!.warcraftbuddy.inventory.v1.Stater
+ApplyItemEnhancement7.warcraftbuddy.inventory.v1.ApplyItemEnhancementRequest!.warcraftbuddy.inventory.v1.State^
 
 SelectAmmo-.warcraftbuddy.inventory.v1.SelectAmmoRequest!.warcraftbuddy.inventory.v1.StateR
 Sell'.warcraftbuddy.inventory.v1.SellRequest!.warcraftbuddy.inventory.v1.State[

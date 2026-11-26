@@ -16,7 +16,8 @@ import (
 const ObjectMask uint32 = 2 | 0x10000 | 0x800 | 0x200 | 0x8000
 const ItemMask uint32 = 0x10 | 0x1000
 
-func packed(dst []byte, guid uint64) []byte {
+// AppendPackedGUID appends the Wrath packed GUID used by spell and item-use targets.
+func AppendPackedGUID(dst []byte, guid uint64) []byte {
 	at := len(dst)
 	dst = append(dst, 0)
 	for i := 0; i < 8; i++ {
@@ -66,10 +67,10 @@ func Encode(count byte, r *actionsv1.CastSpellRequest) ([]byte, error) {
 	out = append(out, flags)
 	out = binary.LittleEndian.AppendUint32(out, mask)
 	if mask&ObjectMask != 0 {
-		out = packed(out, t.GetObjectGuid())
+		out = AppendPackedGUID(out, t.GetObjectGuid())
 	}
 	if mask&ItemMask != 0 {
-		out = packed(out, t.GetItemGuid())
+		out = AppendPackedGUID(out, t.GetItemGuid())
 	}
 	for _, loc := range []*actionsv1.SpellCastLocation{t.GetSource(), t.GetDestination()} {
 		if loc == nil {
@@ -78,7 +79,7 @@ func Encode(count byte, r *actionsv1.CastSpellRequest) ([]byte, error) {
 		if !finite(loc.X) || !finite(loc.Y) || !finite(loc.Z) {
 			return nil, errors.New("finite target location required")
 		}
-		out = packed(out, loc.TransportGuid)
+		out = AppendPackedGUID(out, loc.TransportGuid)
 		out = f32(out, loc.X)
 		out = f32(out, loc.Y)
 		out = f32(out, loc.Z)
