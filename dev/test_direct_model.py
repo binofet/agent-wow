@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import direct_model
 from direct_model import Cancelled, DirectModel, ModelError, ToolOutcomeUnknown, LMStudioPromptCounter
 
 
@@ -803,6 +804,36 @@ class LocalPromptBudgetTests(unittest.TestCase):
             self.assertEqual(next(r for r in wire if r.get('tool_call_id')=='write'),old['write'])
             self.assertEqual(json.loads(path.read_text())['messages'][:len(canonical['messages'])],canonical['messages'])
             self.assertEqual(restarted.last_receipt['promptBudget']['reason'],'retained_overflow_projection')
+
+    def test_distinct_policy_source_reads_archive_but_snapshot_and_unknown_stay_exact(self):
+        client = self.Transport([], local_prompt_budget_bytes=16000)
+        client.last_receipt = {}
+        rows = [dict(role='user', content='Edit my own Lua; retain this exact goal.')]
+        for i in range(18):
+            args = {'first_line': 1+i*20} if i % 2 else {'find': 'function '+str(i)}
+            rows += [chat((str(i), 'policy_show', args))['choices'][0]['message'],
+                     dict(role='tool', tool_call_id=str(i), content=json.dumps(dict(sourceLines='x'*1500)))]
+        canonical = copy.deepcopy(rows)
+        archives = []
+        payload, audit = client._local_prompt('System', rows, [], {'policy_show'}, {}, None,
+            canonical=rows, archive_read=lambda reference, full: archives.append((copy.deepcopy(reference), full)))
+        self.assertLessEqual(audit['afterBytes'], 16000)
+        self.assertGreater(len(audit['archivedReadResults']), 2)
+        self.assertEqual(rows, canonical)
+        self.assertEqual(payload['messages'][-4:], rows[-4:])
+        # Same call name is insufficient: snapshot writes, future arguments,
+        # unknown outcomes and receipt evidence must survive API compaction.
+        for args in ({'save_as':'own.lua'}, {'save_as':None}, {'expected_sha256':''}, {'future_write':True}):
+            with self.subTest(args=args):
+                changed=copy.deepcopy(rows)
+                changed[1]['tool_calls'][0]['function']['arguments']=json.dumps(args)
+                protected=client._local_protected_rows(changed, {'policy_show'}, {})
+                self.assertIn(1,protected); self.assertIn(2,protected)
+        function=rows[1]['tool_calls'][0]['function']
+        fingerprint=hashlib.sha256(direct_model._packed(['policy_show',json.loads(function['arguments'])],client.max_request_bytes)).hexdigest()
+        self.assertIn(2,client._local_protected_rows(rows,{'policy_show'},{fingerprint:True}))
+        malformed=copy.deepcopy(rows);malformed[1]['tool_calls'][0]['function']['arguments']='{'
+        self.assertIn(1,client._local_protected_rows(malformed,{'policy_show'},{}))
 
     def test_configured_budget_uses_only_old_reads_and_preserves_latest_pairs(self):
         client = self.Transport([], local_prompt_budget_bytes=4500)
