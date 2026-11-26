@@ -46,6 +46,8 @@ type ActionReceipt struct {
 	ActionID  uint64
 	Outcome   ActionOutcome
 	Payload   map[string]any
+	// NeverDispatched marks a host-rejected proposal, never a native write reservation.
+	NeverDispatched bool `json:"neverDispatched,omitempty"`
 }
 
 // Event is an observation or a correlated action receipt from this Session's
@@ -60,9 +62,13 @@ type pendingAction struct {
 	applied  ActionOutcome
 	queued   ActionOutcome
 	accepted bool
+	rejected bool
 }
 
 func (p pendingAction) accepts(next ActionOutcome) bool {
+	if p.rejected {
+		return p.queued == ActionReserved && next == ActionNotDispatched
+	}
 	switch next {
 	case ActionTransportAccepted:
 		return p.queued == ActionReserved

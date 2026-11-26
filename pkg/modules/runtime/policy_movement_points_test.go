@@ -88,6 +88,7 @@ type movementPointsTestRig struct {
 	castCalls    int
 	stepRequests []map[string]any
 	setterError  error
+	leaseError   error
 	stepResponse map[string]any
 	callOrder    []string
 }
@@ -95,7 +96,7 @@ type movementPointsTestRig struct {
 func newMovementPointsRig(t *testing.T, source string) *movementPointsTestRig {
 	return newMovementPointsActorRig(t, source, "4")
 }
-func newMovementPointsActorRig(t *testing.T, source, body string) *movementPointsTestRig {
+func newMovementPointsActorRig(t *testing.T, source, body string, options ...behavior.SessionOptions) *movementPointsTestRig {
 	t.Helper()
 	m := New(movementPointsRegistry(t), nil, nil)
 	m.started = true
@@ -114,8 +115,9 @@ func newMovementPointsActorRig(t *testing.T, source, body string) *movementPoint
 		if method == "/agentwow.policy.encounter.v1.Lease/Renew" {
 			r.mu.Lock()
 			r.callOrder = append(r.callOrder, "lease")
+			err := r.leaseError
 			r.mu.Unlock()
-			return nil
+			return err
 		}
 		if method == actionsv1.BuddyActions_CastHeal_FullMethodName {
 			r.mu.Lock()
@@ -198,7 +200,11 @@ func newMovementPointsActorRig(t *testing.T, source, body string) *movementPoint
 	}
 	m.instances[actionsModule].conn = conn
 	m.instances[actionsModule].launch.Environment = map[string]string{modcb.PolicyEncounterKeyEnv: strings.Repeat("a", 64)}
-	host, err := m.StartPolicy(context.Background(), source)
+	var configured behavior.SessionOptions
+	if len(options) > 0 {
+		configured = options[0]
+	}
+	host, err := m.StartPolicyWithOptions(context.Background(), source, configured)
 	if err != nil {
 		t.Fatal(err)
 	}

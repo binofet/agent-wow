@@ -26,8 +26,9 @@ type SessionPolicy struct {
 	lifetime            context.Context
 	advance             sync.Mutex
 	dispatchDone        chan struct{}
-	movementPointsScope map[string]any // guarded by advance; declarative clear on reload
-	encounterLeaseHeld  bool           // guarded by advance
+	rejectedReceipt     *behavior.ActionReceipt // guarded by advance; retained until exact receipt admission
+	movementPointsScope map[string]any          // guarded by advance; declarative clear on reload
+	encounterLeaseHeld  bool                    // guarded by advance
 	followFallback      atomic.Pointer[policyFollowFallback]
 	gearEvaluation      atomic.Pointer[policyFollowFallback]
 	disposalEvaluation  atomic.Pointer[policyFollowFallback]
@@ -97,6 +98,9 @@ func (p *SessionPolicy) observe(_ context.Context, sessionID, guid string) (Poli
 	}
 	view := PolicySnapshot{Revision: s.Revision, Generation: strconv.FormatUint(s.Epoch, 10), Cursor: strconv.FormatUint(s.Cursor, 10), Faulted: s.Fault != ""}
 	for _, receipt := range receipts {
+		if receipt.NeverDispatched {
+			continue
+		}
 		view.PendingActionIDs = append(view.PendingActionIDs, strconv.FormatUint(receipt.ActionID, 10))
 	}
 	return view, nil
@@ -127,6 +131,10 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 		p.advance.Unlock()
 		return nil, nil, status.Error(codes.FailedPrecondition, "policy action dispatch is in progress")
 	}
+	if err := p.flushRejectedReceipt(ctx); err != nil {
+		p.advance.Unlock()
+		return nil, nil, err
+	}
 	if err := p.flushSpellReceipts(ctx); err != nil {
 		p.advance.Unlock()
 		return nil, nil, err
@@ -150,26 +158,25 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	}
 	dispatch, err := resolve(action)
 	if err != nil || dispatch.Module == "" || dispatch.Send == nil {
-		p.advance.Unlock()
-		return decision.Output, nil, errors.Join(err, errors.New("policy action cannot be dispatched"))
+		defer p.advance.Unlock()
+		return p.rejectUnenteredLease(ctx, decision, action, "resolve", errors.Join(err, errors.New("policy action cannot be dispatched")))
 	}
 	if err := p.renewEncounterWriter(ctx, decision.Output, action, dispatch); err != nil {
-		p.advance.Unlock()
-		return decision.Output, nil, err
+		defer p.advance.Unlock()
+		return p.rejectUnenteredLease(ctx, decision, action, "encounter_admission", err)
 	}
 	if err := p.deliverDecisionMovementPoints(ctx, decision.Output, action); err != nil {
-		p.advance.Unlock()
-		return decision.Output, nil, err
+		defer p.advance.Unlock()
+		return p.rejectUnenteredLease(ctx, decision, action, "point_delivery", err)
 	}
 	s := p.vm.Status()
 	id, err := p.reserve(decision)
-	if err == nil {
-		p.dispatchDone = make(chan struct{})
-	}
-	p.advance.Unlock()
 	if err != nil {
-		return decision.Output, nil, err
+		defer p.advance.Unlock()
+		return p.rejectUnenteredLease(ctx, decision, action, "reservation", err)
 	}
+	p.dispatchDone = make(chan struct{})
+	p.advance.Unlock()
 	defer func() {
 		p.advance.Lock()
 		close(p.dispatchDone)

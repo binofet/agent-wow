@@ -78,14 +78,15 @@ type Session struct {
 	closed   bool
 	fault    error
 
-	queue      []queuedEvent
-	queueBytes int
-	pending    map[uint64]pendingAction
-	nextAction uint64
-	serial     uint64
-	admissible uint64
-	clockStart time.Time
-	clockNow   func() time.Time
+	queue          []queuedEvent
+	queueBytes     int
+	pending        map[uint64]pendingAction
+	nextAction     uint64
+	serial         uint64
+	admissible     uint64
+	consumedSerial uint64
+	clockStart     time.Time
+	clockNow       func() time.Time
 }
 
 // NewSession loads a Lua bundle with decide, on_event, export_state and
@@ -197,7 +198,7 @@ func (s *Session) Outstanding() []ActionReceipt {
 func (s *Session) outstandingLocked() []ActionReceipt {
 	out := make([]ActionReceipt, 0, len(s.pending))
 	for id, operation := range s.pending {
-		out = append(out, ActionReceipt{SessionID: s.id, ActionID: id, Outcome: operation.applied})
+		out = append(out, ActionReceipt{SessionID: s.id, ActionID: id, Outcome: operation.applied, NeverDispatched: operation.rejected})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ActionID < out[j].ActionID })
 	return out
@@ -305,6 +306,7 @@ func (s *Session) ReserveAction(decision Decision) (uint64, error) {
 	}
 	s.nextAction++
 	s.admissible = 0
+	s.consumedSerial = decision.serial
 	s.pending[s.nextAction] = pendingAction{applied: ActionReserved, queued: ActionReserved}
 	return s.nextAction, nil
 }
