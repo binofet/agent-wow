@@ -5,10 +5,13 @@ import (
 	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"math"
+	"slices"
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
@@ -35,8 +38,13 @@ func (s *Service) bodyIdleLeaseCurrentLocked(r *actionsv1.BodyMovementRequest, n
 // MoveBody executes one caller-selected input. It neither chooses a direction
 // nor retries a failed route. Local physical proof does not call FindPath.
 func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest) (*actionsv1.State, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
+	if r.GetLanding() == "" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+	} else if r.Landing != "ground_or_water" && r.Landing != "follow_water" || r.Landing == "follow_water" && (r.Jump || r.IdleToken != "") {
+		return nil, status.Error(codes.InvalidArgument, "unknown or incompatible body landing mode")
+	}
 	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetVisitId() == 0 || r.GetSequenceId() == 0 ||
 		len(r.GetIdleToken()) > 128 ||
 		math.IsNaN(float64(r.BearingRadians)) || math.IsInf(float64(r.BearingRadians), 0) || math.Abs(float64(r.BearingRadians)) > math.Pi+.001 ||
@@ -60,7 +68,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		s.state.CastPending || s.state.Traveling || r.IdleToken == "" && s.state.InteractionOwner != "" ||
 		r.IdleToken != "" && !s.bodyIdleLeaseCurrentLocked(r, s.now()) || s.recovery.state.Active ||
 		!w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) ||
-		r.Jump && w.Self.MovementFlags&0x20000000 != 0 {
+		r.Jump && w.Self.MovementFlags&0x20000000 != 0 || r.Landing != "" && w.Self.MovementFlags&movementflags.PassiveModifiers != 0 {
 		return nil, status.Error(codes.FailedPrecondition, "current controllable ground body and its Lua writer required")
 	}
 	if old := s.state.BodyMovement; old != nil && old.SequenceId == r.SequenceId && old.VisitId == r.VisitId {
@@ -70,23 +78,56 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	if speed == 0 {
 		return nil, status.Error(codes.FailedPrecondition, "observed normal movement speed required")
 	}
+	from, revision, mapID := s.pos, s.positionRevision, s.posMap
+	bearing := float64(from.o) + float64(r.BearingRadians)
+	followRevision, followedGUID := s.followRevision, w.GetOwner().GetGuid()
+	var followedPosition position
+	if r.Landing == "follow_water" && w.GetOwner() != nil {
+		followedPosition = playerPosition(w.Owner)
+	}
+	followWaterCurrent := func(fresh *worldv1.SnapshotResponse, landingStarted bool) bool {
+		owner := fresh.GetOwner()
+		if !s.state.Following || !s.now().Before(s.followUntil) || s.followRevision != followRevision || s.movementOwner.owner != "" || followedGUID == 0 ||
+			owner.GetGuid() != 0 && owner.GetGuid() != followedGUID {
+			return false
+		}
+		// Once the confirmed forward input starts a completely measured crossing,
+		// a visibility gap cannot change gravity or the fixed landing. New input
+		// still needs a current swimmer. Revocation/correction fences every frame.
+		if !owner.GetPresent() {
+			return landingStarted
+		}
+		if !landingStarted && (safePlayerMovement(fresh, s.selfGUID, true) != "" || distance(followedPosition, playerPosition(owner)) > 1.5) {
+			return false
+		}
+		return owner.GetGuid() == followedGUID && owner.GetAliveKnown() && owner.GetAlive() &&
+			owner.GetMapKnown() && owner.GetMapId() == mapID && owner.GetPositionKnown() && !owner.GetPositionInferred() && finite(playerPosition(owner)) &&
+			owner.GetMovementFlagsKnown() && swimFollowCompatible(owner.GetMovementFlags(), owner.GetExtraMovementFlags()) && owner.GetZ() < from.z
+	}
+	if r.Landing != "" && s.swimming || r.Landing == "follow_water" && (s.state.Moving || !followWaterCurrent(w, false)) {
+		return nil, status.Error(codes.FailedPrecondition, "current ground body and observed lower follow destination required")
+	}
+	if r.Landing == "follow_water" {
+		bearing = math.Atan2(float64(w.Owner.Y-from.y), float64(w.Owner.X-from.x))
+	}
 	view := &actionsv1.BodyMovementState{SequenceId: r.SequenceId, VisitId: r.VisitId, Phase: "checking_local_physics"}
 	s.state.BodyMovement = view
 	var motion *idleMotionScope
-	if r.IdleToken != "" {
+	if r.IdleToken != "" || r.Landing != "" {
 		ctx = modcb.ForwardPolicySpell(ctx)
-		motion, err = s.newIdleMotionScopeLocked(ctx, r.IdleToken, w, false)
+		motion, err = s.newBodyMotionScopeLocked(ctx, r.IdleToken, w, false, r.Landing != "")
 		if err != nil {
 			view.Phase, view.Detail = "body_scope_not_dispatched", boundedPolicyDiagnostic(err.Error(), 240)
 			return s.stateLocked(), nil
 		}
 		ctx = context.WithValue(ctx, idleMotionScopeKey{}, motion)
 	}
-	from, revision, mapID := s.pos, s.positionRevision, s.posMap
-	bearing := float64(from.o) + float64(r.BearingRadians)
 	plan := s.bodyMotionPlan
 	if plan == nil {
 		plan = buddynav.PlanBodyMotionContext
+		if r.Landing != "" {
+			plan = buddynav.PlanBodyLandingContext
+		}
 	}
 	s.bodyMoving = true
 	ownerEpoch, priorUntil := s.hostEncounterEpoch, s.hostEncounterUntil
@@ -108,10 +149,53 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		}
 	}()
 	dataDir := s.navDataDir
+	trail := s.swimTrail
+	if r.Landing == "follow_water" && trail.visit == r.VisitId {
+		trail.points = slices.Clone(trail.points)
+	} else {
+		trail.points = nil
+	}
+	swimPlan := s.planSwimPath
+	if swimPlan == nil {
+		swimPlan = buddynav.PlanSwimContext
+	}
 	s.mu.Unlock()
 	points, err := plan(ctx, dataDir, mapID, buddynav.Point{X: from.x, Y: from.y, Z: from.z}, bearing, speed, time.Duration(r.DurationMs)*time.Millisecond, r.Jump)
+	if r.Landing == "follow_water" && err == nil && len(points) >= 2 {
+		// A stationary follower can take one supported tap up to the lip.
+		// Prove the next input reaches water and that this pool connects
+		// to the observed destination before writing even the approach.
+		last := points[len(points)-1]
+		if !last.Swimming {
+			var next []buddynav.BodyMotionSample
+			next, err = plan(ctx, dataDir, mapID, last.Point, bearing, speed, time.Duration(r.DurationMs)*time.Millisecond, false)
+			if err == nil && len(next) >= 2 {
+				last = next[len(next)-1]
+			}
+		}
+		if err == nil && !last.Swimming {
+			err = errors.New("forward approach does not reach a measured water crossing")
+		}
+		if err == nil {
+			var path []buddynav.SwimPoint
+			path, err = swimPlan(ctx, dataDir, mapID, last.Point, swimPoint(followedPosition))
+			if disconnectedSwimRoute(err) && len(trail.points) > 1 {
+				if joined := trail.routeFrom(ctx, dataDir, mapID, last.Point, swimPoint(followedPosition), true, w.GetOwner(), swimPlan); len(joined) > 0 {
+					path, err = joined, nil
+				}
+			}
+			if err == nil && (len(path) < 2 || !path[0].Swimming || trailDistance(path[0].Point, last.Point) > 2 ||
+				trailDistance(path[len(path)-1].Point, swimPoint(followedPosition)) > 2) {
+				err = errors.New("water landing does not connect to the observed follow destination")
+			}
+		}
+	}
 	s.mu.Lock()
-	if err != nil || len(points) < 2 || len(points) > 24 {
+	maxSamples := 24
+	if r.Landing != "" {
+		maxSamples = buddynav.BodyLandingSampleLimit(speed)
+	}
+	if err != nil || len(points) < 2 || len(points) > maxSamples {
 		view.Phase = "local_physics_refused"
 		if err != nil {
 			view.Detail = navigationDiagnostic(err, dataDir)
@@ -120,15 +204,35 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		}
 		return s.stateLocked(), nil
 	}
+	if deadline, bounded := ctx.Deadline(); r.Landing != "" && bounded && time.Until(deadline) < points[len(points)-1].At {
+		view.Phase, view.Detail = "body_scope_not_dispatched", "remaining RPC deadline cannot cover the measured landing"
+		return s.stateLocked(), nil
+	}
+	if r.Landing != "" && s.hostEncounterKey != "" && s.hostEncounterEpoch == ownerEpoch && s.hostEncounterVisit == r.VisitId && s.hostEncounterUntil.Equal(reservedUntil) {
+		reservedUntil = s.now().Add(points[len(points)-1].At + encounterLeaseDuration)
+		s.hostEncounterUntil = reservedUntil
+	}
 	settling := points[0].Settling
 	airborne := r.Jump || settling
 	horizontalSpeed, verticalSpeed := speed, float64(buddynav.BodyJumpVelocity)
+	if !r.Jump {
+		verticalSpeed = 0
+	}
 	if settling {
 		horizontalSpeed, verticalSpeed = 0, 0
 	}
 	ctx = modcb.ForwardPolicySpell(ctx)
 	passive := w.Self.MovementFlags & movementflags.PassiveModifiers
 	var motionClock uint32
+	landingStarted := false
+	ownFalling, ownSwimming := false, false
+	compatible := func(flags, extra uint32) bool {
+		if r.Landing != "" && extra == 0 && (ownFalling && (flags == 0x1000 || flags == 0x1001) ||
+			ownSwimming && (flags == swimMovementFlag || flags == swimMovementFlag|1)) {
+			return true
+		}
+		return movementflags.GroundCompatible(flags, extra)
+	}
 	valid := func() bool {
 		fresh, e := s.snapshot(ctx)
 		owner := s.hostEncounterKey == "" || s.trustedEncounterHostLocked(ctx) && s.hostEncounterVisit == r.VisitId && s.hostEncounterEpoch == ownerEpoch
@@ -137,9 +241,10 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 			now := s.now()
 			leaseCurrent = s.bodyIdleLeaseCurrentLocked(r, now) && s.idleMotionCurrentLocked(motion, fresh, now)
 		}
-		if e != nil || s.closed || !owner || !leaseCurrent || !s.matchesCurrentEncounterVisitLocked(fresh) || fresh.VisitRevision != r.VisitId ||
+		if e != nil || s.closed || !owner || !leaseCurrent || r.Landing == "follow_water" && !followWaterCurrent(fresh, landingStarted) || r.Landing != "" && fresh.GetSelf().GetMovementFlags()&movementflags.PassiveModifiers != 0 ||
+			!s.matchesCurrentEncounterVisitLocked(fresh) || fresh.VisitRevision != r.VisitId ||
 			fresh.Self.PositionRevision != revision || fresh.Self.MapId != mapID ||
-			safeSelfCombat(fresh, s.selfGUID) != "" || s.clientControlLost || s.clientControlRestoring {
+			safeSelfMovement(fresh, s.selfGUID, compatible) != "" || s.clientControlLost || s.clientControlRestoring {
 			if s.state.Moving && (e != nil || fresh.GetSelf().GetPositionRevision() == revision) {
 				s.state.MotionUnconfirmed = true
 			}
@@ -152,6 +257,8 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		w = fresh
 		return true
 	}
+	var fallTime time.Duration
+	inWater := false
 	var write func(uint32, position, time.Duration, bool, bool) bool
 	write = func(code uint32, p position, elapsed time.Duration, falling, moving bool) bool {
 		if ctx.Err() != nil {
@@ -188,7 +295,18 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		if elapsed > 0 {
 			stamp = motionClock + uint32(elapsed/time.Millisecond)
 		}
-		packet := bodyMovementPacket(s.selfGUID, stamp, p, passive, elapsed, bearing, horizontalSpeed, verticalSpeed, falling, moving)
+		packetTime := elapsed
+		if r.Landing != "" && !settling {
+			packetTime = fallTime
+		}
+		packet := bodyMovementPacket(s.selfGUID, stamp, p, passive, packetTime, bearing, horizontalSpeed, verticalSpeed, falling, moving)
+		if inWater {
+			flags := passive | swimMovementFlag
+			if moving {
+				flags |= 1
+			}
+			packet = swimMovementPacket(s.selfGUID, stamp, p, 0, flags)
+		}
 		var sendErr error
 		if motion != nil {
 			sendErr = s.sendPacketLocked(ctx, code, packet)
@@ -210,6 +328,10 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 			return false
 		}
 		view.TransportWritten, view.PositionEstimated = true, true
+		if code == opcode.MSGMoveStartForward && points[len(points)-1].Swimming {
+			landingStarted = true
+		}
+		ownFalling, ownSwimming = ownFalling || falling, inWater
 		if code == opcode.MSGMoveStartForward || code == opcode.MSGMoveJump || falling && elapsed == 0 {
 			motionClock = stamp
 		}
@@ -218,6 +340,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 			s.state.TransportWrites++
 		}
 		s.pos, s.posEstimated, s.posAt, s.state.Moving = p, true, s.now(), moving || falling
+		s.swimming = inWater
 		s.posRevision++
 		s.publishClientMovementLocked(ctx, w, p, true)
 		return true
@@ -249,14 +372,20 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		}
 		last := i == len(points)-2
 		code := uint32(opcode.MSGMoveHeartbeat)
-		if last && airborne {
+		fallTime = sample.FallTime
+		inWater = sample.Swimming
+		flying := airborne || fallTime > 0
+		if inWater {
+			code = opcode.MSGMoveStartSwim
+		} else if last && flying {
 			code = opcode.MSGMoveFallLand
 		}
 		point := position{x: sample.Point.X, y: sample.Point.Y, z: sample.Point.Z}
-		if !write(code, point, sample.At, airborne && !last, !settling) {
+		if !write(code, point, sample.At, flying && !last, !settling) {
 			return s.stateLocked(), nil
 		}
 	}
+	fallTime = 0
 	if write(opcode.MSGMoveStop, s.pos, 0, false, false) {
 		view.Phase = "body_input_written"
 		if settling {
@@ -264,6 +393,9 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		}
 		s.followNav.Reset()
 		s.targetMovement.nav.Reset()
+		if r.Landing == "follow_water" && !s.swimming {
+			s.state.Reason = "follow_water_approach_written"
+		}
 	}
 	return s.stateLocked(), nil
 }

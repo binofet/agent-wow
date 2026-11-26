@@ -23,18 +23,34 @@ type BodyMotionSample struct {
 	At       time.Duration
 	Point    Point
 	Settling bool
+	// FallTime is measured from leaving support. Swimming marks contact with verified deep water.
+	FallTime time.Duration
+	Swimming bool
 }
 
 // PlanBodyMotionContext measures one caller-selected local input independently
 // of FindPath and the full route's ledge/step checks. It requires real physical
 // support and body clearance at every sample, including a supported landing.
 func PlanBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, speed float64, duration time.Duration, jump bool) ([]BodyMotionSample, error) {
+	return planBodyMotionContext(ctx, dataDir, mapID, start, bearing, speed, duration, jump, false)
+}
+
+// PlanBodyLandingContext checks a deliberate forward input all the way to its
+// first physical landing, including a verified ordinary swimmable surface.
+func PlanBodyLandingContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, speed float64, duration time.Duration, jump bool) ([]BodyMotionSample, error) {
+	return planBodyMotionContext(ctx, dataDir, mapID, start, bearing, speed, duration, jump, true)
+}
+
+func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, speed float64, duration time.Duration, jump, allowDrop bool) ([]BodyMotionSample, error) {
 	if !worldPoint(start) || math.IsNaN(bearing) || math.IsInf(bearing, 0) || speed < .1 || speed > 14 || math.IsNaN(speed) ||
 		!jump && (duration < time.Millisecond || duration > 500*time.Millisecond) {
 		return nil, errors.New("finite current pose, observed speed and bounded body input required")
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
+	if !allowDrop {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Second)
+		defer cancel()
+	}
 	end := start
 	end.X += float32(math.Cos(bearing) * speed)
 	end.Y += float32(math.Sin(bearing) * speed)
@@ -68,13 +84,38 @@ func PlanBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, st
 		}
 		return h, known, nil
 	}
-	return planBodyMotion(ctx, start, bearing, speed, duration, jump, floor, func(a, b Point) (bool, error) {
+	clear := func(a, b Point) (bool, error) {
+		if allowDrop {
+			// MAP terrain is single-valued and is separate from VMAP rays.
+			// Crossing it from above blocks the chord even under an unrelated
+			// WMO roof. A body already underneath may traverse a real cavern.
+			from, startKnown := p.terrain(a)
+			to, endKnown := p.terrain(b)
+			if startKnown && endKnown && a.Z >= from && b.Z < to {
+				return false, nil
+			}
+		}
 		return p.floors.lineOfSight(ctx, a, b)
-	})
+	}
+	if allowDrop {
+		return planBodyInput(ctx, start, bearing, speed, duration, jump, floor, clear, func(q Point, top, bottom float32) (float32, bool, error) {
+			return p.deepWaterBetween(ctx, q, top, bottom)
+		})
+	}
+	return planBodyMotion(ctx, start, bearing, speed, duration, jump, floor, clear)
 }
 
 func planBodyMotion(ctx context.Context, start Point, bearing, speed float64, duration time.Duration, jump bool,
 	floor func(Point, float32, float32) (float32, bool, error), clear func(Point, Point) (bool, error)) ([]BodyMotionSample, error) {
+	return planBodyInput(ctx, start, bearing, speed, duration, jump, floor, clear, nil)
+}
+
+type bodyFloor func(Point, float32, float32) (float32, bool, error)
+type bodyClear func(Point, Point) (bool, error)
+type bodyWater func(Point, float32, float32) (float32, bool, error)
+
+func planBodyInput(ctx context.Context, start Point, bearing, speed float64, duration time.Duration, jump bool,
+	floor bodyFloor, clear bodyClear, water bodyWater) ([]BodyMotionSample, error) {
 	seconds := BodyMotionHorizon.Seconds()
 	maxDrop := BodyGravity * seconds * seconds / 2
 	h, known, err := floor(start, .5, float32(maxDrop))
@@ -96,6 +137,9 @@ func planBodyMotion(ctx context.Context, start Point, bearing, speed float64, du
 		return planBodySettling(ctx, start, h, bearing, clear)
 	}
 	points := []BodyMotionSample{{Point: start}}
+	if water != nil && jump {
+		return traceBodyLanding(ctx, points, bearing, speed, BodyJumpVelocity, floor, clear, water)
+	}
 	limit := duration
 	if jump {
 		limit = BodyMotionHorizon
@@ -125,6 +169,9 @@ func planBodyMotion(ctx context.Context, start Point, bearing, speed float64, du
 			below = float32(math.Max(0, float64(q.Z-minimumLanding)))
 		}
 		h, known, err = floor(q, above, below)
+		if water != nil && !jump && err == nil && (!known || finite(h) && h < previous.Z-.5) {
+			return traceBodyLanding(ctx, points, bearing, speed, 0, floor, clear, water)
+		}
 		if err != nil || !known || !finite(h) {
 			return nil, fmt.Errorf("body probe lacks a measured physical floor: at=%s sample=(%g,%g,%g) search=[%g,%g] measured_z=%g known=%t error=%v", at, q.X, q.Y, q.Z, q.Z-below, q.Z+above, h, known, err)
 		}
@@ -143,6 +190,11 @@ func planBodyMotion(ctx context.Context, start Point, bearing, speed float64, du
 			return nil, errors.New("body hop intersects physical floor before clearing it")
 		}
 		if err := clearBodyMotionSegment(previous, q, bearing, clear); err != nil {
+			if water != nil && !jump && h < previous.Z-.025 {
+				// A descending lip can support the center foot sample while the
+				// body straddles its rim. Try the unobstructed gravity trajectory.
+				return traceBodyLanding(ctx, points, bearing, speed, 0, floor, clear, water)
+			}
 			return nil, err
 		}
 		points = append(points, BodyMotionSample{At: at, Point: q})

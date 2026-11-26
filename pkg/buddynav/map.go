@@ -81,8 +81,10 @@ func (p *planner) mapTerrainPresent(q Point) bool {
 	return valid
 }
 
+const worldVerticalLimit = 100000
+
 func worldPoint(p Point) bool {
-	return finite(p.X) && finite(p.Y) && finite(p.Z) && math.Abs(float64(p.X)) < 32*mapGridSize && math.Abs(float64(p.Y)) < 32*mapGridSize && math.Abs(float64(p.Z)) <= 100000
+	return finite(p.X) && finite(p.Y) && finite(p.Z) && math.Abs(float64(p.X)) < 32*mapGridSize && math.Abs(float64(p.Y)) < 32*mapGridSize && math.Abs(float64(p.Z)) <= worldVerticalLimit
 }
 
 func mapGrid(p Point) (int, int) {

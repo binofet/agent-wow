@@ -2,7 +2,9 @@ package world
 
 import (
 	"math"
+	"time"
 
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
@@ -13,7 +15,7 @@ import (
 
 func bodyMovementScopeOpcode(op uint32) bool {
 	switch op {
-	case opcode.MSGMoveSetFacing, opcode.MSGMoveStartForward, opcode.MSGMoveHeartbeat, opcode.MSGMoveJump, opcode.MSGMoveFallLand:
+	case opcode.MSGMoveSetFacing, opcode.MSGMoveStartForward, opcode.MSGMoveHeartbeat, opcode.MSGMoveJump, opcode.MSGMoveFallLand, opcode.MSGMoveStartSwim:
 		return true
 	}
 	return false
@@ -30,8 +32,13 @@ func normalBodyMovementImage(op uint32, payload []byte, self uint64) bool {
 		return false
 	}
 	i, n, err := movementinfo.DecodePrefix(payload[c.offset:])
-	if err != nil || n != len(payload)-c.offset || !i.AllFinite() || i.ExtraFlags != 0 ||
-		i.Flags & ^(uint32(1|0x1000)|movementflags.PassiveModifiers) != 0 {
+	if err != nil || n != len(payload)-c.offset || !i.AllFinite() {
+		return false
+	}
+	if op == opcode.MSGMoveStartSwim {
+		return i.BodyWaterEntry(true)
+	}
+	if i.ExtraFlags != 0 || i.Flags & ^(uint32(1|0x1000)|movementflags.PassiveModifiers) != 0 {
 		return false
 	}
 	falling := i.Flags&0x1000 != 0
@@ -44,7 +51,10 @@ func normalBodyMovementImage(op uint32, payload []byte, self uint64) bool {
 	j := i.Jump
 	jump := math.Abs(float64(j.Velocity)-7.955547) <= .0001 && j.XYSpeed >= .1 && j.XYSpeed <= 14
 	settling := j.Velocity == 0 && j.XYSpeed == 0 && i.Flags&1 == 0
-	return (jump || settling) && (op != opcode.MSGMoveJump || jump) && i.FallTime <= 1100 &&
+	walkOff := op == opcode.MSGMoveHeartbeat && j.Velocity == 0 && j.XYSpeed >= .1 && j.XYSpeed <= 14 && i.Flags&1 != 0
+	duration := time.Duration(i.FallTime) * time.Millisecond
+	return (jump || settling || walkOff) && (op != opcode.MSGMoveJump || jump) &&
+		(duration <= buddynav.BodyMotionHorizon || !settling && buddynav.BodyFlightInRange(duration, float64(j.XYSpeed), float64(j.Velocity))) &&
 		math.Abs(float64(j.SinAngle)*float64(j.SinAngle)+float64(j.CosAngle)*float64(j.CosAngle)-1) <= .001
 }
 

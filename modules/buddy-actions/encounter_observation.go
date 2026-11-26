@@ -167,7 +167,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	s.supportSnapshotLocked(w)
 	s.encounterPlayers(w, online, out)
 	out.TargetMovement = s.targetMovementSnapshotLocked()
-	out.Navigation = &actionsv1.NavigationObservation{MovementPointsSupported: true, MovementPoints: s.movementPointsStateLocked(), FollowRevision: s.followRevision, GroundNavigationConfigured: s.navDataDir != "", FollowFormationSupported: true, OwnerArrival: s.followNav.ownerArrival, FollowOwner: encounterFollowOwner(w.GetOwner()), BodyMovementSupported: true, Following: s.state.Following,
+	out.Navigation = &actionsv1.NavigationObservation{MovementPointsSupported: true, MovementPoints: s.movementPointsStateLocked(), FollowRevision: s.followRevision, GroundNavigationConfigured: s.navDataDir != "", FollowFormationSupported: true, OwnerArrival: s.followNav.ownerArrival, FollowOwner: encounterFollowOwner(w.GetOwner()), BodyMovementSupported: true, BodyLandingSupported: true, Following: s.state.Following,
 		MovementOwner: s.movementOwnerStateLocked(), OwnerGuid: w.GetOwner().GetGuid(), Phase: s.state.Reason, Detail: s.state.NavReason, RouteAvailable: s.state.NavAvailable,
 		MotionUnconfirmed: s.state.MotionUnconfirmed, GoalKnown: s.navigationGoalKnown,
 		GoalX: s.navigationGoal.x, GoalY: s.navigationGoal.y, GoalZ: s.navigationGoal.z}
@@ -249,7 +249,7 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 			ClassKnown: p.ClassKnown, ClassId: p.ClassId, RaceKnown: p.RaceKnown, RaceId: p.RaceId,
 			LevelKnown: p.LevelKnown, Level: p.Level,
 			PowerKnown: p.PowerKnown, PowerType: p.PowerType, Power: p.Power, MaxPower: p.MaxPower,
-			MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0xff != 0,
+			MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0xff != 0, Swimming: p.MovementFlagsKnown && p.MovementFlags&swimMovementFlag != 0,
 			CombatKnown: p.UnitFlagsKnown, InCombat: p.UnitFlags&0x80000 != 0,
 		}
 		if view.PositionKnown {
@@ -262,7 +262,7 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 			// raw baseline; Actions knows the pose it actually wrote against
 			// that same map/revision. Lua must plan from that current pose.
 			view.X, view.Y, view.Z, view.Orientation = s.pos.x, s.pos.y, s.pos.z, s.pos.o
-			view.MovementKnown, view.Moving = true, s.state.Moving
+			view.MovementKnown, view.Moving, view.Swimming = true, s.state.Moving, s.swimming
 			current := s.clientPositionLocked()
 			view.PositionAgeMs, view.PositionEstimated = current.AgeMs, current.Estimated
 		}
@@ -481,7 +481,7 @@ func encounterFollowOwner(p *worldv1.PlayerState) *actionsv1.EncounterPlayer {
 		MapId: proto.Uint32(p.MapId), AliveKnown: p.AliveKnown, PositionKnown: p.PositionKnown && finite(playerPosition(p)),
 		PositionRevision: p.PositionRevision, X: p.X, Y: p.Y, Z: p.Z, Orientation: p.Orientation,
 		PositionAgeMs: p.PositionAgeMs, PositionAgeKnown: p.PositionKnown, PositionInferred: p.PositionInferred,
-		MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0x3f != 0, PlayerFlags: p.PlayerFlags}
+		MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0x3f != 0, Swimming: p.MovementFlagsKnown && p.MovementFlags&swimMovementFlag != 0, PlayerFlags: p.PlayerFlags}
 	if p.AliveKnown {
 		out.Alive = proto.Bool(p.Alive)
 	}

@@ -7,14 +7,17 @@ import (
 	"math/bits"
 	"strconv"
 	"strings"
+	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	moddisc "github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -27,6 +30,7 @@ type policyMovement struct {
 	stop      bool
 	body      bool
 	jump      bool
+	landing   bool
 	idleBound bool
 	unknown   bool
 	sequence  uint64
@@ -56,6 +60,23 @@ func (p *SessionPolicy) resolveBodyMovement(action map[string]any) (PolicyDispat
 		"visit_id": protoreflect.ValueOfUint64(visitID), "sequence_id": protoreflect.ValueOfUint64(sequenceID),
 		"bearing_radians": protoreflect.ValueOfFloat32(float32(bearing)), "duration_ms": protoreflect.ValueOfUint32(uint32(duration)), "jump": protoreflect.ValueOfBool(jump),
 	}
+	landing := false
+	if raw, supplied := action["landing"]; supplied {
+		mode, ok := raw.(string)
+		if !ok || mode != "ground_or_water" && mode != "follow_water" || mode == "follow_water" && (jump || action["idleToken"] != nil) {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "unsupported body landing mode")
+		}
+		_, method, err := p.manager.lookup(actionsModule, "move_body", true)
+		if err != nil {
+			return PolicyDispatch{}, err
+		}
+		field := method.Descriptor().Input().Fields().ByName("landing")
+		if field == nil || field.Number() != 9 || field.Kind() != protoreflect.StringKind || field.IsList() || field.IsMap() {
+			return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "installed body input lacks measured landings")
+		}
+		values["landing"] = protoreflect.ValueOfString(mode)
+		landing = true
+	}
 	if raw, supplied := action["idleToken"]; supplied {
 		token, ok := raw.(string)
 		if !ok || token == "" || len(token) > 128 || strings.TrimSpace(token) != token {
@@ -76,7 +97,7 @@ func (p *SessionPolicy) resolveBodyMovement(action map[string]any) (PolicyDispat
 		values["idle_token"] = protoreflect.ValueOfString(token)
 	}
 	op := &policySpell{vm: p.vm, capability: "move_body", encounterVisit: visitID,
-		movement: &policyMovement{self: selfID, body: true, jump: jump, sequence: sequenceID}}
+		movement: &policyMovement{self: selfID, body: true, jump: jump, landing: landing, sequence: sequenceID}}
 	_, op.movement.idleBound = action["idleToken"]
 	dispatch, err := p.preparePolicyDispatch("move_body", values, op)
 	if err == nil {
@@ -151,10 +172,10 @@ func (m *Manager) invokePolicyMovement(ctx context.Context, inst *instance, md m
 	outcome, payload := m.invokePolicySpell(ctx, inst, md, req, op)
 	m.policySpells.mu.Lock()
 	delete(m.policySpells.active, op.token)
-	if op.capability == "movement_points_step" && outcome == behavior.ActionUnknown {
+	if (op.movement.landing || op.capability == "movement_points_step") && outcome == behavior.ActionUnknown {
 		op.movement.unknown = true
 	}
-	if (op.movement.idleBound || op.capability == "release_interaction" || op.capability == "movement_points_step") && op.movement.unknown {
+	if (op.movement.idleBound || op.movement.landing || op.capability == "release_interaction" || op.capability == "movement_points_step") && op.movement.unknown {
 		payload["reconciliationRequired"] = true
 		if op.capability == "movement_points_step" {
 			payload["motion_unconfirmed"] = true
@@ -173,12 +194,12 @@ func (m *Manager) writePolicyScopedMovement(ctx context.Context, token, sessionI
 	registry := &m.policySpells
 	registry.mu.Lock()
 	op := registry.active[token]
-	if op == nil || op.movement == nil || !op.movement.idleBound && !(op.capability == "release_interaction" && op.movement.stop) {
+	if op == nil || op.movement == nil || !op.movement.idleBound && !op.movement.landing && !(op.capability == "release_interaction" && op.movement.stop) {
 		registry.mu.Unlock()
 		return false, nil
 	}
 	movement := op.movement
-	allowed := movement.idleBound && (op.capability == "move_body" && movement.body || op.capability == "travel_to" && !movement.body) ||
+	allowed := (movement.idleBound || movement.landing) && op.capability == "move_body" && movement.body || movement.idleBound && op.capability == "travel_to" && !movement.body ||
 		op.capability == "release_interaction" && movement.stop
 	if !op.admitted || !allowed ||
 		op.origin.Writer != "lua" || op.origin.ActionID == "" || op.origin.SessionID != sessionID || op.origin.Module != module || module != actionsModule ||
@@ -221,6 +242,10 @@ func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 		if !op.movement.body || !op.movement.jump {
 			return false
 		}
+	case opcode.MSGMoveStartSwim:
+		if !op.movement.body || !op.movement.landing {
+			return false
+		}
 	case opcode.MSGMoveFallLand:
 		if !op.movement.body {
 			return false
@@ -249,6 +274,11 @@ func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 		}
 	}
 	flags := binary.LittleEndian.Uint32(body[n:])
+	if flags&movementinfo.SwimmingFlag != 0 || code == opcode.MSGMoveStartSwim {
+		i, size, err := movementinfo.DecodePrefix(body[n:])
+		return guid == op.movement.self && op.movement.body && op.movement.landing &&
+			(code == opcode.MSGMoveStartSwim || code == opcode.MSGMoveStop) && err == nil && size == len(body)-n && i.BodyWaterEntry(code == opcode.MSGMoveStartSwim)
+	}
 	if binary.LittleEndian.Uint16(body[n+4:]) != 0 {
 		return false
 	}
@@ -275,8 +305,11 @@ func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 		}
 		jump := op.movement.jump && math.Abs(values[0]-7.955547) <= .0001 && values[3] >= .1 && values[3] <= 14
 		settling := values[0] == 0 && values[3] == 0 && flags&1 == 0
-		if (!jump && !settling) || code == opcode.MSGMoveJump && !jump ||
-			math.Abs(values[1]*values[1]+values[2]*values[2]-1) > .001 || binary.LittleEndian.Uint32(body[n+26:]) > 1100 {
+		walkOff := code == opcode.MSGMoveHeartbeat && op.movement.landing && !op.movement.jump && values[0] == 0 && flags&1 != 0 && values[3] >= .1 && values[3] <= 14
+		fall := time.Duration(binary.LittleEndian.Uint32(body[n+26:])) * time.Millisecond
+		if (!jump && !settling && !walkOff) || code == opcode.MSGMoveJump && !jump ||
+			math.Abs(values[1]*values[1]+values[2]*values[2]-1) > .001 ||
+			(fall > buddynav.BodyMotionHorizon && (!op.movement.landing || settling || !buddynav.BodyFlightInRange(fall, values[3], values[0]))) {
 			return false
 		}
 	}

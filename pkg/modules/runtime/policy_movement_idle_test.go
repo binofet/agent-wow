@@ -256,7 +256,7 @@ func TestPolicyBodyMovementIncompatibleInstalledContractCannotDropRequestedIdleT
 										if mode == "missing" {
 											continue
 										}
-										field.Number = proto.Int32(9)
+										field.Number = proto.Int32(78)
 									}
 									fields = append(fields, field)
 								}

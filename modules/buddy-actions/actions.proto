@@ -795,6 +795,10 @@ message BodyMovementRequest {
   // Optional exact parent-owned AcquireIdleInteraction lease. No legacy
   // acquisition or movement-ownership side effect is implied.
   string idle_token = 8;
+  // Empty preserves short ground steps/hops. ground_or_water permits the
+  // first safe solid or deep-water contact. follow_water requires a verified
+  // crossing toward the currently observed lower follow destination.
+  string landing = 9;
 }
 message BodyMovementState {
   uint64 sequence_id = 1;
@@ -849,6 +853,7 @@ message NavigationObservation {
   PortalFollowObservation portal = 19;
   bool movement_points_supported = 20;
   MovementPointsState movement_points = 21;
+  bool body_landing_supported = 22;
 }
 message PortalPoint {
   float x = 1;
@@ -933,6 +938,7 @@ message EncounterPlayer {
   // Current self ground run speed in yards/second, when observed.
   optional float ground_run_speed = 41;
   optional uint64 selected_target_guid = 42;
+  bool swimming = 43;
 }
 message EncounterCreature {
   uint64 guid = 1;

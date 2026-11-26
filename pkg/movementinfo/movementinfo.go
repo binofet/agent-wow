@@ -234,3 +234,16 @@ func (c *reader) guid() uint64 {
 	}
 	return guid
 }
+
+// SwimmingFlag adds pitch to ordinary swimming MovementInfo.
+const SwimmingFlag uint32 = 0x00200000
+
+// BodyWaterEntry is the surface-entry or stationary STOP image used after a
+// measured ground-to-water fall. Neither can carry another movement mode.
+func (i Info) BodyWaterEntry(forward bool) bool {
+	flags := SwimmingFlag
+	if forward {
+		flags |= 1
+	}
+	return i.Flags == flags && i.ExtraFlags == 0 && i.PitchPresent && i.Pitch == 0 && i.FallTime == 0 && i.AllFinite()
+}

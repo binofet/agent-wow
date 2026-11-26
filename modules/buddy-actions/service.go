@@ -846,7 +846,9 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 			return err
 		}
 		request.TransportScope = scope
-		s.idleMotion = motion
+		if motion.binding.token != "" {
+			s.idleMotion = motion
+		}
 		motion.lastOpcode, motion.lastPayload = op, append([]byte(nil), payload...)
 	}
 	if _, err := s.session.SendPacket(sendCtx, request); err != nil {
@@ -1348,7 +1350,7 @@ func (s *Service) tickLocked(ctx context.Context) {
 	}
 	if s.state.MotionUnconfirmed {
 		// A new authoritative stationary pose can settle an ambiguous stop.
-		if world, err := s.snapshot(ctx); err == nil && safeSelfCombat(world, s.selfGUID) == "" {
+		if world, err := s.snapshot(ctx); err == nil && safeSelfMovement(world, s.selfGUID, swimFollowCompatible) == "" {
 			s.refreshPositionLocked(world)
 			if s.state.MotionUnconfirmed {
 				s.reconcileOrdinaryMovementLocked(ctx, world)

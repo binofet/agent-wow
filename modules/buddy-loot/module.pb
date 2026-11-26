@@ -813,7 +813,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-‚µ
+îµ
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1681,7 +1681,7 @@ navigation`
 value (2(.warcraftbuddy.actions.v1.EncounterSpellRvalue:8B	
 _map_idB
 _host_ownedB
-_host_requested"Š
+_host_requested"¤
 BodyMovementRequest
 
 session_id (	R	sessionId
@@ -1694,7 +1694,8 @@ sequenceId'
 durationMs
 jump (Rjump
 
-idle_token (	R	idleToken"ƒ
+idle_token (	R	idleToken
+landing	 (	Rlanding"ƒ
 BodyMovementState
 sequence_id (R
 sequenceId
@@ -1724,7 +1725,7 @@ owner_guid (R	ownerGuid6
 ready (Rready
 hold (Rhold'
 follow_revision (RfollowRevision
-phase (	Rphase"˜
+phase (	Rphase"Î
 NavigationObservation6
 body_movement_supported (RbodyMovementSupported
 	following (R	following
@@ -1749,7 +1750,8 @@ goal_known (R	goalKnown
 ground_navigation_configured (RgroundNavigationConfiguredI
 portal (21.warcraftbuddy.actions.v1.PortalFollowObservationRportal:
 movement_points_supported (RmovementPointsSupportedV
-movement_points (2-.warcraftbuddy.actions.v1.MovementPointsStateRmovementPoints"7
+movement_points (2-.warcraftbuddy.actions.v1.MovementPointsStateRmovementPoints4
+body_landing_supported (RbodyLandingSupported"7
 PortalPoint
 x (Rx
 y (Ry
@@ -1791,7 +1793,7 @@ candidates"­
 EncounterParty3
 group (2.warcraftbuddy.party.v1.GroupRgroupJ
 raid_targets (2'.warcraftbuddy.party.v1.RaidTargetStateRraidTargets
-revision (Rrevision"µ
+revision (Rrevision"Ñ
 EncounterPlayer
 guid (Rguid
 present (Rpresent
@@ -1843,7 +1845,8 @@ comboKnown*
 combat_reach_known' (RcombatReachKnown!
 combat_reach( (RcombatReach-
 ground_run_speed) (HRgroundRunSpeedˆ5
-selected_target_guid* (HRselectedTargetGuidˆB	
+selected_target_guid* (HRselectedTargetGuidˆ
+swimming+ (RswimmingB	
 _map_idB
 _aliveB
 _ground_run_speedB

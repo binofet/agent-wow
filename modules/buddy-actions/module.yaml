@@ -141,7 +141,7 @@ script_api:
   release_movement: {effect: mutation, description: Release the exact session body and owner movement token without changing standing follow intent}
   select_target: {effect: mutation, description: Set or clear normal client UI selection for an observed local target or explicitly bound online group member}
   approach_target: {effect: mutation, description: Move one physical navigation step toward the exact observed target and caller-selected range}
-  move_body: {effect: mutation, description: Execute one bounded body-relative step or hop at observed speed; unsupported starts settle to measured ground on the current visit}
+  move_body: {effect: mutation, description: Execute one body-relative step or hop at observed speed. Use ground_or_water for measured forward input or follow_water for a verified crossing to the observed lower owner}
   break_control: {effect: mutation, description: Execute the exact learned or equipped fear break against the selected observed self aura without movement preparation}
   interrupt_cast: {effect: mutation, description: Cast one exact learned interrupt on the selected observed enemy cast revision}
   area_trigger_reference: {effect: read, description: Static current-map trigger volumes for explicit destination intent; no route or realm admission proof}
