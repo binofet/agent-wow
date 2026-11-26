@@ -368,7 +368,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             original = peer.call
             def read(method, params, timeout=None, *, peer=peer, guid=guid, original=original):
                 if method not in ("buddy-actions.status","buddy-world.snapshot","buddy-party.state"):
-                    return original(method,params,timeout=timeout)
+                    return original(method,params,timeout)
                 peer.calls.append((method,copy.deepcopy(params)))
                 if method == "buddy-actions.status":
                     return dict(sessionId=peer.core,selfGuid=guid,
@@ -512,7 +512,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                         ("262","Current help feedback") if after=="261" else ("263","Later feedback"))
                     return dict(sessionId=rpc.chat,oldestSequence="6",latestSequence="264",nextSequence=sequence,
                         messages=[dict(sequence=sequence,channel="CHANNEL_UNSPECIFIED",senderGuid="0",text=text)])
-                return original(method,params,timeout=timeout)
+                return original(method,params,timeout)
             rpc.call=read
             brain.client=direct_model.DirectModel("local",brain.model,http.base)
             loop=converse.Conversation(rpc,brain,character_name="Lotharen",character_class="paladin",character_guid=87)
