@@ -243,8 +243,9 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		// the elapsed interval. Never apply a newly faster speed retroactively.
 		intervalSpeed = math.Min(intervalSpeed, speed)
 		before := s.posAt
-		if !s.navigationStepAtSpeedLocked(call, path, &index, finite, intervalSpeed) {
-			s.state.Reason = "exploration_step_or_transport_failed"
+		advanced, stepReason := s.navigationStepResultLocked(call, path, &index, finite, intervalSpeed, true)
+		if !advanced {
+			s.state.Reason = "exploration_" + stepReason
 			s.mu.Unlock()
 			return nil, nil
 		}
@@ -258,6 +259,9 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 			return nil, nil
 		}
 		s.state.Reason = "exploration_following_client_navmesh_estimate"
+		if stepReason == "checkpoint_delay_bounded" {
+			s.state.Reason = "exploration_checkpoint_delay_bounded"
+		}
 		moving, phase = s.state.Moving, s.state.Reason
 		s.mu.Unlock()
 		if err := s.approachDelay(call, explorationCheckpointDelay(speed)); err != nil {

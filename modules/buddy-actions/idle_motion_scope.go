@@ -101,6 +101,14 @@ func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotion
 	if err != nil || ctx.Err() != nil || b.clientRevision == ^uint64(0) || !s.idleMotionCurrentLocked(b, w, now) {
 		return nil, modcb.PacketNotDispatchedError("idle motion custody or source changed before write")
 	}
+	// This is the final read before a scoped packet. Only this speed-only
+	// refusal, after full custody validation, leaves the current STOP scope intact.
+	if op == opcode.MSGMoveHeartbeat {
+		p, _ := idleMotionPacketPose(payload, b.binding.selfGUID)
+		if !navigationSpeedAllowed(ctx, w, p) {
+			return nil, errNavigationSpeedChanged
+		}
+	}
 	return clonePortalScope(b.current), nil
 }
 

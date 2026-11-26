@@ -828,7 +828,7 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 	if motion != nil {
 		scope, err := s.idleMotionBeforeWriteLocked(ctx, motion, op, payload)
 		if err != nil {
-			if motion.writes > 0 {
+			if motion.writes > 0 && !errors.Is(err, errNavigationSpeedChanged) {
 				motion.broken = true
 				s.state.MotionUnconfirmed = true
 			}
@@ -993,6 +993,12 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	}
 	if moving && swim != nil && (!s.state.Following || !s.now().Before(s.followUntil) || safePlayerMovement(w, s.selfGUID, true) != "") {
 		s.state.Reason = "swim_follow_observation_changed"
+		return false
+	}
+	// Refuse a stale faster checkpoint after clock/World callbacks. STOP remains
+	// available; no packet was dispatched by this failed mechanical check.
+	if moving && !navigationSpeedAllowed(ctx, w, p) {
+		s.state.Reason = "exploration_observed_run_speed_changed"
 		return false
 	}
 	if moving && swim == nil && !s.recoveryOwnsLocked() && (s.swimming || !w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags)) {
