@@ -175,24 +175,63 @@ func (s *Service) navigationStepWithinLocked(ctx context.Context, path []positio
 }
 
 func (s *Service) navigationStepAtSpeedLocked(ctx context.Context, path []position, index *int, inside func(position) bool, speed float64) bool {
+	ok, _ := s.navigationStepResultLocked(ctx, path, index, inside, speed, false)
+	return ok
+}
+
+// Exploration revalidates its body, lease and route before every checkpoint.
+// A delayed checkpoint may discard elapsed backlog, never extrapolate farther
+// than the existing 600ms bound. Other controllers retain their late STOP.
+func (s *Service) navigationStepResultLocked(ctx context.Context, path []position, index *int, inside func(position) bool, speed float64, boundedDelay bool) (bool, string) {
+	beforeWrite := s.transportSequence
+	write := func(ok bool, op uint32) (bool, string) {
+		if ok {
+			return true, ""
+		}
+		if s.state.MotionUnconfirmed {
+			return false, "movement_transport_unconfirmed"
+		}
+		if failure := s.state.LastTransportFailure; failure != nil && failure.Sequence > beforeWrite && failure.Opcode == op && !failure.OutcomeUnknown {
+			return false, "movement_not_dispatched"
+		}
+		if ctx.Err() != nil {
+			return false, "canceled_or_time_limit"
+		}
+		return false, "movement_prewrite_refused"
+	}
+	stop := func(reason string) (bool, string) {
+		if !s.stopLocked(ctx) {
+			if s.state.MotionUnconfirmed {
+				return false, reason + "_stop_unconfirmed"
+			}
+			return false, reason + "_stop_not_dispatched"
+		}
+		return false, reason
+	}
 	for *index < len(path) && distance(s.pos, path[*index]) <= 0.05 {
 		*index++
 	}
 	if *index >= len(path) {
-		return s.stopLocked(ctx)
+		return write(s.stopLocked(ctx), opcode.MSGMoveStop)
 	}
 	p := s.pos
 	if !s.state.Moving {
 		p.o = float32(math.Atan2(float64(path[*index].y-p.y), float64(path[*index].x-p.x)))
-		return s.movementLocked(ctx, opcode.MSGMoveStartForward, p, true)
+		return write(s.movementLocked(ctx, opcode.MSGMoveStartForward, p, true), opcode.MSGMoveStartForward)
 	}
 	elapsed := s.now().Sub(s.posAt).Seconds()
-	if elapsed < 0 || elapsed > 0.6 {
-		s.stopLocked(ctx)
-		return false
+	if elapsed < 0 {
+		return stop("clock_regressed")
+	}
+	late := elapsed > 0.6
+	if late {
+		if !boundedDelay {
+			return stop("checkpoint_late")
+		}
+		elapsed = 0.6
 	}
 	if elapsed < 0.15 {
-		return true
+		return true, ""
 	}
 	remaining := speed * elapsed
 	for *index < len(path) && remaining > 0.001 {
@@ -221,10 +260,13 @@ func (s *Service) navigationStepAtSpeedLocked(ctx context.Context, path []positi
 		p.o += 2 * math.Pi
 	}
 	if !inside(p) || math.Abs(float64(p.z-s.pos.z)) > 2 || distance(s.pos, p) > speed*elapsed+0.01 {
-		s.stopLocked(ctx)
-		return false
+		return stop("step_geometry_invalid")
 	}
-	return s.movementLocked(ctx, opcode.MSGMoveHeartbeat, p, true)
+	ok, reason := write(s.movementLocked(ctx, opcode.MSGMoveHeartbeat, p, true), opcode.MSGMoveHeartbeat)
+	if ok && late {
+		return true, "checkpoint_delay_bounded"
+	}
+	return ok, reason
 }
 
 func routeRemaining(from position, path []position, index int) float64 {
