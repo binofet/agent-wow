@@ -11,6 +11,8 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
+type ordinaryFollowMovementKey struct{}
+
 type ordinaryMovementAttempt struct {
 	id, sid                     string
 	self, sequence, rawRevision uint64
@@ -23,7 +25,7 @@ type ordinaryMovementAttempt struct {
 }
 
 func (s *Service) newOrdinaryMovementAttemptLocked(w *worldv1.SnapshotResponse, op uint32, payload []byte, p position, moving, swimming bool) *ordinaryMovementAttempt {
-	if w == nil || w.Self == nil || !s.matchesCurrentEncounterVisitLocked(w) || (op != opcode.MSGMoveStartForward && op != opcode.MSGMoveHeartbeat && op != opcode.MSGMoveStop && op != opcode.MSGMoveSetFacing) {
+	if s.movementOwner.owner != "" || s.targetMovementActiveLocked() || s.currentFollowFormationGoalLocked(s.followGoal, w) || w == nil || w.Self == nil || !s.matchesCurrentEncounterVisitLocked(w) || (op != opcode.MSGMoveStartForward && op != opcode.MSGMoveHeartbeat && op != opcode.MSGMoveStop && op != opcode.MSGMoveSetFacing) {
 		return nil
 	}
 	scope := portalObservedWorldScope(w, s.selfGUID)
@@ -43,7 +45,7 @@ func (s *Service) reconcileOrdinaryMovementLocked(ctx context.Context, w *worldv
 	a := s.ordinaryMovement
 	failure := s.state.LastTransportFailure
 	if a == nil || failure == nil || !failure.OutcomeUnknown || failure.Sequence != a.sequence || s.transportSequence != a.sequence || failure.Opcode != a.op ||
-		s.closed || s.sessionID != a.sid || s.selfGUID != a.self || s.encounterVisit != a.visit || !a.visit.bound || s.state.InteractionOwner != "" || s.clientControlLost || s.clientControlRestoring {
+		s.closed || s.sessionID != a.sid || s.selfGUID != a.self || s.encounterVisit != a.visit || !a.visit.bound || s.state.InteractionOwner != "" || s.movementOwner.owner != "" || s.targetMovementActiveLocked() || s.currentFollowFormationGoalLocked(s.followGoal, w) || s.clientControlLost || s.clientControlRestoring {
 		return
 	}
 	if w == nil || !s.matchesCurrentEncounterVisitLocked(w) || w.Self == nil || !w.Self.Present || !w.Self.PositionKnown || !w.Self.MapKnown || w.Self.PositionRevision != a.rawRevision || !samePortalCoreVisit(a.scope, portalObservedWorldScope(w, a.self)) {

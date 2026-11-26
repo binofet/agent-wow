@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"strings"
 	"testing"
+	"time"
 )
 
 type ordinaryResultSession struct {
@@ -52,7 +53,7 @@ func (x *ordinaryResultSession) InvokeModule(ctx context.Context, r *modv1.Invok
 func TestOrdinaryFollowExactWriteReconcilesWithoutReplayOrUnknownRewrite(t *testing.T) {
 	for _, op := range []uint32{opcode.MSGMoveStartForward, opcode.MSGMoveHeartbeat, opcode.MSGMoveStop, opcode.MSGMoveSetFacing} {
 		moving := op == opcode.MSGMoveStartForward || op == opcode.MSGMoveHeartbeat
-		for _, mode := range []string{"exact", "missing", "wrong attempt", "changed visit", "changed body", "changed raw pose", "foreign owner", "newer attempt", "wrong packet"} {
+		for _, mode := range []string{"exact", "missing", "wrong attempt", "changed visit", "changed body", "changed raw pose", "foreign owner", "movement lease", "target movement", "newer attempt", "wrong packet"} {
 			t.Run(mode+" "+opcode.WorldName(op), func(t *testing.T) {
 				s, f, _, _, _ := idleBodyFixture(t, true)
 				s.state.InteractionOwner = ""
@@ -62,7 +63,7 @@ func TestOrdinaryFollowExactWriteReconcilesWithoutReplayOrUnknownRewrite(t *test
 				x := &ordinaryResultSession{sessionAPI: f, f: f, available: true}
 				s.session = x
 				s.refreshPositionLocked(f.world)
-				if s.movementLocked(context.Background(), op, s.pos, moving) || !s.state.MotionUnconfirmed || s.ordinaryMovement == nil || !modcb.ValidMovementAttempt(x.id) {
+				if s.movementLocked(context.WithValue(context.Background(), ordinaryFollowMovementKey{}, true), op, s.pos, moving) || !s.state.MotionUnconfirmed || s.ordinaryMovement == nil || !modcb.ValidMovementAttempt(x.id) {
 					t.Fatal("fixture did not retain timed-out attempt", s.stateLocked(), x.id)
 				}
 				original := proto.Clone(s.state.LastTransportFailure)
@@ -79,6 +80,12 @@ func TestOrdinaryFollowExactWriteReconcilesWithoutReplayOrUnknownRewrite(t *test
 					f.world.Self.PositionRevision++
 				case "foreign owner":
 					s.state.InteractionOwner = "other"
+				case "movement lease":
+					s.movementOwner = movementOwner{owner: "task:finite", token: "existing", until: s.now().Add(time.Minute)}
+				case "target movement":
+					s.targetMovement.view.TargetGuid = enemyGUID
+					s.targetMovement.view.VisitId = s.encounterVisit.revision
+					s.targetMovement.until = s.now().Add(time.Minute)
 				case "newer attempt":
 					s.transportSequence++
 				case "wrong packet":
@@ -101,5 +108,46 @@ func TestOrdinaryFollowExactWriteReconcilesWithoutReplayOrUnknownRewrite(t *test
 				}
 			})
 		}
+	}
+}
+
+func TestOrdinaryMovementAttemptDoesNotAdoptExplicitApproachFacing(t *testing.T) {
+	s, f, r, ctx, _ := targetMovementFixture(t)
+	seedSyntheticPortalWorldScope(f, 9)
+	s.state.Following = true
+	s.followUntil = s.now().Add(time.Minute)
+	f.world.RequestedCreature.X = 0
+	f.world.RequestedCreature.Y = 3
+	x := &ordinaryResultSession{sessionAPI: f, f: f, available: true}
+	s.session = x
+	out, err := s.ApproachTarget(ctx, r)
+	if err != nil || len(f.packets) != 1 || f.packets[0].Opcode != opcode.MSGMoveSetFacing || !out.MotionUnconfirmed || x.id != "" || s.ordinaryMovement != nil {
+		t.Fatal("explicit writer borrowed ordinary-follow recovery", out, err, f.packets, x.id)
+	}
+}
+func TestOrdinaryMovementAttemptDoesNotAdoptFiniteFormation(t *testing.T) {
+	s, f, r, ctx, _ := followGoalFixture(t)
+	seedSyntheticPortalWorldScope(f, 9)
+	if _, err := s.SetFollowFormation(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	x := &ordinaryResultSession{sessionAPI: f, f: f, available: true}
+	s.session = x
+	s.Tick(context.Background())
+	if len(f.packets) == 0 || !s.state.MotionUnconfirmed || x.id != "" || s.ordinaryMovement != nil {
+		t.Fatal("finite formation borrowed ordinary recovery", s.stateLocked(), f.packets, x.id)
+	}
+}
+func TestOrdinaryMovementAttemptIsCapturedByNormalFollowTick(t *testing.T) {
+	s, f, _, _, _ := idleBodyFixture(t, true)
+	s.state.InteractionOwner = ""
+	s.interactionToken = ""
+	s.idleInteraction = idleInteractionBinding{}
+	toggle(t, s, true)
+	x := &ordinaryResultSession{sessionAPI: f, f: f, available: true}
+	s.session = x
+	s.Tick(context.Background())
+	if len(f.packets) != 1 || !s.state.MotionUnconfirmed || s.ordinaryMovement == nil || !modcb.ValidMovementAttempt(x.id) {
+		t.Fatal("normal native follow did not retain its exact attempt", s.stateLocked(), f.packets, x.id)
 	}
 }

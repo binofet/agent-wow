@@ -1093,7 +1093,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	var attempt *ordinaryMovementAttempt
 	// Only ordinary follow uses this recovery; leased/finite operations retain
 	// their existing receipt and cleanup custody.
-	if len(scopes) == 0 && !s.bodyMoving && swim == nil && ctx.Value(idleMotionScopeKey{}) == nil && s.state.Following && s.state.InteractionOwner == "" {
+	if ctx.Value(ordinaryFollowMovementKey{}) == true && len(scopes) == 0 && !s.bodyMoving && swim == nil && ctx.Value(idleMotionScopeKey{}) == nil && s.state.Following && s.state.InteractionOwner == "" {
 		attempt = s.newOrdinaryMovementAttemptLocked(w, op, payload, p, moving, isSwimming)
 		if attempt != nil {
 			ctx = modcb.WithMovementAttempt(ctx, attempt.id)
@@ -1434,6 +1434,9 @@ func (s *Service) Tick(ctx context.Context) {
 		goal := s.followGoal
 		s.followGoalExecuting = &goal
 		defer func() { s.followGoalExecuting = nil }()
+	}
+	if !ownedFollow && !swimFollow {
+		ctx = context.WithValue(ctx, ordinaryFollowMovementKey{}, true)
 	}
 	if s.navDataDir != "" {
 		formationUsed = true
