@@ -25,6 +25,7 @@ message ItemEligibility {
   GearItemFacts gear_facts = 15;
   bool ammo_select_eligible = 16;
   string ammo_blocked_reason = 17;
+  ItemEnhancementUse enhancement_use = 18;
 }
 message Operation {
   string request_id = 1;
@@ -60,6 +61,7 @@ message Operation {
   uint32 ammo_entry = 31;
   uint32 baseline_ammo_entry = 32;
   bool ammo_confirmed = 33;
+  ItemEnhancementApplication enhancement = 34;
 }
 message State {
   string session_id = 1;
@@ -93,6 +95,25 @@ message State {
   bool ammo_known = 43;
   uint32 ammo_entry = 44;
   uint64 ammo_revision = 45;
+  uint64 world_visit_revision = 46;
+}
+
+message ItemEnhancementUse {
+  uint32 spell_id = 1; uint32 enchantment_slot = 2; uint32 enchantment_id = 3;
+}
+message ItemEnhancementApplication {
+  uint64 visit_revision = 1; uint64 equipped_item_guid = 2; uint32 equipped_entry = 3;
+  uint32 spell_id = 4; uint32 enchantment_slot = 5; uint32 enchantment_id = 6;
+  uint32 previous_enchantment_id = 7; optional uint32 observed_enchantment_id = 8;
+  bool effect_confirmed = 9;
+}
+message ApplyItemEnhancementRequest {
+  string session_id = 1; string request_id = 2; uint64 self_guid = 3; uint64 visit_revision = 4;
+  uint64 expected_revision = 5; uint64 expected_inventory_revision = 6;
+  ItemRef source = 7; uint32 spell_id = 8; uint64 expected_equipment_revision = 9;
+  uint32 equipment_slot = 10; uint64 equipped_item_guid = 11; uint32 equipped_entry = 12;
+  // Explicitly binds the observed old enchant in the spell's permanent or temporary slot.
+  optional uint32 expected_enchantment_id = 13;
 }
 
 // Static template facts and exact legal destinations; no upgrade preference.
@@ -205,6 +226,7 @@ service BuddyInventory {
   rpc Move(MoveRequest) returns (State);
   rpc Equip(EquipRequest) returns (State);
   rpc EquipGear(EquipGearRequest) returns (State);
+  rpc ApplyItemEnhancement(ApplyItemEnhancementRequest) returns (State);
   rpc SelectAmmo(SelectAmmoRequest) returns (State);
   rpc Sell(SellRequest) returns (State);
   rpc Drink(DrinkRequest) returns (DrinkReceipt);

@@ -36,14 +36,17 @@ type sessionAPI interface {
 	InvokeModule(context.Context, *modv1.InvokeModuleRequest, ...grpc.CallOption) (*modv1.InvokeModuleResponse, error)
 }
 type operation struct {
-	request   proto.Message
-	receipt   *inventoryv1.Operation
-	baseline  view
-	expected  view
-	token     string
-	ctx       context.Context
-	cancel    context.CancelFunc
-	attempted bool
+	request                 proto.Message
+	receipt                 *inventoryv1.Operation
+	baseline                view
+	expected                view
+	token                   string
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	attempted               bool
+	useCount                byte
+	multiCharge             bool
+	enhancementVisitRetired bool
 }
 type Service struct {
 	inventoryv1.UnimplementedBuddyInventoryServer
@@ -168,6 +171,7 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 	s.known = e == nil
 	s.state.BlockedReason = ""
 	if e != nil {
+		s.state.WorldVisitRevision = 0
 		s.state.InventoryKnown = false
 		s.state.CopperKnown = false
 		s.state.AmmoKnown = false
@@ -175,6 +179,7 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 		s.state.BlockedReason = "coherent_current_observations_unavailable"
 	} else {
 		s.view, s.actions, s.trade, s.loot, s.prof = v, a, t, l, p
+		s.state.WorldVisitRevision = w.VisitRevision
 		s.state.InventoryKnown = true
 		s.state.InventoryRevision = w.InventoryRevision
 		s.state.InventoryBags = w.InventoryBags
@@ -293,11 +298,14 @@ func (s *Service) eligibilityLocked() {
 		r.AmmoBlockedReason = s.ammoEligibilityLocked(i)
 		r.AmmoSelectEligible = r.AmmoBlockedReason == ""
 		r.Consumable = consumableMetadata(m, s.view.w.Self)
+		if i.MetadataKnown {
+			r.EnhancementUse, _ = m.enhancementUse()
+		}
 		r.GearFacts = s.gearFactsLocked(i)
 		r.GearBlockedReason = "lua_gear_evaluation_required"
 		if !i.MetadataKnown || !m.known {
 			r.BlockedReason = "complete_owned_item_metadata_pending"
-		} else if !r.SafeJunkSaleEligible && !r.NormalBag && !r.GearEquipEligible && !r.AmmoSelectEligible {
+		} else if !r.SafeJunkSaleEligible && !r.NormalBag && !r.GearEquipEligible && !r.AmmoSelectEligible && r.EnhancementUse == nil {
 			r.BlockedReason = "not_supported_sale_bag_or_armor"
 		}
 		s.state.Items = append(s.state.Items, r)
@@ -459,7 +467,7 @@ func (s *Service) gateLocked(op *operation, leased bool) string {
 		return "inventory_revision_changed"
 	}
 	source, ok := s.view.source(r.Source)
-	if !ok || r.Kind != "select_ammo" && !s.ordinaryBagLocked(source.Bag) {
+	if !ok || r.Kind != "select_ammo" && r.Kind != "apply_item_enhancement" && !s.ordinaryBagLocked(source.Bag) {
 		return "exact_owned_source_changed_or_unsupported_bag"
 	}
 	m := s.metadata[source.Entry]
@@ -507,6 +515,8 @@ func (s *Service) gateLocked(op *operation, leased bool) string {
 		if reason := s.ammoGateLocked(r, source); reason != "" {
 			return reason
 		}
+	case "apply_item_enhancement":
+		return s.enhancementGateLocked(op, source)
 	case "sell":
 		if !m.disposable() || m.sellPrice == 0 || m.sellPrice != r.UnitSellPriceCopper {
 			return "exact_safe_gray_junk_positive_price_required"
@@ -684,6 +694,7 @@ func (s *Service) run(op *operation) {
 	s.mu.Lock()
 	if e != nil || w.InventoryRevision < s.state.InventoryRevision || w.SelfCopperRevision < s.state.CopperRevision || w.SelfEquipmentKnown && w.SelfEquipmentRevision < s.state.EquipmentRevision || w.SelfAmmoKnown && w.SelfAmmoRevision < s.state.AmmoRevision {
 		s.known = false
+		s.state.WorldVisitRevision = 0
 		s.state.InventoryKnown = false
 		s.state.CopperKnown = false
 		s.state.AmmoKnown = false
@@ -694,6 +705,7 @@ func (s *Service) run(op *operation) {
 		return
 	}
 	s.view, s.known = v, true
+	s.state.WorldVisitRevision = w.VisitRevision
 	s.state.InventoryKnown = true
 	s.state.InventoryRevision = w.InventoryRevision
 	s.state.InventoryBags = w.InventoryBags
@@ -741,6 +753,11 @@ func (s *Service) run(op *operation) {
 	case "select_ammo":
 		code = opcode.CMSGSetAmmo
 		payload = ammoPacket(r.AmmoEntry)
+	case "apply_item_enhancement":
+		s.itemUseCount++
+		op.useCount = s.itemUseCount
+		code = opcode.CMSGUseItem
+		payload = equippedItemUsePayload(r.Source, r.Enhancement.SpellId, op.useCount, r.Enhancement.EquippedItemGuid)
 	case "sell":
 		code = opcode.CMSGSellItem
 		payload = sellPacket(r.VendorGuid, r.Source.ItemGuid, r.Source.StackCount)
@@ -801,6 +818,10 @@ func (s *Service) evidenceLocked(v view) {
 	r.ObservedEquipmentRevision = v.w.SelfEquipmentRevision
 	r.ObservedCopperRevision = v.w.SelfCopperRevision
 	r.ObservedCopper = v.w.SelfCopper
+	if r.Kind == "apply_item_enhancement" {
+		s.enhancementEvidenceLocked(op, v)
+		return
+	}
 	if r.Kind == "select_ammo" {
 		r.ObservedAmmoRevision = v.w.SelfAmmoRevision
 		r.AmmoConfirmed = v.w.SelfAmmoKnown && v.w.SelfAmmoRevision > r.BaselineAmmoRevision && v.w.SelfAmmoEntry == r.AmmoEntry
@@ -848,6 +869,7 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.observeEnhancementBoundaryLocked(p.Opcode)
 	s.observeConsumableErrorLocked(p)
 	if p.Opcode == opcode.SMSGItemQuerySingleResponse {
 		m, e := parseItemMetadata(p.Payload)
@@ -861,10 +883,24 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 		return &emptypb.Empty{}, nil
 	}
 	op := s.active
+	if op == nil && s.last != nil && s.last.receipt.Enhancement != nil && s.last.receipt.Status == "OUTCOME_UNCONFIRMED" {
+		op = s.last
+	}
 	if op == nil || !op.attempted {
 		return &emptypb.Empty{}, nil
 	}
 	r := op.receipt
+	if r.Enhancement != nil && (op.enhancementVisitRetired || !s.known || s.state.WorldVisitRevision != r.Enhancement.VisitRevision ||
+		r.Status == "CONFIRMED" || r.Status == "SERVER_REJECTED") {
+		return &emptypb.Empty{}, nil
+	}
+	if r.Kind == "apply_item_enhancement" && p.Opcode == opcode.SMSGCastFailed &&
+		len(p.Payload) >= 6 && len(p.Payload) <= 14 && (len(p.Payload)-6)%4 == 0 &&
+		p.Payload[0] == op.useCount && binary.LittleEndian.Uint32(p.Payload[1:]) == r.Enhancement.SpellId {
+		r.ServerErrorObserved, r.ServerError = true, uint32(p.Payload[5])
+		r.Status, r.Reason = "SERVER_REJECTED", "matching_server_enhancement_spell_rejection"
+		s.state.Revision++
+	}
 	if p.Opcode == opcode.SMSGInventoryChangeFailure {
 		f, e := parseInventoryChangeFailure(p.Payload)
 		if e != nil {

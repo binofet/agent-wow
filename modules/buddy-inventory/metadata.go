@@ -14,6 +14,7 @@ type itemMetadata struct {
 	bonding, startQuest, lockID, pageText, bagFamily, duration, maxDurability                             uint32
 	hasSpell                                                                                              bool
 	onUseSpells                                                                                           [5]uint32
+	onUseCharges                                                                                          [5]int32
 	hasRequirement                                                                                        bool
 	allowableClass, allowableRace, requiredLevel, requiredSkill, requiredSkillRank                        uint32
 	requiredSpell, requiredHonorRank, requiredCityRank, requiredReputationFaction, requiredReputationRank uint32
@@ -175,6 +176,7 @@ func parseItemMetadata(data []byte) (itemMetadata, error) {
 		}
 		if spell != 0 && trigger == 0 { // ITEM_SPELLTRIGGER_ON_USE
 			m.onUseSpells[i] = spell
+			m.onUseCharges[i] = int32(binary.LittleEndian.Uint32(data[at:]))
 		}
 		at += 16
 	}

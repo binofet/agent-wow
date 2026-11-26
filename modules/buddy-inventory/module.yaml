@@ -15,6 +15,7 @@ rpc:
   equip: /warcraftbuddy.inventory.v1.BuddyInventory/Equip
   select_ammo: /warcraftbuddy.inventory.v1.BuddyInventory/SelectAmmo
   equip_gear: /warcraftbuddy.inventory.v1.BuddyInventory/EquipGear
+  apply_item_enhancement: /warcraftbuddy.inventory.v1.BuddyInventory/ApplyItemEnhancement
   sell: /warcraftbuddy.inventory.v1.BuddyInventory/Sell
   drink: /warcraftbuddy.inventory.v1.BuddyInventory/Drink
   eat_buff_food: /warcraftbuddy.inventory.v1.BuddyInventory/EatBuffFood
@@ -23,9 +24,13 @@ script_api:
   state: {effect: read, description: 'Current owned inventory, raw gear destinations and template facts, current Lua gear comparisons, item-use metadata and observed consumable effects'}
   raw_gear_facts: {effect: read, description: 'Cached owned inventory, equipment, physical gear destinations and template facts only; no dependency reads, refresh or Lua comparison; consumers must verify body and revisions against current observations'}
   equip_gear: {effect: mutation, description: 'Equip the exact selected owned item and destination; legacy requireConservativeUpgrade uses the current Lua gear evaluator'}
+  apply_item_enhancement: {effect: mutation, description: 'Use an exact carried oil, poison, or enchant scroll on an exact equipped item in the current visit. Requires the observed prior enchant and verifies its replacement from the equipped item.'}
   drink: {effect: mutation, description: 'Use an exact selected carried mana drink, or queue a no-item request to the current Lua policy'}
   eat_buff_food: {effect: mutation, description: 'Use exact selected carried buff food, or queue a no-item request to the current Lua policy'}
 packets:
+  SMSG_LOGIN_VERIFY_WORLD: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
+  SMSG_TRANSFER_PENDING: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
+  SMSG_NEW_WORLD: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
   SMSG_ITEM_QUERY_SINGLE_RESPONSE: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
   SMSG_CAST_FAILED: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
   SMSG_INVENTORY_CHANGE_FAILURE: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
