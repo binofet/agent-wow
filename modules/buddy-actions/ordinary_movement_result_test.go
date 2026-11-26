@@ -139,14 +139,23 @@ func TestOrdinaryMovementAttemptDoesNotAdoptFiniteFormation(t *testing.T) {
 	}
 }
 func TestOrdinaryMovementAttemptIsCapturedByNormalFollowTick(t *testing.T) {
-	s, f, _, _, _ := idleBodyFixture(t, true)
+	s, f, _, _, advance := idleBodyFixture(t, true)
 	s.state.InteractionOwner = ""
 	s.interactionToken = ""
 	s.idleInteraction = idleInteractionBinding{}
 	toggle(t, s, true)
 	x := &ordinaryResultSession{sessionAPI: f, f: f, available: true}
 	s.session = x
-	s.Tick(context.Background())
+	for i := 0; i < 10; i++ {
+		s.Tick(context.Background())
+		if len(f.packets) != 0 {
+			break
+		}
+		if s.state.Reason != "formation_reaction_delay" {
+			t.Fatal("normal follow did not reach its reaction gate", s.stateLocked())
+		}
+		advance(100 * time.Millisecond)
+	}
 	if len(f.packets) != 1 || !s.state.MotionUnconfirmed || s.ordinaryMovement == nil || !modcb.ValidMovementAttempt(x.id) {
 		t.Fatal("normal native follow did not retain its exact attempt", s.stateLocked(), f.packets, x.id)
 	}
