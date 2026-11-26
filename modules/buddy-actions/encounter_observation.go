@@ -77,6 +77,13 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	s.mu.Lock()
 	sessionID, selfGUID, closed := s.sessionID, s.selfGUID, s.closed
 	transportSequence, supportOp, buffOp := s.transportSequence, s.supportOp, s.buffOp
+	var supportView, buffView proto.Message
+	if supportOp != nil {
+		supportView = proto.Clone(&supportOp.view)
+	}
+	if buffOp != nil {
+		buffView = proto.Clone(&buffOp.view)
+	}
 	s.mu.Unlock()
 	var w *worldv1.SnapshotResponse
 	var state *partyv1.StateResponse
@@ -113,10 +120,12 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		identity.Reason = "world_observation_unavailable"
 		return identity, nil
 	}
-	// A newly entered operation must never consume a World read begun before
-	// its admission. Same-operation inbound receipts do not advance this
-	// outgoing transport generation and remain free to complete above.
-	if s.transportSequence != transportSequence || s.supportOp != supportOp || s.buffOp != buffOp {
+	// Neither a new operation nor a receipt transition (for example GO)
+	// may consume World evidence read before that transition. Packet handling
+	// and its receipts still progress; only this composite is superseded.
+	if s.transportSequence != transportSequence || s.supportOp != supportOp || s.buffOp != buffOp ||
+		supportOp != nil && !proto.Equal(supportView, &supportOp.view) ||
+		buffOp != nil && !proto.Equal(buffView, &buffOp.view) {
 		identity.Reason = "world_observation_superseded"
 		return identity, nil
 	}

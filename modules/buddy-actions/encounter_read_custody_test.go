@@ -129,7 +129,7 @@ func TestEncounterObservationRemoteReadAllowsCurrentCastReceipt(t *testing.T) {
 	if h.finished != nil {
 		<-h.finished
 	}
-	if err != nil || !h.completed || out.Reason != "" || s.state.CastPending || s.state.LastCastFailure != 47 ||
+	if err != nil || !h.completed || out.Reason != "world_observation_superseded" || out.MapId != nil || s.state.CastPending || s.state.LastCastFailure != 47 ||
 		s.supportOp.view.OperationRevision != revision || s.supportOp.view.Phase != "server_rejected_no_replay" || len(f.packets) != written {
 		t.Fatalf("read blocked or changed current rejection custody: observation=%v state=%v err=%v", out, &s.state, err)
 	}
@@ -207,5 +207,43 @@ func TestEncounterObservationCannotBorrowWorldForNewOperation(t *testing.T) {
 				t.Fatal("unknown transport changed", s.supportOp.view.Phase)
 			}
 		})
+	}
+}
+
+func TestEncounterObservationCannotCombineOlderAliveWithNewResurrectionGo(t *testing.T) {
+	s, f, _ := resRig(t)
+	s.encounterVisit = encounterVisit{bound: true, revision: 1, mapID: f.world.Self.MapId}
+	f.world.VisitRevision = 1
+	if _, err := requestResurrection(s); err != nil {
+		t.Fatal(err)
+	}
+	revision := s.supportOp.view.OperationRevision
+	// Another observer update already says alive before this operation's GO.
+	// Capture that World first, then deliver the actual GO through OnPacket.
+	f.world.Owner.Alive = true
+	f.world.Owner.Health = 100
+	packet := smiteEvent(true, s.castCount, 3)
+	_, _, _, offset, _ := castEvent(packet)
+	binary.LittleEndian.PutUint32(packet[offset-4:], 2006)
+	h := &encounterReadHook{fakeSession: f, module: "buddy-party"}
+	h.hook = func() {
+		s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: packet})
+	}
+	s.session = h
+	out, err := s.EncounterObservation(context.Background(), &emptypb.Empty{})
+	if h.finished != nil {
+		<-h.finished
+	}
+	if err != nil || !h.completed || out.Reason != "world_observation_superseded" || out.MapId != nil ||
+		!s.supportOp.view.ServerCastGo || s.supportOp.view.EffectObserved || !s.resurrectionBindings[3] ||
+		s.supportOp.view.OperationRevision != revision || countPackets(f, opcode.CMSGCastSpell) != 1 {
+		t.Fatalf("older alive snapshot was attributed to newly arrived GO: out=%v operation=%v err=%v", out, s.supportOp, err)
+	}
+	// A subsequent fresh read, begun after GO, retains the existing settlement
+	// contract; superseding one composite must not create a lasting hold/replay.
+	s.session = f
+	fresh, err := s.EncounterObservation(context.Background(), &emptypb.Empty{})
+	if err != nil || fresh.Reason != "" || !s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "confirmed_alive" || s.resurrectionBindings[3] || countPackets(f, opcode.CMSGCastSpell) != 1 {
+		t.Fatalf("fresh post-GO life could not settle existing operation: out=%v operation=%v err=%v", fresh, s.supportOp, err)
 	}
 }
