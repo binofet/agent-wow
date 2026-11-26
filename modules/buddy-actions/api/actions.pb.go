@@ -8567,49 +8567,50 @@ func (x *EncounterParty) GetRevision() uint64 {
 }
 
 type EncounterPlayer struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	Guid              uint64                 `protobuf:"varint,1,opt,name=guid,proto3" json:"guid,omitempty"`
-	Present           bool                   `protobuf:"varint,2,opt,name=present,proto3" json:"present,omitempty"`
-	MapKnown          bool                   `protobuf:"varint,3,opt,name=map_known,json=mapKnown,proto3" json:"map_known,omitempty"`
-	MapId             *uint32                `protobuf:"varint,4,opt,name=map_id,json=mapId,proto3,oneof" json:"map_id,omitempty"`
-	AliveKnown        bool                   `protobuf:"varint,5,opt,name=alive_known,json=aliveKnown,proto3" json:"alive_known,omitempty"`
-	Alive             *bool                  `protobuf:"varint,6,opt,name=alive,proto3,oneof" json:"alive,omitempty"`
-	HealthKnown       bool                   `protobuf:"varint,7,opt,name=health_known,json=healthKnown,proto3" json:"health_known,omitempty"`
-	Health            uint32                 `protobuf:"varint,8,opt,name=health,proto3" json:"health,omitempty"`
-	MaxHealth         uint32                 `protobuf:"varint,9,opt,name=max_health,json=maxHealth,proto3" json:"max_health,omitempty"`
-	FactionTemplate   uint32                 `protobuf:"varint,10,opt,name=faction_template,json=factionTemplate,proto3" json:"faction_template,omitempty"`
-	PositionKnown     bool                   `protobuf:"varint,11,opt,name=position_known,json=positionKnown,proto3" json:"position_known,omitempty"`
-	PositionRevision  uint64                 `protobuf:"varint,12,opt,name=position_revision,json=positionRevision,proto3" json:"position_revision,omitempty"`
-	X                 float32                `protobuf:"fixed32,13,opt,name=x,proto3" json:"x,omitempty"`
-	Y                 float32                `protobuf:"fixed32,14,opt,name=y,proto3" json:"y,omitempty"`
-	Z                 float32                `protobuf:"fixed32,15,opt,name=z,proto3" json:"z,omitempty"`
-	Orientation       float32                `protobuf:"fixed32,16,opt,name=orientation,proto3" json:"orientation,omitempty"`
-	ClassKnown        bool                   `protobuf:"varint,17,opt,name=class_known,json=classKnown,proto3" json:"class_known,omitempty"`
-	ClassId           uint32                 `protobuf:"varint,18,opt,name=class_id,json=classId,proto3" json:"class_id,omitempty"`
-	RaceKnown         bool                   `protobuf:"varint,19,opt,name=race_known,json=raceKnown,proto3" json:"race_known,omitempty"`
-	RaceId            uint32                 `protobuf:"varint,20,opt,name=race_id,json=raceId,proto3" json:"race_id,omitempty"`
-	LevelKnown        bool                   `protobuf:"varint,21,opt,name=level_known,json=levelKnown,proto3" json:"level_known,omitempty"`
-	Level             uint32                 `protobuf:"varint,22,opt,name=level,proto3" json:"level,omitempty"`
-	PowerKnown        bool                   `protobuf:"varint,23,opt,name=power_known,json=powerKnown,proto3" json:"power_known,omitempty"`
-	PowerType         uint32                 `protobuf:"varint,24,opt,name=power_type,json=powerType,proto3" json:"power_type,omitempty"`
-	Power             uint32                 `protobuf:"varint,25,opt,name=power,proto3" json:"power,omitempty"`
-	MaxPower          uint32                 `protobuf:"varint,26,opt,name=max_power,json=maxPower,proto3" json:"max_power,omitempty"`
-	MovementKnown     bool                   `protobuf:"varint,27,opt,name=movement_known,json=movementKnown,proto3" json:"movement_known,omitempty"`
-	Moving            bool                   `protobuf:"varint,28,opt,name=moving,proto3" json:"moving,omitempty"`
-	CombatKnown       bool                   `protobuf:"varint,29,opt,name=combat_known,json=combatKnown,proto3" json:"combat_known,omitempty"`
-	InCombat          bool                   `protobuf:"varint,30,opt,name=in_combat,json=inCombat,proto3" json:"in_combat,omitempty"`
-	ComboKnown        bool                   `protobuf:"varint,31,opt,name=combo_known,json=comboKnown,proto3" json:"combo_known,omitempty"`
-	ComboTargetGuid   uint64                 `protobuf:"varint,32,opt,name=combo_target_guid,json=comboTargetGuid,proto3" json:"combo_target_guid,omitempty"`
-	ComboPoints       uint32                 `protobuf:"varint,33,opt,name=combo_points,json=comboPoints,proto3" json:"combo_points,omitempty"`
-	PlayerFlags       uint32                 `protobuf:"varint,34,opt,name=player_flags,json=playerFlags,proto3" json:"player_flags,omitempty"`
-	PositionAgeMs     uint64                 `protobuf:"varint,35,opt,name=position_age_ms,json=positionAgeMs,proto3" json:"position_age_ms,omitempty"`
-	PositionInferred  bool                   `protobuf:"varint,36,opt,name=position_inferred,json=positionInferred,proto3" json:"position_inferred,omitempty"`
-	PositionEstimated bool                   `protobuf:"varint,37,opt,name=position_estimated,json=positionEstimated,proto3" json:"position_estimated,omitempty"`
-	PositionAgeKnown  bool                   `protobuf:"varint,38,opt,name=position_age_known,json=positionAgeKnown,proto3" json:"position_age_known,omitempty"`
-	CombatReachKnown  bool                   `protobuf:"varint,39,opt,name=combat_reach_known,json=combatReachKnown,proto3" json:"combat_reach_known,omitempty"`
-	CombatReach       float32                `protobuf:"fixed32,40,opt,name=combat_reach,json=combatReach,proto3" json:"combat_reach,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Guid               uint64                 `protobuf:"varint,1,opt,name=guid,proto3" json:"guid,omitempty"`
+	Present            bool                   `protobuf:"varint,2,opt,name=present,proto3" json:"present,omitempty"`
+	MapKnown           bool                   `protobuf:"varint,3,opt,name=map_known,json=mapKnown,proto3" json:"map_known,omitempty"`
+	MapId              *uint32                `protobuf:"varint,4,opt,name=map_id,json=mapId,proto3,oneof" json:"map_id,omitempty"`
+	AliveKnown         bool                   `protobuf:"varint,5,opt,name=alive_known,json=aliveKnown,proto3" json:"alive_known,omitempty"`
+	Alive              *bool                  `protobuf:"varint,6,opt,name=alive,proto3,oneof" json:"alive,omitempty"`
+	HealthKnown        bool                   `protobuf:"varint,7,opt,name=health_known,json=healthKnown,proto3" json:"health_known,omitempty"`
+	Health             uint32                 `protobuf:"varint,8,opt,name=health,proto3" json:"health,omitempty"`
+	MaxHealth          uint32                 `protobuf:"varint,9,opt,name=max_health,json=maxHealth,proto3" json:"max_health,omitempty"`
+	FactionTemplate    uint32                 `protobuf:"varint,10,opt,name=faction_template,json=factionTemplate,proto3" json:"faction_template,omitempty"`
+	PositionKnown      bool                   `protobuf:"varint,11,opt,name=position_known,json=positionKnown,proto3" json:"position_known,omitempty"`
+	PositionRevision   uint64                 `protobuf:"varint,12,opt,name=position_revision,json=positionRevision,proto3" json:"position_revision,omitempty"`
+	X                  float32                `protobuf:"fixed32,13,opt,name=x,proto3" json:"x,omitempty"`
+	Y                  float32                `protobuf:"fixed32,14,opt,name=y,proto3" json:"y,omitempty"`
+	Z                  float32                `protobuf:"fixed32,15,opt,name=z,proto3" json:"z,omitempty"`
+	Orientation        float32                `protobuf:"fixed32,16,opt,name=orientation,proto3" json:"orientation,omitempty"`
+	ClassKnown         bool                   `protobuf:"varint,17,opt,name=class_known,json=classKnown,proto3" json:"class_known,omitempty"`
+	ClassId            uint32                 `protobuf:"varint,18,opt,name=class_id,json=classId,proto3" json:"class_id,omitempty"`
+	RaceKnown          bool                   `protobuf:"varint,19,opt,name=race_known,json=raceKnown,proto3" json:"race_known,omitempty"`
+	RaceId             uint32                 `protobuf:"varint,20,opt,name=race_id,json=raceId,proto3" json:"race_id,omitempty"`
+	LevelKnown         bool                   `protobuf:"varint,21,opt,name=level_known,json=levelKnown,proto3" json:"level_known,omitempty"`
+	Level              uint32                 `protobuf:"varint,22,opt,name=level,proto3" json:"level,omitempty"`
+	PowerKnown         bool                   `protobuf:"varint,23,opt,name=power_known,json=powerKnown,proto3" json:"power_known,omitempty"`
+	PowerType          uint32                 `protobuf:"varint,24,opt,name=power_type,json=powerType,proto3" json:"power_type,omitempty"`
+	Power              uint32                 `protobuf:"varint,25,opt,name=power,proto3" json:"power,omitempty"`
+	MaxPower           uint32                 `protobuf:"varint,26,opt,name=max_power,json=maxPower,proto3" json:"max_power,omitempty"`
+	MovementKnown      bool                   `protobuf:"varint,27,opt,name=movement_known,json=movementKnown,proto3" json:"movement_known,omitempty"`
+	Moving             bool                   `protobuf:"varint,28,opt,name=moving,proto3" json:"moving,omitempty"`
+	CombatKnown        bool                   `protobuf:"varint,29,opt,name=combat_known,json=combatKnown,proto3" json:"combat_known,omitempty"`
+	InCombat           bool                   `protobuf:"varint,30,opt,name=in_combat,json=inCombat,proto3" json:"in_combat,omitempty"`
+	ComboKnown         bool                   `protobuf:"varint,31,opt,name=combo_known,json=comboKnown,proto3" json:"combo_known,omitempty"`
+	ComboTargetGuid    uint64                 `protobuf:"varint,32,opt,name=combo_target_guid,json=comboTargetGuid,proto3" json:"combo_target_guid,omitempty"`
+	ComboPoints        uint32                 `protobuf:"varint,33,opt,name=combo_points,json=comboPoints,proto3" json:"combo_points,omitempty"`
+	PlayerFlags        uint32                 `protobuf:"varint,34,opt,name=player_flags,json=playerFlags,proto3" json:"player_flags,omitempty"`
+	PositionAgeMs      uint64                 `protobuf:"varint,35,opt,name=position_age_ms,json=positionAgeMs,proto3" json:"position_age_ms,omitempty"`
+	PositionInferred   bool                   `protobuf:"varint,36,opt,name=position_inferred,json=positionInferred,proto3" json:"position_inferred,omitempty"`
+	PositionEstimated  bool                   `protobuf:"varint,37,opt,name=position_estimated,json=positionEstimated,proto3" json:"position_estimated,omitempty"`
+	PositionAgeKnown   bool                   `protobuf:"varint,38,opt,name=position_age_known,json=positionAgeKnown,proto3" json:"position_age_known,omitempty"`
+	CombatReachKnown   bool                   `protobuf:"varint,39,opt,name=combat_reach_known,json=combatReachKnown,proto3" json:"combat_reach_known,omitempty"`
+	CombatReach        float32                `protobuf:"fixed32,40,opt,name=combat_reach,json=combatReach,proto3" json:"combat_reach,omitempty"`
+	SelectedTargetGuid *uint64                `protobuf:"varint,41,opt,name=selected_target_guid,json=selectedTargetGuid,proto3,oneof" json:"selected_target_guid,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *EncounterPlayer) Reset() {
@@ -8918,6 +8919,13 @@ func (x *EncounterPlayer) GetCombatReachKnown() bool {
 func (x *EncounterPlayer) GetCombatReach() float32 {
 	if x != nil {
 		return x.CombatReach
+	}
+	return 0
+}
+
+func (x *EncounterPlayer) GetSelectedTargetGuid() uint64 {
+	if x != nil && x.SelectedTargetGuid != nil {
+		return *x.SelectedTargetGuid
 	}
 	return 0
 }
@@ -14076,9 +14084,11 @@ type RespondToSummonRequest struct {
 	OfferSequence uint64                 `protobuf:"varint,4,opt,name=offer_sequence,json=offerSequence,proto3" json:"offer_sequence,omitempty"`
 	SummonerGuid  uint64                 `protobuf:"varint,5,opt,name=summoner_guid,json=summonerGuid,proto3" json:"summoner_guid,omitempty"`
 	// A missing choice must never silently decline a real offer.
-	Accept        *bool `protobuf:"varint,6,opt,name=accept,proto3,oneof" json:"accept,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Accept *bool `protobuf:"varint,6,opt,name=accept,proto3,oneof" json:"accept,omitempty"`
+	// Optional caller-selected roster precondition, checked before responding.
+	ExpectedGroupGuid uint64 `protobuf:"varint,7,opt,name=expected_group_guid,json=expectedGroupGuid,proto3" json:"expected_group_guid,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *RespondToSummonRequest) Reset() {
@@ -14151,6 +14161,13 @@ func (x *RespondToSummonRequest) GetAccept() bool {
 		return *x.Accept
 	}
 	return false
+}
+
+func (x *RespondToSummonRequest) GetExpectedGroupGuid() uint64 {
+	if x != nil {
+		return x.ExpectedGroupGuid
+	}
+	return 0
 }
 
 var File_modules_buddy_actions_actions_proto protoreflect.FileDescriptor
@@ -15133,7 +15150,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0eEncounterParty\x123\n" +
 	"\x05group\x18\x01 \x01(\v2\x1d.warcraftbuddy.party.v1.GroupR\x05group\x12J\n" +
 	"\fraid_targets\x18\x02 \x01(\v2'.warcraftbuddy.party.v1.RaidTargetStateR\vraidTargets\x12\x1a\n" +
-	"\brevision\x18\x03 \x01(\x04R\brevision\"\xa1\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\"\xf1\n" +
 	"\n" +
 	"\x0fEncounterPlayer\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
@@ -15184,9 +15201,11 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x12position_estimated\x18% \x01(\bR\x11positionEstimated\x12,\n" +
 	"\x12position_age_known\x18& \x01(\bR\x10positionAgeKnown\x12,\n" +
 	"\x12combat_reach_known\x18' \x01(\bR\x10combatReachKnown\x12!\n" +
-	"\fcombat_reach\x18( \x01(\x02R\vcombatReachB\t\n" +
+	"\fcombat_reach\x18( \x01(\x02R\vcombatReach\x125\n" +
+	"\x14selected_target_guid\x18) \x01(\x04H\x02R\x12selectedTargetGuid\x88\x01\x01B\t\n" +
 	"\a_map_idB\b\n" +
-	"\x06_alive\"\xad\a\n" +
+	"\x06_aliveB\x17\n" +
+	"\x15_selected_target_guid\"\xad\a\n" +
 	"\x11EncounterCreature\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x18\n" +
@@ -15758,7 +15777,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\bvisit_id\x18\x03 \x01(\x04R\avisitId\x12!\n" +
 	"\fuse_revision\x18\x04 \x01(\x04R\vuseRevision\x12G\n" +
 	"\blast_use\x18\x05 \x01(\v2,.warcraftbuddy.actions.v1.SummoningObjectUseR\alastUse\x12;\n" +
-	"\x05offer\x18\x06 \x01(\v2%.warcraftbuddy.actions.v1.SummonOfferR\x05offer\"\xe3\x01\n" +
+	"\x05offer\x18\x06 \x01(\v2%.warcraftbuddy.actions.v1.SummonOfferR\x05offer\"\x93\x02\n" +
 	"\x16RespondToSummonRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -15766,7 +15785,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\bvisit_id\x18\x03 \x01(\x04R\avisitId\x12%\n" +
 	"\x0eoffer_sequence\x18\x04 \x01(\x04R\rofferSequence\x12#\n" +
 	"\rsummoner_guid\x18\x05 \x01(\x04R\fsummonerGuid\x12\x1b\n" +
-	"\x06accept\x18\x06 \x01(\bH\x00R\x06accept\x88\x01\x01B\t\n" +
+	"\x06accept\x18\x06 \x01(\bH\x00R\x06accept\x88\x01\x01\x12.\n" +
+	"\x13expected_group_guid\x18\a \x01(\x04R\x11expectedGroupGuidB\t\n" +
 	"\a_accept2\xdc6\n" +
 	"\fBuddyActions\x12~\n" +
 	"\x14AreaTriggerReference\x125.warcraftbuddy.actions.v1.AreaTriggerReferenceRequest\x1a/.warcraftbuddy.actions.v1.AreaTriggerReferences\x12w\n" +

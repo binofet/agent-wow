@@ -809,7 +809,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-ˆ²
+ˆ³
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1786,7 +1786,7 @@ candidates"­
 EncounterParty3
 group (2.warcraftbuddy.party.v1.GroupRgroupJ
 raid_targets (2'.warcraftbuddy.party.v1.RaidTargetStateRraidTargets
-revision (Rrevision"¡
+revision (Rrevision"ñ
 
 EncounterPlayer
 guid (Rguid
@@ -1837,9 +1837,11 @@ comboKnown*
 position_estimated% (RpositionEstimated,
 position_age_known& (RpositionAgeKnown,
 combat_reach_known' (RcombatReachKnown!
-combat_reach( (RcombatReachB	
+combat_reach( (RcombatReach5
+selected_target_guid) (HRselectedTargetGuidˆB	
 _map_idB
-_alive"­
+_aliveB
+_selected_target_guid"­
 EncounterCreature
 guid (Rguid
 entry (Rentry
@@ -2411,7 +2413,7 @@ session_id (	R	sessionId
 visit_id (RvisitId!
 use_revision (RuseRevisionG
 last_use (2,.warcraftbuddy.actions.v1.SummoningObjectUseRlastUse;
-offer (2%.warcraftbuddy.actions.v1.SummonOfferRoffer"ã
+offer (2%.warcraftbuddy.actions.v1.SummonOfferRoffer"“
 RespondToSummonRequest
 
 session_id (	R	sessionId
@@ -2419,7 +2421,8 @@ session_id (	R	sessionId
 visit_id (RvisitId%
 offer_sequence (RofferSequence#
 summoner_guid (RsummonerGuid
-accept (H RacceptˆB	
+accept (H Racceptˆ.
+expected_group_guid (RexpectedGroupGuidB	
 _accept2Ü6
 BuddyActions~
 AreaTriggerReference5.warcraftbuddy.actions.v1.AreaTriggerReferenceRequest/.warcraftbuddy.actions.v1.AreaTriggerReferencesw

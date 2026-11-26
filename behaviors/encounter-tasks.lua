@@ -3,6 +3,7 @@
 local M = {tuning={lease_ms=3000,renew_below_ms=1500,response_yards=10,anchor_yards=2}}
 local state = {retired={}}
 local instance_entry = encounter_instance_entry
+local summoning = encounter_party_summon
 local function number(n) return type(n)=="number" and n==n and n>-math.huge and n<math.huge end
 local function id(s) return type(s)=="string" and #s>0 and #s<=80 end
 local function guid(s)
@@ -49,6 +50,7 @@ function M.on_event(event)
         state.observed={sessionId=o.sessionId,selfGuid=o.selfGuid,visitId=o.visitId,mapId=o.mapId}
     end
     local task=state.current
+    if summoning then summoning.on_event(task and task.kind=="party_summon" and task or nil,event) end
     if task and task.kind=="enter_instance" and instance_entry then instance_entry.on_event(task,event) end
     local receipt=event.receipt
     if task and task.kind~="enter_instance" and task.operation and receipt then
@@ -80,9 +82,10 @@ function M.on_event(event)
         if state.next and (v.id==nil or v.id==state.next.id) then
             state.retired[state.next.id]="canceled";state.next=nil
         end
-    elseif v.task=="wait_for_pull" or v.task=="enter_instance" or v.task=="rally_to" then
+    elseif v.task=="wait_for_pull" or v.task=="enter_instance" or v.task=="rally_to" or v.task=="party_summon" then
         local next_task
-        if v.task=="enter_instance" then next_task=instance_entry and instance_entry.request(v,state.observed)
+        if v.task=="party_summon" then next_task=summoning and summoning.request(v)
+        elseif v.task=="enter_instance" then next_task=instance_entry and instance_entry.request(v,state.observed)
         else next_task=request(v) end
         if not next_task then state.inputError="invalid_"..v.task.."_intent"
         elseif not state.retired[next_task.id] and (not task or task.id~=next_task.id) then
@@ -121,6 +124,11 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act,pause_rally)
     if not state.current and state.next then state.current,state.next=state.next,nil end
     local task=state.current
     if not task then return {status=state.inputError and {phase=state.inputError} or state.last} end
+    if task.kind=="party_summon" and summoning then
+        local view=summoning.step(task,obs,frame,sequence,in_combat,can_act)
+        if view.done then pop(task) end
+        return view
+    end
     if task.kind=="enter_instance" then
         local view=instance_entry and instance_entry.step(task,obs,frame,sequence,in_combat,can_act)
         if not view then return {status={phase="instance_entry_handler_unavailable"},hold=true,task=task} end
@@ -280,6 +288,9 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act,pause_rally)
 end
 
 function M.commit(view,chosen)
+    if view and view.task and view.task.kind=="party_summon" and summoning then
+        summoning.commit(view,chosen);return
+    end
     if view and view.task and view.task.kind=="rally_to" and chosen==view.action and chosen then
         if chosen.capability=="approach_target" then view.task.approached=true
         elseif chosen.capability=="stop_movement" then view.task.stopIssued=true end
@@ -298,6 +309,7 @@ end
 function M.allow(view,obs,proposed)
     if not proposed or not view or not view.hold then return true end
     local cap=proposed.capability
+    if view.task and view.task.kind=="party_summon" then return view.action==proposed end
     if view.task and view.task.kind=="rally_to" and
        (view.action==proposed or view.task.pausedForEncounter and view.rangedWithdrawal==proposed) then return true end
     if view.task and view.task.kind=="enter_instance" then
@@ -343,7 +355,8 @@ function M.import_state(checkpoint)
         local rally=type(task)=="table" and task.kind=="rally_to" and guid(task.guideGuid) and
             (task.destinationGuid==nil or guid(task.destinationGuid)) and number(task.responseYards) and
             task.responseYards>0 and number(task.deadline)
-        if type(task)~="table" or not id(task.id) or (task.kind~="wait_for_pull" and not rally and (not instance_entry or not instance_entry.validate(task))) or
+        local summon=summoning and summoning.validate(task)
+        if type(task)~="table" or not id(task.id) or (task.kind~="wait_for_pull" and not rally and not summon and (not instance_entry or not instance_entry.validate(task))) or
            task.pausedForEncounter~=nil and type(task.pausedForEncounter)~="boolean" or
            task.token~=nil and (type(task.token)~="string" or #task.token==0) or
            task.deadline~=nil and (not number(task.deadline) or task.deadline<0) then return false end

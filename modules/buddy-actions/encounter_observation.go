@@ -268,6 +268,9 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 		if p.AliveKnown {
 			view.Alive = proto.Bool(p.Alive)
 		}
+		if p.TargetKnown {
+			view.SelectedTargetGuid = proto.Uint64(p.TargetGuid)
+		}
 		if guid == s.selfGUID {
 			view.ComboKnown, view.ComboTargetGuid, view.ComboPoints = s.weaponCombo.known, s.weaponCombo.target, s.weaponCombo.points
 		}

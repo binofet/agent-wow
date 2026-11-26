@@ -103,6 +103,9 @@ func (s *Service) RespondToSummon(ctx context.Context, r *actionsv1.RespondToSum
 	if offer.RequestedAccept != nil && *offer.RequestedAccept == *r.Accept {
 		return s.summoningObservationLocked(), nil
 	}
+	if r.ExpectedGroupGuid != 0 && !s.summonPartyLocked(ctx, r.ExpectedGroupGuid)[r.SummonerGuid] {
+		return nil, status.Error(codes.FailedPrecondition, "summoner must remain online in the selected group")
+	}
 	w, err := s.readWorldSnapshot(ctx)
 	self := w.GetSelf()
 	if err != nil || !s.summonVisitCurrent(w, r.VisitId) || !offer.Pending || !s.now().Before(s.summoning.expires) ||

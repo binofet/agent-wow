@@ -130,6 +130,12 @@ func TestSummonResponseRequiresCurrentLiveOfferAndNeverReplays(t *testing.T) {
 			t.Fatal("consumed an offer in combat")
 		}
 		f.world.Self.UnitFlags = 0
+		r.ExpectedGroupGuid = 77
+		f.party.Group.Members[1].Online = false
+		if _, err := s.RespondToSummon(context.Background(), r); err == nil {
+			t.Fatal("consumed an offer after the selected group member went offline")
+		}
+		f.party.Group.Members[1].Online = true
 		f.failSend = accept // exercise both an acknowledged decline and ambiguous accept
 		out, err := s.RespondToSummon(context.Background(), r)
 		o := out.GetOffer()

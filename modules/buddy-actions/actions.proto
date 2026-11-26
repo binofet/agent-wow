@@ -928,6 +928,7 @@ message EncounterPlayer {
   bool position_age_known = 38;
   bool combat_reach_known = 39;
   float combat_reach = 40;
+  optional uint64 selected_target_guid = 41;
 }
 message EncounterCreature {
   uint64 guid = 1;
@@ -1574,4 +1575,6 @@ message RespondToSummonRequest {
   uint64 summoner_guid = 5;
   // A missing choice must never silently decline a real offer.
   optional bool accept = 6;
+  // Optional caller-selected roster precondition, checked before responding.
+  uint64 expected_group_guid = 7;
 }
