@@ -15,7 +15,9 @@ import (
 //
 // A bundle is qualified by its hooks, import and event replay. The first real
 // decision runs only on actual input. A failed active callback fences its VM;
-// a subsequent reload can recover from the last committed export.
+// a subsequent reload can recover from the last committed export. A faulted
+// session may publish a valid replay prefix at a safe event boundary; remaining
+// ingress stays queued, and reservation remains fenced until it is consumed.
 func (s *Session) Reload(ctx context.Context, source, expectedRevision string) (string, error) {
 	return s.reload(ctx, source, expectedRevision, nil)
 }
@@ -72,6 +74,7 @@ func (s *Session) reload(ctx context.Context, source, expectedRevision string, a
 		s.mu.Unlock()
 		return rev, errors.New("behavior writer epoch exhausted")
 	}
+	recovering := s.fault != nil
 	s.epoch++
 	s.swapping = true
 	s.admissible = 0
@@ -92,8 +95,15 @@ func (s *Session) reload(ctx context.Context, source, expectedRevision string, a
 		s.mu.Unlock()
 	}()
 
-	ctx, cancel := context.WithTimeout(ctx, sessionCatchupLimit)
+	window, cancel := context.WithTimeout(ctx, sessionCatchupLimit)
 	defer cancel()
+	if !recovering {
+		ctx = window
+	}
+	// A dead VM cannot drain a legal backlog. Fault recovery may publish a
+	// successfully exported prefix and retain the rest for normal bounded
+	// drains. The caller deadline and each callback watchdog remain strict.
+	// Healthy reloads retain their original all-or-nothing catch-up deadline.
 	if afterFence != nil {
 		afterFence()
 	}
@@ -113,7 +123,7 @@ func (s *Session) reload(ctx context.Context, source, expectedRevision string, a
 			s.mu.Unlock()
 			return rev, fmt.Errorf("candidate catch-up: %w", err)
 		}
-		if consumed == len(s.queue) {
+		if consumed == len(s.queue) || recovering && consumed > 0 && window.Err() != nil {
 			old := s.vm
 			s.vm, s.state, s.rev, s.fault = candidate, state, version, nil
 			s.latest = nil // the replacement has not made a decision yet
@@ -127,6 +137,9 @@ func (s *Session) reload(ctx context.Context, source, expectedRevision string, a
 		batch := append([]queuedEvent(nil), s.queue[consumed:]...)
 		s.mu.Unlock()
 		for _, row := range batch {
+			if recovering && consumed > 0 && window.Err() != nil {
+				break
+			}
 			if err := ctx.Err(); err != nil {
 				return rev, fmt.Errorf("candidate catch-up: %w", err)
 			}
