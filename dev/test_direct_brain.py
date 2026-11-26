@@ -142,6 +142,147 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             self.assertTrue(brain.client._read_only_call('policy_show',{'first_line':1},{'policy_show'}))
             self.assertFalse(brain.client._read_only_call('policy_show',{'save_as':'own.lua'},{'policy_show'}))
 
+    def test_preparation_timeout_recovers_only_after_same_bound_fresh_read(self):
+        with self.rig([spoken()]) as (loop,brain,state,http):
+            original=self.rpc.call; polls=[]
+            def call(method,params,timeout=None):
+                if method=='buddy-chat.poll' and timeout==1.5:
+                    polls.append((copy.deepcopy(params),timeout))
+                    if len(polls)==1:raise converse.ChatPollTimeout('synthetic delayed read')
+                return original(method,params,timeout=timeout)
+            self.rpc.call=call
+            result=loop.generate_reply([dict(text='Improve my existing policy')],state)
+            self.assertEqual(result['text'],REPLY['text'])
+            self.assertEqual(len(http.requests),1)
+            self.assertEqual(len(polls),2)
+            self.assertEqual(polls[0],polls[1])
+            self.assertEqual(polls[0][1],1.5)
+            self.assertEqual((loop.session_id,loop.cursor),(self.rpc.chat,1))
+            self.assertFalse(self.rpc.commands or self.rpc.replies)
+            self.assertEqual(brain.last_development_result['counts']['completedTools'],0)
+
+    def test_preparation_recovery_never_ignores_replacement_or_permanent_failure(self):
+        for case in ('stop','chat_body','local_body','cursor','permanent','invalid','unavailable'):
+            self.rpc=PublicRPC()
+            with self.subTest(case=case), self.rig([]) as (loop,brain,state,http):
+                original=self.rpc.call;polls=[]
+                def call(method,params,timeout=None):
+                    if method=='buddy-chat.poll' and timeout==1.5:
+                        polls.append(copy.deepcopy(params))
+                        if case=='invalid':raise converse.ConversationError('invalid response')
+                        if case=='unavailable':raise converse.CapabilityUnavailable('offline')
+                        if len(polls)==1:raise converse.ChatPollTimeout('delayed')
+                        if case=='permanent':raise converse.ChatPollTimeout('still delayed')
+                        result=original(method,params,timeout=timeout)
+                        if case=='stop':
+                            result['messages']=[dict(sequence='2',text='Stop',senderGuid='3',
+                                channel='WHISPER',receiverGuid='4')]
+                        if case=='chat_body':result['sessionId']='other-chat'
+                        if case=='local_body':loop.character_guid=8
+                        if case=='cursor':loop.cursor=2
+                        return result
+                    return original(method,params,timeout=timeout)
+                self.rpc.call=call
+                with self.assertRaises(converse.OwnerInputPending):loop.generate_reply([],state)
+                self.assertEqual(len(polls),1 if case in ('invalid','unavailable') else 2)
+                self.assertTrue(all(p==polls[0] for p in polls))
+                self.assertEqual(http.requests,[])
+                self.assertFalse(self.rpc.commands or self.rpc.replies)
+                self.assertEqual(brain.last_failure_receipt.get('pendingTools',[]),[])
+                reason={'stop':'owner_input_waiting','chat_body':'chat_body_changed',
+                    'local_body':'owned_body_changed','cursor':'owned_body_changed'}.get(case,'chat_freshness_unavailable')
+                self.assertEqual(brain.last_failure_receipt['reason'],reason)
+
+    def test_delayed_api_preparation_can_recover_once_before_first_http(self):
+        with self.rig([spoken()]) as (loop,brain,state,http):
+            original=self.rpc.call;polls=[];request=brain.client._http
+            def call(method,params,timeout=None):
+                if method=='buddy-chat.poll' and timeout==1.5:
+                    polls.append(copy.deepcopy(params))
+                    if len(polls)==2:raise converse.ChatPollTimeout('preparing first request')
+                return original(method,params,timeout=timeout)
+            def delayed(*args,**kwargs):
+                time.sleep(.8)
+                return request(*args,**kwargs)
+            self.rpc.call=call
+            with patch.object(brain.client,'_http',side_effect=delayed):
+                self.assertEqual(loop.generate_reply([],state),REPLY)
+            self.assertEqual(len(http.requests),1)
+            self.assertEqual(len(polls),3)
+            self.assertTrue(all(p==polls[0] for p in polls))
+            self.assertFalse(self.rpc.commands or self.rpc.replies)
+
+    def test_preparation_read_recovery_is_once_per_generation_not_per_check(self):
+        with self.rig([]) as (loop,brain,state,http):
+            original=self.rpc.call;polls=[];request=brain.client._http
+            def call(method,params,timeout=None):
+                if method=='buddy-chat.poll' and timeout==1.5:
+                    polls.append(copy.deepcopy(params))
+                    if len(polls) in (1,3):raise converse.ChatPollTimeout('transient read')
+                return original(method,params,timeout=timeout)
+            def delayed(*args,**kwargs):
+                time.sleep(.8)
+                return request(*args,**kwargs)
+            self.rpc.call=call
+            with patch.object(brain.client,'_http',side_effect=delayed):
+                with self.assertRaises(converse.OwnerInputPending):loop.generate_reply([],state)
+            self.assertEqual(len(polls),3)
+            self.assertEqual(http.requests,[])
+            self.assertEqual(brain.last_failure_receipt['chatFreshnessFailure'],'read_timeout')
+
+    def test_preparation_recovery_preserves_prior_unknown_tool_custody(self):
+        with self.ordinary_party_rpc() as native:
+            native.fail_mutation=True
+            with self.rig([chat(('lost','party_invite',dict(name='Joel')))],developer=False) as (loop,brain,state,_):
+                with self.assertRaisesRegex(converse.ConversationError,'tool_outcome_unknown'):
+                    loop.generate_reply([],state)
+            retained={path:path.read_bytes() for path in (self.state/'party-invites').rglob('state.json')}
+            self.assertTrue(retained)
+            native.fail_mutation=False
+            with self.rig([chat(('later','party_invite',dict(name='Joel')))],developer=False) as (loop,brain,state,http):
+                original=self.rpc.call;polls=[]
+                def call(method,params,timeout=None):
+                    if method=='buddy-chat.poll' and timeout==1.5:
+                        polls.append(copy.deepcopy(params))
+                        if len(polls)==1:raise converse.ChatPollTimeout('preparation delayed')
+                    return original(method,params,timeout=timeout)
+                with patch.object(self.rpc,'call',side_effect=call):
+                    with self.assertRaisesRegex(converse.ConversationError,'tool_outcome_unknown'):
+                        loop.generate_reply([],state)
+                self.assertEqual(len(polls),2)
+                self.assertEqual(len(http.requests),1)
+                self.assertFalse(brain.last_failure_receipt['tools'][-1]['unknownReceipt']['replayAllowed'])
+            self.assertEqual(native.writes,[('buddy-party.invite',dict(name='Joel'))])
+            for path,content in retained.items():self.assertEqual(path.read_bytes(),content)
+
+    def test_post_entry_timeout_does_not_retry_model_or_completed_mutation(self):
+        with self.ordinary_party_rpc() as native:
+            with self.rig([chat(('invite','party_invite',dict(name='Joel'))),spoken()],developer=False) as (loop,brain,state,http):
+                original=self.rpc.call;original_native=native.call;entered=[False];polls=[]
+                def native_call(method,params,**kwargs):
+                    result=original_native(method,params,**kwargs)
+                    if method=='buddy-party.invite':
+                        entered[0]=True
+                        time.sleep(.8) # Advance past the existing poll cadence, not its deadline.
+                    return result
+                native.call=native_call
+                def call(method,params,timeout=None):
+                    if method=='buddy-chat.poll' and timeout==1.5:
+                        polls.append(entered[0])
+                        if entered[0]:raise converse.ChatPollTimeout('after entered tool')
+                    return original(method,params,timeout=timeout)
+                self.rpc.call=call
+                with self.assertRaises(converse.OwnerInputPending):loop.generate_reply([],state)
+                self.assertEqual(native.writes,[('buddy-party.invite',dict(name='Joel'))])
+                self.assertEqual(len(http.requests),1)
+                self.assertEqual(polls,[False,True])
+                receipt=brain.last_failure_receipt
+                self.assertEqual(receipt['reason'],'chat_freshness_unavailable')
+                self.assertEqual(receipt['chatFreshnessFailure'],'read_timeout')
+                self.assertEqual(receipt['counts']['completedTools'],1)
+                self.assertEqual(receipt['tools'][0]['status'],'returned')
+                self.assertFalse(self.rpc.commands or self.rpc.replies)
+
     def test_local_meter_deadlines_reach_real_brain_without_model_or_game_call(self):
         with patch.object(converse, "ROOT", self.workspace):
             brain=converse.DirectBrain(self.state,developer_workspace=self.workspace,model='loaded-exact',provider='local',base_url='http://127.0.0.1:1/v1',

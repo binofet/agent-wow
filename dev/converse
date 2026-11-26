@@ -2711,6 +2711,10 @@ class AgentBrain:
             cursor=context.get('cursor') if type(context.get('cursor')) is int and 0<=context['cursor']<2**64 else None,
             requestSource=source if source in ('owner','party_agent','mission_fault','combat_review','spell_learning','banter') else 'unknown')
         try:
+            if isinstance(self, DirectBrain):
+                prepare = getattr(cancelled, 'prepare', None)
+                if callable(prepare) and prepare():
+                    raise OwnerInputPending('Chat freshness unavailable before API preparation')
             return self._generate(history,control_state,cancelled)
         except BaseException as error:
             if self.last_failure_receipt is None:
@@ -2867,6 +2871,10 @@ class DirectBrain(AgentBrain):
         mutation_entered = [False]
         def interrupted():
             return self.stopped() or bool(cancelled and cancelled())
+        def entered():
+            seal = getattr(cancelled, 'entered', None)
+            if callable(seal): seal()
+        interrupted.entered = entered
         private_context = getattr(self, '_generation_context', None) or {}
         literal_command=private_context.get('literalGMCommand')
         if literal_command is not None:
@@ -2968,6 +2976,7 @@ class DirectBrain(AgentBrain):
                     continuationReport=json.loads(encode(private_context.get('continuationReport'))))
                     if gm_authorised() else None))
         if tools is not None and gm_authorised() and literal_command is None:
+            entered()
             read_started = int(time.time()*1000)
             observed = tools.dispatch("gm_inspect", {})
             read_completed = int(time.time()*1000)
@@ -3006,6 +3015,7 @@ class DirectBrain(AgentBrain):
         def dispatch(name, arguments):
             if interrupted():
                 raise OwnerInputPending("Fresh owner input is waiting")
+            entered()
             serial[0] += 1
             if name in ("workspace_write", "workspace_patch", "policy_apply", "policy_input", "party_invite", "follow", "gameplay_command", "request_buffs", "gm_task_start", "gm_task_cancel", "gm_task_resume", "gm_execute"):
                 mutation_entered[0] = True
@@ -4953,9 +4963,9 @@ class Conversation:
         interruption_latched = [False]
         interrupt_reason = ["owner_input_waiting"]
         bound_chat, bound_cursor, bound_guid = self.session_id, self.cursor, self.character_guid
-        def check_freshness():
+        def check_freshness(*, force=False):
             now = time.monotonic()
-            if now < next_poll[0]: return False
+            if not force and now < next_poll[0]: return False
             next_poll[0] = now + 0.75
             params = {"afterSequence": str(bound_cursor), "limit": 256, "sessionId": bound_chat}
             try:
@@ -4990,12 +5000,35 @@ class Conversation:
                     else "unavailable_or_invalid_response")
                 interrupt_reason[0] = "chat_freshness_unavailable"
                 return True
+        preparing = [False]
+        recovery_used = [False]
         def cancelled():
             # A subsequent sample cannot forget an already observed interruption.
-            if not interruption_latched[0]: interruption_latched[0] = check_freshness()
+            if not interruption_latched[0]:
+                interrupted = check_freshness()
+                if (interrupted and preparing[0] and not recovery_used[0]
+                        and interrupt_reason[0] == 'chat_freshness_unavailable'
+                        and freshness_failure[0] == 'read_timeout'):
+                    recovery_used[0] = True
+                    freshness_failure[0] = None
+                    interrupt_reason[0] = 'owner_input_waiting'
+                    interrupted = check_freshness(force=True)
+                interruption_latched[0] = interrupted
             cancelled.interrupt_reason = interrupt_reason[0]
             cancelled.freshness_failure = freshness_failure[0]
             return interruption_latched[0]
+        preparation_checked = [False]
+        def prepare():
+            # Only the DirectBrain entry, before model/tool preparation, may
+            # replace a timed-out read with one genuinely fresh bound read.
+            # Never restart generation or forget an observed interruption.
+            if preparation_checked[0] or interruption_latched[0]: return cancelled()
+            preparation_checked[0] = True
+            preparing[0] = True
+            return cancelled()
+        cancelled.prepare = prepare
+        def entered(): preparing[0] = False
+        cancelled.entered = entered
         development=state.get('development',{}) if isinstance(state,dict) else {}
         sid=development.get('sessionId') if isinstance(development,dict) else None
         context=dict(sessionId=sid if isinstance(sid,str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid) else self.session_id,
