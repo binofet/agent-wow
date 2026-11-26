@@ -411,6 +411,9 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	if _, err := rand.Read(token[:]); err != nil {
 		return nil, status.Error(codes.Internal, "interaction token generation failed")
 	}
+	// This is a fresh legacy lease, not a renewal of the previous idle-only
+	// token. Its new authority must not inherit that token's body/visit fence.
+	s.idleInteraction = idleInteractionBinding{}
 	s.interactionToken = hex.EncodeToString(token[:])
 	s.interactionUntil = s.now().Add(time.Duration(duration) * time.Millisecond)
 	s.state.InteractionOwner = r.Owner
