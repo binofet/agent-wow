@@ -5,10 +5,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	"time"
 
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/status"
@@ -67,6 +67,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 		requested = scopes[0]
 	}
 	if requested != nil || op == opcode.CMSGMoveSplineDone {
+		proofDeadline := time.Now().Add(bodyUpdateWait)
 		for {
 			if !e.scopedWriteAvailable(ctx) {
 				return "", false, modcb.PacketNotDispatchedError("scoped gameplay write requires the uncanceled current live world session")
@@ -78,6 +79,11 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 				}
 			}
 			if serial == e.writeSerial {
+				if modsession.IsBodyInput(ctx) && requested != nil && e.s.waitBodyProof(ctx, requested, e.transport.scope, proofDeadline) {
+					// The parser runs outside the physical owner. Process any
+					// network facts that arrived while waiting before reserving.
+					continue
+				}
 				break
 			}
 			// A protocol ACK issued while processing a ready inbound packet
@@ -93,7 +99,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	}
 	// No callback, deadline setter or owner-state transition follows the final
 	// scope comparison and attempt reservation before entering WritePacket.
-	if err := e.reserveGameplayPacket(op, body, requested, prior); err != nil {
+	if err := e.reserveGameplayPacket(ctx, op, body, requested, prior); err != nil {
 		return "", false, err
 	}
 	e.writeSerial++

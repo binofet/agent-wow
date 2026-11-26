@@ -1,7 +1,9 @@
 package world
 
 import (
+	"context"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
@@ -12,14 +14,21 @@ import (
 // A portal's STOP must still belong to the exact observed source visit when
 // the owner loop writes it. World/Actions queues can lag a same-map entry.
 // Legacy unscoped STOP remains available through its existing path.
-func (e *engine) reserveGameplayPacket(op uint32, body []byte, requested *modv1.TransportScope, prior *modv1.WorldPacket) error {
+func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []byte, requested *modv1.TransportScope, prior *modv1.WorldPacket) error {
+	qualified := modsession.IsBodyInput(ctx) && requested != nil
+	if qualified {
+		if reason := e.s.bodyProof(requested, e.transport.scope); reason != "" {
+			return modcb.PacketNotDispatchedError("body input before write: " + reason)
+		}
+		requested = e.transport.scope
+	}
 	if op == opcode.MSGMoveStop && requested != nil {
-		return e.transport.reserveMovementStop(body, requested, prior)
+		return e.transport.reserveMovementStop(body, requested, prior, qualified && prior != nil && e.s.bodyProof(prior.TransportScope, e.transport.scope) == "")
 	}
 	return e.transport.reserve(op, body, requested)
 }
 
-func (t *transportScopeState) reserveMovementStop(payload []byte, requested *modv1.TransportScope, prior *modv1.WorldPacket) error {
+func (t *transportScopeState) reserveMovementStop(payload []byte, requested *modv1.TransportScope, prior *modv1.WorldPacket, qualifiedEntry bool) error {
 	current := t.scope
 	if current == nil || t.exhausted || current.ConnectionId == "" || current.SelfGuid == 0 || !current.VisitBound ||
 		current.VisitRevision == 0 || current.MotionRevision == 0 || !proto.Equal(requested, current) {
@@ -36,7 +45,7 @@ func (t *transportScopeState) reserveMovementStop(payload []byte, requested *mod
 	if !movementflags.GroundCompatible(info.Flags, uint32(info.ExtraFlags)) {
 		// Only the immediately preceding known water entry can authorize its
 		// stationary wet STOP, at the same contact point in the same scope.
-		if !info.BodyWaterEntry(false) || prior.GetOpcode() != opcode.MSGMoveStartSwim || !proto.Equal(prior.GetTransportScope(), current) {
+		if !info.BodyWaterEntry(false) || prior.GetOpcode() != opcode.MSGMoveStartSwim || !qualifiedEntry && !proto.Equal(prior.GetTransportScope(), current) {
 			return modcb.PacketNotDispatchedError("water STOP requires the current written water entry")
 		}
 		before := teleportCursor{body: prior.Payload}

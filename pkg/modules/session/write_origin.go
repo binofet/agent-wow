@@ -28,3 +28,12 @@ func WriteOriginFromContext(ctx context.Context) WriteOrigin {
 	origin, _ := ctx.Value(writeOriginKey{}).(WriteOrigin)
 	return origin
 }
+
+// Only Runtime's authenticated measured body-input callback marks a write for
+// complete-World-parser continuity. This marker grants no write by itself.
+type bodyInputKey struct{}
+
+func WithBodyInput(ctx context.Context) context.Context {
+	return context.WithValue(ctx, bodyInputKey{}, true)
+}
+func IsBodyInput(ctx context.Context) bool { yes, _ := ctx.Value(bodyInputKey{}).(bool); return yes }

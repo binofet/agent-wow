@@ -21,4 +21,6 @@ type Session struct {
 	// only while its original scope remains current. It is not a server pose.
 	OwnMovementReport  func() *modv1.WorldPacket
 	OwnMovementAttempt func(string) *modv1.WorldPacket
+	BodyInputReport    func(context.Context, string) (*modv1.WorldPacket, string)
+	ParsedBodyUpdate   func(*modv1.TransportScope, string)
 }

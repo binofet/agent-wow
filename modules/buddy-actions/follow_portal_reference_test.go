@@ -97,7 +97,8 @@ func (f *fakeSession) readSyntheticOwnMovementReport(ctx context.Context, r *mod
 		value.Fields["selfGuid"].GetStringValue() != strconv.FormatUint(f.world.GetSelf().GetGuid(), 10) {
 		return nil, errors.New("invalid movement-report identity")
 	}
-	if f.ownMovementReport == nil || !proto.Equal(f.ownMovementReport.TransportScope, f.portalCoreScope) {
+	attempt := value.Fields["attemptId"].GetStringValue()
+	if f.ownMovementReport == nil || attempt != "" && attempt != f.ownMovementAttempt || !proto.Equal(f.ownMovementReport.TransportScope, f.portalCoreScope) {
 		return nil, status.Error(codes.FailedPrecondition, "current own movement report unavailable")
 	}
 	packet := proto.Clone(f.ownMovementReport).(*modv1.WorldPacket)

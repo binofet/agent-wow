@@ -33,11 +33,19 @@ func (s *Service) newOrdinaryMovementAttemptLocked(w *worldv1.SnapshotResponse, 
 	if scope == nil || !scope.VisitBound || scope.ConnectionId == "" {
 		return nil
 	}
-	var entropy [32]byte
-	if _, err := rand.Read(entropy[:]); err != nil {
+	id, err := newMovementAttemptID()
+	if err != nil {
 		return nil
 	}
-	return &ordinaryMovementAttempt{id: hex.EncodeToString(entropy[:]), sid: s.sessionID, self: s.selfGUID, visit: s.encounterVisit, scope: clonePortalScope(scope), rawRevision: w.Self.PositionRevision, op: op, payload: bytes.Clone(payload), pose: p, moving: moving, swimming: swimming}
+	return &ordinaryMovementAttempt{id: id, sid: s.sessionID, self: s.selfGUID, visit: s.encounterVisit, scope: clonePortalScope(scope), rawRevision: w.Self.PositionRevision, op: op, payload: bytes.Clone(payload), pose: p, moving: moving, swimming: swimming}
+}
+
+func newMovementAttemptID() (string, error) {
+	var entropy [32]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(entropy[:]), nil
 }
 
 // Legacy exploration uses the same diagnostic reader for its terminal STOP,

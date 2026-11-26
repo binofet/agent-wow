@@ -2,11 +2,13 @@ package modrt
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -20,8 +22,8 @@ func TestPolicyMeasuredWaterBindingAndUncertainStop(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			x := newInstanceEntryFixture(t)
 			writes := 0
-			x.m.session.SendScopedPacket = func(_ context.Context, op uint32, _ []byte, scope *modv1.TransportScope) error {
-				if scope == nil {
+			x.m.session.SendScopedPacket = func(ctx context.Context, op uint32, _ []byte, scope *modv1.TransportScope) error {
+				if scope == nil || !modsession.IsBodyInput(ctx) || !modcb.ValidMovementAttempt(modsession.WriteOriginFromContext(ctx).MovementAttempt) {
 					t.Fatal("unscoped source")
 				}
 
@@ -66,7 +68,12 @@ func TestPolicyMeasuredWaterBindingAndUncertainStop(t *testing.T) {
 					if e := w(in, op, wire); !modcb.PacketWasNotDispatched(e) {
 						t.Fatal("measured crossing accepted unscoped frame", op, e)
 					}
-					return x.m.moduleScopedPacketWriter(friendlyEncounterSession, actionsModule)(in, op, wire, instanceEntryScope())
+					scoped := x.m.moduleScopedPacketWriter(friendlyEncounterSession, actionsModule)
+					if e := scoped(in, op, wire, instanceEntryScope()); !modcb.PacketWasNotDispatched(e) {
+						t.Fatal("body frame without an attempt identity entered transport", op, e)
+					}
+					withAttempt := instanceEntryIncoming(modcb.WithMovementAttempt(ctx, fmt.Sprintf("%064x", op)))
+					return scoped(withAttempt, op, wire, instanceEntryScope())
 				}
 				fall := movementinfo.Info{Flags: 0x1001, FallTime: 13000, JumpPresent: true, Jump: movementinfo.Jump{CosAngle: 1, XYSpeed: 7}}
 				entry := movementinfo.Info{Flags: movementinfo.SwimmingFlag | 1, PitchPresent: true, X: 11, Y: 12, Z: -700}

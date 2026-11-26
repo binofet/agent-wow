@@ -1,0 +1,391 @@
+package world
+
+import (
+	"bytes"
+	"compress/zlib"
+	"context"
+	"encoding/binary"
+	"encoding/hex"
+	"fmt"
+	"math"
+	"os"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	actions "github.com/agent-wow/agent-wow/modules/buddy-actions"
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	buddyworld "github.com/agent-wow/agent-wow/modules/buddy-world"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+type bodyUpdateTrailer struct {
+	grpc.ServerTransportStream
+	md metadata.MD
+}
+
+func (s *bodyUpdateTrailer) SetTrailer(md metadata.MD) error {
+	s.md = metadata.Join(s.md, md)
+	return nil
+}
+
+func compressedBodyUpdates(t *testing.T, blocks ...[]byte) []byte {
+	t.Helper()
+	raw := binary.LittleEndian.AppendUint32(nil, uint32(len(blocks)))
+	for _, b := range blocks {
+		raw = append(raw, b...)
+	}
+	out := bytes.NewBuffer(binary.LittleEndian.AppendUint32(nil, uint32(len(raw))))
+	z := zlib.NewWriter(out)
+	if _, err := z.Write(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+func bodyValuesBlock(guid byte, field int, value uint32) []byte {
+	b := []byte{0, 0}
+	if guid != 0 {
+		b = []byte{0, 1, guid}
+	}
+	b = append(b, byte(field/32+1))
+	for i := 0; i < field/32; i++ {
+		b = binary.LittleEndian.AppendUint32(b, 0)
+	}
+	b = binary.LittleEndian.AppendUint32(b, uint32(1)<<uint(field%32))
+	return binary.LittleEndian.AppendUint32(b, value)
+}
+
+// This adapter only transports module calls. World supplies every observed
+// fact, Core supplies every original write/attempt, and Actions runs unchanged.
+type bodyContinuitySession struct {
+	t          *testing.T
+	e          *engine
+	w          *buddyworld.Service
+	started    time.Time
+	afterWrite func(uint32)
+}
+
+func newBodyContinuitySession(t *testing.T) (*bodyContinuitySession, *scopeWriteConn) {
+	c := &scopeWriteConn{}
+	return &bodyContinuitySession{t: t, e: scopedBodyEngine(t, c), w: buddyworld.NewService(99), started: time.Now()}, c
+}
+
+func (c *bodyContinuitySession) observe(op uint16, wire []byte) (string, *modv1.WorldPacket) {
+	c.t.Helper()
+	c.e.observeTransportScope(op, wire)
+	p := &modv1.WorldPacket{Opcode: uint32(op), Payload: wire, TransportScope: c.e.transport.snapshot()}
+	tr := &bodyUpdateTrailer{}
+	ctx := grpc.NewContextWithServerTransportStream(context.Background(), tr)
+	if _, err := c.w.OnPacket(ctx, p); err != nil {
+		c.t.Fatal(err)
+	}
+	result := modcb.BodyUpdateResult(tr.md.Get(modcb.BodyInputUpdateTrailer), tr.md.Get(modcb.BodyInputBarrierTrailer))
+	if op == opcode.SMSGUpdateObject || op == opcode.SMSGCompressedUpdateObject {
+		c.e.s.recordParsedBodyUpdate(p.TransportScope, result)
+	}
+	return result, p
+}
+
+func (c *bodyContinuitySession) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	id := modcb.IncomingMovementAttempt(metadata.NewIncomingContext(ctx, md))
+	if r.TransportScope != nil {
+		if id == "" {
+			c.t.Fatal("measured frame has no exact attempt")
+		}
+		ctx = modsession.WithBodyInput(modsession.WithWriteOrigin(ctx, modsession.WriteOrigin{MovementAttempt: id}))
+	}
+	_, _, err := c.e.writeContext(ctx, r.Opcode, r.Payload, r.TransportScope)
+	if err == nil && c.afterWrite != nil {
+		c.afterWrite(r.Opcode)
+	}
+	return &emptypb.Empty{}, err
+}
+func (c *bodyContinuitySession) GetClock(ctx context.Context, _ *emptypb.Empty, _ ...grpc.CallOption) (*modv1.ClockResponse, error) {
+	return &modv1.ClockResponse{ClientTimeMs: 1000 + uint32(time.Since(c.started).Milliseconds())}, ctx.Err()
+}
+func (c *bodyContinuitySession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, _ ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
+	var response proto.Message
+	var err error
+	switch {
+	case r.Module == "buddy-world" && r.Method == "snapshot":
+		q := &worldv1.SnapshotRequest{}
+		if err = r.Request.UnmarshalTo(q); err == nil {
+			response, err = c.w.Snapshot(ctx, q)
+		}
+	case r.Module == "buddy-world" && r.Method == "observe_client_movement":
+		q := &worldv1.ClientMovementRequest{}
+		if err = r.Request.UnmarshalTo(q); err == nil {
+			response, err = c.w.ObserveClientMovement(ctx, q)
+		}
+	case r.Module == "session" && r.Method == modcb.BodyInputReportMethod:
+		q := &structpb.Struct{}
+		if err = r.Request.UnmarshalTo(q); err != nil {
+			break
+		}
+		p, reason := c.e.s.bodyInputReport(ctx, q.Fields["attemptId"].GetStringValue())
+		if p == nil {
+			return nil, status.Error(codes.FailedPrecondition, reason)
+		}
+		response = p
+	default:
+		return nil, fmt.Errorf("unexpected method %s.%s", r.Module, r.Method)
+	}
+	if err != nil {
+		return nil, err
+	}
+	packed, err := anypb.New(response)
+	return &modv1.InvokeModuleResponse{Result: packed}, err
+}
+
+func TestParsedWorldUpdateRetainsOnlyExactQualifiedPhysicalSource(t *testing.T) {
+	for _, mode := range []string{"two_powers", "own_death_restore", "owner_death", "unknown_subject", "malformed", "sitting", "missing", "control_then_power", "competing_write", "new_visit"} {
+		t.Run(mode, func(t *testing.T) {
+			c, conn := newBodyContinuitySession(t)
+			c.observe(opcode.SMSGLoginVerifyWorld, positionBody(349, 1, 2, 3, .5))
+			ctx := modsession.WithBodyInput(modsession.WithWriteOrigin(context.Background(), modsession.WriteOrigin{MovementAttempt: strings.Repeat("a", 64)}))
+			if _, _, err := c.e.writeContext(ctx, opcode.MSGMoveStartForward, scopedBodyPacket(t, opcode.MSGMoveStartForward), c.e.transport.snapshot()); err != nil {
+				t.Fatal(err)
+			}
+			prior := c.e.s.OwnMovementReport()
+			power := compressedBodyUpdates(t, bodyValuesBlock(23, 0x19, 17))
+			add := func(b []byte) { c.observe(opcode.SMSGCompressedUpdateObject, b) }
+			var want string
+			switch mode {
+			case "two_powers":
+				add(power)
+				c.observe(opcode.SMSGStandstateUpdate, []byte{0})
+				add(power)
+			case "own_death_restore":
+				add(compressedBodyUpdates(t, bodyValuesBlock(99, 0x18, 0), bodyValuesBlock(99, 0x18, 100)))
+				add(power)
+				want = modcb.BodyUpdateSelfField
+			case "owner_death":
+				add(compressedBodyUpdates(t, bodyValuesBlock(3, 0x18, 0)))
+				want = modcb.BodyUpdateOwnerField
+			case "unknown_subject":
+				add(compressedBodyUpdates(t, bodyValuesBlock(0, 0x19, 17)))
+				want = modcb.BodyUpdateUnknownSubject
+			case "malformed":
+				add(append(slices.Clone(power), 1))
+				want = modcb.BodyUpdateMalformed
+			case "sitting":
+				c.observe(opcode.SMSGStandstateUpdate, []byte{1})
+				c.observe(opcode.SMSGStandstateUpdate, []byte{0})
+				add(power)
+				want = "own_stand_state"
+			case "missing":
+				c.e.observeTransportScope(opcode.SMSGCompressedUpdateObject, power)
+				want = modcb.BodyUpdateMissing
+			case "control_then_power":
+				c.e.observeTransportScope(opcode.SMSGClientControlUpdate, []byte{1, 99, 0})
+				add(power)
+				want = "own_motion_or_control"
+			case "competing_write":
+				if _, _, err := c.e.writeContext(context.Background(), opcode.MSGMoveStartForward, prior.Payload); err != nil {
+					t.Fatal(err)
+				}
+				add(power)
+				want = "exact_write_unavailable"
+			case "new_visit":
+				c.observe(opcode.SMSGNewWorld, positionBody(349, 1, 2, 3, .5))
+				add(power)
+				want = "body_or_visit_changed"
+			}
+			got, reason := c.e.s.bodyInputReport(ctx, strings.Repeat("a", 64))
+			if reason != want || (got != nil) != (want == "") || (got != nil && !proto.Equal(got, prior)) || c.e.s.OwnMovementReport() != nil {
+				t.Fatal("lost provenance", reason, want, got, prior)
+			}
+			writes := conn.writes
+			_, _, err := c.e.writeContext(ctx, opcode.MSGMoveHeartbeat, scopedBodyPacket(t, opcode.MSGMoveHeartbeat), prior.TransportScope)
+			if want == "" && (err != nil || conn.writes != writes+1) || want != "" && (!modcb.PacketWasNotDispatched(err) || conn.writes != writes) {
+				t.Fatal("physical final admission", want, reason, err, conn.writes, writes)
+			}
+		})
+	}
+}
+
+func bodyPlayerCreate(guid byte, x, y, z, o float32) []byte {
+	// Real 3.3.5 CREATE_PLAYER with living movement, nine speeds and the
+	// positive health/max-health and unit flags used by the normal follow guard.
+	b := binary.LittleEndian.AppendUint32(nil, 1)
+	b = append(b, 3, 1, guid, 4, 0x20, 0)
+	b = binary.LittleEndian.AppendUint32(b, 0)
+	b = append(b, 0, 0)
+	b = binary.LittleEndian.AppendUint32(b, 123)
+	for _, v := range []float32{x, y, z, o} {
+		b = binary.LittleEndian.AppendUint32(b, math.Float32bits(v))
+	}
+	b = binary.LittleEndian.AppendUint32(b, 0)
+	for _, v := range []float32{2.5, 7, 4.5, 4.7, 2.5, 7, 4.5, 3.14, 3.14} {
+		b = binary.LittleEndian.AppendUint32(b, math.Float32bits(v))
+	}
+	b = append(b, 2)
+	for _, v := range []uint32{1 << 0x18, (1 << (0x3b - 32)) | 1, 100, 100, 8} {
+		b = binary.LittleEndian.AppendUint32(b, v)
+	}
+	return b
+}
+
+func TestCopiedMaraudonNativeFollowThroughParsedWorldAndCore(t *testing.T) {
+	root := os.Getenv("BUDDY_NAV_POOL_TEST_DATA_DIR")
+	if root == "" {
+		t.Skip("set BUDDY_NAV_POOL_TEST_DATA_DIR to extracted Maraudon collision and liquid")
+	}
+	for _, mode := range []string{"ambient", "own_death_restore"} {
+		t.Run(mode, func(t *testing.T) {
+			c, conn := newBodyContinuitySession(t)
+			a := actions.NewService(c, 99, "continuity-fixture")
+			a.SetNavigationDataDir(root)
+			ctx := context.Background()
+			const x, y, z, o = 475.6561, 50.766533, -96.19031, 3.13039
+			for _, p := range []struct {
+				op   uint16
+				wire []byte
+			}{
+				{opcode.SMSGLoginVerifyWorld, positionBody(349, x, y, z, o)},
+				{opcode.SMSGUpdateObject, bodyPlayerCreate(99, x, y, z, o)},
+				{opcode.SMSGUpdateObject, bodyPlayerCreate(3, 390.99612, 27.22958, -130.92584, .5)},
+			} {
+				_, packet := c.observe(p.op, p.wire)
+				if _, err := a.OnPacket(ctx, packet); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := a.Follow(ctx, &actionsv1.ToggleRequest{Enabled: true}); err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			c.afterWrite = func(op uint32) {
+				if op != opcode.MSGMoveStartForward && op != opcode.MSGMoveStartSwim {
+					return
+				}
+				count++
+				if mode == "own_death_restore" {
+					c.observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, bodyValuesBlock(99, 0x18, 0), bodyValuesBlock(99, 0x18, 100)))
+				} else {
+					c.observe(opcode.SMSGStandstateUpdate, []byte{0})
+					c.observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, bodyValuesBlock(23, 0x19, 17)))
+				}
+			}
+			md, _ := metadata.FromOutgoingContext(modcb.WithPolicySpell(ctx, strings.Repeat("b", 64)))
+			out, err := a.MoveBody(metadata.NewIncomingContext(ctx, md), &actionsv1.BodyMovementRequest{SessionId: "continuity-fixture", SelfGuid: 99, VisitId: 1, SequenceId: 23, DurationMs: 500, Landing: "follow_water"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := out.GetBodyMovement()
+			if mode == "ambient" {
+				if count != 2 || body.GetPhase() != "body_input_written" || out.MotionUnconfirmed || conn.opcodes[len(conn.opcodes)-1] != opcode.MSGMoveStop || !slices.Contains(conn.opcodes, opcode.MSGMoveHeartbeat) || !slices.Contains(conn.opcodes, opcode.MSGMoveStartSwim) {
+					t.Fatal("measured follow interrupted", count, out, conn.opcodes)
+				}
+				return
+			}
+			if count != 1 || body.GetPhase() != "body_scope_unconfirmed_no_retry" || !body.GetTransportWritten() || !out.MotionUnconfirmed || !strings.Contains(body.Detail, modcb.BodyUpdateSelfField) || slices.Contains(conn.opcodes, opcode.MSGMoveHeartbeat) || slices.Contains(conn.opcodes, opcode.MSGMoveStop) {
+				t.Fatal("mixed update lost partial custody", out, conn.opcodes)
+			}
+			stopped, err := a.Follow(ctx, &actionsv1.ToggleRequest{Enabled: false})
+			if err != nil || stopped.MotionUnconfirmed || stopped.Moving || stopped.Reason != "follow_disabled" || conn.opcodes[len(conn.opcodes)-1] != opcode.MSGMoveStop || body.Phase != "body_scope_unconfirmed_no_retry" {
+				t.Fatal("distinct explicit stop did not settle physical motion", stopped, err, conn.opcodes)
+			}
+		})
+	}
+}
+
+func TestBodyProofDistinguishesEqualLengthPacketsAndStandingChanges(t *testing.T) {
+	c, _ := newBodyContinuitySession(t)
+	c.observe(opcode.SMSGLoginVerifyWorld, positionBody(349, 1, 2, 3, .5))
+	c.observe(opcode.SMSGUpdateObject, bodyPlayerCreate(99, 1, 2, 3, .5))
+	// These two synthetic 27-byte frames have independently fixed contents.
+	for _, row := range []struct{ hex, reason string }{
+		{"1800000078016364000246716620c9046282003f100300026a002e", modcb.BodyUpdateHarmless},
+		{"14000000780163640002c6644620c90c626a3331300000067b0097", modcb.BodyUpdateSelfField},
+	} {
+		wire, err := hex.DecodeString(row.hex)
+		if err != nil || len(wire) != 27 {
+			t.Fatal(err, len(wire))
+		}
+		if got, _ := c.observe(opcode.SMSGCompressedUpdateObject, wire); got != row.reason {
+			t.Fatal(got, row.reason)
+		}
+	}
+	for _, row := range []struct {
+		value  uint32
+		reason string
+	}{
+		{1, modcb.BodyUpdateSelfField},          // sit
+		{0, modcb.BodyUpdateHarmless},           // normal stand-up during a forward input
+		{0x01000000, modcb.BodyUpdateSelfField}, // changed animation tier
+		{0x01000007, modcb.BodyUpdateSelfField}, // dead stand state
+		{0x01000000, modcb.BodyUpdateSelfField}, // cannot bridge that earlier state
+	} {
+		got, _ := c.observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, bodyValuesBlock(99, 0x4a, row.value)))
+		if got != row.reason {
+			t.Fatal(row, got)
+		}
+	}
+}
+
+type bodyProofWaitContext struct {
+	context.Context
+	once  sync.Once
+	ready func()
+}
+
+func (c *bodyProofWaitContext) Done() <-chan struct{} { c.once.Do(c.ready); return c.Context.Done() }
+
+func TestPhysicalDrainAfterWaitingForWorld(t *testing.T) {
+	for _, mode := range []string{"harmless", "transfer", "cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			c, conn := newBodyContinuitySession(t)
+			prior := c.e.transport.snapshot()
+			wire := compressedBodyUpdates(t, bodyValuesBlock(23, 0x19, 17))
+			base, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx := &bodyProofWaitContext{Context: base}
+			drains := 0
+			queuedTransfer := false
+			c.e.beforeScopedWrite = func() error {
+				drains++
+				if drains == 1 {
+					c.e.observeTransportScope(opcode.SMSGCompressedUpdateObject, wire)
+				}
+				if queuedTransfer {
+					c.e.observeTransportScope(opcode.SMSGNewWorld, positionBody(prior.MapId, 1, 2, 3, .5))
+					queuedTransfer = false
+				}
+				return nil
+			}
+			// The positive response for the earlier packet wakes the writer
+			// only after a new physical event has become ready to drain.
+			ctx.ready = func() {
+				queuedTransfer = mode == "transfer"
+				c.e.s.recordParsedBodyUpdate(c.e.s.TransportScope(), modcb.BodyUpdateHarmless)
+				if mode == "cancel" {
+					cancel()
+				}
+			}
+			_, _, err := c.e.writeContext(modsession.WithBodyInput(ctx), opcode.MSGMoveHeartbeat, scopedBodyPacket(t, opcode.MSGMoveHeartbeat), prior)
+			if mode == "harmless" && (err != nil || drains < 2 || conn.writes != 1) || mode != "harmless" && (!modcb.PacketWasNotDispatched(err) || conn.writes != 0) || mode == "transfer" && drains < 2 {
+				t.Fatal(mode, err, drains, conn.writes)
+			}
+		})
+	}
+}

@@ -48,6 +48,7 @@ type Session struct {
 	transportScopeSnapshot     *modv1.TransportScope
 	ownMovementReportSnapshot  *modv1.WorldPacket
 	ownMovementAttemptSnapshot string
+	bodyUpdates                parsedBodyUpdates
 }
 
 // Options injects a session-owned module runtime and separate startup budgets.
@@ -127,7 +128,7 @@ func enter(ctx context.Context, conn *worldconn.Conn, realm Realm, character Cha
 	startup, endStartup := context.WithTimeout(ctx, opts.ModuleTimeout)
 	stopStartup := context.AfterFunc(lifetime, endStartup)
 	err = s.modules.Start(startup, modsession.Session{Identity: modsession.Identity{CharacterGUID: character.GUID, CharacterName: character.Name, RealmID: realm.ID, RealmName: realm.Name}, SendPacket: s.SendPacket, Clock: s.Clock,
-		SendScopedPacket: s.SendScopedPacket, TransportScope: s.TransportScope, OwnMovementReport: s.OwnMovementReport, OwnMovementAttempt: s.OwnMovementAttempt})
+		SendScopedPacket: s.SendScopedPacket, TransportScope: s.TransportScope, OwnMovementReport: s.OwnMovementReport, OwnMovementAttempt: s.OwnMovementAttempt, BodyInputReport: s.bodyInputReport, ParsedBodyUpdate: s.recordParsedBodyUpdate})
 	endStartup()
 	stopStartup()
 	close(s.startupDone)

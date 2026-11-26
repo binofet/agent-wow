@@ -11,21 +11,56 @@ import (
 )
 
 const OwnMovementReportMethod = "own_movement_report"
+const BodyInputReportMethod = "body_input_movement_report"
+const BodyInputUpdateTrailer = "agentwow-parsed-body-input-update"
+const BodyInputBarrierTrailer = "agentwow-body-input-barrier"
+
+const (
+	BodyUpdateHarmless       = "harmless_values"
+	BodyUpdateMissing        = "world_proof_missing"
+	BodyUpdateMalformed      = "malformed_object_update"
+	BodyUpdateUnbound        = "unbound_object_update"
+	BodyUpdateMovement       = "object_movement"
+	BodyUpdateLifecycle      = "object_lifecycle"
+	BodyUpdateSelfField      = "own_restricted_field"
+	BodyUpdateOwnerField     = "owner_restricted_field"
+	BodyUpdateUnknownSubject = "unknown_update_subject"
+)
+
+// Only fixed diagnostics cross the World callback boundary.
+func BodyUpdateResult(positive, reason []string) string {
+	if len(positive) == 1 && positive[0] == "1" && len(reason) == 0 {
+		return BodyUpdateHarmless
+	}
+	if len(positive) == 0 && len(reason) == 1 {
+		switch reason[0] {
+		case BodyUpdateMalformed, BodyUpdateUnbound, BodyUpdateMovement, BodyUpdateLifecycle, BodyUpdateSelfField, BodyUpdateOwnerField, BodyUpdateUnknownSubject:
+			return reason[0]
+		}
+	}
+	return BodyUpdateMissing
+}
 
 // ReadOwnMovementReport reads the module's own session socket, not a public
 // JSON method or a gameplay mutation. The bytes and their original transport
 // correlation are inseparable; this must never freshen an old World image.
 func ReadOwnMovementReport(ctx context.Context, client FollowPolicyClient, sid string, self uint64) (*modv1.WorldPacket, error) {
-	return readOwnMovementReport(ctx, client, sid, self, "")
+	return readOwnMovementReport(ctx, client, sid, self, "", OwnMovementReportMethod)
 }
 
 func ReadOwnMovementAttempt(ctx context.Context, client FollowPolicyClient, sid string, self uint64, id string) (*modv1.WorldPacket, error) {
 	if !ValidMovementAttempt(id) {
 		return nil, errors.New("exact movement attempt required")
 	}
-	return readOwnMovementReport(ctx, client, sid, self, id)
+	return readOwnMovementReport(ctx, client, sid, self, id, OwnMovementReportMethod)
 }
-func readOwnMovementReport(ctx context.Context, client FollowPolicyClient, sid string, self uint64, id string) (*modv1.WorldPacket, error) {
+func ReadBodyInputReport(ctx context.Context, client FollowPolicyClient, sid string, self uint64, id string) (*modv1.WorldPacket, error) {
+	if id != "" && !ValidMovementAttempt(id) {
+		return nil, errors.New("exact body input attempt required")
+	}
+	return readOwnMovementReport(ctx, client, sid, self, id, BodyInputReportMethod)
+}
+func readOwnMovementReport(ctx context.Context, client FollowPolicyClient, sid string, self uint64, id, method string) (*modv1.WorldPacket, error) {
 	if sid == "" || len(sid) > 128 || self == 0 {
 		return nil, errors.New("current movement-report body required")
 	}
@@ -41,7 +76,7 @@ func readOwnMovementReport(ctx context.Context, client FollowPolicyClient, sid s
 	if err != nil {
 		return nil, err
 	}
-	response, err := client.InvokeModule(ctx, &modv1.InvokeModuleRequest{Module: "session", Method: OwnMovementReportMethod, Request: packed})
+	response, err := client.InvokeModule(ctx, &modv1.InvokeModuleRequest{Module: "session", Method: method, Request: packed})
 	if err != nil {
 		return nil, err
 	}
