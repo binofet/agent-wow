@@ -16,6 +16,10 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/worldconn"
 )
 
+func (e *engine) handle(op uint16, body []byte) (bool, error) {
+	return e.handlePacket(packet{opcode: op, body: body, receivedAt: time.Now()})
+}
+
 // This peer independently encodes the build-12340 headers and fixture payloads.
 // The character tests additionally exercise the same session with encryption.
 type testPeer struct {

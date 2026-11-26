@@ -14,6 +14,7 @@ import (
 	actions "github.com/agent-wow/agent-wow/modules/buddy-actions"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -58,7 +59,12 @@ func (c knockbackTestClient) InvokeModule(ctx context.Context, r *modv1.InvokeMo
 
 func knockbackToWorld(t *testing.T, c *bodyContinuitySession, op uint16, wire []byte) *modv1.WorldPacket {
 	t.Helper()
-	if _, err := c.e.handle(op, wire); err != nil {
+	return knockbackToWorldAt(t, c, op, wire, time.Now())
+}
+
+func knockbackToWorldAt(t *testing.T, c *bodyContinuitySession, op uint16, wire []byte, at time.Time) *modv1.WorldPacket {
+	t.Helper()
+	if _, err := c.e.handlePacket(packet{opcode: op, body: wire, receivedAt: at}); err != nil {
 		t.Fatal(err)
 	}
 	p := &modv1.WorldPacket{Opcode: uint32(op), Payload: wire, TransportScope: c.e.transport.snapshot()}
@@ -81,8 +87,9 @@ func TestCopiedOwnKnockbackRegainsPhysicalContactWithoutRealmSelfEcho(t *testing
 	if dir == "" {
 		t.Skip("set BUDDY_NAV_POOL_TEST_DATA_DIR to copied client geometry")
 	}
-	for _, mode := range []string{"upper_floor", "pool", "far_bank"} {
+	for _, mode := range []string{"upper_floor", "pool", "far_bank", "forward_on_princess_floor"} {
 		wet := mode == "pool"
+		forward := mode == "forward_on_princess_floor"
 		c, conn := newBodyContinuitySession(t)
 		c.e.s.started = time.Now()
 		if wet {
@@ -97,10 +104,23 @@ func TestCopiedOwnKnockbackRegainsPhysicalContactWithoutRealmSelfEcho(t *testing
 			// The subsequent order, origin continuity and force are simulated.
 			x, y, z = 384.65375, 26.86131, -130.93765
 		}
+		if forward {
+			// A synthetic running checkpoint on the copied Princess floor.
+			x, y, z = 18.5, 5.5, -127.6
+		}
 		knockbackToWorld(t, c, opcode.SMSGLoginVerifyWorld, positionBody(349, 502, 157, -94, 0))
 		knockbackToWorld(t, c, opcode.SMSGUpdateObject, bodyPlayerCreate(99, 502, 157, -94, 0))
-		wire, _ := movementinfo.MoverFrame(99, movementinfo.Info{X: x, Y: y, Z: z})
-		if _, _, err := c.e.writeContext(context.Background(), opcode.MSGMoveStop, wire); err != nil {
+		origin := movementinfo.Info{X: x, Y: y, Z: z}
+		sourceOpcode := uint32(opcode.MSGMoveStop)
+		sourceContext := context.Background()
+		if forward {
+			c.e.s.started = time.Now().Add(-time.Second)
+			origin.Flags, origin.Time = 1, c.e.timestamp()-14
+			sourceOpcode = opcode.MSGMoveHeartbeat
+			sourceContext = modsession.WithWriteOrigin(sourceContext, modsession.WriteOrigin{SessionID: "fixture", Module: "buddy-actions", Writer: "module"})
+		}
+		wire, _ := movementinfo.MoverFrame(99, origin)
+		if _, _, err := c.e.writeContext(sourceContext, sourceOpcode, wire); err != nil {
 			t.Fatal(err)
 		}
 		// Prior ordinary selection generated no wire, retiring its action
@@ -112,14 +132,14 @@ func TestCopiedOwnKnockbackRegainsPhysicalContactWithoutRealmSelfEcho(t *testing
 		}
 		before, _ := c.w.Snapshot(context.Background(), &worldv1.SnapshotRequest{})
 		horizontal := float32(0)
-		if wet {
+		if wet || forward {
 			horizontal = 9
 		}
 		bearing := math.Atan2(40.353012-float64(y), 446.6661-float64(x))
 		order := impulseOrder(99, 0, float32(math.Cos(bearing)), float32(math.Sin(bearing)), horizontal, -4)
 		p := knockbackToWorld(t, c, opcode.SMSGMoveKnockBack, order)
 		motion := c.e.impulse
-		if motion == nil || !slices.Equal(conn.opcodes, []uint32{opcode.MSGMoveStop, opcode.CMSGMoveKnockBackAck}) || motion.launch.X != x || motion.launch.Z != z {
+		if motion == nil || !slices.Equal(conn.opcodes, []uint32{sourceOpcode, opcode.CMSGMoveKnockBackAck}) || motion.launch.X != x || motion.launch.Y != y || motion.launch.Z != z {
 			t.Fatalf("actual 22-byte order failed to ACK from the latest body %#v %v", motion, conn.opcodes)
 		}
 		ack := c.e.s.readKnockback(p, false)
@@ -177,7 +197,7 @@ func TestCopiedOwnKnockbackRegainsPhysicalContactWithoutRealmSelfEcho(t *testing
 		if err != nil || !state.GetPosition().GetKnown() || !state.Position.Estimated || state.Position.X != motion.contact.X || state.Position.Z != motion.contact.Z {
 			t.Fatal("ordinary Actions still lacks a current client position", mode, state.GetPosition(), err)
 		}
-		if !slices.Equal(conn.opcodes, []uint32{opcode.MSGMoveStop, opcode.CMSGMoveKnockBackAck, opcode.MSGMoveHeartbeat, want}) || !bytes.Equal(c.e.ownMovementReport.Payload, c.e.s.readKnockback(p, true).Payload) {
+		if !slices.Equal(conn.opcodes, []uint32{sourceOpcode, opcode.CMSGMoveKnockBackAck, opcode.MSGMoveHeartbeat, want}) || !bytes.Equal(c.e.ownMovementReport.Payload, c.e.s.readKnockback(p, true).Payload) {
 			t.Fatal("missing exact physical contact", conn.opcodes)
 		}
 	}
@@ -211,6 +231,60 @@ func TestKnockbackRequiresLocatedMovingOrigin(t *testing.T) {
 				t.Fatalf("used stale %s 0x%x pose for a new impulse", source, flags)
 			}
 		}
+	}
+}
+
+func TestMovingKnockbackRequiresCurrentActionsHeartbeatAtSocketRead(t *testing.T) {
+	// The payload timestamp uses the wrapping session clock. The write and
+	// read order use monotonic time, independently of when the owner handles it.
+	const wrap = int64(math.MaxUint32) + 1
+	for _, tc := range []struct {
+		name        string
+		writer      string
+		writeMs     int64
+		sampleMs    int64
+		readDelayMs int64
+		want        bool
+	}{
+		{"fresh_module", "module", 1000, 1000, 14, true},
+		{"fresh_lua_wrap", "lua", wrap - 4, wrap - 7, 14, true},
+		{"single_step", "module", 1000, 1000, 50, true},
+		{"beyond_step", "module", 1000, 1000, 51, false},
+		{"stale_payload_at_write", "module", 1000, 780, 1, false},
+		{"queued_before_write", "module", 1000, 995, -1, false},
+		{"future_when_written", "module", 1000, 1010, 14, false},
+		{"unattributed", "", 1000, 1000, 14, false},
+		{"unrecognized_writer", "peer", 1000, 1000, 14, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, conn := newBodyContinuitySession(t)
+			e := c.e
+			knockbackToWorld(t, c, opcode.SMSGLoginVerifyWorld, positionBody(349, 5, 15, 3, 0))
+			knockbackToWorld(t, c, opcode.SMSGUpdateObject, bodyPlayerCreate(99, 5, 15, 3, 0))
+			i := movementinfo.Info{Flags: 1, Time: uint32(tc.sampleMs), X: 8, Y: 15, Z: 3}
+			wire, err := movementinfo.MoverFrame(99, i)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := modsession.WithWriteOrigin(context.Background(), modsession.WriteOrigin{SessionID: "test", Module: "buddy-actions", Writer: tc.writer})
+			if _, _, err = e.writeContext(ctx, opcode.MSGMoveHeartbeat, wire); err != nil {
+				t.Fatal(err)
+			}
+			writtenAt := e.lastWrittenPose.at
+			e.s.started = writtenAt.Add(-time.Duration(tc.writeMs) * time.Millisecond)
+			order := packet{opcode: opcode.SMSGMoveKnockBack, body: impulseOrder(99, 0, 1, 0, 9, -4),
+				receivedAt: writtenAt.Add(time.Duration(tc.readDelayMs) * time.Millisecond)}
+			if _, err := e.handlePacket(order); err != nil {
+				t.Fatal(err)
+			}
+			acked := slices.Contains(conn.opcodes, uint32(opcode.CMSGMoveKnockBackAck))
+			if acked != tc.want || (e.impulse != nil) != tc.want {
+				t.Fatalf("order acknowledged=%v, want %v", acked, tc.want)
+			}
+			if acked && (e.impulse.launch.X != i.X || e.impulse.launch.Y != i.Y || e.impulse.launch.Z != i.Z) {
+				t.Fatal("launch moved beyond the physically written checkpoint", e.impulse.launch)
+			}
+		})
 	}
 }
 
@@ -269,7 +343,7 @@ func TestSocketOwnerClocksKnockbackAndResumesOrdinaryInput(t *testing.T) {
 }
 
 func TestOwnKnockbackSupersessionAndUnknown(t *testing.T) {
-	for _, mode := range []string{"repeat_zero", "partial_ack", "partial_landing", "transfer", "control", "malformed", "foreign", "missing_pose", "stale_login", "competing_stop", "mismatched_plan"} {
+	for _, mode := range []string{"repeat_zero", "repeat_before_launch", "repeat_before_ack", "repeat_at_contact", "partial_ack", "partial_landing", "transfer", "control", "malformed", "foreign", "missing_pose", "stale_login", "competing_stop", "mismatched_plan"} {
 		t.Run(mode, func(t *testing.T) {
 			c, conn := newBodyContinuitySession(t)
 			c.e.s.started = time.Now()
@@ -329,9 +403,27 @@ func TestOwnKnockbackSupersessionAndUnknown(t *testing.T) {
 			if k.contact == nil {
 				t.Fatal("missing plan")
 			}
-			if mode == "repeat_zero" {
-				k.start = time.Now().Add(-200 * time.Millisecond)
-				b2 := knockbackToWorld(t, c, opcode.SMSGMoveKnockBack, b)
+			switch mode {
+			case "repeat_before_launch", "repeat_before_ack", "repeat_at_contact":
+				at := k.start.Add(-time.Millisecond)
+				if mode == "repeat_at_contact" {
+					at = k.start.Add(time.Duration(end) * time.Millisecond)
+				} else if mode == "repeat_before_ack" {
+					at = k.start.Add(time.Millisecond)
+					k.ackAt = at.Add(time.Millisecond)
+				}
+				knockbackToWorldAt(t, c, opcode.SMSGMoveKnockBack, b, at)
+				if c.e.impulse != nil || conn.writes != 1 {
+					t.Fatal("repeated order borrowed a position outside the first flight", conn.opcodes)
+				}
+				return
+			case "repeat_zero":
+				// The socket received the second order during the arc. Its
+				// handler runs later, after the nominal time of first contact.
+				at := time.Now().Add(-650 * time.Millisecond)
+				k.start = at.Add(-200 * time.Millisecond)
+				k.ackAt = k.start.Add(time.Millisecond)
+				b2 := knockbackToWorldAt(t, c, opcode.SMSGMoveKnockBack, b, at)
 				k2 := c.e.impulse
 				if k2 == nil || k2 == k || k2.launch.X < 6.9 || k2.launch.X > 7.2 || c.e.s.readKnockback(order, false) != nil || c.e.s.readKnockback(b2, false) == nil || conn.writes != 2 {
 					t.Fatal("legitimate repeated zero order lost its current flight/identity", k2, conn.opcodes)

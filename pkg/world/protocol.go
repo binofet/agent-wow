@@ -10,9 +10,10 @@ import (
 
 // The core handles connection lifecycle and server-commanded movement ACKs.
 // Gameplay payloads are still routed unchanged to registered modules.
-func (e *engine) handle(op uint16, body []byte) (bool, error) {
+func (e *engine) handlePacket(p packet) (bool, error) {
+	op, body := p.opcode, p.body
 	if op == opcode.SMSGMoveKnockBack && !transportClearlyForeign(op, body, e.transport.scope.GetSelfGuid()) {
-		return false, e.knockbackOrder(body)
+		return false, e.knockbackOrder(body, p.receivedAt)
 	}
 	e.observeTransportScope(op, body)
 	switch op {
