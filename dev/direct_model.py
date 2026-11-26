@@ -419,6 +419,8 @@ class DirectModel:
         if progress is not None:
             progress(copy.deepcopy(self.last_receipt))
         self._check(cancelled, deadline)
+        entered = getattr(cancelled, 'entered', None)
+        if callable(entered): entered()
         connection_type = http.client.HTTPSConnection if target.scheme == "https" else http.client.HTTPConnection
         remaining = None if deadline is None else max(.001, deadline-time.monotonic())
         connection = connection_type(target.hostname, target.port, timeout=remaining)
