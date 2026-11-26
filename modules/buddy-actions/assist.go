@@ -14,6 +14,10 @@ import (
 // Physical caster observations and ordinary packet/effect mechanics only.
 // Ordinary target and spell selection lives in the attached Lua policy.
 func safeSelfCombat(w *worldv1.SnapshotResponse, selfGUID uint64) string {
+	return safeSelfMovement(w, selfGUID, movementflags.GroundCompatible)
+}
+
+func safeSelfMovement(w *worldv1.SnapshotResponse, selfGUID uint64, compatible func(uint32, uint32) bool) string {
 	if w == nil || w.Self == nil || w.Self.Guid != selfGUID {
 		return "player_identity_mismatch"
 	}
@@ -21,7 +25,7 @@ func safeSelfCombat(w *worldv1.SnapshotResponse, selfGUID uint64) string {
 	if !p.Present || !p.MapKnown || !p.PositionKnown || !finite(playerPosition(p)) || !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 {
 		return "self_defense_character_unknown_or_dead"
 	}
-	if !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) {
+	if !p.MovementFlagsKnown || !compatible(p.MovementFlags, p.ExtraMovementFlags) {
 		return "unsupported_movement_state"
 	}
 	const unsafe = uint32(0x1 | 0x4 | 0x00040000 | 0x00100000 | 0x00400000 | 0x00800000 | 0x01000000 | 0x02000000 | 0x08000000)

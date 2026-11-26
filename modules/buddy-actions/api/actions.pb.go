@@ -7628,7 +7628,11 @@ type BodyMovementRequest struct {
 	Jump       bool   `protobuf:"varint,7,opt,name=jump,proto3" json:"jump,omitempty"`
 	// Optional exact parent-owned AcquireIdleInteraction lease. No legacy
 	// acquisition or movement-ownership side effect is implied.
-	IdleToken     string `protobuf:"bytes,8,opt,name=idle_token,json=idleToken,proto3" json:"idle_token,omitempty"`
+	IdleToken string `protobuf:"bytes,8,opt,name=idle_token,json=idleToken,proto3" json:"idle_token,omitempty"`
+	// Empty preserves short ground steps/hops. ground_or_water permits the
+	// first safe solid or deep-water contact. follow_water requires a verified
+	// crossing toward the currently observed lower follow destination.
+	Landing       string `protobuf:"bytes,9,opt,name=landing,proto3" json:"landing,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7715,6 +7719,13 @@ func (x *BodyMovementRequest) GetJump() bool {
 func (x *BodyMovementRequest) GetIdleToken() string {
 	if x != nil {
 		return x.IdleToken
+	}
+	return ""
+}
+
+func (x *BodyMovementRequest) GetLanding() string {
+	if x != nil {
+		return x.Landing
 	}
 	return ""
 }
@@ -8009,6 +8020,7 @@ type NavigationObservation struct {
 	Portal                     *PortalFollowObservation `protobuf:"bytes,19,opt,name=portal,proto3" json:"portal,omitempty"`
 	MovementPointsSupported    bool                     `protobuf:"varint,20,opt,name=movement_points_supported,json=movementPointsSupported,proto3" json:"movement_points_supported,omitempty"`
 	MovementPoints             *MovementPointsState     `protobuf:"bytes,21,opt,name=movement_points,json=movementPoints,proto3" json:"movement_points,omitempty"`
+	BodyLandingSupported       bool                     `protobuf:"varint,22,opt,name=body_landing_supported,json=bodyLandingSupported,proto3" json:"body_landing_supported,omitempty"`
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
@@ -8188,6 +8200,13 @@ func (x *NavigationObservation) GetMovementPoints() *MovementPointsState {
 		return x.MovementPoints
 	}
 	return nil
+}
+
+func (x *NavigationObservation) GetBodyLandingSupported() bool {
+	if x != nil {
+		return x.BodyLandingSupported
+	}
+	return false
 }
 
 type PortalPoint struct {
@@ -8620,6 +8639,7 @@ type EncounterPlayer struct {
 	// Current self ground run speed in yards/second, when observed.
 	GroundRunSpeed     *float32 `protobuf:"fixed32,41,opt,name=ground_run_speed,json=groundRunSpeed,proto3,oneof" json:"ground_run_speed,omitempty"`
 	SelectedTargetGuid *uint64  `protobuf:"varint,42,opt,name=selected_target_guid,json=selectedTargetGuid,proto3,oneof" json:"selected_target_guid,omitempty"`
+	Swimming           bool     `protobuf:"varint,43,opt,name=swimming,proto3" json:"swimming,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -8946,6 +8966,13 @@ func (x *EncounterPlayer) GetSelectedTargetGuid() uint64 {
 		return *x.SelectedTargetGuid
 	}
 	return 0
+}
+
+func (x *EncounterPlayer) GetSwimming() bool {
+	if x != nil {
+		return x.Swimming
+	}
+	return false
 }
 
 type EncounterCreature struct {
@@ -15077,7 +15104,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2(.warcraftbuddy.actions.v1.EncounterSpellR\x05value:\x028\x01B\t\n" +
 	"\a_map_idB\r\n" +
 	"\v_host_ownedB\x11\n" +
-	"\x0f_host_requested\"\x8a\x02\n" +
+	"\x0f_host_requested\"\xa4\x02\n" +
 	"\x13BodyMovementRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -15090,7 +15117,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"durationMs\x12\x12\n" +
 	"\x04jump\x18\a \x01(\bR\x04jump\x12\x1d\n" +
 	"\n" +
-	"idle_token\x18\b \x01(\tR\tidleToken\"\x83\x02\n" +
+	"idle_token\x18\b \x01(\tR\tidleToken\x12\x18\n" +
+	"\alanding\x18\t \x01(\tR\alanding\"\x83\x02\n" +
 	"\x11BodyMovementState\x12\x1f\n" +
 	"\vsequence_id\x18\x01 \x01(\x04R\n" +
 	"sequenceId\x12\x19\n" +
@@ -15120,7 +15148,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x05ready\x18\f \x01(\bR\x05ready\x12\x12\n" +
 	"\x04hold\x18\r \x01(\bR\x04hold\x12'\n" +
 	"\x0ffollow_revision\x18\x0e \x01(\x04R\x0efollowRevision\x12\x14\n" +
-	"\x05phase\x18\x0f \x01(\tR\x05phase\"\x98\b\n" +
+	"\x05phase\x18\x0f \x01(\tR\x05phase\"\xce\b\n" +
 	"\x15NavigationObservation\x126\n" +
 	"\x17body_movement_supported\x18\x01 \x01(\bR\x15bodyMovementSupported\x12\x1c\n" +
 	"\tfollowing\x18\x02 \x01(\bR\tfollowing\x12\x1d\n" +
@@ -15145,7 +15173,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x1cground_navigation_configured\x18\x12 \x01(\bR\x1agroundNavigationConfigured\x12I\n" +
 	"\x06portal\x18\x13 \x01(\v21.warcraftbuddy.actions.v1.PortalFollowObservationR\x06portal\x12:\n" +
 	"\x19movement_points_supported\x18\x14 \x01(\bR\x17movementPointsSupported\x12V\n" +
-	"\x0fmovement_points\x18\x15 \x01(\v2-.warcraftbuddy.actions.v1.MovementPointsStateR\x0emovementPoints\"7\n" +
+	"\x0fmovement_points\x18\x15 \x01(\v2-.warcraftbuddy.actions.v1.MovementPointsStateR\x0emovementPoints\x124\n" +
+	"\x16body_landing_supported\x18\x16 \x01(\bR\x14bodyLandingSupported\"7\n" +
 	"\vPortalPoint\x12\f\n" +
 	"\x01x\x18\x01 \x01(\x02R\x01x\x12\f\n" +
 	"\x01y\x18\x02 \x01(\x02R\x01y\x12\f\n" +
@@ -15187,7 +15216,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0eEncounterParty\x123\n" +
 	"\x05group\x18\x01 \x01(\v2\x1d.warcraftbuddy.party.v1.GroupR\x05group\x12J\n" +
 	"\fraid_targets\x18\x02 \x01(\v2'.warcraftbuddy.party.v1.RaidTargetStateR\vraidTargets\x12\x1a\n" +
-	"\brevision\x18\x03 \x01(\x04R\brevision\"\xb5\v\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\"\xd1\v\n" +
 	"\x0fEncounterPlayer\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
 	"\apresent\x18\x02 \x01(\bR\apresent\x12\x1b\n" +
@@ -15239,7 +15268,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x12combat_reach_known\x18' \x01(\bR\x10combatReachKnown\x12!\n" +
 	"\fcombat_reach\x18( \x01(\x02R\vcombatReach\x12-\n" +
 	"\x10ground_run_speed\x18) \x01(\x02H\x02R\x0egroundRunSpeed\x88\x01\x01\x125\n" +
-	"\x14selected_target_guid\x18* \x01(\x04H\x03R\x12selectedTargetGuid\x88\x01\x01B\t\n" +
+	"\x14selected_target_guid\x18* \x01(\x04H\x03R\x12selectedTargetGuid\x88\x01\x01\x12\x1a\n" +
+	"\bswimming\x18+ \x01(\bR\bswimmingB\t\n" +
 	"\a_map_idB\b\n" +
 	"\x06_aliveB\x13\n" +
 	"\x11_ground_run_speedB\x17\n" +

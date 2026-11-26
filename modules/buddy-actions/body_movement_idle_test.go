@@ -37,7 +37,7 @@ func (c *idleBodyReportSession) SendPacket(ctx context.Context, r *modv1.SendPac
 		}
 	}
 	out, err := c.sessionAPI.SendPacket(ctx, r, opts...)
-	if err == nil && (r.Opcode == opcode.MSGMoveSetFacing || r.Opcode == opcode.MSGMoveJump || r.Opcode == opcode.MSGMoveFallLand) {
+	if err == nil && (r.Opcode == opcode.MSGMoveSetFacing || r.Opcode == opcode.MSGMoveJump || r.Opcode == opcode.MSGMoveFallLand || r.Opcode == opcode.MSGMoveStartSwim) {
 		c.f.mu.Lock()
 		defer c.f.mu.Unlock()
 		if c.f.portalCoreScope == nil {

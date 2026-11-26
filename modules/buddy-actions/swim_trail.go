@@ -12,9 +12,9 @@ import (
 )
 
 type swimTrail struct {
-	mapID    uint32
-	revision uint64
-	points   []buddynav.Point
+	mapID           uint32
+	visit, revision uint64
+	points          []buddynav.Point
 }
 
 func swimPoint(p position) buddynav.Point {
@@ -26,8 +26,8 @@ func (t *swimTrail) observe(w *worldv1.SnapshotResponse, selfGUID uint64) {
 	if self.GetGuid() != selfGUID || !self.GetMapKnown() {
 		return
 	}
-	if t.mapID != self.MapId || owner.GetMapKnown() && owner.GetMapId() != self.MapId {
-		*t = swimTrail{mapID: self.MapId}
+	if t.visit != w.VisitRevision || t.mapID != self.MapId || owner.GetMapKnown() && owner.GetMapId() != self.MapId {
+		*t = swimTrail{mapID: self.MapId, visit: w.VisitRevision}
 	}
 	if owner.GetGuid() != ownerGUID || !owner.GetPresent() || !owner.GetAlive() ||
 		!owner.GetMapKnown() || owner.MapId != self.MapId || !owner.GetPositionKnown() ||
@@ -69,16 +69,17 @@ func disconnectedSwimRoute(err error) bool {
 // the actual submerged poses of the leader. Surface projection cannot model
 // an opening underneath a wall that separates two Detour lakes.
 func (s *Service) swimRouteViaLeaderLocked(ctx context.Context, target buddynav.Point, plan func(context.Context, string, uint32, buddynav.Point, buddynav.Point) ([]buddynav.SwimPoint, error)) []buddynav.SwimPoint {
-	t := s.swimTrail
-	if len(t.points) < 2 || t.mapID != s.posMap {
+	return s.swimTrail.routeFrom(ctx, s.navDataDir, s.posMap, swimPoint(s.pos), target, s.swimming, s.lastWorld.GetOwner(), plan)
+}
+
+func (t swimTrail) routeFrom(ctx context.Context, dataDir string, mapID uint32, start, target buddynav.Point, swimming bool, goal *worldv1.PlayerState, plan func(context.Context, string, uint32, buddynav.Point, buddynav.Point) ([]buddynav.SwimPoint, error)) []buddynav.SwimPoint {
+	if len(t.points) < 2 || t.mapID != mapID {
 		return nil
 	}
 	last := t.points[len(t.points)-1]
-	goal := s.lastWorld.GetOwner()
 	if trailDistance(last, target) > buddynav.MaxSwimTrailStep || goal.GetGuid() != ownerGUID || !goal.GetPresent() {
 		return nil
 	}
-	start := swimPoint(s.pos)
 	type joinCandidate struct {
 		i        int
 		distance float64
@@ -106,19 +107,19 @@ func (s *Service) swimRouteViaLeaderLocked(ctx context.Context, target buddynav.
 		tail := t.points[candidate.i:]
 		var path []buddynav.SwimPoint
 		proof := tail
-		if s.swimming && candidate.distance <= buddynav.MaxSwimTrailStep {
+		if swimming && candidate.distance <= buddynav.MaxSwimTrailStep {
 			proof = make([]buddynav.Point, 1, len(tail)+1)
 			proof[0] = start
 			proof = append(proof, tail...)
 			path = []buddynav.SwimPoint{{Point: start, Swimming: true}}
 		} else {
-			joined, err := plan(call, s.navDataDir, s.posMap, start, tail[0])
+			joined, err := plan(call, dataDir, mapID, start, tail[0])
 			if err != nil || len(joined) == 0 || !joined[len(joined)-1].Swimming {
 				continue
 			}
 			path = joined
 		}
-		if len(proof) < 2 || buddynav.ValidateSwimTrailContext(call, s.navDataDir, s.posMap, proof) != nil {
+		if len(proof) < 2 || buddynav.ValidateSwimTrailContext(call, dataDir, mapID, proof) != nil {
 			continue
 		}
 		for _, p := range proof {
@@ -127,7 +128,7 @@ func (s *Service) swimRouteViaLeaderLocked(ctx context.Context, target buddynav.
 			}
 		}
 		if goal.MovementFlags&swimMovementFlag == 0 && trailDistance(last, target) > .005 {
-			shore, err := plan(call, s.navDataDir, s.posMap, last, target)
+			shore, err := plan(call, dataDir, mapID, last, target)
 			if err != nil || len(shore) == 0 || shore[len(shore)-1].Swimming {
 				continue
 			}

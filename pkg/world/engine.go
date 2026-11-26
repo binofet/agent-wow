@@ -47,6 +47,7 @@ func (e *engine) write(op uint32, body []byte) error {
 }
 
 func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scopes ...*modv1.TransportScope) (GameplayWriteOutcome, bool, error) {
+	prior := e.ownMovementReport
 	if ownMovementReportOpcode(op) {
 		// A failed or unsupported new write must not leave the prior report
 		// available as the most recent known own movement during transport.
@@ -92,7 +93,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	}
 	// No callback, deadline setter or owner-state transition follows the final
 	// scope comparison and attempt reservation before entering WritePacket.
-	if err := e.transport.reserve(op, body, requested); err != nil {
+	if err := e.reserveGameplayPacket(op, body, requested, prior); err != nil {
 		return "", false, err
 	}
 	e.writeSerial++

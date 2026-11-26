@@ -34,7 +34,8 @@ func (e *engine) retainOwnMovementReport(op uint32, body []byte) {
 	}
 	legacyGround := (op == opcode.MSGMoveStartForward || op == opcode.MSGMoveHeartbeat || op == opcode.MSGMoveStop) &&
 		movementflags.GroundCompatible(info.Flags, uint32(info.ExtraFlags))
-	if !legacyGround && !normalBodyMovementImage(op, body, scope.SelfGuid) {
+	waterStop := op == opcode.MSGMoveStop && info.BodyWaterEntry(false)
+	if !legacyGround && !waterStop && !normalBodyMovementImage(op, body, scope.SelfGuid) {
 		return
 	}
 	e.ownMovementReport = &modv1.WorldPacket{Opcode: op, Payload: append([]byte(nil), body...), TransportScope: cloneTransportScope(scope)}

@@ -26,7 +26,7 @@ type idleMotionScope struct {
 	rawPose, pose                                    position
 	rawRevision, clientRevision, rawMovementRevision uint64
 	mapID                                            uint32
-	cleanupOnly, broken                              bool
+	cleanupOnly, broken, landing                     bool
 	writes                                           uint64
 	lastOpcode                                       uint32
 	lastPayload                                      []byte
@@ -63,13 +63,17 @@ func (s *Service) idleMotionLocalFailureLocked(b *idleMotionScope, now time.Time
 	if s.closed || s.sessionID != b.binding.sessionID || s.selfGUID != b.binding.selfGUID {
 		return "body_changed"
 	}
-	if s.idleInteraction != b.binding || s.state.InteractionOwner != "exploration" || s.interactionToken != b.binding.token || s.state.InteractionHarvest {
+	if b.landing && b.binding.token == "" {
+		if s.state.InteractionOwner != "" || s.movementOwner.owner != "" || s.state.CastPending || s.state.Traveling {
+			return "body_writer_changed"
+		}
+	} else if s.idleInteraction != b.binding || s.state.InteractionOwner != "exploration" || s.interactionToken != b.binding.token || s.state.InteractionHarvest {
 		return "lease_changed"
 	}
 	if !s.encounterVisit.bound || s.encounterVisit.revision != b.binding.visit {
 		return "visit_changed"
 	}
-	if !b.cleanupOnly && s.interactionUntil.Sub(now) < time.Second {
+	if b.binding.token != "" && !b.cleanupOnly && s.interactionUntil.Sub(now) < time.Second {
 		return "lease_expiring"
 	}
 	if s.clientControlLost || s.clientControlRestoring {
@@ -94,7 +98,13 @@ func (s *Service) idleMotionCurrentFailureLocked(b *idleMotionScope, w *worldv1.
 	if w.GetSelf().GetPositionRevision() != b.rawRevision || playerPosition(w.GetSelf()) != b.rawPose {
 		return "observed_pose_changed"
 	}
-	if safeSelfCombat(w, s.selfGUID) != "" {
+	compatible := movementflags.GroundCompatible
+	if b.landing && b.writes > 0 {
+		compatible = func(flags, extra uint32) bool {
+			return movementflags.GroundCompatible(flags, extra) || extra == 0 && (flags == 0x1000 || flags == 0x1001 || flags == swimMovementFlag || flags == swimMovementFlag|1)
+		}
+	}
+	if safeSelfMovement(w, s.selfGUID, compatible) != "" {
 		return "observed_body_unsafe"
 	}
 	observed := portalObservedWorldScope(w, s.selfGUID)
@@ -109,11 +119,18 @@ func (s *Service) idleMotionCurrentLocked(b *idleMotionScope, w *worldv1.Snapsho
 }
 
 func (s *Service) newIdleMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly bool) (*idleMotionScope, error) {
+	return s.newBodyMotionScopeLocked(ctx, token, w, cleanupOnly, false)
+}
+
+func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly, landing bool) (*idleMotionScope, error) {
 	b := &idleMotionScope{binding: s.idleInteraction, initial: clonePortalScope(portalObservedWorldScope(w, s.selfGUID)),
 		rawPose: playerPosition(w.GetSelf()), pose: s.pos, rawRevision: s.positionRevision, clientRevision: s.posRevision,
-		rawMovementRevision: w.GetSelfMovementFacts().GetRevision(), mapID: s.posMap, cleanupOnly: cleanupOnly}
+		rawMovementRevision: w.GetSelfMovementFacts().GetRevision(), mapID: s.posMap, cleanupOnly: cleanupOnly, landing: landing}
+	if landing && token == "" {
+		b.binding = idleInteractionBinding{sessionID: s.sessionID, selfGUID: s.selfGUID, visit: w.GetVisitRevision()}
+	}
 	b.current = clonePortalScope(b.initial)
-	if token == "" || token != b.binding.token || b.clientRevision == 0 || b.initial == nil {
+	if token == "" && !landing || token != b.binding.token || b.clientRevision == 0 || b.initial == nil {
 		return nil, modcb.PacketNotDispatchedError("idle motion source mapping unavailable")
 	}
 	prior, err := modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
@@ -132,12 +149,14 @@ func (s *Service) newIdleMotionScopeLocked(ctx context.Context, token string, w 
 	if err != nil || ctx.Err() != nil || !s.idleMotionCurrentLocked(b, fresh, now) {
 		return nil, modcb.PacketNotDispatchedError("idle motion custody or parsed body changed")
 	}
-	s.idleMotion = b
+	if b.binding.token != "" {
+		s.idleMotion = b
+	}
 	return b, nil
 }
 
 func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotionScope, op uint32, payload []byte) (*modv1.TransportScope, error) {
-	if !idleMotionOpcode(op) {
+	if !idleMotionOpcode(op) && !(b.landing && op == opcode.MSGMoveStartSwim) {
 		return nil, modcb.PacketNotDispatchedError("packet outside idle motion scope")
 	}
 	if b.cleanupOnly && op != opcode.MSGMoveStop {
