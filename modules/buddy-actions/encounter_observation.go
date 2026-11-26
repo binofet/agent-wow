@@ -70,6 +70,32 @@ func validEncounterWorldEntry(payload []byte) bool {
 // EncounterObservation projects this body's server observations. The Lua
 // policy owns encounter bindings, ordering and decisions about dispatch.
 func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*actionsv1.EncounterObservationResponse, error) {
+	// Remote reads must not prevent the packet callback from advancing this
+	// body's visit or completing an in-flight action. The callback connection
+	// and independent mode are fixed at construction; capture identity under
+	// the lock and validate the returned World against current native custody.
+	s.mu.Lock()
+	sessionID, selfGUID, closed := s.sessionID, s.selfGUID, s.closed
+	transportSequence, supportOp, buffOp := s.transportSequence, s.supportOp, s.buffOp
+	var supportView, buffView proto.Message
+	if supportOp != nil {
+		supportView = proto.Clone(&supportOp.view)
+	}
+	if buffOp != nil {
+		buffView = proto.Clone(&buffOp.view)
+	}
+	s.mu.Unlock()
+	var w *worldv1.SnapshotResponse
+	var state *partyv1.StateResponse
+	var readErr error
+	if !closed {
+		call, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
+		w, readErr = s.readWorldSnapshot(call)
+		cancel()
+		if readErr == nil {
+			state = s.readPartyStateLocked(ctx)
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Expiry is native operation bookkeeping, independent of inbound traffic.
@@ -90,18 +116,31 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		identity.Reason = "session_closing"
 		return identity, nil
 	}
-	call, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
-	defer cancel()
-	w, err := s.readWorldSnapshot(call)
-	if err != nil {
+	if readErr != nil || ctx.Err() != nil || sessionID != s.sessionID || selfGUID != s.selfGUID {
 		identity.Reason = "world_observation_unavailable"
 		return identity, nil
 	}
-	s.observeRecoveryLifeLocked(w)
 	if !s.matchesCurrentEncounterVisitLocked(w) {
 		identity.Reason = "world_visit_unbound"
 		return identity, nil
 	}
+	// If this exact operation receives GO during the read, already-observed
+	// life must remain unattributed even on later reads of that retained fact.
+	// Reuse normal death-custody settlement without claiming this cast's effect.
+	if supportOp != nil && s.supportOp == supportOp &&
+		!supportView.(*actionsv1.SpellOperation).ServerCastGo && supportOp.view.ServerCastGo && !supportOp.view.EffectObserved {
+		s.settleResurrectionLifeLocked(w, false)
+	}
+	// Neither a new operation nor a receipt transition (for example GO)
+	// may consume World evidence read before that transition. Packet handling
+	// and its receipts still progress; only this composite is superseded.
+	if s.transportSequence != transportSequence || s.supportOp != supportOp || s.buffOp != buffOp ||
+		supportOp != nil && !proto.Equal(supportView, &supportOp.view) ||
+		buffOp != nil && !proto.Equal(buffView, &buffOp.view) {
+		identity.Reason = "world_observation_superseded"
+		return identity, nil
+	}
+	s.observeRecoveryLifeLocked(w)
 
 	out := &actionsv1.EncounterObservationResponse{
 		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(s.hostEncounterActiveLocked()), HostRequested: identity.HostRequested,
@@ -119,7 +158,6 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	if s.state.LastTransportFailure != nil {
 		out.LastTransportFailure = proto.Clone(s.state.LastTransportFailure).(*actionsv1.TransportFailure)
 	}
-	state := s.readPartyStateLocked(ctx)
 	var online map[uint64]bool
 	if state.GetSessionId() == s.sessionID {
 		out.Party, online = s.encounterParty(state)
