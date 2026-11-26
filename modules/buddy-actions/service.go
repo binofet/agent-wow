@@ -495,7 +495,7 @@ func (s *Service) clientPositionLocked() *actionsv1.ClientPosition {
 		result.Y = s.pos.y
 		result.Z = s.pos.z
 		result.Orientation = s.pos.o
-		result.Estimated = s.posEstimated
+		result.Estimated = s.posEstimated || w.PositionInferred
 		result.Revision = s.posRevision
 		if age := s.now().Sub(s.posAt); age > 0 {
 			result.AgeMs = uint64(age.Milliseconds())
@@ -807,7 +807,7 @@ func (s *Service) observePositionLocked(p *worldv1.PlayerState) {
 	s.posMap = p.MapId
 	s.swimming = p.MovementFlagsKnown && p.MovementFlags&swimMovementFlag != 0
 	s.swimFollow = swimFollowRoute{}
-	s.posEstimated = p.PositionInferred
+	s.posEstimated = false
 	s.posAt = s.now().Add(-time.Duration(min(p.PositionAgeMs, uint64(24*time.Hour/time.Millisecond))) * time.Millisecond)
 	s.posRevision++
 }

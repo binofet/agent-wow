@@ -2,6 +2,8 @@ package buddyworld
 
 import (
 	"context"
+	"math"
+	"time"
 
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
@@ -10,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func (s *Service) observeKnockbackLocked(ctx context.Context, packet *modv1.WorldPacket, p observed, next *observations) {
@@ -39,6 +42,10 @@ func (s *Service) settleKnockback(ctx context.Context) {
 	if order == nil || client == nil {
 		return
 	}
+	clock, err := client.GetClock(ctx, &emptypb.Empty{})
+	if err != nil || clock == nil {
+		return
+	}
 	r, err := modcb.ReadKnockbackReport(ctx, client, order)
 	if err != nil || !sameMotionVisit(order.TransportScope, r.TransportScope) || r.TransportScope.MotionRevision <= order.TransportScope.MotionRevision {
 		return
@@ -47,10 +54,16 @@ func (s *Service) settleKnockback(ctx context.Context) {
 	if !ok || !(r.Opcode == opcode.MSGMoveFallLand && i.Flags == 0 || r.Opcode == opcode.MSGMoveStartSwim && i.BodyWaterEntry(false)) {
 		return
 	}
+	// MovementInfo and GetClock use the same wrapping session clock. A late
+	// first snapshot must retain the measured contact's age.
+	elapsed := clock.ClientTimeMs - i.Time
+	if elapsed > math.MaxInt32 {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := &s.state.players[0]
-	if s.knockback != order || p.positionKnown || p.known[unitHealth] && p.fields[unitHealth] == 0 || !scopeMatchesSelf(r.TransportScope, *p, s.state.visitRevision) {
+	if ctx.Err() != nil || s.knockback != order || p.positionKnown || p.known[unitHealth] && p.fields[unitHealth] == 0 || !scopeMatchesSelf(r.TransportScope, *p, s.state.visitRevision) {
 		return
 	}
 	now := s.now()
@@ -58,6 +71,9 @@ func (s *Service) settleKnockback(ctx context.Context) {
 	p.positionKnown, p.positionInferred, p.movementKnown = true, true, true
 	p.movementFlags, p.extraFlags, p.movementTime = i.Flags, uint32(i.ExtraFlags), i.Time
 	p.positionRevision++
-	p.positionAt, p.observedAt = now, now
+	p.positionAt = now.Add(-time.Duration(elapsed) * time.Millisecond)
+	if p.observedAt.Before(p.positionAt) {
+		p.observedAt = p.positionAt
+	}
 	s.knockback = nil
 }

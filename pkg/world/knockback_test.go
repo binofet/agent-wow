@@ -36,6 +36,10 @@ type knockbackTestClient struct {
 	landing bool
 }
 
+func (c knockbackTestClient) GetClock(ctx context.Context, _ *emptypb.Empty, _ ...grpc.CallOption) (*modv1.ClockResponse, error) {
+	return &modv1.ClockResponse{ClientTimeMs: c.e.s.Clock()}, ctx.Err()
+}
+
 func (c knockbackTestClient) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, opts ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
 	if r.Module != "session" || r.Method != modcb.KnockbackReportMethod {
 		return c.bodyContinuitySession.InvokeModule(ctx, r, opts...)
@@ -81,6 +85,9 @@ func TestCopiedOwnKnockbackRegainsPhysicalContactWithoutRealmSelfEcho(t *testing
 		wet := mode == "pool"
 		c, conn := newBodyContinuitySession(t)
 		c.e.s.started = time.Now()
+		if wet {
+			c.e.s.started = c.e.s.started.Add(-time.Duration(math.MaxUint32-5000) * time.Millisecond)
+		}
 		a := actions.NewService(knockbackTestClient{c, false}, 99)
 		a.SetNavigationDataDir(dir)
 		c.w.ConfigureSession(knockbackTestClient{c, true})
@@ -150,8 +157,15 @@ func TestCopiedOwnKnockbackRegainsPhysicalContactWithoutRealmSelfEcho(t *testing
 		if err := c.e.advanceKnockback(); err != nil {
 			t.Fatal(err)
 		}
+		// Delay World's first read past physical contact. Cross uint32 clock
+		// wrap for the wet fixture while retaining the original landing age.
+		landed, ok := movementinfo.OwnFrame(c.e.ownMovementReport.GetPayload(), 99)
+		if !ok {
+			t.Fatal("no valid physical terminal", conn.opcodes)
+		}
+		c.e.s.started = time.Now().Add(-time.Duration(landed.Time+7300) * time.Millisecond)
 		after, _ := c.w.Snapshot(context.Background(), &worldv1.SnapshotRequest{})
-		if !after.Self.PositionKnown || !after.Self.PositionInferred || after.Self.PositionRevision <= before.Self.PositionRevision || !after.Self.MovementFlagsKnown ||
+		if !after.Self.PositionKnown || !after.Self.PositionInferred || after.Self.PositionAgeMs < 7300 || after.Self.PositionAgeMs > 8000 || after.Self.PositionRevision <= before.Self.PositionRevision || !after.Self.MovementFlagsKnown ||
 			!after.Self.Alive || after.Self.Z != motion.contact.Z || !proto.Equal(before.SelfMovementFacts.Info, after.SelfMovementFacts.Info) || before.SelfMovementFacts.Revision != after.SelfMovementFacts.Revision {
 			t.Fatalf("lost real self, fake realm facts or stale login wet=%v self=%v writes=%v", wet, after.Self, conn.opcodes)
 		}

@@ -174,6 +174,32 @@ func traceBodyFall(ctx context.Context, points []BodyMotionSample, bearing, spee
 	}
 }
 
+// An impulse which never emerges from a deep pool cannot turn an underwater
+// lakebed into a dry landing. Check the water column at the actual endpoint;
+// a solid roof can separate the body from an unrelated pool overhead.
+func verifyDryImpulseContact(q Point, water bodyWater, clear bodyClear) error {
+	low := q
+	low.Z += swimBodyRayHeight
+	top := float32(worldVerticalLimit)
+	for layer := 0; layer < maxGroundCandidates; layer++ {
+		surface, found, err := water(q, top, q.Z+swimImmersion+.025)
+		if err != nil || !found {
+			return err
+		}
+		high := q
+		high.Z = surface + swimBodyRayHeight
+		open, err := clear(high, low)
+		if err != nil {
+			return err
+		}
+		if open {
+			return errors.New("submerged impulse did not make an airborne water entry or dry contact")
+		}
+		top = surface + swimImmersion - .025
+	}
+	return errors.New("overlapping liquid layers exceed the impulse contact query")
+}
+
 // Lower pools can overlap an entirely separate shallow upper layer at the
 // same XY. Inspect only the swept band, using the exact water polygon and
 // the same floor/depth rules as the normal swim planner.

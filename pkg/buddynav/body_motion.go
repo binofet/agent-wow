@@ -138,7 +138,17 @@ func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, st
 		if gravity != nil {
 			feet := bodyFootprintFloor(floor)
 			if gravity.impulse {
-				return traceBodyFall(ctx, []BodyMotionSample{{Point: start}}, bearing, speed, gravity.initial, 0, true, feet, clear, water)
+				path, err := traceBodyFall(ctx, []BodyMotionSample{{Point: start}}, bearing, speed, gravity.initial, 0, true, feet, clear, water)
+				if err != nil {
+					return nil, err
+				}
+				last := path[len(path)-1]
+				if !last.Swimming {
+					if err := verifyDryImpulseContact(last.Point, water, clear); err != nil {
+						return nil, err
+					}
+				}
+				return path, nil
 			}
 			if h, supported, err := feet(start, .025, .025); err != nil || supported && finite(h) {
 				if err != nil {
