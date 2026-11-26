@@ -126,7 +126,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
                 return dict(revision='synthetic-source',sourceLines='exact source '+str(args['first_line'])+'x'*6000,
                     gameplayDispatched=False)
             with patch.object(direct_tools.DirectTools,'_policy_show',source_read):
-                brain.generate([dict(speaker='Joel',text='Inspect and improve my own Lua.')],state)
+                loop.generate_reply([dict(speaker='Joel',text='Inspect and improve my own Lua.')],state)
             self.assertEqual(len(http.requests),20)
             audit=brain.client.last_receipt['promptBudget']
             self.assertTrue(audit['archivedReadResults'])
