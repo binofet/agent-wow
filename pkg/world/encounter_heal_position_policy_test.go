@@ -115,7 +115,24 @@ func TestEncounterUnknownRangeRejectionKeepsOtherPatientsEligible(t *testing.T) 
 	p.expectNoAction(observeSparseEncounter(t, p, obs))
 	obs.Healing.Patients = []*actionsv1.HealingPatient{patient}
 	p.expectNoAction(observeSparseEncounter(t, p, obs))
+	obs.Interaction = &actionsv1.InteractionObservation{Owner: "supply", Token: "supply-turn"}
+	obs.Healing.Caster.Ready, obs.Spells["6063"].Ready = false, false
+	obs.Healing.Reason = "healing_caster_busy"
+	p.expectNoAction(observeSparseEncounter(t, p, obs))
+	// Older builds omit the busy heal rows. A rejected, unmeasured patient
+	// still cannot interrupt the lease. A newly injured second patient can.
+	ranks := obs.Healing.Spells
+	obs.Healing.Patients, obs.Healing.Spells = nil, nil
+	obs.Players[fallbackGUID(fallbackLeader)].Health = obs.Players[fallbackGUID(fallbackLeader)].MaxHealth
+	p.expectNoAction(observeSparseEncounter(t, p, obs))
 	self.HealthKnown, self.Health, self.MaxHealth = true, 70, 100
+	release, _ := p.decide(observeSparseEncounter(t, p, obs)).Output["action"].(map[string]any)
+	if release["capability"] != "release_interaction" {
+		t.Fatal("legacy busy feed lost the newly injured self", release)
+	}
+	obs.Interaction, obs.Healing.Reason, obs.Healing.Spells = nil, "", ranks
+	obs.Healing.Caster.Ready, obs.Spells["6063"].Ready = true, true
+	obs.Healing.Patients = []*actionsv1.HealingPatient{patient}
 	obs.Healing.Patients = append(obs.Healing.Patients, &actionsv1.HealingPatient{Guid: fallbackSelf,
 		Health: 70, MaxHealth: 100, Distance: proto.Float64(0)})
 	out := p.decide(observeSparseEncounter(t, p, obs))
@@ -127,6 +144,33 @@ func TestEncounterUnknownRangeRejectionKeepsOtherPatientsEligible(t *testing.T) 
 	action, _ = p.decide(observeSparseEncounter(t, p, obs)).Output["action"].(map[string]any)
 	if action["capability"] != "approach_target" || action["targetGuid"] != "8" {
 		t.Fatal("fresh out-of-range measurement did not restore ordinary catch-up", action)
+	}
+}
+
+func TestUnknownRangeHealRetriesOnlyAfterObservedUnwrittenBusyRecovery(t *testing.T) {
+	p, obs := newFallbackPolicyTest(t, ""), positionedHealObservation()
+	obs.Healing.Patients[0].Distance = nil
+	self := obs.Players[fallbackGUID(fallbackSelf)]
+	self.PositionKnown, self.MovementKnown = false, false
+	cast := p.decide(observeSparseEncounter(t, p, obs))
+	id, err := p.host.ReserveAction(cast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{
+		SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionNotDispatched,
+		Payload: map[string]any{"capability": "heal", "target_guid": "8", "spell_id": 6063, "phase": "admission_rejected",
+			"grpc_status": "FailedPrecondition", "grpc_message": "healing_caster_busy", "transport_written": false},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	p.expectNoAction(observeSparseEncounter(t, p, obs))
+	obs.Healing.Caster.Ready, obs.Spells["6063"].Ready, obs.Healing.Reason = false, false, "healing_caster_busy"
+	p.expectNoAction(observeSparseEncounter(t, p, obs))
+	obs.Healing.Caster.Ready, obs.Spells["6063"].Ready, obs.Healing.Reason = true, true, ""
+	action, _ := p.decide(observeSparseEncounter(t, p, obs)).Output["action"].(map[string]any)
+	if action["capability"] != "heal" || action["targetGuid"] != "8" {
+		t.Fatal("affirmative caster recovery did not permit a new exact selection", action)
 	}
 }
 

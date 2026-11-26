@@ -111,11 +111,27 @@ local function needs_heal(patient, explicit)
 end
 
 local function position_unknown(view, patient)
-  return patient.distance == nil or patient.guid == view.caster.guid and view.casterMotionUnknown == true
+  return patient.distance == nil or view.caster and patient.guid == view.caster.guid and view.casterMotionUnknown == true
+end
+
+local function requires_measurement(guid)
+  return refused[guid] or overflow or refused_count >= refusal_limit
 end
 
 local function clear_refusal(guid)
   if refused[guid] then refused[guid], refused_count = nil, refused_count - 1 end
+end
+
+local function hold_refusal(guid, reason)
+  if refused[guid] then
+    if reason == true then refused[guid] = true end
+  elseif refused_count < refusal_limit then
+    refused[guid], refused_count = reason, refused_count + 1
+  else
+    -- A measured cast may also fail while the set is full. Preserve every
+    -- earlier refusal and require measurements for this visit.
+    overflow = true
+  end
 end
 
 local function choose_cast(view, explicit, allow_busy)
@@ -130,7 +146,7 @@ local function choose_cast(view, explicit, allow_busy)
   local target
   for _, patient in ipairs(view.patients) do
     if needs_heal(patient,explicit) and
-        not (position_unknown(view, patient) and (refused[patient.guid] or overflow or refused_count >= refusal_limit)) and
+        not (position_unknown(view, patient) and requires_measurement(patient.guid)) and
         (patient.guid == caster.guid or patient.distance == nil or
           type(patient.distance) == "number" and patient.distance >= 0 and patient.distance < math.huge) and
         prefer_patient(patient, target, caster.guid) and can_heal(patient, caster.guid, spells) then
@@ -189,6 +205,8 @@ return {
   needs_access = function(view, obs)
     local target,rank=choose_cast(view,request_pending,true)
     if target and rank then return true end
+    if type(view.patients) == "table" and #view.patients > 0 and
+        type(view.spells) == "table" and #view.spells > 0 then return false end
     -- Older Actions builds hide patient/rank rows while another interaction
     -- owns the body. Their raw player vitals and available spell metadata can
     -- still prove that this healer needs access for self/party triage.
@@ -204,8 +222,13 @@ return {
     for _,member in ipairs(((obs.party or {}).group or {}).members or {}) do
       if member.online==true then allies[member.guid]=true end
     end
+    local measured = {[obs.selfGuid]=view.casterMotionUnknown ~= true}
+    for _, patient in ipairs(view.patients or {}) do
+      if not position_unknown(view, patient) then measured[patient.guid] = true end
+    end
     for key,patient in pairs(obs.players or {}) do
-      if allies[key] and (key==obs.selfGuid and self_heal or key~=obs.selfGuid and ally_heal) and
+      if allies[key] and (measured[key] or not requires_measurement(key)) and
+        (key==obs.selfGuid and self_heal or key~=obs.selfGuid and ally_heal) and
         patient.present==true and patient.aliveKnown==true and patient.alive==true and patient.healthKnown==true and
         patient.mapKnown==true and (patient.mapId or 0)==(obs.mapId or 0) and needs_heal(patient,request_pending) then return true end
     end
@@ -216,6 +239,14 @@ return {
       observation, sequence = event.value, event.sequence
       if observation.visitId ~= visit then
         visit, proposed, refused, refused_count, overflow = observation.visitId, nil, {}, 0, false
+      end
+      local caster = observation.caster
+      if caster then
+        for guid, reason in pairs(refused) do
+          if reason == "awaiting_busy" and caster.ready ~= true and observation.reason == "healing_caster_busy" then
+            refused[guid] = "observed_busy"
+          elseif reason == "observed_busy" and caster.ready == true then clear_refusal(guid) end
+        end
       end
       if observation.caster and observation.caster.ready == true and type(observation.patients) == "table" then
         -- Only this patient's actual range/own motion can clear its refusal.
@@ -234,15 +265,10 @@ return {
         proposed.id = receipt.action_id
         if receipt.outcome == "failed" or receipt.outcome == "unknown" or receipt.outcome == "not_dispatched" or
             receipt.outcome == "settled_unverified" then
-          if not refused[p.target_guid] then
-            if refused_count < refusal_limit then
-              refused[p.target_guid], refused_count = true, refused_count + 1
-            else
-              -- A measured cast may also fail while the set is full. Preserve
-              -- every earlier refusal and require measurements for this visit.
-              overflow = true
-            end
-          end
+          local caster_busy = receipt.outcome == "not_dispatched" and p.phase == "admission_rejected" and
+            p.transport_written == false and p.grpc_status == "FailedPrecondition" and
+            (p.grpc_message == "healing_caster_busy" or p.grpc_message == "healing_caster_changed_before_cast")
+          hold_refusal(p.target_guid, caster_busy and "awaiting_busy" or true)
         elseif receipt.outcome == "confirmed" then clear_refusal(p.target_guid) end
       end
     end
@@ -284,7 +310,8 @@ return {
     refused_count, overflow = 0, checkpoint.data.refusalOverflow == true
     for guid, held in pairs(refused) do
       refused_count = refused_count + 1
-      if type(guid) ~= "string" or held ~= true or refused_count > refusal_limit then return false end
+      if type(guid) ~= "string" or held ~= true and held ~= "awaiting_busy" and held ~= "observed_busy" or
+          refused_count > refusal_limit then return false end
     end
     return true
   end,
