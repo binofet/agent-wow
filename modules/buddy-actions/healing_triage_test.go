@@ -56,9 +56,6 @@ func healingVM(t *testing.T, s *Service, source string) *behavior.Session {
 	t.Helper()
 	if s.sessionID == "" {
 		s.sessionID = "actions-test-body"
-		if fake, ok := s.session.(*fakeSession); ok && fake.party.GetSessionId() != "" {
-			s.sessionID = fake.party.SessionId
-		}
 	}
 	if source == "" {
 		b, e := os.ReadFile("../../behaviors/healing.lua")

@@ -34,7 +34,7 @@ func partyDefenseRig(t *testing.T, class uint32) (*Service, *fakeSession, *world
 	c.AttackVictimGuid, c.AttackAgeMs = victim.Guid, 90000
 	c.TargetKnown, c.TargetGuid = true, victim.Guid
 	c.UnitFlagsKnown, c.UnitFlags = true, 0x80000
-	f.party = &partyv1.StateResponse{SessionId: "current-party-body", Group: &partyv1.Group{Known: true, InGroup: true, Members: []*partyv1.Member{
+	f.party = &partyv1.StateResponse{SessionId: s.sessionID, Group: &partyv1.Group{Known: true, InGroup: true, Members: []*partyv1.Member{
 		{Guid: 1, Online: true, Self: own == 1, Name: "Arlen"}, {Guid: 4, Online: true, Self: own == 4, Name: "Mira"}, {Guid: 5, Online: true, Self: own == 5, Name: "Rook"}, {Guid: 3, Online: false, Name: "Joel"},
 	}}}
 	return s, f, c, advance

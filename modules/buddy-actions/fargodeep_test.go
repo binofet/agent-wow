@@ -59,7 +59,7 @@ func fargodeepRig(t *testing.T, guid uint64) (*Service, *fakeSession, *worldv1.C
 		}
 		f.world.NearbyPlayers = append(f.world.NearbyPlayers, p)
 	}
-	f.party = &partyv1.StateResponse{SessionId: "test-fargodeep-body", Group: &partyv1.Group{Known: true, InGroup: true, Members: members}}
+	f.party = &partyv1.StateResponse{SessionId: s.sessionID, Group: &partyv1.Group{Known: true, InGroup: true, Members: members}}
 	target := &worldv1.CreatureState{Guid: 0xf130000000000000 | uint64(40)<<24 | 111, Entry: 40, Present: true, MapKnown: true, PositionKnown: true, X: -9817, Y: 124, Z: 5, PositionRevision: 1, LevelKnown: true, Level: 6, HealthKnown: true, Health: 100, MaxHealth: 100, AliveKnown: true, Alive: true, TargetKnown: true, UnitFlagsKnown: true, DynamicFlagsKnown: true, CombatReachKnown: true, CombatReach: 1.5}
 	f.world.NearbyCreatures = []*worldv1.CreatureState{target}
 	f.world.Owner = nil
