@@ -4959,28 +4959,18 @@ class Conversation:
             next_poll[0] = now + 0.75
             params = {"afterSequence": str(bound_cursor), "limit": 256, "sessionId": bound_chat}
             try:
-                try:
-                    result = self.rpc.call("buddy-chat.poll", params, timeout=0.5)
-                except ChatPollTimeout:
-                    # Each due poll may retry one failed pure read on the same bound cursor.
-                    # A recovered earlier poll does not consume later polls' retry.
-                    remaining = now + 0.8 - time.monotonic()
-                    if (self.stopped() or self.session_id != bound_chat or self.cursor != bound_cursor
-                            or self.character_guid != bound_guid):
-                        interrupt_reason[0] = "owned_body_changed"
-                        return True
-                    if remaining <= 0:
-                        raise
-                    result = self.rpc.call("buddy-chat.poll", dict(params), timeout=min(0.3, remaining))
-                    if time.monotonic() > now + 0.8:
-                        raise ChatPollTimeout("Chat freshness read deadline elapsed")
-                if result.get("sessionId") != bound_chat:
-                    interrupt_reason[0] = "chat_body_changed"
-                    self.reset_body(); return True
-                if (self.session_id != bound_chat or self.cursor != bound_cursor
+                # Keep the same read alive across measured healthy tail latency;
+                # restarting it at 500ms discards a potentially fresh response.
+                result = self.rpc.call("buddy-chat.poll", params, timeout=1.5)
+                if (self.stopped() or self.session_id != bound_chat or self.cursor != bound_cursor
                         or self.character_guid != bound_guid):
                     interrupt_reason[0] = "owned_body_changed"
                     return True
+                if time.monotonic() > now + 1.5:
+                    raise ChatPollTimeout("Chat freshness read deadline elapsed")
+                if result.get("sessionId") != bound_chat:
+                    interrupt_reason[0] = "chat_body_changed"
+                    self.reset_body(); return True
                 if self.owner_message_waiting(result):return True
                 if still_current is not None:
                     if self.combat_review_peer_waiting(result):
@@ -4991,6 +4981,10 @@ class Conversation:
                         return True
                 return False
             except ConversationError as error:
+                if (self.stopped() or self.session_id != bound_chat or self.cursor != bound_cursor
+                        or self.character_guid != bound_guid):
+                    interrupt_reason[0] = "owned_body_changed"
+                    return True
                 # Persistent/invalid freshness never authorizes a stale reply or write.
                 freshness_failure[0] = ("read_timeout" if isinstance(error, ChatPollTimeout)
                     else "unavailable_or_invalid_response")
