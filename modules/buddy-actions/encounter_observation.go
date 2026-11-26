@@ -76,6 +76,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	// the lock and validate the returned World against current native custody.
 	s.mu.Lock()
 	sessionID, selfGUID, closed := s.sessionID, s.selfGUID, s.closed
+	transportSequence, supportOp, buffOp := s.transportSequence, s.supportOp, s.buffOp
 	s.mu.Unlock()
 	var w *worldv1.SnapshotResponse
 	var state *partyv1.StateResponse
@@ -110,6 +111,13 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	}
 	if readErr != nil || ctx.Err() != nil || sessionID != s.sessionID || selfGUID != s.selfGUID {
 		identity.Reason = "world_observation_unavailable"
+		return identity, nil
+	}
+	// A newly entered operation must never consume a World read begun before
+	// its admission. Same-operation inbound receipts do not advance this
+	// outgoing transport generation and remain free to complete above.
+	if s.transportSequence != transportSequence || s.supportOp != supportOp || s.buffOp != buffOp {
+		identity.Reason = "world_observation_superseded"
 		return identity, nil
 	}
 	s.observeRecoveryLifeLocked(w)

@@ -176,3 +176,36 @@ func TestEncounterObservationLargeLearnedCatalogRemainsComplete(t *testing.T) {
 		t.Fatal("fixture no longer represents a large encounter observation", len(encoded))
 	}
 }
+
+func TestEncounterObservationCannotBorrowWorldForNewOperation(t *testing.T) {
+	for _, unknown := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unknown_transport_%t", unknown), func(t *testing.T) {
+			s, f, _ := genericCastRig(t)
+			f.party.SessionId = s.sessionID
+			s.applySpellbookLocked(map[uint32]bool{3018: true})
+			f.failSend = unknown
+			h := &encounterReadHook{fakeSession: f, module: "buddy-party"}
+			var revision uint64
+			h.hook = func() {
+				s.CastSpell(context.Background(), genericRequest(s, 3018))
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				if s.supportOp != nil {
+					revision = s.supportOp.view.OperationRevision
+				}
+			}
+			s.session = h
+			out, err := s.EncounterObservation(context.Background(), &emptypb.Empty{})
+			if h.finished != nil {
+				<-h.finished
+			}
+			if err != nil || !h.completed || out.Reason != "world_observation_superseded" || out.MapId != nil || len(out.Players) != 0 || len(out.Spells) != 0 ||
+				s.supportOp == nil || revision == 0 || s.supportOp.view.OperationRevision != revision || s.supportOp.view.EffectObserved || len(f.packets) != 1 {
+				t.Fatalf("pre-operation World escaped or changed newly entered cast custody: out=%v operation=%v packets=%d err=%v", out, s.supportOp, len(f.packets), err)
+			}
+			if unknown && s.supportOp.view.Phase != "transport_unconfirmed_no_retry" {
+				t.Fatal("unknown transport changed", s.supportOp.view.Phase)
+			}
+		})
+	}
+}
