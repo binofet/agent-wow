@@ -200,7 +200,7 @@ func TestNativeFollowFiniteUnknownOwnershipCleanup(t *testing.T) {
 		}
 		return string(b)
 	}
-	source := "local encounter_priors=(function()\n" + read("encounter-priors.lua") + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
+	source := "local encounter_priors=(function()\n" + withStandingRange(read("encounter-priors.lua")) + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
 end)()
 return {on_event=function() end,export_state=function() return {version=1,data={}} end,import_state=function() return true end,decide=function(frame)
  local function scenario(kind)

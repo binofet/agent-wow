@@ -197,9 +197,10 @@ function M.adjust_cloud_points(frame,obs,sequence,out,points,passivePrior,ownHol
     for _,p in ipairs(points) do
         -- Scope and emission/deduplication belong to the agent's producer.
         -- Expiry is absolute Unixms: reading a point never extends it.
+        local expires=type(p)=="table" and (p.expiresAtUnixMs or p.expiresAtMs)
         if type(p)=="table" and type(p.x)=="number" and math.abs(p.x-self.x)<7.8 and
            type(p.y)=="number" and math.abs(p.y-self.y)<7.8 and type(p.z)=="number" and math.abs(p.z-self.z)<5 and
-           p.radiusYards==5 and number(p.expiresAtMs) and p.expiresAtMs>now and p.expiresAtMs<=now+20000 then
+           p.radiusYards==5 and number(expires) and expires>now and expires<=now+20000 then
             local dx,dy=self.x-p.x,self.y-p.y
             local projection=math.max(0,math.min(length,-dx*ux-dy*uy))
             local cx,cy=dx+projection*ux,dy+projection*uy
@@ -219,7 +220,7 @@ function M.adjust_cloud_points(frame,obs,sequence,out,points,passivePrior,ownHol
                 rx,ry=rx+vx/d*weight,ry+vy/d*weight
                 if not nearest or d2+dz*dz<nearest then
                     nearest,nx,ny=d2+dz*dz,vx/d,vy/d
-                    contributor={x=p.x,y=p.y,z=p.z,radiusYards=5,expiresAtMs=p.expiresAtMs}
+                    contributor={x=p.x,y=p.y,z=p.z,radiusYards=5,expiresAtMs=expires}
                 end
             end
         end

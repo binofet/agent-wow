@@ -16,7 +16,7 @@ func TestPassivePriorDoesNotStarveConfirmedOwnDrinkLease(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			h, e := behavior.NewSession(context.Background(), fallbackSession, "local encounter_consumables=(function()\n"+string(raw)+"\nend)()\n"+readEncounterBundle(t))
+			h, e := behavior.NewSession(context.Background(), fallbackSession, "local encounter_consumables=(function()\n"+string(raw)+"\nend)()\n"+withStandingRange(readEncounterBundle(t)))
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -169,7 +169,7 @@ func TestPassivePriorDoesNotStarveConfirmedOwnDrinkLease(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if _, e = h.Reload(context.Background(), "local encounter_consumables=(function()\n"+string(raw)+"\nend)()\n"+readEncounterBundle(t), h.Status().Revision); e != nil {
+			if _, e = h.Reload(context.Background(), "local encounter_consumables=(function()\n"+string(raw)+"\nend)()\n"+withStandingRange(readEncounterBundle(t)), h.Status().Revision); e != nil {
 				t.Fatal(e)
 			}
 			d = step()

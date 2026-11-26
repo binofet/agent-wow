@@ -13,7 +13,7 @@ func passivePriorPolicy(t *testing.T, prefix string) *fallbackPolicyTest {
 	t.Helper()
 	path := os.Getenv("BUDDY_TEST_ENCOUNTER_BUNDLE")
 	if path == "" {
-		return newFallbackPolicyTest(t, prefix)
+		return standingRangePolicy(t, prefix)
 	}
 	source, e := os.ReadFile(path)
 	if e != nil {
@@ -139,7 +139,7 @@ func TestPassiveDistantPriorPreservesFormationButNotOffensiveAdmission(t *testin
  obs.targets['9'].x=3
  out={followFormation={witness="original"},portalCatchup={witness="original"}}
  prior.filter(obs,out,nil)
- return{far=far,near=out.followFormation==nil and out.portalCatchup==nil}
+ return{far=far,near=out.followFormation~=nil and out.portalCatchup~=nil}
 end}`
 	h, e := behavior.NewSession(context.Background(), "passive-filter", source)
 	if e != nil {

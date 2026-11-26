@@ -40,18 +40,20 @@ end
 function M.bind_visible(points,sightings)
     if type(points)~="table" then return nil end
     local bound={}
-    for _,p in ipairs(points) do
-        if type(p)~="table" then return nil end
-        local match
-        for _,witness in ipairs(sightings) do
-            if p.x==witness.x and p.y==witness.y and p.z==witness.z and number(p.radiusYards) and p.radiusYards>0 and
-               (not match or witness.observedAtMs>match.observedAtMs) then match=witness end
+    -- An older provider may return only coordinates. Bind each current object
+    -- once at that location, keeping its own GUID, radius and first-seen time.
+    for _,witness in ipairs(sightings) do
+        local latest
+        for _,p in ipairs(points) do
+            if type(p)~="table" then return nil end
+            if (not p.groundEffectGuid or p.groundEffectGuid==witness.groundEffectGuid) and
+               p.x==witness.x and p.y==witness.y and p.z==witness.z and number(p.radiusYards) and p.radiusYards>0 then
+                local expires=p.expiresAtUnixMs or p.expiresAtMs
+                if number(expires) and (not latest or expires>latest) then latest=expires end
+            end
         end
-        if match then
-            local expires=p.expiresAtUnixMs or p.expiresAtMs
-            if number(expires) then bound[#bound+1]={x=p.x,y=p.y,z=p.z,radiusYards=match.radiusYards,groundEffectGuid=match.groundEffectGuid,
-                expiresAtUnixMs=math.min(expires,match.observedAtMs+M.reference_duration_ms)} end
-        end
+        if latest then bound[#bound+1]={x=witness.x,y=witness.y,z=witness.z,radiusYards=witness.radiusYards,
+            groundEffectGuid=witness.groundEffectGuid,expiresAtUnixMs=math.min(latest,witness.observedAtMs+M.reference_duration_ms)} end
     end
     return bound
 end
