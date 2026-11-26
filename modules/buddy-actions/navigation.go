@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
@@ -179,17 +180,46 @@ func (s *Service) navigationStepAtSpeedLocked(ctx context.Context, path []positi
 	return ok
 }
 
+// A proof belongs to one proposed exploration packet, not a reusable movement
+// permission. Every existing final World read checks its displacement against
+// both the captured interval speed and the newly observed speed.
+type navigationSpeedProofKey struct{}
+type navigationSpeedProof struct {
+	from           position
+	elapsed, speed float64
+	refused        bool
+}
+
+var errNavigationSpeedChanged = errors.New("exploration observed speed no longer permits proposed checkpoint")
+
+func navigationSpeedAllowed(ctx context.Context, w *worldv1.SnapshotResponse, p position) bool {
+	proof, _ := ctx.Value(navigationSpeedProofKey{}).(*navigationSpeedProof)
+	if proof == nil {
+		return true
+	}
+	speed := observedRunSpeed(w.GetSelf())
+	if speed <= 0 || distance(proof.from, p) > math.Min(proof.speed, speed)*proof.elapsed+0.01 {
+		proof.refused = true
+		return false
+	}
+	return true
+}
+
 // Exploration revalidates its body, lease and route before every checkpoint.
 // A delayed checkpoint may discard elapsed backlog, never extrapolate farther
 // than the existing 600ms bound. Other controllers retain their late STOP.
 func (s *Service) navigationStepResultLocked(ctx context.Context, path []position, index *int, inside func(position) bool, speed float64, boundedDelay bool) (bool, string) {
 	beforeWrite := s.transportSequence
+	var speedProof *navigationSpeedProof
 	write := func(ok bool, op uint32) (bool, string) {
 		if ok {
 			return true, ""
 		}
 		if s.state.MotionUnconfirmed {
 			return false, "movement_transport_unconfirmed"
+		}
+		if speedProof != nil && speedProof.refused {
+			return false, "observed_run_speed_changed"
 		}
 		if failure := s.state.LastTransportFailure; failure != nil && failure.Sequence > beforeWrite && failure.Opcode == op && !failure.OutcomeUnknown {
 			return false, "movement_not_dispatched"
@@ -261,6 +291,10 @@ func (s *Service) navigationStepResultLocked(ctx context.Context, path []positio
 	}
 	if !inside(p) || math.Abs(float64(p.z-s.pos.z)) > 2 || distance(s.pos, p) > speed*elapsed+0.01 {
 		return stop("step_geometry_invalid")
+	}
+	if boundedDelay {
+		speedProof = &navigationSpeedProof{from: s.pos, elapsed: elapsed, speed: speed}
+		ctx = context.WithValue(ctx, navigationSpeedProofKey{}, speedProof)
 	}
 	ok, reason := write(s.movementLocked(ctx, opcode.MSGMoveHeartbeat, p, true), opcode.MSGMoveHeartbeat)
 	if ok && late {
