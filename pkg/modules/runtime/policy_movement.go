@@ -26,16 +26,18 @@ import (
 )
 
 type policyMovement struct {
-	self      uint64
-	stop      bool
-	body      bool
-	jump      bool
-	landing   bool
-	idleBound bool
-	unknown   bool
-	sequence  uint64
-	phase     string
-	detail    string
+	self         uint64
+	stop         bool
+	body         bool
+	jump         bool
+	landing      bool
+	followsOwner bool
+	airborne     bool
+	idleBound    bool
+	unknown      bool
+	sequence     uint64
+	phase        string
+	detail       string
 }
 
 func (p *SessionPolicy) resolveBodyMovement(action map[string]any) (PolicyDispatch, error) {
@@ -97,7 +99,7 @@ func (p *SessionPolicy) resolveBodyMovement(action map[string]any) (PolicyDispat
 		values["idle_token"] = protoreflect.ValueOfString(token)
 	}
 	op := &policySpell{vm: p.vm, capability: "move_body", encounterVisit: visitID,
-		movement: &policyMovement{self: selfID, body: true, jump: jump, landing: landing, sequence: sequenceID}}
+		movement: &policyMovement{self: selfID, body: true, jump: jump, landing: landing, followsOwner: action["landing"] == "follow_water", sequence: sequenceID}}
 	_, op.movement.idleBound = action["idleToken"]
 	dispatch, err := p.preparePolicyDispatch("move_body", values, op)
 	if err == nil {
@@ -188,12 +190,22 @@ func (m *Manager) invokePolicyMovement(ctx context.Context, inst *instance, md m
 	return outcome, payload
 }
 
-// Only a native idle-bound body/travel invocation may supply these scopes.
-// Lua chooses the input, never a transport scope or an unscoped fallback.
+func routeScopeBound(scope *modv1.TransportScope) bool {
+	return scope != nil && scope.ConnectionId != "" && scope.VisitBound && scope.VisitRevision != 0 &&
+		scope.MotionRevision != 0 && scope.SelfGuid != 0 && !scope.SplineActive
+}
+
+// The native Actions handler attaches each physical source. Lua supplies the
+// selected operation and its bound dispatch token.
 func (m *Manager) writePolicyScopedMovement(ctx context.Context, token, sessionID, module string, code uint32, payload []byte, scope *modv1.TransportScope) (bool, error) {
 	registry := &m.policySpells
 	registry.mu.Lock()
+	follows, route, _ := modcb.IncomingRouteBodyInput(ctx)
 	op := registry.active[token]
+	if route && (follows || op == nil || op.capability != "travel_to" || op.movement == nil || !op.movement.idleBound) {
+		registry.mu.Unlock()
+		return true, modcb.PacketNotDispatchedError("route frame is outside the active travel dispatch")
+	}
 	if op == nil || op.movement == nil || !op.movement.idleBound && !op.movement.landing && !(op.capability == "release_interaction" && op.movement.stop) {
 		registry.mu.Unlock()
 		return false, nil
@@ -202,23 +214,35 @@ func (m *Manager) writePolicyScopedMovement(ctx context.Context, token, sessionI
 	allowed := (movement.idleBound || movement.landing) && op.capability == "move_body" && movement.body || movement.idleBound && op.capability == "travel_to" && !movement.body ||
 		op.capability == "release_interaction" && movement.stop
 	attempt := modcb.IncomingMovementAttempt(ctx)
-	if !op.admitted || !allowed || movement.landing && attempt == "" ||
+	if !op.admitted || !allowed || (movement.landing || route) && attempt == "" ||
 		op.origin.Writer != "lua" || op.origin.ActionID == "" || op.origin.SessionID != sessionID || op.origin.Module != module || module != actionsModule ||
 		movement.unknown || scope == nil || scope.ConnectionId == "" || !scope.VisitBound || scope.VisitRevision == 0 || scope.MotionRevision == 0 || scope.SelfGuid != movement.self ||
-		!op.matchesMovementPacket(code, payload) || ctx.Err() != nil || m.session.SendScopedPacket == nil {
+		(!route && !op.matchesMovementPacket(code, payload) || route && !routeScopeBound(scope)) || ctx.Err() != nil || m.session.SendScopedPacket == nil {
 		registry.mu.Unlock()
 		return true, modcb.PacketNotDispatchedError("scoped callback is outside the exact idle movement dispatch")
 	}
 	op.attempted = true
 	origin := op.origin
-	if movement.landing {
+	if route {
+		ctx = modsession.WithRouteBodyInput(ctx, false)
+		origin.MovementAttempt = attempt
+	} else if movement.landing {
 		ctx = modsession.WithBodyInput(ctx)
+		if !movement.followsOwner || movement.airborne {
+			ctx = modsession.WithSelfBodyInput(ctx)
+		}
 		origin.MovementAttempt = attempt
 	}
 	registry.mu.Unlock()
 	err := m.session.SendScopedPacket(modsession.WithWriteOrigin(ctx, origin), code, append([]byte(nil), payload...), proto.Clone(scope).(*modv1.TransportScope))
 	registry.mu.Lock()
 	movement.unknown = movement.unknown || err != nil && !modcb.PacketWasNotDispatched(err)
+	if err == nil && movement.landing && (code == opcode.MSGMoveHeartbeat || code == opcode.MSGMoveJump) {
+		offset := 1 + bits.OnesCount8(payload[0])
+		if len(payload) >= offset+4 && binary.LittleEndian.Uint32(payload[offset:])&0x1000 != 0 {
+			movement.airborne = true
+		}
+	}
 	op.written = op.written || err == nil
 	if modcb.PacketWasNotDispatched(err) && !op.written && !movement.unknown {
 		op.attempted = false
@@ -282,7 +306,7 @@ func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 	if flags&movementinfo.SwimmingFlag != 0 || code == opcode.MSGMoveStartSwim {
 		i, size, err := movementinfo.DecodePrefix(body[n:])
 		return guid == op.movement.self && op.movement.body && op.movement.landing &&
-			(code == opcode.MSGMoveStartSwim || code == opcode.MSGMoveStop) && err == nil && size == len(body)-n && i.BodyWaterEntry(code == opcode.MSGMoveStartSwim)
+			(code == opcode.MSGMoveStartSwim || code == opcode.MSGMoveStop) && err == nil && size == len(body)-n && (i.BodyWaterEntry(false) || code == opcode.MSGMoveStartSwim && i.BodyWaterEntry(true))
 	}
 	if binary.LittleEndian.Uint16(body[n+4:]) != 0 {
 		return false
@@ -309,12 +333,12 @@ func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 			}
 		}
 		jump := op.movement.jump && math.Abs(values[0]-7.955547) <= .0001 && values[3] >= .1 && values[3] <= 14
-		settling := values[0] == 0 && values[3] == 0 && flags&1 == 0
+		settling := code == opcode.MSGMoveHeartbeat && (values[0] == 0 || op.movement.landing && op.movement.jump && math.Abs(values[0]-buddynav.BodyJumpVelocity) <= .0001) && values[3] == 0 && flags&1 == 0
 		walkOff := code == opcode.MSGMoveHeartbeat && op.movement.landing && !op.movement.jump && values[0] == 0 && flags&1 != 0 && values[3] >= .1 && values[3] <= 14
 		fall := time.Duration(binary.LittleEndian.Uint32(body[n+26:])) * time.Millisecond
 		if (!jump && !settling && !walkOff) || code == opcode.MSGMoveJump && !jump ||
 			math.Abs(values[1]*values[1]+values[2]*values[2]-1) > .001 ||
-			(fall > buddynav.BodyMotionHorizon && (!op.movement.landing || settling || !buddynav.BodyFlightInRange(fall, values[3], values[0]))) {
+			(fall > buddynav.BodyMotionHorizon && (!op.movement.landing || !buddynav.BodyFlightInRange(fall, values[3], values[0]))) {
 			return false
 		}
 	}

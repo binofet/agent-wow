@@ -17,6 +17,11 @@ const bodyWaterReportInterval = 100 * time.Millisecond
 // A moving body traverses at most one verified horizontal route. Gravity is
 // checked continuously in sub-yard chords, independently of report cadence.
 func BodyLandingSampleLimit(speed float64) int {
+	if speed == 0 {
+		// With forward released only vertical map extent and terminal speed
+		// bound elapsed time. No horizontal route limit caps a vertical fall.
+		return 12 + int(math.Ceil((2*worldVerticalLimit/normalTerminalVelocity+(normalTerminalVelocity+BodyJumpVelocity)/BodyGravity)/bodyWaterReportInterval.Seconds()))
+	}
 	if speed < .1 || speed > 14 || math.IsNaN(speed) {
 		return 0
 	}
@@ -38,20 +43,27 @@ func bodyElevation(seconds, initial float64) float64 {
 // Find the first contact as the body falls along its actual horizontal momentum.
 // Geometry bounds the work. The ordinary short-hop horizon is not a landing.
 func traceBodyLanding(ctx context.Context, points []BodyMotionSample, bearing, speed, initial float64, floor bodyFloor, clear bodyClear, water bodyWater) ([]BodyMotionSample, error) {
+	return traceBodyFall(ctx, points, bearing, speed, initial, 0, false, floor, clear, water)
+}
+
+func traceBodyFall(ctx context.Context, points []BodyMotionSample, bearing, speed, initial float64, age time.Duration, settling bool, floor bodyFloor, clear bodyClear, water bodyWater) ([]BodyMotionSample, error) {
 	takeoff := points[len(points)-1]
+	offset := age.Seconds()
+	startHeight := bodyElevation(offset, initial)
 	dx, dy := speed*math.Cos(bearing), speed*math.Sin(bearing)
 	pose := func(t float64) Point {
-		return Point{takeoff.Point.X + float32(dx*t), takeoff.Point.Y + float32(dy*t), takeoff.Point.Z + float32(bodyElevation(t, initial))}
+		return Point{takeoff.Point.X + float32(dx*t), takeoff.Point.Y + float32(dy*t), takeoff.Point.Z + float32(bodyElevation(offset+t, initial)-startHeight)}
 	}
 	previous := takeoff.Point
-	ceiling := takeoff.Point.Z + float32(initial*initial/(2*BodyGravity)) + .025
+	up := math.Max(0, initial-BodyGravity*offset)
+	ceiling := takeoff.Point.Z + float32(up*up/(2*BodyGravity)) + .025
 	for t := 0.; ; {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		// Keep checks within a yard even at terminal velocity. Do not jump
 		// between a high ledge and a floor or water layer below it.
-		vz := math.Max(-normalTerminalVelocity, initial-BodyGravity*t)
+		vz := math.Max(-normalTerminalVelocity, initial-BodyGravity*(offset+t))
 		step := math.Min(.1, 1/math.Hypot(speed, math.Abs(vz)+BodyGravity*.1))
 		next := t + step
 		q := pose(next)
@@ -149,11 +161,11 @@ func traceBodyLanding(ctx context.Context, points []BodyMotionSample, bearing, s
 			return nil, fmt.Errorf("body landing corridor at %gs: %v to %v: %w", next, previous, q, err)
 		}
 		elapsed := time.Duration(next * float64(time.Second))
-		if landed && !wet && elapsed > BodyMotionHorizon {
+		if landed && !wet && !settling && elapsed > BodyMotionHorizon {
 			return nil, fmt.Errorf("first contact is solid ground outside the short landing envelope at %v", q)
 		}
 		if landed || takeoff.At+elapsed-points[len(points)-1].At >= bodyWaterReportInterval {
-			points = append(points, BodyMotionSample{At: takeoff.At + elapsed, Point: q, FallTime: elapsed, Swimming: landed && wet})
+			points = append(points, BodyMotionSample{At: takeoff.At + elapsed, Point: q, Settling: settling, FallTime: age + elapsed, Swimming: landed && wet})
 		}
 		if landed {
 			return points, nil

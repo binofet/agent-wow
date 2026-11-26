@@ -20,6 +20,10 @@ func (s *Service) followFormationLocked(ctx context.Context, world *worldv1.Snap
 	// A complete verified ground route can include stairs between floors.
 	// The observed-owner catch-up bound leaves room for a verified detour
 	// inside the planner's independent 240-yard route budget.
+	if distance(s.pos, owner) > 200 && owner.z < s.pos.z && followHorizontalDistance(s.pos, owner) <= 200 && waterMovementAllowed(world) {
+		s.swimFollowTickLocked(ctx, owner, now)
+		return
+	}
 	if distance(s.pos, owner) > 200 {
 		pause("formation_owner_outside_supported_range")
 		return

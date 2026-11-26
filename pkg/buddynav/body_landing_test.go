@@ -188,3 +188,44 @@ func TestBodyLandingCrossesBelowWalkwayButCannotEnterRisingTerrain(t *testing.T)
 		}
 	}
 }
+
+func TestReleasedGravityKeepsFallAgeAndMeetsFirstSolid(t *testing.T) {
+	clear := func(Point, Point) (bool, error) { return true, nil }
+	from := Point{X: 2, Z: -8}
+	for _, age := range []time.Duration{0, 700 * time.Millisecond} {
+		p, err := traceBodyFall(context.Background(), []BodyMotionSample{{Point: from, Settling: true, FallTime: age}}, 0, 0, 0, age, true, ledgeFloor(-45, -90), clear, ledgeWater(-72, true))
+		if err != nil {
+			t.Fatal(err)
+		}
+		last := p[len(p)-1]
+		if last.Point != (Point{X: 2, Z: -45}) || last.Swimming || last.FallTime != age+last.At || !last.Settling {
+			t.Fatal("lost solid or original age", age, last)
+		}
+		for _, q := range p {
+			if q.Point.X != from.X || q.Point.Y != from.Y {
+				t.Fatal("retained unrequested horizontal input", q)
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := traceBodyFall(ctx, []BodyMotionSample{{Point: from, Settling: true}}, 0, 0, 0, 0, true, ledgeFloor(-45), clear, ledgeWater(-72, true)); err == nil {
+		t.Fatal("canceled gravity proceeded")
+	}
+}
+
+func TestReleasedGravityMaraudonStandingOverShelf(t *testing.T) {
+	root := os.Getenv("BUDDY_NAV_POOL_TEST_DATA_DIR")
+	if root == "" {
+		t.Skip("set BUDDY_NAV_POOL_TEST_DATA_DIR to copied client geometry")
+	}
+	from := Point{469.89444, 50.35286, -99.962814}
+	p, err := PlanBodyGravityContext(context.Background(), root, 349, from, 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := p[len(p)-1]
+	if last.Swimming || last.Point.X != from.X || last.Point.Y != from.Y || math.Abs(float64(last.Point.Z+110.44878)) > .025 {
+		t.Fatal("missed measured contact above pool", last)
+	}
+}

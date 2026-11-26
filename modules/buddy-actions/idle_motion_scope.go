@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"time"
@@ -22,12 +23,13 @@ type idleMotionScopeKey struct{}
 // Latest mechanical source for an already-owned idle lease, not a movement
 // controller or operation ledger. Only actual known-written reports advance it.
 type idleMotionScope struct {
+	destination                                      *destinationOwner
 	binding                                          idleInteractionBinding
 	initial, current                                 *modv1.TransportScope
 	rawPose, pose                                    position
 	rawRevision, clientRevision, rawMovementRevision uint64
 	mapID                                            uint32
-	cleanupOnly, broken, landing                     bool
+	cleanupOnly, broken, landing, selfOnly           bool
 	writes                                           uint64
 	lastAttempt                                      string
 	lastOpcode                                       uint32
@@ -65,7 +67,11 @@ func (s *Service) idleMotionLocalFailureLocked(b *idleMotionScope, now time.Time
 	if s.closed || s.sessionID != b.binding.sessionID || s.selfGUID != b.binding.selfGUID {
 		return "body_changed"
 	}
-	if b.landing && b.binding.token == "" {
+	if b.destination != nil {
+		if !b.destination.localCurrent(s, now) {
+			return "destination_writer_changed"
+		}
+	} else if b.landing && b.binding.token == "" {
 		if s.state.InteractionOwner != "" || s.movementOwner.owner != "" || s.state.CastPending || s.state.Traveling {
 			return "body_writer_changed"
 		}
@@ -101,6 +107,12 @@ func (s *Service) idleMotionCurrentFailureLocked(b *idleMotionScope, w *worldv1.
 		return "observed_pose_changed"
 	}
 	compatible := movementflags.GroundCompatible
+	if b.destination != nil {
+		if !waterMovementAllowed(w) {
+			return "water_movement_unavailable"
+		}
+		compatible = func(f, x uint32) bool { return destinationSelfMode(w, f, x) || b.destination.gravity.current(w) }
+	}
 	if b.landing && b.writes > 0 {
 		compatible = func(flags, extra uint32) bool {
 			return movementflags.GroundCompatible(flags, extra) || extra == 0 && (flags == 0x1000 || flags == 0x1001 || flags == swimMovementFlag || flags == swimMovementFlag|1)
@@ -121,24 +133,30 @@ func (s *Service) idleMotionCurrentLocked(b *idleMotionScope, w *worldv1.Snapsho
 }
 
 func (s *Service) newIdleMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly bool) (*idleMotionScope, error) {
-	return s.newBodyMotionScopeLocked(ctx, token, w, cleanupOnly, false)
+	return s.newBodyMotionScopeLocked(ctx, token, w, cleanupOnly, "")
 }
 
 // Finite landings pin every successful frame to the attempt that wrote it.
 // Core can return its original bytes across a contiguous run of parsed VALUES.
 func (s *Service) readBodyMotionReport(ctx context.Context, b *idleMotionScope) (*modv1.WorldPacket, error) {
 	if b.landing {
-		return modcb.ReadBodyInputReport(ctx, s.session, s.sessionID, s.selfGUID, b.lastAttempt)
+		return modcb.ReadBodyInputReport(ctx, s.session, s.sessionID, s.selfGUID, b.lastAttempt, b.selfOnly)
 	}
 	return modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
 }
 
-func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly, landing bool) (*idleMotionScope, error) {
+func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly bool, landingMode string) (*idleMotionScope, error) {
+	landing := landingMode != ""
 	b := &idleMotionScope{binding: s.idleInteraction, initial: clonePortalScope(portalObservedWorldScope(w, s.selfGUID)),
 		rawPose: playerPosition(w.GetSelf()), pose: s.pos, rawRevision: s.positionRevision, clientRevision: s.posRevision,
-		rawMovementRevision: w.GetSelfMovementFacts().GetRevision(), mapID: s.posMap, cleanupOnly: cleanupOnly, landing: landing}
+		rawMovementRevision: w.GetSelfMovementFacts().GetRevision(), mapID: s.posMap, cleanupOnly: cleanupOnly, landing: landing, selfOnly: landingMode == "ground_or_water"}
 	if landing && token == "" {
 		b.binding = idleInteractionBinding{sessionID: s.sessionID, selfGUID: s.selfGUID, visit: w.GetVisitRevision()}
+	}
+	if owner, ok := ctx.Value(destinationOwnerKey{}).(destinationOwner); ok && landing {
+		b.destination = &owner
+		b.selfOnly = owner.token != "" || owner.lastSeen
+		b.binding = idleInteractionBinding{sessionID: s.sessionID, selfGUID: s.selfGUID, visit: w.GetVisitRevision(), token: token}
 	}
 	b.current = clonePortalScope(b.initial)
 	if token == "" && !landing || token != b.binding.token || b.clientRevision == 0 || b.initial == nil {
@@ -146,14 +164,24 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 	}
 	prior, err := s.readBodyMotionReport(ctx, b)
 	needPose := s.posEstimated || w.GetSelf().GetPositionInferred()
+	settled := false
+	if err != nil && status.Code(err) == codes.FailedPrecondition && landing && needPose {
+		// For a genuinely new selection, a stationary STOP still supplies its
+		// exact pose across a destination or ordinary posture change. Start any
+		// new control decision at the newly parsed World source instead.
+		prior, err = modcb.ReadSettledBodySource(ctx, s.session, s.sessionID, s.selfGUID)
+		settled = err == nil
+	}
 	if err == nil {
 		p, valid := idleMotionPacketPose(prior.Payload, s.selfGUID)
 		if !valid || !idleMotionOpcode(prior.Opcode) || !samePortalCoreVisit(b.initial, prior.TransportScope) || !landing && prior.TransportScope.MotionRevision < b.initial.MotionRevision || needPose && p != b.pose {
 			return nil, modcb.PacketNotDispatchedError("idle motion prior report no longer matches the captured body")
 		}
-		b.current = clonePortalScope(prior.TransportScope)
+		if !settled || prior.TransportScope.MotionRevision > b.initial.MotionRevision {
+			b.current = clonePortalScope(prior.TransportScope)
+		}
 	} else if status.Code(err) != codes.FailedPrecondition || needPose {
-		return nil, modcb.PacketNotDispatchedError("idle motion current prior report unavailable")
+		return nil, modcb.PacketNotDispatchedError("idle motion current prior report unavailable: " + status.Convert(err).Message())
 	}
 	fresh, err := s.readWorldSnapshot(ctx)
 	now := s.now()
@@ -167,7 +195,7 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 }
 
 func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotionScope, op uint32, payload []byte) (*modv1.TransportScope, error) {
-	if !idleMotionOpcode(op) && !(b.landing && op == opcode.MSGMoveStartSwim) {
+	if !idleMotionOpcode(op) && !(b.landing && (op == opcode.MSGMoveStartSwim || b.destination != nil && op == opcode.MSGMoveStopSwim)) {
 		return nil, modcb.PacketNotDispatchedError("packet outside idle motion scope")
 	}
 	if b.cleanupOnly && op != opcode.MSGMoveStop {
@@ -209,6 +237,11 @@ func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotion
 
 func (s *Service) idleMotionAfterWriteLocked(ctx context.Context, b *idleMotionScope, op uint32, payload []byte) error {
 	b.writes++
+	if b.landing && (op == opcode.MSGMoveHeartbeat || op == opcode.MSGMoveJump) {
+		if _, n, e := readGUID(payload); e == nil && len(payload) >= n+4 && binary.LittleEndian.Uint32(payload[n:])&0x1000 != 0 {
+			b.selfOnly = true
+		}
+	}
 	b.lastOpcode, b.lastPayload = op, append([]byte(nil), payload...)
 	w, worldErr := s.readWorldSnapshot(ctx)
 	// A competing same-wire write may arrive during the World read. Read our

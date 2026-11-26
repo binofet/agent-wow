@@ -81,7 +81,7 @@ func (f *fakeSession) GetClock(ctx context.Context, _ *emptypb.Empty, _ ...grpc.
 func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, _ ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if r.Module == "session" && (r.Method == modcb.OwnMovementReportMethod || r.Method == modcb.BodyInputReportMethod) {
+	if r.Module == "session" && (r.Method == modcb.OwnMovementReportMethod || r.Method == modcb.BodyInputReportMethod || r.Method == modcb.SelfBodyInputReportMethod || r.Method == modcb.SettledBodyInputReportMethod) {
 		return f.readSyntheticOwnMovementReport(ctx, r)
 	}
 	if r.Module == "buddy-world" && r.Method == "observe_client_movement" && r.Request.MessageIs(&worldv1.ClientMovementRequest{}) {

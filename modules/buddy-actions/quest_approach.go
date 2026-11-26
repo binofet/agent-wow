@@ -41,6 +41,10 @@ func (s *Service) ownsQuestApproach(r *actionsv1.ApproachQuestRequest) bool {
 // Local NPC interactions depend on this character's own observations. Joel's
 // visibility and activity remain requirements of the separate social controllers.
 func safeQuestCharacter(w *worldv1.SnapshotResponse, selfGUID uint64) string {
+	return safeQuestCharacterMode(w, selfGUID, movementflags.GroundCompatible)
+}
+
+func safeQuestCharacterMode(w *worldv1.SnapshotResponse, selfGUID uint64, compatible func(uint32, uint32) bool) string {
 	if w == nil || w.Self == nil || w.Self.Guid != selfGUID || !w.Self.Present {
 		return "character_missing_or_identity_mismatch"
 	}
@@ -51,7 +55,7 @@ func safeQuestCharacter(w *worldv1.SnapshotResponse, selfGUID uint64) string {
 	if !p.AliveKnown || !p.Alive {
 		return "character_dead_or_unknown"
 	}
-	if !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) {
+	if !p.MovementFlagsKnown || !compatible(p.MovementFlags, p.ExtraMovementFlags) {
 		return "character_ordinary_ground_movement_unknown"
 	}
 	const unsafe = uint32(0x1 | 0x4 | 0x00040000 | 0x00080000 | 0x00100000 | 0x00400000 | 0x00800000 | 0x01000000 | 0x02000000 | 0x08000000)

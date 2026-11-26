@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/agent-wow/agent-wow/pkg/buddyidentity"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
@@ -287,10 +288,10 @@ func (t *transportScopeState) reserve(op uint32, payload []byte, requested *modv
 		return nil
 	}
 	if op == opcode.MSGMoveStop && requested != nil {
-		return t.reserveMovementStop(payload, requested, nil, false)
+		return t.reserveMovementStop(payload, requested, nil, false, false)
 	}
 	if requested != nil && bodyMovementScopeOpcode(op) {
-		return t.reserveBodyMovement(op, payload, requested)
+		return t.reserveBodyMovement(op, payload, requested, false)
 	}
 	if op == opcode.CMSGAreatrigger && requested != nil {
 		return t.reserveAreaTrigger(payload, requested)
@@ -372,7 +373,15 @@ func (e *engine) observeTransportScope(op uint16, body []byte) {
 		return
 	}
 	before := e.transport.scope.GetMotionRevision()
+	// A keyed standalone packet can supersede a freshly selected follow
+	// destination even though it cannot change the controlled player's body.
+	// Use the same companion identity that the production World module selects.
+	self := e.transport.scope.GetSelfGuid()
+	ownerChange := self != 0 && transportClearlyForeign(op, body, self) && !transportClearlyForeign(op, body, buddyidentity.CompanionOwnerGUID)
 	e.transport.observe(op, body)
+	if ownerChange {
+		e.transport.advance(&e.transport.scope.MotionRevision)
+	}
 	objectUpdate := op == opcode.SMSGUpdateObject || op == opcode.SMSGCompressedUpdateObject
 	if objectUpdate {
 		e.s.mu.Lock()
@@ -382,8 +391,17 @@ func (e *engine) observeTransportScope(op uint16, body []byte) {
 	e.publishTransportScope()
 	if e.transport.scope.GetMotionRevision() != before && !objectUpdate {
 		reason := "own_motion_or_control"
-		if op == opcode.SMSGStandstateUpdate {
-			reason = "own_stand_state"
+		if ownerChange {
+			reason = modcb.BodyUpdateOwnerMovement
+			if op == opcode.SMSGDestroyObject {
+				reason = modcb.BodyUpdateOwnerLifecycle
+			}
+		} else if op == opcode.SMSGStandstateUpdate {
+			if len(body) == 1 && body[0] >= 1 && body[0] <= 6 {
+				reason = modcb.BodyUpdatePosture
+			} else {
+				reason = "own_restricted_stand_state"
+			}
 		}
 		e.s.recordParsedBodyUpdate(e.transport.scope, reason)
 	}

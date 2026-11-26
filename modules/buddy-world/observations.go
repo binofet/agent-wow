@@ -33,6 +33,7 @@ const (
 // so malformed packet rollback never mutates previously committed observations.
 type observations struct {
 	bodyInputBarrier      string
+	bodyInputFields       []string
 	players               [2]observed
 	visitRevision         uint64
 	nearbyPlayers         map[uint64]*observed

@@ -15,3 +15,12 @@ const GroundMask uint32 = 0x1ff | PassiveModifiers
 func GroundCompatible(flags, extra uint32) bool {
 	return flags & ^GroundMask == 0 && extra == 0
 }
+
+// UnsafeUnitFlags are build-12340 unit states that exclude ordinary
+// self-directed movement, including external control, stun, taxi and mount.
+const UnsafeUnitFlags uint32 = 0x1 | 0x4 | 0x00040000 | 0x00100000 | 0x00400000 | 0x00800000 | 0x01000000 | 0x02000000 | 0x08000000
+
+// Build-12340 UNIT_FIELD_FLAGS and UNIT_FIELD_FLAGS_2 respectively.
+const CannotSwim uint32 = 0x4000
+const CannotTurn uint32 = 0x8000
+const ForcedOrFeign uint32 = 0x40 | 0x1
