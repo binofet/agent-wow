@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"google.golang.org/protobuf/proto"
@@ -53,6 +54,23 @@ func princessLease(t *testing.T, p *fallbackPolicyTest, o *actionsv1.EncounterOb
 	}
 }
 
+func finishPrincessStep(t *testing.T, p *fallbackPolicyTest, o *actionsv1.EncounterObservationResponse, d behavior.Decision, a map[string]any) {
+	t.Helper()
+	self := o.Players["4"]
+	seq, err := strconv.ParseUint(a["sequenceId"].(string), 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groundReceipt(t, p, d, a, behavior.ActionSettledUnverified, "body_input_written", true)
+	direction := float64(self.Orientation) + a["bearingRadians"].(float64)
+	length := float64(self.GetGroundRunSpeed()) * a["durationMs"].(float64) / 1000
+	self.X += float32(length * math.Cos(direction))
+	self.Y += float32(length * math.Sin(direction))
+	self.Orientation, self.PositionEstimated = float32(direction), true
+	o.Navigation.BodyMovement = &actionsv1.BodyMovementState{SequenceId: seq, VisitId: o.VisitId,
+		Phase: "body_input_written", TransportWritten: true, PositionEstimated: true, X: self.X, Y: self.Y, Z: self.Z}
+}
+
 func TestPrincessDustBodyOnlyWithdrawalAndRoleResumption(t *testing.T) {
 	for _, class := range []uint32{5, 8, 9} {
 		t.Run(strconv.Itoa(int(class)), func(t *testing.T) {
@@ -86,12 +104,11 @@ func TestPrincessDustBodyOnlyWithdrawalAndRoleResumption(t *testing.T) {
 				Phase: "body_input_written", TransportWritten: true, PositionEstimated: true, X: self.X}
 			d, a = step()
 			if class != 5 {
-				if a["capability"] != "approach_target" || a["targetGuid"] != fallbackGUID(fallbackNPC) ||
-					a["minRangeYards"] != nil || a["clearanceYards"] != nil || a["requireLos"] != true {
-					t.Fatal("withdrawing caster did not regain facing and LOS on the selected boss", d.Output)
+				if a["capability"] != "move_body" || a["durationMs"] != float64(1) ||
+					math.Cos(float64(self.Orientation)+a["bearingRadians"].(float64)) < .98 {
+					t.Fatal("withdrawing caster did not turn toward the boss with a bounded input", d.Output)
 				}
-				self.Orientation = 0
-				o.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: fallbackNPC, VisitId: 1, RangeYards: 28, RequireLos: true, Ready: true}
+				finishPrincessStep(t, p, o, d, a)
 				d, a = step()
 			}
 			target, cap, spell := fallbackGUID(fallbackNPC), "offense", float64(133)
@@ -119,7 +136,7 @@ func TestPrincessDustBodyOnlyWithdrawalAndRoleResumption(t *testing.T) {
 	}
 }
 
-func TestPrincessDustPreservesSelectedAddAndNativeLOS(t *testing.T) {
+func TestPrincessDustPreservesSelectedAddAfterServerRejectedCast(t *testing.T) {
 	p, o := newFallbackPolicyTest(t, ""), princessEncounter(8)
 	boss := o.Targets[fallbackGUID(fallbackNPC)]
 	princessLease(t, p, o, false)
@@ -135,14 +152,33 @@ func TestPrincessDustPreservesSelectedAddAndNativeLOS(t *testing.T) {
 		return d, a
 	}
 	d, a := step()
-	if d.Output["focusGuid"] != fallbackGUID(addID) || a["targetGuid"] != fallbackGUID(addID) ||
-		a["capability"] != "approach_target" || a["requireLos"] != true || a["minRangeYards"] != nil || a["clearanceTargetGuids"] != nil {
-		t.Fatal("lost selected add or submitted unsupported target-band fields", d.Output)
+	if d.Output["focusGuid"] != fallbackGUID(addID) || a["targetGuid"] != fallbackGUID(addID) || a["capability"] != "offense" {
+		t.Fatal("lost the ordinary selected target", d.Output)
 	}
-	o.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: addID, VisitId: 1, RangeYards: 30, RequireLos: true, Ready: true}
+	id, err := p.host.ReserveAction(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionFailed,
+		Payload: map[string]any{"capability": "offense", "target_guid": fallbackGUID(addID), "spell_id": float64(133), "phase": "server_rejected"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, a = step()
+	if a["capability"] != "move_body" || d.Output["rangedStance"].(map[string]any)["phase"] != "seeking_spell_los" {
+		t.Fatal("rejected cast did not seek a new bounded firing pose", d.Output)
+	}
+	finishPrincessStep(t, p, o, d, a)
+	d, a = step()
+	if a["capability"] == "move_body" {
+		if a["durationMs"] != float64(1) {
+			t.Fatal("did not resume or turn after changing pose", d.Output)
+		}
+		finishPrincessStep(t, p, o, d, a)
+	}
 	d, a = step()
 	if a["capability"] != "offense" || a["targetGuid"] != fallbackGUID(addID) || a["spellId"] != float64(133) {
-		t.Fatal("native LOS was ready but ordinary selected damage did not resume", d.Output)
+		t.Fatal("ordinary damage did not resume from the new position", d.Output)
 	}
 }
 
@@ -155,6 +191,55 @@ func TestPrincessDustHealerReachesSelectedPatientOutsideBoss(t *testing.T) {
 	d, a := groundAction(t, p, o)
 	if a["capability"] != "move_body" || math.Sin(a["bearingRadians"].(float64)) < .98 {
 		t.Fatal("healer did not approach the patient outside carrier clearance", d.Output)
+	}
+}
+
+func TestPrincessDustPriestKeepsUnlocatedPatientAndRespondsToCastRejection(t *testing.T) {
+	p, o := newFallbackPolicyTest(t, ""), princessEncounter(5)
+	o.Targets[fallbackGUID(fallbackNPC)].X = 27
+	o.Players["3"].Health = 100
+	o.Party.Group.Members = append(o.Party.Group.Members, &partyv1.Member{Guid: 8, Online: true})
+	ally := fallbackPlayer(8)
+	ally.MapId, ally.HealthKnown, ally.Health, ally.MaxHealth = proto.Uint32(349), true, 12, 100
+	ally.PositionKnown = false
+	o.Players["8"] = ally
+	o.Healing.Patients = []*actionsv1.HealingPatient{{Guid: 8, Health: 12, MaxHealth: 100}}
+	d, a := groundAction(t, p, o)
+	if a["capability"] != "heal" || a["targetGuid"] != "8" {
+		t.Fatal("suppressed selected stationary care at unknown range", d.Output)
+	}
+	ally.PositionKnown, ally.X = true, 18
+	o.Healing.Patients[0].Distance = proto.Float64(18)
+	d, a = groundAction(t, p, o)
+	id, err := p.host.ReserveAction(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id,
+		Outcome: behavior.ActionFailed, Payload: map[string]any{"capability": "heal", "target_guid": "8", "spell_id": float64(6063), "phase": "server_rejected"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	princessLease(t, p, o, false)
+	d, a = groundAction(t, p, o)
+	if a["capability"] != "move_body" {
+		t.Fatal("reissued rejected heal without a changed position", d.Output)
+	}
+	finishPrincessStep(t, p, o, d, a)
+	d, a = groundAction(t, p, o)
+	if a["capability"] != "heal" || a["targetGuid"] != "8" || a["spellId"] != float64(6063) {
+		t.Fatal("did not return to original patient after moving", d.Output)
+	}
+}
+
+func TestPrincessDustCanLeaveCoincidentCarrierAtDifferentHeight(t *testing.T) {
+	p, o := newFallbackPolicyTest(t, ""), princessEncounter(8)
+	boss := o.Targets[fallbackGUID(fallbackNPC)]
+	boss.X, boss.Y, boss.Z = 0, 0, .2
+	princessLease(t, p, o, false)
+	d, a := groundAction(t, p, o)
+	if a["capability"] != "move_body" || a["jump"] != false {
+		t.Fatal("coincident horizontal centers blocked every outward ray", d.Output)
 	}
 }
 
