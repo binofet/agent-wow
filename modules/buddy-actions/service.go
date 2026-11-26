@@ -1107,6 +1107,12 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 			ctx = modcb.WithMovementAttempt(ctx, attempt.id)
 		}
 	}
+	// Refuse before callback entry while retaining the prior physical state and
+	// receipt. Errors from a callback already entered keep UNKNOWN handling.
+	if ctx.Value(ordinaryFollowMovementKey{}) == true && ctx.Err() != nil {
+		s.state.Reason = "ordinary_follow_context_ended_before_packet"
+		return false
+	}
 	before := s.transportSequence
 	if s.sendPacketLocked(ctx, op, payload, scopes...) != nil {
 		if failure := s.state.LastTransportFailure; failure != nil && failure.Sequence > before && !failure.OutcomeUnknown {
