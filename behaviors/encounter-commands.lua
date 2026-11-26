@@ -580,7 +580,7 @@ local function ranged_stance(obs,frame)
             minRangeYards=row.minRangeYards,maxRangeYards=row.maxRangeYards,clearanceYards=row.clearanceYards,remainingMs=math.max(0,row.expiresUnixMs-unix),rejected=state.rangedStatus}
     end
     local prior=encounter_priors and encounter_priors.rule(obs)
-    if not prior then return nil,state.rangedStatus or {applied=false,active=false,phase="not_requested"} end
+    if not prior or prior.automaticRange~=true then return nil,state.rangedStatus or {applied=false,active=false,phase="not_requested"} end
     local seen=state.rangedPrior
     local same=seen and seen.id==prior.id and seen.sessionId==obs.sessionId and seen.selfGuid==obs.selfGuid and seen.mapId==obs.mapId and seen.visitId==obs.visitId
     -- Retain a visible legacy cancellation as well as the new explicit marker.
@@ -737,6 +737,20 @@ local function ranged_hold(obs,frame,out,row,status,wanted,stopTarget)
     status.stationaryObserved=stopped==true
     return false
 end
+local function matching_body_pose(obs,self,from,body,expected)
+    if not body or body.sequenceId~=expected or body.visitId~=obs.visitId or body.transportWritten~=true or
+       (body.phase~="body_input_written" and body.phase~="body_settled_written") then return false end
+    if self.positionEstimated~=true then return true end
+    return body.positionEstimated==true and
+        math.abs(from.x-(body.x or 0))<=0.0001 and math.abs(from.y-(body.y or 0))<=0.0001 and math.abs(from.z-(body.z or 0))<=0.0001
+end
+local function observe_ground_input(ground,obs,self,from)
+    local op=ground.awaiting
+    if not from or not matching_body_pose(obs,self,from,(obs.navigation or {}).bodyMovement,op.sequence) then return false end
+    ground.awaiting=nil
+    if (from.x-op.x)^2+(from.y-op.y)^2+(from.z-op.z)^2<0.00000001 then ground.blocked[op.heading]=true end
+    return true
+end
 -- Older native clients already provide physics-checked straight body inputs.
 -- Their observed speed is validated natively in [0.1,14] yards/s. Check the
 -- ENTIRE worst-case ray here; the native floor/collision check may refuse it.
@@ -774,20 +788,10 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
     status.lastInputPhase,status.lastInputDetail=ground.lastPhase,ground.lastDetail
     if ground.uncertain then status.phase="ground_input_unknown";return end
     if ground.operation then status.phase="waiting_for_ground_input_receipt";return end
-    local function matching_body_pose(body,expected)
-        if not body or body.sequenceId~=expected or body.visitId~=obs.visitId or body.transportWritten~=true or
-           (body.phase~="body_input_written" and body.phase~="body_settled_written") then return false end
-        if self.positionEstimated~=true then return true end
-        return body.positionEstimated==true and
-            math.abs(from.x-(body.x or 0))<=0.0001 and math.abs(from.y-(body.y or 0))<=0.0001 and math.abs(from.z-(body.z or 0))<=0.0001
-    end
     if ground.awaiting then
-        local op,body=ground.awaiting,nav.bodyMovement
-        if not matching_body_pose(body,op.sequence) then
+        if not observe_ground_input(ground,obs,self,from) then
             status.phase="waiting_for_ground_input_observation";return
         end
-        ground.awaiting=nil
-        if (from.x-op.x)^2+(from.y-op.y)^2+(from.z-op.z)^2<0.00000001 then ground.blocked[op.heading]=true end
         status.poseSource=self.positionEstimated==true and "client_written_pose" or "observed_pose"
     elseif self.positionEstimated==true then
         -- A first input may hand off the current stationary native self pose
@@ -801,7 +805,7 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
             hold and hold.sessionId==obs.sessionId and hold.selfGuid==obs.selfGuid and
             hold.mapId==obs.mapId and hold.visitId==obs.visitId and not hold.operation and not hold.uncertain and
             not hold.released and type(hold.token)=="string" and #hold.token>0
-        if not first and (not ground.observedSequence or not matching_body_pose(nav.bodyMovement,ground.observedSequence)) then
+        if not first and (not ground.observedSequence or not matching_body_pose(obs,self,from,nav.bodyMovement,ground.observedSequence)) then
             status.phase="uncorrelated_estimated_pose";return
         end
         if first then status.poseSource="native_self_estimate" end
@@ -938,7 +942,26 @@ end
 local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task_view)
     out.rangedStance=status
     if not row then
-        if #frame.pending==0 then ranged_hold(obs,frame,out,nil,status,false) end
+        local hold,ground=state.rangedHold,state.rangedGround
+        if not hold and not (ground and (ground.operation or ground.uncertain or ground.awaiting)) then return end
+        -- Retire an ended stance through its own acknowledged token. The
+        -- position of the body or its former target is irrelevant to release.
+        local nav=obs.navigation or {}
+        local self=(obs.players or {})[obs.selfGuid]
+        local protected=#frame.pending~=0 or nav.motionUnconfirmed==true or
+            hold and (hold.sessionId~=obs.sessionId or hold.selfGuid~=obs.selfGuid or
+                hold.visitId and hold.visitId~=obs.visitId or hold.mapId and hold.mapId~=obs.mapId) or
+            ground and (ground.uncertain or ground.operation or ground.awaiting and
+                (ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or
+                 not observe_ground_input(ground,obs,self,movement and movement.current_pose(self))))
+        if protected then
+            local cap=out.action and out.action.capability
+            if cap~="cancel_spell" and cap~="stop_movement" and cap~="melee_stop" then out.action=nil end
+            out.followFormation,out.portalCatchup=nil,nil
+            status.phase="waiting_for_native_custody"
+        elseif ranged_hold(obs,frame,out,nil,status,false) then
+            out.followFormation,out.portalCatchup=nil,nil
+        end
         return
     end
     local task=task_view and task_view.task

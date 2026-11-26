@@ -12,7 +12,7 @@ func TestOwnedSludgeLeaseWithdrawsBeforeReadyHealing(t *testing.T) {
 	for _, patient := range []string{"peer", "self"} {
 		for _, geometry := range []string{"near_stopped", "near_spline", "far", "unknown_spline", "pending", "motion_unknown", "movement_unsupported"} {
 			t.Run(patient+"/"+geometry, func(t *testing.T) {
-				p := newFallbackPolicyTest(t, "")
+				p := standingRangePolicy(t, "")
 				o := positionedHealObservation()
 				o.MapId = proto.Uint32(349)
 				for _, v := range o.Players {

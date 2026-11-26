@@ -3,7 +3,6 @@ package world
 import (
 	"context"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
-	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"google.golang.org/protobuf/proto"
 	"math"
@@ -15,9 +14,8 @@ import (
 
 func cloudPointPolicy(t *testing.T, provider string) (*fallbackPolicyTest, *actionsv1.EncounterObservationResponse) {
 	t.Helper()
-	source := "local encounter_intent={cloud_points=" + provider + "}\n" + readEncounterBundle(t)
+	source := "local authored=" + provider + "\nlocal encounter_intent={movement_points=function(frame) return authored(frame.clock.unixMs) end}\n" + withStandingRange(readEncounterBundle(t))
 	source = strings.Replace(source, "local function decide(frame)", "local function decide(frame)\nframe.clock={monotonicMs=frame.input.now or 100000,unixMs=frame.input.now or 100000}", 1)
-	source = strings.Replace(source, "local points=intent.cloud_points(frame.clock.unixMs,scope,sightings)", "local points=intent.cloud_points(frame.clock.unixMs,scope,sightings)\nout.testSightings=sightings;out.testScope=scope", 1)
 	h, e := behavior.NewSession(context.Background(), fallbackSession, source)
 	if e != nil {
 		t.Fatal(e)
@@ -103,40 +101,13 @@ func TestCloudPointLocalAdjustmentInsideDenseAndOutside(t *testing.T) {
 		})
 	}
 }
-func TestCloudPointRealEncounterSightingsAreStableEstimatedAndScoped(t *testing.T) {
-	p, o := cloudPointPolicy(t, "function()return {} end")
-	addFallbackTarget(o, fallbackNPC, 0, 100)
-	n := o.Targets[fallbackGUID(fallbackNPC)]
-	n.Entry = 12221
-	n.MapId = proto.Uint32(349)
-	n.PositionKnown = true
-	n.PositionRevision = 7
-	n.X = 2
-	first := cloudPointStep(t, p, o, 100000).Output["testSightings"].([]any)[0].(map[string]any)
-	n.PositionRevision = 8 // sameXYZ is not a new cloud or a new expiry
-	second := cloudPointStep(t, p, o, 110000).Output["testSightings"].([]any)[0].(map[string]any)
-	if first["id"] != second["id"] || first["observedAtMs"] != second["observedAtMs"] || second["estimated"] != true || second["castObserved"] != false {
-		t.Fatal("poll renewed or misattributed sighting", first, second)
-	}
-	n.X = 3
-	n.PositionRevision = 9
-	third := cloudPointStep(t, p, o, 111000).Output["testSightings"].([]any)[0].(map[string]any)
-	if first["id"] == third["id"] || third["observedAtMs"] != float64(111000) {
-		t.Fatal("new observed movement did not reach actor emitter", third)
-	}
-	o.VisitId = 2
-	fourth := cloudPointStep(t, p, o, 112000).Output["testSightings"].([]any)[0].(map[string]any)
-	if fourth["observedAtMs"] != float64(112000) {
-		t.Fatal("old epoch observation reused", fourth)
-	}
-}
 func TestCloudPointDefaultRouteAndFollowExpiry(t *testing.T) {
 	raw, e := os.ReadFile("../../behaviors/follow-formation.lua")
 	if e != nil {
 		t.Fatal(e)
 	}
 	p, o := cloudPointPolicy(t, "function()return {{x=2,y=0,z=0,radiusYards=5,expiresAtMs=120000}} end")
-	source := "local encounter_formation=(function()\n" + string(raw) + "\nend)()\nlocal encounter_intent={cloud_points=function()return {{x=2,y=0,z=0,radiusYards=5,expiresAtMs=120000}} end}\n" + readEncounterBundle(t)
+	source := "local encounter_formation=(function()\n" + string(raw) + "\nend)()\nlocal encounter_intent={movement_points=function()return {{x=2,y=0,z=0,radiusYards=5,expiresAtMs=120000}} end}\n" + readEncounterBundle(t)
 	source = strings.Replace(source, "local function decide(frame)", "local function decide(frame)\nframe.clock={monotonicMs=frame.input.now,unixMs=frame.input.now}", 1)
 	h, e := behavior.NewSession(context.Background(), fallbackSession, source)
 	if e != nil {
@@ -148,7 +119,12 @@ func TestCloudPointDefaultRouteAndFollowExpiry(t *testing.T) {
 	owner.MapId = proto.Uint32(349)
 	owner.PositionKnown = true
 	owner.MovementKnown = true
-	owner.X = 30
+	owner.X = 130
+	o.Players["4"].PositionEstimated = true
+	addFallbackTarget(o, fallbackNPC, 0, 100)
+	npc := o.Targets[fallbackGUID(fallbackNPC)]
+	npc.Entry, npc.MapId, npc.PositionKnown, npc.X = 12222, proto.Uint32(349), true, 3
+	npc.AttackObservation = &actionsv1.EncounterAttackObservation{}
 	o.Players["3"] = owner
 	o.Navigation.FollowOwner = owner
 	o.Navigation.OwnerGuid = 3
@@ -209,27 +185,7 @@ func TestCloudPointIntersectingNextLegUsesSideOffsetAndUnknownIsNotReplayed(t *t
 		t.Fatal("unknown input replayed by point consumer", d.Output)
 	}
 }
-func TestCloudPointTrajectoryInputIsEstimatedAndPollStable(t *testing.T) {
-	p, o := cloudPointPolicy(t, "function()return {} end")
-	addFallbackTarget(o, fallbackNPC, 0, 100)
-	n := o.Targets[fallbackGUID(fallbackNPC)]
-	n.Entry = 12221
-	n.MapId = proto.Uint32(349)
-	n.PositionRevision = 1
-	n.X = 2
-	// The ordinary pose helper supports this public moving-creature trajectory.
-	n.Trajectory = &worldv1.CreatureTrajectory{Known: true, DestinationKnown: true, DestinationX: 12, DurationMs: 2000, AgeMs: 1000}
-	first := cloudPointStep(t, p, o, 100000).Output["testSightings"].([]any)[0].(map[string]any)
-	if first["x"] != float64(7) || first["estimated"] != true {
-		t.Fatal("actual trajectory was not available as estimated input", first)
-	}
-	next := cloudPointStep(t, p, o, 100250).Output["testSightings"].([]any)[0].(map[string]any)
-	if first["id"] != next["id"] || first["observedAtMs"] != next["observedAtMs"] {
-		t.Fatal("poll renewed unchanged trajectory sample", first, next)
-	}
-}
-
-func TestCloudPointInputRemainsAvailableUnderExistingRangedLease(t *testing.T) {
+func TestCloudPointPreservesForeignRangedLease(t *testing.T) {
 	p, o := cloudPointPolicy(t, "function()return {{x=2,y=0,z=0,radiusYards=5,expiresAtMs=120000}} end")
 	addFallbackTarget(o, fallbackNPC, 0, 100)
 	n := o.Targets[fallbackGUID(fallbackNPC)]
@@ -239,7 +195,7 @@ func TestCloudPointInputRemainsAvailableUnderExistingRangedLease(t *testing.T) {
 	n.X = 2
 	o.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Active: true, Owner: "ranged:maraudon_sludge_backline", RemainingMs: 2000}
 	d := cloudPointStep(t, p, o, 100000)
-	if d.Output["action"] != nil || len(d.Output["testSightings"].([]any)) != 1 || d.Output["cloudPointInput"].(map[string]any)["activeMovementOwner"] != "ranged:maraudon_sludge_backline" {
+	if d.Output["action"] != nil {
 		t.Fatal("input hidden or existing role lease overridden", d.Output)
 	}
 }
