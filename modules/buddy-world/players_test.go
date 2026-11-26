@@ -117,7 +117,7 @@ func TestNearbyPlayersNeverAcquirePrivateOwnAuthorityOrExposeOtherFields(t *test
 		t.Fatal("foreign private data mutated self", r)
 	}
 	cached := s.state.nearbyPlayers[4]
-	if cached.isSelf || cached.questLogKnown || cached.backpackKnown || cached.copperKnown || cached.skillsKnown || cached.freePrimaryKnown || cached.mainhandKnown || cached.offhandKnown || cached.equipmentKnown || cached.equipment != [19]uint64{} || cached.known[0x55] || cached.known[0x78] || cached.known[0x12] || cached.known[unitChannelSpell] {
+	if cached.isSelf || cached.questLogKnown || cached.backpackKnown || cached.copperKnown || cached.skillsKnown || cached.freePrimaryKnown || cached.mainhandKnown || cached.offhandKnown || cached.equipmentKnown || cached.equipment != [19]uint64{} || cached.known[0x55] || cached.known[0x78] || cached.known[unitChannelSpell] {
 		t.Fatal("foreign private/non-whitelisted evidence retained", cached)
 	}
 	allowed := map[string]bool{}

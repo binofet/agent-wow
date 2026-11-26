@@ -13,13 +13,13 @@ func publicPlayerGUID(guid uint64) bool {
 	return guid != 0 && guid>>48 == 0 && uint32(guid) != 0
 }
 
-// Only the public fields needed for nearby pose/vitals triage are retained.
+// Keep public pose/vitals fields and the target used by a visible ritual caster.
 // Build12340 UpdateFields.h marks these PUBLIC; private own data stays self-only.
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Entities/Object/Updates/UpdateFields.h
 func publicPlayerField(field int) bool {
 	return field == unitBytes0 || field == unitHealth || field == unitMaxHealth ||
 		field >= unitPower1 && field < unitPower1+7 || field >= unitMaxPower1 && field < unitMaxPower1+7 ||
-		field == unitFlags || field == unitDynamicFlags || field == playerFlags || field == 0x3c || field == 0x36
+		field == unitFlags || field == unitDynamicFlags || field == playerFlags || field == 0x3c || field == 0x36 || field == 0x12 || field == 0x13
 }
 
 // Only a complete TYPEID_PLAYER CREATE admits a new public player. Movement or

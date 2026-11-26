@@ -45,6 +45,10 @@ message TransportScope {
   // Latest immediate observed transfer edge. It proves neither taxi booking
   // causality nor arrival and never replaces this scope's current binding.
   ObservedWorldTransfer world_transfer = 13;
+  // Set only on a received summon request and its matching response.
+  uint64 summon_offer_sequence = 14;
+  // Target-dependent game-object use must still agree with the socket's latest UI selection.
+  uint64 meeting_stone_target_guid = 15;
 }
 
 // Flat owner-ordered protocol observations, not a route or a visit history.

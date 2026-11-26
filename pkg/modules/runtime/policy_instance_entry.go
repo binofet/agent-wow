@@ -179,13 +179,18 @@ func (p *SessionPolicy) resolveInstanceEntry(action map[string]any, capability s
 	if notify, ok := request.(*actionsv1.NotifyAreaTriggerRequest); ok {
 		op.instanceEntry.trigger = notify.TriggerId
 	}
+	return p.prepareObservedAction(capability, sid, self, guid, visit, method, path, request, response, op)
+}
+
+// Prepare a typed, visit-bound Lua action. A returned mutation never proves its game effect.
+func (p *SessionPolicy) prepareObservedAction(capability, sid, self string, guid, visit uint64, method, path string, request, response proto.Message, op *policySpell) (PolicyDispatch, error) {
 	inst, md, err := p.manager.lookup(actionsModule, method, true)
 	if err != nil {
 		return PolicyDispatch{}, err
 	}
 	if md.Path() != path || !instanceEntryDescriptorMatches(md.Descriptor().Input(), request.ProtoReflect().Descriptor(), map[protoreflect.FullName]bool{}) ||
 		!instanceEntryDescriptorMatches(md.Descriptor().Output(), response.ProtoReflect().Descriptor(), map[protoreflect.FullName]bool{}) {
-		return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "installed instance-entry contract is incompatible")
+		return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "installed action contract is incompatible")
 	}
 	var nonce [32]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -197,14 +202,14 @@ func (p *SessionPolicy) resolveInstanceEntry(action map[string]any, capability s
 		current, observed := ctx.Value(policyEncounterVisitKey{}).(policyEncounterObservation)
 		origin := modsession.WriteOriginFromContext(ctx)
 		if !observed || current.visit != visit || !p.instanceEntryIdentity(sid, self, guid) || origin.SessionID != sid || origin.Writer != "lua" || origin.Module != actionsModule || origin.ActionID == "" {
-			payload["error"] = "instance-entry dispatch lost its current observed body/visit"
+			payload["error"] = "action lost its current observed body/visit"
 			return behavior.ActionNotDispatched, payload
 		}
 		probe, cancel := context.WithTimeout(ctx, 2*time.Second)
 		ready, err := grpc_health_v1.NewHealthClient(inst.conn).Check(probe, &grpc_health_v1.HealthCheckRequest{Service: modcb.PolicySpellService})
 		cancel()
 		if err != nil || ready.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
-			payload["error"] = "instance-entry callback bridge unavailable"
+			payload["error"] = "action callback bridge unavailable"
 			return behavior.ActionNotDispatched, payload
 		}
 		registry := &p.manager.policySpells
@@ -226,10 +231,10 @@ func (p *SessionPolicy) resolveInstanceEntry(action map[string]any, capability s
 		callErr := p.manager.invoke(call, publicCall, "lua", actionsModule, inst, md, request, result)
 		registry.mu.Lock()
 		attempted, written := op.attempted, op.written
-		unknown := op.instanceEntry != nil && op.instanceEntry.unknown || op.movement != nil && op.movement.unknown
+		unknown := op.instanceEntry != nil && op.instanceEntry.unknown || op.movement != nil && op.movement.unknown || op.summoning != nil && op.summoning.unknown
 		registry.mu.Unlock()
 		payload["transport_written"] = written
-		mutation := capability == "notify_area_trigger" || capability == "travel_to"
+		mutation := capability == "notify_area_trigger" || capability == "travel_to" || op.summoning != nil
 		if callErr != nil {
 			payload["error"], payload["phase"] = callErr.Error(), "rpc_failed"
 			if !mutation || !attempted && instanceEntryKnownRefusal(callErr) {
@@ -240,6 +245,21 @@ func (p *SessionPolicy) resolveInstanceEntry(action map[string]any, capability s
 		}
 		bound := p.instanceEntryIdentity(sid, self, guid)
 		switch value := result.(type) {
+		case *actionsv1.SelectTargetResponse:
+			bound = bound && value.SessionId == sid && value.SelfGuid == guid && value.TargetGuid == request.(*actionsv1.SelectTargetRequest).TargetGuid
+			unknown = unknown || !value.TransportWritten
+		case *actionsv1.SummoningObservation:
+			bound = bound && value.SessionId == sid && value.SelfGuid == guid && value.VisitId == visit
+			switch r := request.(type) {
+			case *actionsv1.UseSummoningObjectRequest:
+				bound = bound && value.UseRevision == r.ExpectedUseRevision+1 && proto.Equal(value.GetLastUse().GetRequest(), r)
+				unknown = unknown || value.GetLastUse().GetTransportUnknown()
+			case *actionsv1.RespondToSummonRequest:
+				offer := value.GetOffer()
+				bound = bound && offer.GetSequence() == r.OfferSequence && offer.GetSummonerGuid() == r.SummonerGuid &&
+					offer.GetVisitId() == r.VisitId && offer.RequestedAccept != nil && r.GetAccept() == offer.GetRequestedAccept()
+				unknown = unknown || offer.GetTransportUnknown()
+			}
 		case *actionsv1.AreaTriggerReferences:
 			bound = bound && value.SessionId == sid && value.SelfGuid == guid && value.VisitId == visit
 		case *actionsv1.AreaTriggerOperation:
@@ -263,7 +283,7 @@ func (p *SessionPolicy) resolveInstanceEntry(action map[string]any, capability s
 		encoded, encodeErr := (protojson.MarshalOptions{EmitUnpopulated: true}).Marshal(result)
 		var value map[string]any
 		if !bound || encodeErr != nil || json.Unmarshal(encoded, &value) != nil {
-			payload["error"], payload["phase"] = "instance-entry reply lost its exact body or request binding", "reply_unverified"
+			payload["error"], payload["phase"] = "action reply lost its exact body or request binding", "reply_unverified"
 			if mutation {
 				payload["reconciliationRequired"] = true
 				return behavior.ActionSettledUnverified, payload

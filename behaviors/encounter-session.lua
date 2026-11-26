@@ -665,7 +665,8 @@ local function decide_encounter(frame)
     out.controlStatus = command_status
     if command_action then out.action = command_action; return out end
     if warrior and out.focusGuid and not pulse_radius(obs,out.focusGuid) and (not active_melee or active_melee==out.focusGuid) then
-        local class_action=warrior.choose(frame,obs,obs.targets[out.focusGuid],state.sequence,intent,active_melee~=nil)
+        local class_action=warrior.choose(frame,obs,obs.targets[out.focusGuid],state.sequence,intent,active_melee~=nil,
+            targets,movement and movement.current_pose)
         if class_action then out.action=class_action;return out end
     end
     if active_melee then
@@ -1064,7 +1065,9 @@ local function decide(frame)
     end
     if shot_proposal and shot_proposal.action==out.action then state.pulseShot={key=shot_proposal.key,target=shot_proposal.target} end
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
-    if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
+    if transient_tasks and task_view and task_view.action==out.action then
+        out.actionRequestId=transient_tasks.commit(task_view,out.action)
+    end
     if spell_invocation then spell_invocation.commit(out.action) end
     if warrior then warrior.commit(out.action) end
     if auto_equipment then auto_equipment.commit(out.action) end

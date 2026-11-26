@@ -134,6 +134,9 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 			if handled, err := m.writePolicyScopedMovement(ctx, token, sessionID, module, opcode, payload, scope); handled {
 				return err
 			}
+			if handled, err := m.writePolicySummonScoped(ctx, token, sessionID, module, opcode, payload, scope); handled {
+				return err
+			}
 			return m.writePolicyInstanceEntryScoped(ctx, token, sessionID, module, opcode, payload, scope)
 		}
 		origin := modsession.WriteOrigin{SessionID: sessionID, Module: module, Writer: "module"}

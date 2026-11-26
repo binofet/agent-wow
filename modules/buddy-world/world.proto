@@ -457,6 +457,8 @@ message GameObjectState {
   uint64 created_by_guid = 21;
   bool state_known = 22;
   uint32 state = 23;
+  // Public UNIT_FIELD_TARGET of the visible creator of this summoning object.
+  optional uint64 creator_selected_target_guid = 24;
 }
 
 // Public, server-observed creature state. No database lookup or invented name.
@@ -702,6 +704,11 @@ message SnapshotResponse {
   bool ground_effects_supported = 62;
   // At least one area observation was omitted by the bounded cache this visit.
   bool ground_effects_overflow = 63;
+  // All currently observed creatures fit the nearby list and its backing cache.
+  // An evicted creature can remain visible until this visit ends.
+  bool nearby_creatures_complete = 64;
+  // At most 32 actually observed summoning rituals (18) and meeting stones (23).
+  repeated GameObjectState summoning_objects = 65;
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.

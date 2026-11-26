@@ -37,6 +37,7 @@ const friendlyEncounterBuff = uint32(1243)
 type friendlyEncounterCallback struct {
 	manager *Manager
 	world   *worldv1.SnapshotResponse
+	party   *partyv1.StateResponse
 	writes  []*modv1.SendPacketRequest
 	visits  []uint64
 	reject  bool
@@ -49,6 +50,9 @@ func (f *friendlyEncounterCallback) SendPacket(ctx context.Context, r *modv1.Sen
 	sid := friendlyEncounterSession
 	if f.reject {
 		sid = "replaced-death-callback-session"
+	}
+	if r.TransportScope != nil && f.manager.session.SendScopedPacket != nil {
+		return &emptypb.Empty{}, f.manager.moduleScopedPacketWriter(sid, actionsModule)(ctx, r.Opcode, r.Payload, r.TransportScope)
 	}
 	err := f.manager.modulePacketWriter(sid, actionsModule)(ctx, r.Opcode, r.Payload)
 	return &emptypb.Empty{}, err
@@ -63,6 +67,9 @@ func (f *friendlyEncounterCallback) InvokeModule(_ context.Context, r *modv1.Inv
 		result = proto.Clone(f.world)
 	case "buddy-party.state":
 		result = &partyv1.StateResponse{SessionId: friendlyEncounterSession, Group: &partyv1.Group{Known: true}}
+		if f.party != nil {
+			result = proto.Clone(f.party)
+		}
 	default:
 		return nil, fmt.Errorf("unexpected friendly-cast dependency %s.%s", r.Module, r.Method)
 	}
