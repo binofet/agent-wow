@@ -115,7 +115,7 @@ func transportClearlyForeign(op uint16, body []byte, self uint64) bool {
 	switch op {
 	case opcode.SMSGMonsterMove, opcode.SMSGMonsterMoveTransport, opcode.SMSGClientControlUpdate,
 		opcode.SMSGForceMoveRoot, opcode.SMSGForceMoveUnroot, opcode.SMSGForceRunSpeedChange, opcode.SMSGForceWalkSpeedChange,
-		opcode.SMSGMoveKnockBack, opcode.MSGMoveTeleportAck,
+		opcode.SMSGMoveKnockBack, opcode.MSGMoveKnockBack, opcode.MSGMoveTeleportAck,
 		opcode.MSGMoveStartForward, opcode.MSGMoveStartBackward, opcode.MSGMoveStop,
 		opcode.MSGMoveStartStrafeLeft, opcode.MSGMoveStartStrafeRight, opcode.MSGMoveStopStrafe,
 		opcode.MSGMoveJump, opcode.MSGMoveStartTurnLeft, opcode.MSGMoveStartTurnRight, opcode.MSGMoveStopTurn,

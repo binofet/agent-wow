@@ -96,6 +96,7 @@ type Service struct {
 	motion                       ownMotionAuthority
 	completion                   splineCompletionState
 	worldTransfer                worldTransferObservation
+	knockback                    *modv1.WorldPacket
 }
 
 func NewService(selfGUID uint64) *Service {
@@ -164,7 +165,7 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 	return r
 }
 
-func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) (*worldv1.SnapshotResponse, error) {
+func (s *Service) Snapshot(ctx context.Context, request *worldv1.SnapshotRequest) (*worldv1.SnapshotResponse, error) {
 	guid := request.GetCreatureGuid()
 	if request.GetCreatureEntry() > 0xffffff || request.GetGameObjectEntry() > 0xffffff {
 		return nil, status.Error(codes.InvalidArgument, "entry filters must fit actual creature/gameobject GUID entries")
@@ -172,6 +173,7 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 	if guid != 0 && !creatureGUID(guid) {
 		return nil, status.Error(codes.InvalidArgument, "creature_guid must identify a creature or be zero")
 	}
+	s.settleKnockback(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
@@ -228,10 +230,21 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		}
 		s.invalidateWorldTransferPacketLocked(packet)
 		s.invalidateMalformedMotionLocked(packet)
+		if packet.Opcode == opcode.SMSGMoveKnockBack || packet.Opcode == opcode.MSGMoveKnockBack {
+			c := cursor{b: packet.Payload}
+			guid := c.guid()
+			p := &s.state.players[0]
+			if c.err != nil || guid == 0 || guid == p.guid {
+				s.knockback = nil
+				p.positionKnown, p.positionInferred, p.movementKnown = false, false, false
+				p.observedAt = observedAt
+			}
+		}
 		s.malformed++
 		s.lastError = fmt.Sprintf("%s (opcode 0x%03x)", err.Error(), packet.Opcode)
 	} else if handled {
 		old, current := s.state.players[0], next.players[0]
+		s.observeKnockbackLocked(ctx, packet, current, &next)
 		next.commitOwnMovementFacts(old, packet.Opcode, observedAt, packet.TransportScope)
 		s.observeMotionLocked(packet, old, current, &next, observedAt)
 		if !current.present || !current.mapKnown || !current.positionKnown || old.positionRevision != current.positionRevision || old.mapKnown != current.mapKnown || old.mapID != current.mapID {
@@ -269,7 +282,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		s.observed++
 		if objectUpdate {
 			reason := next.bodyInputBarrier
-			if !scopeMatchesSelf(packet.TransportScope, current, next.visitRevision) || !current.positionKnown {
+			if !scopeMatchesSelf(packet.TransportScope, current, next.visitRevision) || !current.positionKnown && s.knockback == nil {
 				reason = modcb.BodyUpdateUnbound
 			}
 			if reason == "" {

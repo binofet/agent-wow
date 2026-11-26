@@ -489,12 +489,13 @@ func (s *Service) clientPositionLocked() *actionsv1.ClientPosition {
 	result.Orientation = w.Orientation
 	result.AgeMs = w.PositionAgeMs
 	result.Revision = w.PositionRevision
+	result.Estimated = w.PositionInferred
 	if s.posKnown && s.posMap == w.MapId && s.positionRevision == w.PositionRevision && !s.state.MotionUnconfirmed {
 		result.X = s.pos.x
 		result.Y = s.pos.y
 		result.Z = s.pos.z
 		result.Orientation = s.pos.o
-		result.Estimated = s.posEstimated
+		result.Estimated = s.posEstimated || w.PositionInferred
 		result.Revision = s.posRevision
 		if age := s.now().Sub(s.posAt); age > 0 {
 			result.AgeMs = uint64(age.Milliseconds())
@@ -791,7 +792,7 @@ func (s *Service) refreshPositionLocked(snapshot *worldv1.SnapshotResponse) bool
 		s.pos = playerPosition(p)
 		s.positionRevision = p.PositionRevision
 		s.observePositionLocked(p)
-		if p.MovementFlagsKnown && p.MovementFlags&0xff == 0 {
+		if !p.PositionInferred && p.MovementFlagsKnown && p.MovementFlags&0xff == 0 {
 			s.state.MotionUnconfirmed = false
 		}
 		if s.state.Moving {
@@ -1545,6 +1546,10 @@ func (s *Service) tickLocked(ctx context.Context) {
 }
 
 func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
+	if packet.GetOpcode() == opcode.SMSGMoveKnockBack {
+		s.measureKnockback(ctx, packet)
+		return &emptypb.Empty{}, nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if packet == nil {

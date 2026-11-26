@@ -36,7 +36,7 @@ func BodyFlightInRange(elapsed time.Duration, speed, initial float64) bool {
 }
 
 func bodyElevation(seconds, initial float64) float64 {
-	accelerating := math.Min(seconds, (normalTerminalVelocity+initial)/BodyGravity)
+	accelerating := math.Max(0, math.Min(seconds, (normalTerminalVelocity+initial)/BodyGravity))
 	return initial*accelerating - BodyGravity*accelerating*accelerating/2 - normalTerminalVelocity*(seconds-accelerating)
 }
 
@@ -132,7 +132,7 @@ func traceBodyFall(ctx context.Context, points []BodyMotionSample, bearing, spee
 			return nil, err
 		}
 		landed := hit && q.Z <= h && q.Z < previous.Z
-		if hit && q.Z < h && q.Z >= previous.Z {
+		if hit && !wet && q.Z < h && q.Z >= previous.Z {
 			return nil, errors.New("body hits solid terrain during ascent")
 		}
 		if landed {
@@ -172,6 +172,32 @@ func traceBodyFall(ctx context.Context, points []BodyMotionSample, bearing, spee
 		}
 		previous, t = q, next
 	}
+}
+
+// An impulse which never emerges from a deep pool cannot turn an underwater
+// lakebed into a dry landing. Check the water column at the actual endpoint;
+// a solid roof can separate the body from an unrelated pool overhead.
+func verifyDryImpulseContact(q Point, water bodyWater, clear bodyClear) error {
+	low := q
+	low.Z += swimBodyRayHeight
+	top := float32(worldVerticalLimit)
+	for layer := 0; layer < maxGroundCandidates; layer++ {
+		surface, found, err := water(q, top, q.Z+swimImmersion+.025)
+		if err != nil || !found {
+			return err
+		}
+		high := q
+		high.Z = surface + swimBodyRayHeight
+		open, err := clear(high, low)
+		if err != nil {
+			return err
+		}
+		if open {
+			return errors.New("submerged impulse did not make an airborne water entry or dry contact")
+		}
+		top = surface + swimImmersion - .025
+	}
+	return errors.New("overlapping liquid layers exceed the impulse contact query")
 }
 
 // Lower pools can overlap an entirely separate shallow upper layer at the

@@ -111,6 +111,16 @@ func (m *Manager) packetWorker(name string, inst *instance) {
 				m.fail(name, fmt.Errorf("packet 0x%x: %w", packet.Opcode, err))
 				return
 			}
+			if name == "buddy-world" && m.session.ParsedOwnPose != nil {
+				if rows := trailers.Get(modcb.KnockbackPoseTrailer); len(rows) == 1 && len(rows[0]) <= 128 {
+					m.session.ParsedOwnPose(packet.TransportScope, []byte(rows[0]))
+				}
+			}
+			if name == actionsModule && packet.Opcode == opcode.SMSGMoveKnockBack && m.session.MeasuredKnockback != nil {
+				if rows := trailers.Get(modcb.KnockbackContactTrailer); len(rows) == 1 && len(rows[0]) <= 128 {
+					m.session.MeasuredKnockback(packet, []byte(rows[0]))
+				}
+			}
 			if name == "buddy-world" && (packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject) && m.session.ParsedBodyUpdate != nil {
 				class := modcb.BodyUpdateResult(trailers.Get(modcb.BodyInputUpdateTrailer), trailers.Get(modcb.BodyInputBarrierTrailer))
 				m.session.ParsedBodyUpdate(packet.TransportScope, modcb.BodyUpdateDetail(class, trailers.Get(modcb.BodyInputFieldTrailer)))
