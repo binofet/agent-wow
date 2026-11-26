@@ -213,7 +213,7 @@ func TestEncounterPriorKeepsUrgentStationaryFriendlyHealing(t *testing.T) {
 	n := o.Targets[fallbackGUID(fallbackNPC)]
 	n.Entry = 12222
 	n.MapId = proto.Uint32(349)
-	n.X = 13
+	n.X = 35
 	n.Y = 10
 	n.Z = 10
 	n.AttackObservation = &actionsv1.EncounterAttackObservation{}
