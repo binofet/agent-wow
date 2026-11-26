@@ -147,6 +147,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(s.hostEncounterActiveLocked()), HostRequested: identity.HostRequested,
 		VisitId: w.VisitRevision, MapId: proto.Uint32(w.Self.MapId), WorldObservationRevision: w.ObservedPackets,
 		GroundEffects: w.GroundEffects, GroundEffectsSupported: w.GroundEffectsSupported, GroundEffectsOverflow: w.GroundEffectsOverflow,
+		Summoning: s.summoningObservationLocked(), SummoningObjects: w.SummoningObjects,
 		Recovery:       s.recoveryStateLocked(),
 		Interaction:    s.interactionObservationLocked(),
 		SpellbookKnown: s.spellbookKnown, SpellbookRevision: s.spellbookRevision,
@@ -267,6 +268,9 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 		}
 		if p.AliveKnown {
 			view.Alive = proto.Bool(p.Alive)
+		}
+		if p.TargetKnown {
+			view.SelectedTargetGuid = proto.Uint64(p.TargetGuid)
 		}
 		if guid == s.selfGUID {
 			view.ComboKnown, view.ComboTargetGuid, view.ComboPoints = s.weaponCombo.known, s.weaponCombo.target, s.weaponCombo.points

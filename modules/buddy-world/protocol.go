@@ -536,7 +536,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					setMap(p, players[0])
 					// Public player CREATE omits zero-valued fields. Establish
 					// only the same public baselines used for the fixed owner.
-					for _, f := range []int{unitBytes0, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags, 0x3c, 0x36} {
+					for _, f := range []int{unitBytes0, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags, 0x3c, 0x36, 0x12, 0x13} {
 						p.known[f] = true
 					}
 					for f := 0; f < 7; f++ {

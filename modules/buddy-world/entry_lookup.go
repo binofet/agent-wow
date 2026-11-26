@@ -7,8 +7,20 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 )
 
-func gameObjectSnapshot(p *observed, now time.Time) *worldv1.GameObjectState {
-	return &worldv1.GameObjectState{Guid: p.guid, Entry: p.fields[objectEntry], Present: p.present, MapKnown: p.mapKnown, MapId: p.mapID, PositionKnown: p.positionKnown, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation, PositionRevision: p.positionRevision, PositionAgeMs: age(now, p.positionAt), ObservationAgeMs: age(now, p.observedAt), TypeKnown: p.known[gameObjectBytes], GameObjectType: (p.fields[gameObjectBytes] >> 8) & 0xff, FlagsKnown: p.known[gameObjectFlags], Flags: p.fields[gameObjectFlags], DynamicFlagsKnown: p.known[gameObjectDynamic], DynamicFlags: p.fields[gameObjectDynamic], CreatedByKnown: p.known[gameObjectCreatedBy] && p.known[gameObjectCreatedBy+1], CreatedByGuid: uint64(p.fields[gameObjectCreatedBy]) | uint64(p.fields[gameObjectCreatedBy+1])<<32, StateKnown: p.known[gameObjectBytes], State: p.fields[gameObjectBytes] & 0xff}
+func (s *observations) gameObjectSnapshot(p *observed, now time.Time) *worldv1.GameObjectState {
+	v := &worldv1.GameObjectState{Guid: p.guid, Entry: p.fields[objectEntry], Present: p.present, MapKnown: p.mapKnown, MapId: p.mapID, PositionKnown: p.positionKnown, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation, PositionRevision: p.positionRevision, PositionAgeMs: age(now, p.positionAt), ObservationAgeMs: age(now, p.observedAt), TypeKnown: p.known[gameObjectBytes], GameObjectType: (p.fields[gameObjectBytes] >> 8) & 0xff, FlagsKnown: p.known[gameObjectFlags], Flags: p.fields[gameObjectFlags], DynamicFlagsKnown: p.known[gameObjectDynamic], DynamicFlags: p.fields[gameObjectDynamic], CreatedByKnown: p.known[gameObjectCreatedBy] && p.known[gameObjectCreatedBy+1], CreatedByGuid: uint64(p.fields[gameObjectCreatedBy]) | uint64(p.fields[gameObjectCreatedBy+1])<<32, StateKnown: p.known[gameObjectBytes], State: p.fields[gameObjectBytes] & 0xff}
+	if summoningObject(p) {
+		creator := player(&s.players, v.CreatedByGuid)
+		if creator == nil {
+			creator = s.nearbyPlayers[v.CreatedByGuid]
+		}
+		if v.CreatedByKnown && v.CreatedByGuid != 0 && creator != nil && creator.present && creator.mapKnown &&
+			p.mapKnown && creator.mapID == p.mapID && creator.known[0x12] && creator.known[0x13] {
+			selected := uint64(creator.fields[0x12]) | uint64(creator.fields[0x13])<<32
+			v.CreatorSelectedTargetGuid = &selected
+		}
+	}
+	return v
 }
 
 func (s *observations) appendRequested(r *worldv1.SnapshotResponse, now time.Time, creatureEntry, objectEntryID uint32, factions ...uint32) {
@@ -37,7 +49,7 @@ func (s *observations) appendRequested(r *worldv1.SnapshotResponse, now time.Tim
 	if objectEntryID != 0 {
 		for _, p := range s.gameObjects {
 			if p.present && p.known[objectEntry] && p.fields[objectEntry] == objectEntryID {
-				r.RequestedGameObjects = append(r.RequestedGameObjects, gameObjectSnapshot(p, now))
+				r.RequestedGameObjects = append(r.RequestedGameObjects, s.gameObjectSnapshot(p, now))
 			}
 		}
 		sort.Slice(r.RequestedGameObjects, func(i, j int) bool {

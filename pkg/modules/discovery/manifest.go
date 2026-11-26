@@ -366,7 +366,13 @@ func compatibleWorldPacket(packet protoreflect.MessageDescriptor) bool {
 	if proto.Equal(actual, legacy) {
 		return true
 	}
-	if !proto.Equal(actual, expected) {
+	// The preceding revision already carried the full world-transfer witness.
+	// Older modules can still use it, but cannot supply a summon-offer sequence.
+	previous := proto.Clone(expected).(*descriptorpb.DescriptorProto)
+	previous.Field = previous.Field[:13]
+	offer := proto.Clone(expected).(*descriptorpb.DescriptorProto)
+	offer.Field = offer.Field[:14]
+	if !proto.Equal(actual, previous) && !proto.Equal(actual, offer) && !proto.Equal(actual, expected) {
 		return false
 	}
 	// Scope now references a message: validate its full leaf shape too, rather

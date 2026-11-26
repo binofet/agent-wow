@@ -3342,8 +3342,10 @@ type GameObjectState struct {
 	CreatedByGuid     uint64                 `protobuf:"varint,21,opt,name=created_by_guid,json=createdByGuid,proto3" json:"created_by_guid,omitempty"`
 	StateKnown        bool                   `protobuf:"varint,22,opt,name=state_known,json=stateKnown,proto3" json:"state_known,omitempty"`
 	State             uint32                 `protobuf:"varint,23,opt,name=state,proto3" json:"state,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Public UNIT_FIELD_TARGET of the visible creator of this summoning object.
+	CreatorSelectedTargetGuid *uint64 `protobuf:"varint,24,opt,name=creator_selected_target_guid,json=creatorSelectedTargetGuid,proto3,oneof" json:"creator_selected_target_guid,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *GameObjectState) Reset() {
@@ -3533,6 +3535,13 @@ func (x *GameObjectState) GetStateKnown() bool {
 func (x *GameObjectState) GetState() uint32 {
 	if x != nil {
 		return x.State
+	}
+	return 0
+}
+
+func (x *GameObjectState) GetCreatorSelectedTargetGuid() uint64 {
+	if x != nil && x.CreatorSelectedTargetGuid != nil {
+		return *x.CreatorSelectedTargetGuid
 	}
 	return 0
 }
@@ -4666,8 +4675,10 @@ type SnapshotResponse struct {
 	// All currently observed creatures fit the nearby list and its backing cache.
 	// An evicted creature can remain visible until this visit ends.
 	NearbyCreaturesComplete bool `protobuf:"varint,64,opt,name=nearby_creatures_complete,json=nearbyCreaturesComplete,proto3" json:"nearby_creatures_complete,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// At most 32 actually observed summoning rituals (18) and meeting stones (23).
+	SummoningObjects []*GameObjectState `protobuf:"bytes,65,rep,name=summoning_objects,json=summoningObjects,proto3" json:"summoning_objects,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -5146,6 +5157,13 @@ func (x *SnapshotResponse) GetNearbyCreaturesComplete() bool {
 		return x.NearbyCreaturesComplete
 	}
 	return false
+}
+
+func (x *SnapshotResponse) GetSummoningObjects() []*GameObjectState {
+	if x != nil {
+		return x.SummoningObjects
+	}
+	return nil
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.
@@ -5893,7 +5911,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x13server_cast_time_ms\x18\t \x01(\rH\x00R\x10serverCastTimeMs\x88\x01\x01\x12+\n" +
 	"\x11position_revision\x18\n" +
 	" \x01(\x04R\x10positionRevisionB\x16\n" +
-	"\x14_server_cast_time_ms\"\xdd\x05\n" +
+	"\x14_server_cast_time_ms\"\xc4\x06\n" +
 	"\x0fGameObjectState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x18\n" +
@@ -5921,7 +5939,9 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x0fcreated_by_guid\x18\x15 \x01(\x04R\rcreatedByGuid\x12\x1f\n" +
 	"\vstate_known\x18\x16 \x01(\bR\n" +
 	"stateKnown\x12\x14\n" +
-	"\x05state\x18\x17 \x01(\rR\x05state\"\xa4\f\n" +
+	"\x05state\x18\x17 \x01(\rR\x05state\x12D\n" +
+	"\x1ccreator_selected_target_guid\x18\x18 \x01(\x04H\x00R\x19creatorSelectedTargetGuid\x88\x01\x01B\x1f\n" +
+	"\x1d_creator_selected_target_guid\"\xa4\f\n" +
 	"\rCreatureState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x1b\n" +
@@ -6043,7 +6063,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xd8\x1f\n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xae \n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -6113,7 +6133,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x0eground_effects\x18= \x03(\v2).warcraftbuddy.world.v1.SpellGroundEffectR\rgroundEffects\x128\n" +
 	"\x18ground_effects_supported\x18> \x01(\bR\x16groundEffectsSupported\x126\n" +
 	"\x17ground_effects_overflow\x18? \x01(\bR\x15groundEffectsOverflow\x12:\n" +
-	"\x19nearby_creatures_complete\x18@ \x01(\bR\x17nearbyCreaturesComplete\"q\n" +
+	"\x19nearby_creatures_complete\x18@ \x01(\bR\x17nearbyCreaturesComplete\x12T\n" +
+	"\x11summoning_objects\x18A \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x10summoningObjects\"q\n" +
 	"\x13CombatEventsRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +
@@ -6274,27 +6295,28 @@ var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	10, // 53: warcraftbuddy.world.v1.SnapshotResponse.spline_completion:type_name -> warcraftbuddy.world.v1.SplineCompletionObservation
 	11, // 54: warcraftbuddy.world.v1.SnapshotResponse.world_transfer:type_name -> warcraftbuddy.world.v1.WorldTransferObservation
 	22, // 55: warcraftbuddy.world.v1.SnapshotResponse.ground_effects:type_name -> warcraftbuddy.world.v1.SpellGroundEffect
-	33, // 56: warcraftbuddy.world.v1.CombatEventsResponse.events:type_name -> warcraftbuddy.world.v1.CombatEvent
-	34, // 57: warcraftbuddy.world.v1.CombatEventsResponse.gaps:type_name -> warcraftbuddy.world.v1.CombatEventGap
-	9,  // 58: warcraftbuddy.world.v1.BuddyWorld.RetireSplineCompletion:input_type -> warcraftbuddy.world.v1.RetireSplineCompletionRequest
-	12, // 59: warcraftbuddy.world.v1.BuddyWorld.AdoptSplineTransfer:input_type -> warcraftbuddy.world.v1.AdoptSplineTransferRequest
-	7,  // 60: warcraftbuddy.world.v1.BuddyWorld.CompleteSpline:input_type -> warcraftbuddy.world.v1.CompleteSplineRequest
-	32, // 61: warcraftbuddy.world.v1.BuddyWorld.CombatEvents:input_type -> warcraftbuddy.world.v1.CombatEventsRequest
-	19, // 62: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	20, // 63: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:input_type -> warcraftbuddy.world.v1.ClientMovementRequest
-	38, // 64: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	10, // 65: warcraftbuddy.world.v1.BuddyWorld.RetireSplineCompletion:output_type -> warcraftbuddy.world.v1.SplineCompletionObservation
-	10, // 66: warcraftbuddy.world.v1.BuddyWorld.AdoptSplineTransfer:output_type -> warcraftbuddy.world.v1.SplineCompletionObservation
-	10, // 67: warcraftbuddy.world.v1.BuddyWorld.CompleteSpline:output_type -> warcraftbuddy.world.v1.SplineCompletionObservation
-	35, // 68: warcraftbuddy.world.v1.BuddyWorld.CombatEvents:output_type -> warcraftbuddy.world.v1.CombatEventsResponse
-	31, // 69: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	39, // 70: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:output_type -> google.protobuf.Empty
-	39, // 71: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	65, // [65:72] is the sub-list for method output_type
-	58, // [58:65] is the sub-list for method input_type
-	58, // [58:58] is the sub-list for extension type_name
-	58, // [58:58] is the sub-list for extension extendee
-	0,  // [0:58] is the sub-list for field type_name
+	23, // 56: warcraftbuddy.world.v1.SnapshotResponse.summoning_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
+	33, // 57: warcraftbuddy.world.v1.CombatEventsResponse.events:type_name -> warcraftbuddy.world.v1.CombatEvent
+	34, // 58: warcraftbuddy.world.v1.CombatEventsResponse.gaps:type_name -> warcraftbuddy.world.v1.CombatEventGap
+	9,  // 59: warcraftbuddy.world.v1.BuddyWorld.RetireSplineCompletion:input_type -> warcraftbuddy.world.v1.RetireSplineCompletionRequest
+	12, // 60: warcraftbuddy.world.v1.BuddyWorld.AdoptSplineTransfer:input_type -> warcraftbuddy.world.v1.AdoptSplineTransferRequest
+	7,  // 61: warcraftbuddy.world.v1.BuddyWorld.CompleteSpline:input_type -> warcraftbuddy.world.v1.CompleteSplineRequest
+	32, // 62: warcraftbuddy.world.v1.BuddyWorld.CombatEvents:input_type -> warcraftbuddy.world.v1.CombatEventsRequest
+	19, // 63: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	20, // 64: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:input_type -> warcraftbuddy.world.v1.ClientMovementRequest
+	38, // 65: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	10, // 66: warcraftbuddy.world.v1.BuddyWorld.RetireSplineCompletion:output_type -> warcraftbuddy.world.v1.SplineCompletionObservation
+	10, // 67: warcraftbuddy.world.v1.BuddyWorld.AdoptSplineTransfer:output_type -> warcraftbuddy.world.v1.SplineCompletionObservation
+	10, // 68: warcraftbuddy.world.v1.BuddyWorld.CompleteSpline:output_type -> warcraftbuddy.world.v1.SplineCompletionObservation
+	35, // 69: warcraftbuddy.world.v1.BuddyWorld.CombatEvents:output_type -> warcraftbuddy.world.v1.CombatEventsResponse
+	31, // 70: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	39, // 71: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:output_type -> google.protobuf.Empty
+	39, // 72: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	66, // [66:73] is the sub-list for method output_type
+	59, // [59:66] is the sub-list for method input_type
+	59, // [59:59] is the sub-list for extension type_name
+	59, // [59:59] is the sub-list for extension extendee
+	0,  // [0:59] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }
@@ -6303,6 +6325,7 @@ func file_modules_buddy_world_world_proto_init() {
 		return
 	}
 	file_modules_buddy_world_world_proto_msgTypes[22].OneofWrappers = []any{}
+	file_modules_buddy_world_world_proto_msgTypes[23].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

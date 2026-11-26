@@ -100,6 +100,10 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	if err != nil {
 		return GameplayWriteFailed, anyBytes, err
 	}
+	if op == opcode.CMSGSetSelection && len(body) == 8 {
+		e.transport.selectionKnown = true
+		e.transport.selectedGUID = binary.LittleEndian.Uint64(body)
+	}
 	e.movement.sent(op, body, e.s.state.Character.GUID)
 	e.transport.sent(op)
 	e.retainOwnMovementReport(op, body)

@@ -204,21 +204,21 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	dispatch, err := resolve(action)
 	if err != nil || dispatch.Module == "" || dispatch.Send == nil {
 		defer p.advance.Unlock()
-		return p.rejectUnenteredLease(ctx, decision, action, "resolve", errors.Join(err, errors.New("policy action cannot be dispatched")))
+		return p.rejectUnenteredAction(ctx, decision, action, "resolve", errors.Join(err, errors.New("policy action cannot be dispatched")))
 	}
 	if err := p.renewEncounterWriter(ctx, decision.Output, action, dispatch); err != nil {
 		defer p.advance.Unlock()
-		return p.rejectUnenteredLease(ctx, decision, action, "encounter_admission", err)
+		return p.rejectUnenteredAction(ctx, decision, action, "encounter_admission", err)
 	}
 	if err := p.deliverDecisionMovementPoints(ctx, decision.Output, action); err != nil {
 		defer p.advance.Unlock()
-		return p.rejectUnenteredLease(ctx, decision, action, "point_delivery", err)
+		return p.rejectUnenteredAction(ctx, decision, action, "point_delivery", err)
 	}
 	s := p.vm.Status()
 	id, err := p.reserve(decision)
 	if err != nil {
 		defer p.advance.Unlock()
-		return p.rejectUnenteredLease(ctx, decision, action, "reservation", err)
+		return p.rejectUnenteredAction(ctx, decision, action, "reservation", err)
 	}
 	p.dispatchDone = make(chan struct{})
 	p.advance.Unlock()
@@ -237,6 +237,12 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	p.dispatchAwaiting.Store(true)
 	outcome, payload := dispatch.Send(modsession.WithWriteOrigin(dispatchCtx, origin))
 	p.dispatchAwaiting.Store(false)
+	if requestID := policyActionRequestID(decision); requestID != "" {
+		if payload == nil {
+			payload = map[string]any{}
+		}
+		payload["policy_request_id"] = requestID
+	}
 	p.publishDispatch(s, id, dispatch.Module, outcome, payload)
 	receipt := &behavior.ActionReceipt{SessionID: s.SessionID, ActionID: id, Outcome: outcome, Payload: payload}
 	if dispatch.spell != nil {

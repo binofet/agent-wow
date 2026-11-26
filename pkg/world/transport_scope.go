@@ -18,21 +18,24 @@ import (
 // General barriers are deliberately conservative; only World can qualify its
 // complete parser's current spline against the separately retained source.
 type transportScopeState struct {
-	scope                       *modv1.TransportScope
-	visit                       uint64
-	attemptedVisit, attemptedID uint64
-	exhausted                   bool
-	lastHeader                  [32]byte
-	lastHeaderKnown             bool
-	lastHeaderVisit             uint64
-	currentHeader               [32]byte
-	currentHeaderKnown          bool
-	consumed                    map[[32]byte]struct{}
-	consumedVisit               uint64
-	transfer                    worldTransferState
-	completionAttempt           *modv1.TransportScope
-	completionReport            *modv1.TransportScope
-	areaTriggerAttempts         map[areaTriggerAttempt]struct{}
+	summon                             pendingSummon
+	selectionAttempted, selectionKnown bool
+	selectedGUID                       uint64
+	scope                              *modv1.TransportScope
+	visit                              uint64
+	attemptedVisit, attemptedID        uint64
+	exhausted                          bool
+	lastHeader                         [32]byte
+	lastHeaderKnown                    bool
+	lastHeaderVisit                    uint64
+	currentHeader                      [32]byte
+	currentHeaderKnown                 bool
+	consumed                           map[[32]byte]struct{}
+	consumedVisit                      uint64
+	transfer                           worldTransferState
+	completionAttempt                  *modv1.TransportScope
+	completionReport                   *modv1.TransportScope
+	areaTriggerAttempts                map[areaTriggerAttempt]struct{}
 }
 
 func newTransportScope(self uint64) (*modv1.TransportScope, error) {
@@ -73,6 +76,8 @@ func (t *transportScopeState) clearSpline() {
 }
 
 func (t *transportScopeState) boundary() {
+	t.summon.caster = 0
+	t.selectionAttempted = false
 	t.scope.VisitBound, t.scope.VisitRevision = false, 0
 	t.clearSpline()
 	t.advance(&t.scope.SplineRevision)
@@ -140,6 +145,10 @@ func scopeWorldEntry(body []byte) (uint32, bool) {
 }
 
 func (t *transportScopeState) observe(op uint16, body []byte) {
+	if op == opcode.SMSGSummonRequest || op == opcode.SMSGSummonCancel {
+		t.observeSummon(op, body)
+		return
+	}
 	t.observeTransferBefore(op, body)
 	if t.scope == nil || !transportMotionBarrier(uint32(op)) || transportClearlyForeign(op, body, t.scope.SelfGuid) {
 		return
@@ -250,6 +259,25 @@ func (t *transportScopeState) sent(op uint32) {
 // Its attempt key is independent of the general barrier: fetching a fresh
 // scope after the write can never make the same spline replayable.
 func (t *transportScopeState) reserve(op uint32, payload []byte, requested *modv1.TransportScope) error {
+	if op == opcode.CMSGSummonResponse {
+		return t.reserveSummonResponse(payload, requested)
+	}
+	if requested != nil && (op == opcode.CMSGSetSelection || op == opcode.CMSGGameobjUse) {
+		if t.exhausted || !sameTransferVisit(t.scope, requested) {
+			return modcb.PacketNotDispatchedError("the selected character visit changed")
+		}
+		if wanted := requested.MeetingStoneTargetGuid; wanted != 0 && (op != opcode.CMSGGameobjUse ||
+			t.selectionAttempted && (!t.selectionKnown || t.selectedGUID != wanted)) {
+			return modcb.PacketNotDispatchedError("a newer or uncertain UI selection prevents this meeting-stone use")
+		}
+		if op == opcode.CMSGGameobjUse {
+			return nil
+		}
+	}
+	if op == opcode.CMSGSetSelection {
+		t.selectionAttempted, t.selectionKnown = true, false
+		return nil
+	}
 	if op == opcode.MSGMoveStop && requested != nil {
 		return t.reserveMovementStop(payload, requested)
 	}
@@ -340,7 +368,11 @@ func (e *engine) publishObserved(op uint16, body []byte) error {
 	if observed, ok := e.s.modules.(interface {
 		PublishObserved(uint16, []byte, *modv1.TransportScope) error
 	}); ok {
-		return observed.PublishObserved(op, body, e.transport.snapshot())
+		scope := e.transport.snapshot()
+		if op == opcode.SMSGSummonRequest && scope != nil && e.transport.summon.caster != 0 {
+			scope.SummonOfferSequence = e.transport.summon.sequence
+		}
+		return observed.PublishObserved(op, body, scope)
 	}
 	return e.s.modules.Publish(op, body)
 }

@@ -4,21 +4,34 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"maps"
+
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 )
 
-// Only the intended lease action is known unsent. An earlier prerequisite RPC
+// A policy may correlate its selected action across receipt delivery and reload.
+// This opaque label has no effect on action selection, authorization or outcome.
+func policyActionRequestID(decision behavior.Decision) string {
+	id, _ := decision.Output["actionRequestId"].(string)
+	if len(id) > 256 {
+		return ""
+	}
+	return id
+}
+
+// Only the intended action is known unsent. An earlier prerequisite RPC
 // may have an unknown result; this is not a claim that it had no side effects.
 // Caller holds advance; no rejected ID is exposed as native write permission.
-func (p *SessionPolicy) rejectUnenteredLease(ctx context.Context, decision behavior.Decision, action map[string]any, phase string, cause error) (map[string]any, *behavior.ActionReceipt, error) {
-	if action["capability"] != "movement_owner" {
+func (p *SessionPolicy) rejectUnenteredAction(ctx context.Context, decision behavior.Decision, action map[string]any, phase string, cause error) (map[string]any, *behavior.ActionReceipt, error) {
+	requestID := policyActionRequestID(decision)
+	capability, _ := action["capability"].(string)
+	if capability != "movement_owner" && requestID == "" {
 		return decision.Output, nil, cause
 	}
 	// Preserve the original typed error while naming the exact no-Send gate.
 	mode, _ := action["mode"].(string)
 	owner, _ := action["owner"].(string)
-	cause = fmt.Errorf("unentered movement_owner %s admission (%s): %w", mode, phase, cause)
+	cause = fmt.Errorf("unentered %s %s admission (%s): %w", capability, mode, phase, cause)
 	id, err := p.vm.RejectAction(decision)
 	if err != nil {
 		return decision.Output, nil, errors.Join(cause, err)
@@ -28,10 +41,13 @@ func (p *SessionPolicy) rejectUnenteredLease(ctx context.Context, decision behav
 		message = message[:2048]
 	}
 	receipt := &behavior.ActionReceipt{SessionID: p.vm.Status().SessionID, ActionID: id, Outcome: behavior.ActionNotDispatched, NeverDispatched: true, Payload: map[string]any{
-		"capability": "movement_owner", "mode": mode, "owner": owner,
+		"capability": capability, "mode": mode, "owner": owner,
 		"error": message, "admissionPhase": phase, "admissionRejected": true, "transport_written": false,
 		"prerequisiteOutcomeUnverified": phase == "encounter_admission" || phase == "point_delivery",
 	}}
+	if requestID != "" {
+		receipt.Payload["policy_request_id"] = requestID
+	}
 	// Own both the record and its scalar payload; a caller may mutate its return.
 	retained := *receipt
 	retained.Payload = maps.Clone(receipt.Payload)

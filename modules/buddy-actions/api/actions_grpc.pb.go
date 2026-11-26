@@ -89,6 +89,9 @@ const (
 	BuddyActions_CastBuff_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/CastBuff"
 	BuddyActions_Melee_FullMethodName                   = "/warcraftbuddy.actions.v1.BuddyActions/Melee"
 	BuddyActions_SelfManaObservation_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/SelfManaObservation"
+	BuddyActions_ObserveSummoning_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/ObserveSummoning"
+	BuddyActions_UseSummoningObject_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/UseSummoningObject"
+	BuddyActions_RespondToSummon_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/RespondToSummon"
 )
 
 // BuddyActionsClient is the client API for BuddyActions service.
@@ -165,6 +168,9 @@ type BuddyActionsClient interface {
 	CastBuff(ctx context.Context, in *CastBuffRequest, opts ...grpc.CallOption) (*State, error)
 	Melee(ctx context.Context, in *MeleeRequest, opts ...grpc.CallOption) (*State, error)
 	SelfManaObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SelfManaObservationResponse, error)
+	ObserveSummoning(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SummoningObservation, error)
+	UseSummoningObject(ctx context.Context, in *UseSummoningObjectRequest, opts ...grpc.CallOption) (*SummoningObservation, error)
+	RespondToSummon(ctx context.Context, in *RespondToSummonRequest, opts ...grpc.CallOption) (*SummoningObservation, error)
 }
 
 type buddyActionsClient struct {
@@ -855,6 +861,36 @@ func (c *buddyActionsClient) SelfManaObservation(ctx context.Context, in *emptyp
 	return out, nil
 }
 
+func (c *buddyActionsClient) ObserveSummoning(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SummoningObservation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SummoningObservation)
+	err := c.cc.Invoke(ctx, BuddyActions_ObserveSummoning_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) UseSummoningObject(ctx context.Context, in *UseSummoningObjectRequest, opts ...grpc.CallOption) (*SummoningObservation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SummoningObservation)
+	err := c.cc.Invoke(ctx, BuddyActions_UseSummoningObject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) RespondToSummon(ctx context.Context, in *RespondToSummonRequest, opts ...grpc.CallOption) (*SummoningObservation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SummoningObservation)
+	err := c.cc.Invoke(ctx, BuddyActions_RespondToSummon_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BuddyActionsServer is the server API for BuddyActions service.
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
@@ -929,6 +965,9 @@ type BuddyActionsServer interface {
 	CastBuff(context.Context, *CastBuffRequest) (*State, error)
 	Melee(context.Context, *MeleeRequest) (*State, error)
 	SelfManaObservation(context.Context, *emptypb.Empty) (*SelfManaObservationResponse, error)
+	ObserveSummoning(context.Context, *emptypb.Empty) (*SummoningObservation, error)
+	UseSummoningObject(context.Context, *UseSummoningObjectRequest) (*SummoningObservation, error)
+	RespondToSummon(context.Context, *RespondToSummonRequest) (*SummoningObservation, error)
 	mustEmbedUnimplementedBuddyActionsServer()
 }
 
@@ -1142,6 +1181,15 @@ func (UnimplementedBuddyActionsServer) Melee(context.Context, *MeleeRequest) (*S
 }
 func (UnimplementedBuddyActionsServer) SelfManaObservation(context.Context, *emptypb.Empty) (*SelfManaObservationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SelfManaObservation not implemented")
+}
+func (UnimplementedBuddyActionsServer) ObserveSummoning(context.Context, *emptypb.Empty) (*SummoningObservation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ObserveSummoning not implemented")
+}
+func (UnimplementedBuddyActionsServer) UseSummoningObject(context.Context, *UseSummoningObjectRequest) (*SummoningObservation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UseSummoningObject not implemented")
+}
+func (UnimplementedBuddyActionsServer) RespondToSummon(context.Context, *RespondToSummonRequest) (*SummoningObservation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RespondToSummon not implemented")
 }
 func (UnimplementedBuddyActionsServer) mustEmbedUnimplementedBuddyActionsServer() {}
 func (UnimplementedBuddyActionsServer) testEmbeddedByValue()                      {}
@@ -2388,6 +2436,60 @@ func _BuddyActions_SelfManaObservation_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_ObserveSummoning_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).ObserveSummoning(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_ObserveSummoning_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).ObserveSummoning(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_UseSummoningObject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UseSummoningObjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).UseSummoningObject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_UseSummoningObject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).UseSummoningObject(ctx, req.(*UseSummoningObjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_RespondToSummon_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RespondToSummonRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).RespondToSummon(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_RespondToSummon_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).RespondToSummon(ctx, req.(*RespondToSummonRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BuddyActions_ServiceDesc is the grpc.ServiceDesc for BuddyActions service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2666,6 +2768,18 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SelfManaObservation",
 			Handler:    _BuddyActions_SelfManaObservation_Handler,
+		},
+		{
+			MethodName: "ObserveSummoning",
+			Handler:    _BuddyActions_ObserveSummoning_Handler,
+		},
+		{
+			MethodName: "UseSummoningObject",
+			Handler:    _BuddyActions_UseSummoningObject_Handler,
+		},
+		{
+			MethodName: "RespondToSummon",
+			Handler:    _BuddyActions_RespondToSummon_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
