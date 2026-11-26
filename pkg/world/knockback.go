@@ -18,11 +18,22 @@ import (
 // Geometry belongs to the installed Actions module. World consumes the final
 // successful contact since the realm broadcasts the ACK to other players.
 type knockbackFrameKey struct{}
+type writtenPose struct {
+	packet           *modv1.WorldPacket
+	at               time.Time
+	actionsHeartbeat bool
+}
+
+// The body simulation samples ground and liquid at 50 ms intervals. Only a
+// forward checkpoint within one such step can locate an ordinary moving launch.
+const knockbackGroundSampleAge = 50 * time.Millisecond
+
 type knockbackMotion struct {
 	order     movementinfo.Knockback
 	source    *modv1.WorldPacket
 	launch    movementinfo.Info
 	start     time.Time
+	ackAt     time.Time
 	lastScope *modv1.TransportScope
 	contact   *movementinfo.Info
 	next      <-chan time.Time
@@ -102,7 +113,7 @@ func (k *knockbackMotion) point(age time.Duration) buddynav.Point {
 	return buddynav.KnockbackPoint(buddynav.Point{X: i.X, Y: i.Y, Z: i.Z}, math.Atan2(float64(k.order.Sin), float64(k.order.Cos)), float64(k.order.Horizontal), -float64(k.order.Vertical), age)
 }
 
-func (e *engine) impulseOrigin() (movementinfo.Info, bool) {
+func (e *engine) impulseOrigin(receivedAt time.Time) (movementinfo.Info, bool) {
 	ctx := modsession.WithSelfBodyInput(context.Background())
 	current := e.transport.scope
 	proved := func(p *modv1.WorldPacket) bool {
@@ -115,12 +126,17 @@ func (e *engine) impulseOrigin() (movementinfo.Info, bool) {
 		before.MotionRevision--
 		e.s.waitBodyProof(ctx, before, current, time.Now().Add(bodyUpdateWait))
 	}
+	last := e.lastWrittenPose
+	if !receivedAt.IsZero() && last.at.After(receivedAt) {
+		// The reader had this order before the owner committed another move.
+		return movementinfo.Info{}, false
+	}
 	if k := e.impulse; k != nil && !k.finished && e.s.bodyProof(ctx, k.lastScope, current) == "" {
-		if k.contact == nil {
+		if k.contact == nil || receivedAt.IsZero() || receivedAt.Before(k.ackAt) {
 			return movementinfo.Info{}, false
 		}
-		age := time.Since(k.start)
-		if age >= time.Duration(k.contact.Time)*time.Millisecond {
+		age := receivedAt.Sub(k.start)
+		if age < 0 || age >= time.Duration(k.contact.Time)*time.Millisecond {
 			return movementinfo.Info{}, false
 		}
 		q := k.point(age)
@@ -131,7 +147,7 @@ func (e *engine) impulseOrigin() (movementinfo.Info, bool) {
 	e.s.mu.RLock()
 	raw := e.s.parsedOwnPose
 	e.s.mu.RUnlock()
-	source := e.lastWrittenPose
+	source := last.packet
 	if !proved(source) {
 		source = nil
 	}
@@ -142,21 +158,34 @@ func (e *engine) impulseOrigin() (movementinfo.Info, bool) {
 		return movementinfo.Info{}, false
 	}
 	i, ok := movementinfo.OwnFrame(source.Payload, current.GetSelfGuid())
-	// Scope continuity preserves a stationary position. A last ordinary
-	// heartbeat with active motion does not locate a subsequently moving
-	// body. Only the measured in-flight continuation above supplies that.
+	if !ok || i.ExtraFlags != 0 {
+		return movementinfo.Info{}, false
+	}
 	const stationary = uint32(0x100) | movementinfo.SwimmingFlag // walk mode or resting in water
-	return i, ok && i.ExtraFlags == 0 && i.Flags & ^stationary == 0
+	if i.Flags & ^stationary == 0 {
+		return i, true
+	}
+	if source != last.packet || !last.actionsHeartbeat || i.Flags != 1 || i.FallTime != 0 ||
+		receivedAt.IsZero() || last.at.Before(e.s.started) || receivedAt.Sub(last.at) > knockbackGroundSampleAge {
+		return movementinfo.Info{}, false
+	}
+	// Use both clocks at receipt. A delayed callback can put an old sample
+	// on the socket just before the order. Unsigned subtraction retains wrap
+	// and rejects future client times. The launch uses the wire XYZ unchanged.
+	writeClock := uint32(last.at.Sub(e.s.started) / time.Millisecond)
+	orderClock := uint32(receivedAt.Sub(e.s.started) / time.Millisecond)
+	maxAge := uint32(knockbackGroundSampleAge.Milliseconds())
+	return i, writeClock-i.Time <= maxAge && orderClock-i.Time <= maxAge
 }
 
 // Unit::KnockbackFrom / WorldSession::HandleMoveKnockBackAck use the supplied
 // order counter and full MovementInfo, with the launch velocity signed down.
-func (e *engine) knockbackOrder(body []byte) error {
+func (e *engine) knockbackOrder(body []byte, receivedAt time.Time) error {
 	k, err := movementinfo.DecodeKnockback(body)
 	ready := err == nil && e.scopedWriteAvailable(context.Background()) && k.Mover == e.s.state.Character.GUID
 	var origin movementinfo.Info
 	if ready {
-		origin, ready = e.impulseOrigin()
+		origin, ready = e.impulseOrigin(receivedAt)
 	}
 	e.observeTransportScope(opcode.SMSGMoveKnockBack, body)
 	e.impulse = nil
@@ -167,7 +196,7 @@ func (e *engine) knockbackOrder(body []byte) error {
 	if !ready || e.transport.reserveBodySource(e.transport.scope) != nil {
 		return nil
 	}
-	now := time.Now()
+	start := time.Now()
 	launch := k.Launch(origin, e.timestamp())
 	ack := k.Acknowledgement(launch)
 	if err := e.write(opcode.CMSGMoveKnockBackAck, ack); err != nil {
@@ -175,7 +204,7 @@ func (e *engine) knockbackOrder(body []byte) error {
 	}
 	scope := e.transport.snapshot()
 	order := &modv1.WorldPacket{Opcode: opcode.SMSGMoveKnockBack, Payload: append([]byte(nil), body...), TransportScope: scope}
-	e.impulse = &knockbackMotion{order: k, source: order, launch: launch, start: now, lastScope: scope}
+	e.impulse = &knockbackMotion{order: k, source: order, launch: launch, start: start, ackAt: e.bodyWrittenAt, lastScope: scope}
 	e.s.mu.Lock()
 	e.s.knockbackReports = knockbackReports{order: order, ack: &modv1.WorldPacket{Opcode: opcode.CMSGMoveKnockBackAck, Payload: ack, TransportScope: scope}}
 	e.s.mu.Unlock()

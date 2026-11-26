@@ -40,7 +40,8 @@ type engine struct {
 	ownMovementReport     *modv1.WorldPacket
 	// Last supported physical write survives a later known-not-dispatched
 	// selection. It supplies a new realm order only through source continuity.
-	lastWrittenPose    *modv1.WorldPacket
+	lastWrittenPose    writtenPose
+	bodyWrittenAt      time.Time
 	ownMovementAttempt string
 	impulse            *knockbackMotion
 }
@@ -108,9 +109,12 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	}
 	e.writeSerial++
 	anyBytes, err := e.s.conn.WritePacket(op, body)
+	if err == nil && (ownMovementReportOpcode(op) || op == opcode.CMSGMoveKnockBackAck) {
+		e.bodyWrittenAt = time.Now()
+	}
 	if err != nil {
 		if ownMovementReportOpcode(op) || op == opcode.CMSGMoveKnockBackAck {
-			e.lastWrittenPose = nil
+			e.lastWrittenPose = writtenPose{}
 			e.s.mu.Lock()
 			e.s.parsedOwnPose = nil
 			e.s.knockbackReports = knockbackReports{}
@@ -126,8 +130,11 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	e.transport.sent(op)
 	e.retainOwnMovementReport(ctx, op, body)
 	if ownMovementReportOpcode(op) {
-		e.ownMovementAttempt = modsession.WriteOriginFromContext(ctx).MovementAttempt
-		e.lastWrittenPose = e.ownMovementReport
+		origin := modsession.WriteOriginFromContext(ctx)
+		e.ownMovementAttempt = origin.MovementAttempt
+		e.lastWrittenPose = writtenPose{packet: e.ownMovementReport, at: e.bodyWrittenAt,
+			actionsHeartbeat: op == opcode.MSGMoveHeartbeat && origin.Module == "buddy-actions" && origin.SessionID != "" &&
+				(origin.Writer == "module" || origin.Writer == "lua")}
 	}
 	e.publishTransportScope()
 	logPacket(e.s.logger, "write", op, len(body))
@@ -326,7 +333,7 @@ func (e *engine) processIncoming(p packet) (bool, error) {
 		}
 		return false, fmt.Errorf("worldserver disconnected: %w", p.err)
 	}
-	complete, err := e.handle(p.opcode, p.body)
+	complete, err := e.handlePacket(p)
 	if err != nil {
 		return false, fmt.Errorf("world packet 0x%03x: %w", p.opcode, err)
 	}
