@@ -2,6 +2,7 @@
 """Conversation acceptance tests with fake RPC and a local fake Codex process."""
 
 import copy
+from contextlib import nullcontext
 import hashlib
 import io
 import subprocess
@@ -4302,7 +4303,7 @@ from test_owner_acknowledgement import OwnerAcknowledgementTests
 from test_model_transport import ModelTransportTests
 
 class OwnerPreemptionTests(unittest.TestCase):
-    def freshness_case(self, outcomes, *, mutate=None, elapsed=0.5, checks=1, clock_times=None):
+    def freshness_case(self, outcomes, *, mutate=None, elapsed=0.5, checks=1, clock_times=None, still_current=None):
         calls=[];statuses=[];seen=[]
         class Brain(converse.CodexBrain):
             def __init__(self): self.developer_workspace=None
@@ -4321,62 +4322,113 @@ class OwnerPreemptionTests(unittest.TestCase):
         loop=converse.Conversation(types.SimpleNamespace(call=call),Brain(),status=lambda **kw:statuses.append(kw))
         loop.session_id='chat';loop.cursor=41;loop.initialized=True
         with patch.object(converse.time,'monotonic',side_effect=clock_times or [0,elapsed,elapsed]):
-            try: result=loop.generate_reply([],{})
+            try: result=loop.generate_reply([],{},still_current=still_current)
             except converse.OwnerInputPending: result=None
         return loop,calls,statuses,seen,result
 
-    def test_chat_timeout_retries_one_same_cursor_read_and_accepts_fresh_result(self):
-        loop,calls,statuses,seen,result=self.freshness_case([
-            converse.ChatPollTimeout('timeout'),poll(latest=41,sessionId='chat')])
-        self.assertEqual(result['text'],'fresh');self.assertEqual(loop.cursor,41)
-        self.assertEqual(len(calls),2);self.assertEqual(calls[0][0],calls[1][0])
-        self.assertEqual(calls[0][1],0.5);self.assertLessEqual(calls[1][1],0.3)
-        self.assertEqual(seen,[(False,'owner_input_waiting')])
+    def test_single_freshness_read_accepts_measured_slow_success(self):
+        for elapsed in (.5308,.6075,.8902):
+            with self.subTest(elapsed=elapsed):
+                loop,calls,_,seen,result=self.freshness_case([poll(latest=41,sessionId='chat')],elapsed=elapsed)
+                self.assertEqual(result['text'],'fresh');self.assertEqual(loop.cursor,41)
+                self.assertEqual(calls,[({'afterSequence':'41','limit':256,'sessionId':'chat'},1.5)])
+                self.assertEqual(seen,[(False,'owner_input_waiting')])
 
-    def test_chat_retry_respects_new_owner_persistent_failure_and_body_change(self):
+    def test_single_read_respects_new_owner_timeout_and_body_change(self):
         cases=[(poll([message(42,'Stop',channel='WHISPER')],sessionId='chat'),'owner_input_waiting'),
-            (converse.ChatPollTimeout('again'),'chat_freshness_unavailable'),
+            (converse.ChatPollTimeout('deadline'),'chat_freshness_unavailable'),
             (poll(latest=41,sessionId='other'),'chat_body_changed')]
         for response,reason in cases:
             with self.subTest(reason=reason):
-                loop,calls,statuses,seen,result=self.freshness_case([converse.ChatPollTimeout('first'),response])
-                self.assertIsNone(result);self.assertEqual(len(calls),2)
+                loop,calls,statuses,seen,result=self.freshness_case([response],elapsed=.8902)
+                self.assertIsNone(result);self.assertEqual(len(calls),1)
                 self.assertEqual(seen,[(True,reason)])
                 self.assertEqual(statuses[-1]['generationInterruptReason'],reason)
                 if reason=='chat_freshness_unavailable':
                     self.assertEqual(statuses[-1]['generationFreshnessFailure'],'read_timeout')
                 if reason!='chat_body_changed':self.assertEqual(loop.cursor,41)
 
-    def test_chat_no_retry_for_invalid_read_changed_binding_or_elapsed_budget(self):
+    def test_single_read_rejects_invalid_response_binding_change_stop_and_late_result(self):
         cases=[([converse.ConversationError('invalid json')],None,.1,'chat_freshness_unavailable'),
-            ([converse.ChatPollTimeout('first')],lambda loop:setattr(loop,'session_id','new'),.1,'owned_body_changed'),
-            ([converse.ChatPollTimeout('first')],None,.81,'chat_freshness_unavailable')]
+            ([converse.ChatPollTimeout('deadline')],lambda loop:setattr(loop,'session_id','new'),.1,'owned_body_changed'),
+            ([poll(latest=41,sessionId='chat')],lambda loop:setattr(loop,'cursor',42),.1,'owned_body_changed'),
+            ([poll(latest=41,sessionId='chat')],lambda loop:setattr(loop,'character_guid',99),.1,'owned_body_changed'),
+            ([poll(latest=41,sessionId='chat')],lambda loop:setattr(loop,'stopped',lambda:True),.1,'owned_body_changed'),
+            ([poll(latest=41,sessionId='chat')],None,1.501,'chat_freshness_unavailable')]
         for outcomes,mutate,elapsed,reason in cases:
-            with self.subTest(reason=reason):
-                loop,calls,statuses,seen,result=self.freshness_case(outcomes,mutate=mutate,elapsed=elapsed)
+            with self.subTest(reason=reason,mutate=mutate):
+                _,calls,_,seen,result=self.freshness_case(outcomes,mutate=mutate,elapsed=elapsed)
                 self.assertIsNone(result);self.assertEqual(len(calls),1)
                 self.assertEqual(seen,[(True,reason)])
 
-    def test_each_poll_has_one_bounded_retry_and_rejects_late_read_result(self):
+    def test_later_poll_has_single_read_and_owner_replacement_still_preempts(self):
         for outcome,reason in [(poll(latest=41,sessionId='chat'),None),
-                (converse.ChatPollTimeout('persistent'),'chat_freshness_unavailable'),
-                (poll([message(42,'Stop',channel='WHISPER')],sessionId='chat'),'owner_input_waiting'),
-                (poll(latest=41,sessionId='other'),'chat_body_changed')]:
+                (converse.ChatPollTimeout('deadline'),'chat_freshness_unavailable'),
+                (poll([message(42,'Stop',channel='WHISPER')],sessionId='chat'),'owner_input_waiting')]:
             with self.subTest(reason=reason):
-                _,calls,_,seen,result=self.freshness_case([converse.ChatPollTimeout('first'),
-                    poll(latest=41,sessionId='chat'),converse.ChatPollTimeout('later'),outcome],
-                    checks=2,clock_times=[0,.2,.2,1,1.1,1.1])
-                self.assertEqual(len(calls),4)
-                self.assertTrue(all(params == calls[0][0] for params,_ in calls))
+                _,calls,_,seen,result=self.freshness_case([poll(latest=41,sessionId='chat'),outcome],
+                    checks=2,clock_times=[0,.89,1,1.89])
+                self.assertEqual(len(calls),2);self.assertEqual(calls[0][0],calls[1][0])
+                self.assertTrue(all(timeout==1.5 for _,timeout in calls))
                 if reason is None:
                     self.assertEqual(result['text'],'fresh')
-                    self.assertEqual(seen,[(False,'owner_input_waiting')]*2)
                 else:
                     self.assertIsNone(result);self.assertEqual(seen[-1],(True,reason))
-        _,calls,_,seen,result=self.freshness_case([converse.ChatPollTimeout('first'),
-            poll(latest=41,sessionId='chat')],clock_times=[0,.5,.81])
-        self.assertIsNone(result);self.assertEqual(len(calls),2)
-        self.assertEqual(seen,[(True,'chat_freshness_unavailable')])
+
+    def test_slow_read_still_checks_review_peer_and_current_body(self):
+        cases=[(poll([message(42,'Development update',sender=87,channel='WHISPER')],sessionId='chat'),
+                lambda:True,'peer_input_waiting'),
+            (poll(latest=41,sessionId='chat'),lambda:False,'owned_body_changed')]
+        for response,current,reason in cases:
+            with self.subTest(reason=reason):
+                loop,calls,_,seen,result=self.freshness_case([response],elapsed=.8902,still_current=current)
+                self.assertIsNone(result);self.assertEqual(len(calls),1);self.assertEqual(loop.cursor,41)
+                self.assertEqual(seen,[(True,reason)])
+
+    def test_actual_rpc_path_keeps_slow_read_and_blocks_dead_or_replaced_owner(self):
+        for case in ('slow_success','dead_endpoint','owner_before_action'):
+            with self.subTest(case=case):
+                requests=[];actions=[]
+                class Brain(converse.CodexBrain):
+                    def __init__(self):self.developer_workspace=None
+                    def generate(self,history,control_state=None,cancelled=None):
+                        for _ in range(2 if case=='owner_before_action' else 1):
+                            if cancelled():raise converse.OwnerInputPending('pre-action freshness refused')
+                        actions.append('admitted_once')
+                        return dict(text='fresh',emote='NONE')
+                rpc=converse.RPC('http://127.0.0.1:1/rpc')
+                def opened(request,timeout=None):
+                    value=json.loads(request.data);requests.append((value,timeout))
+                    self.assertEqual(value['method'],'buddy-chat.poll')
+                    self.assertEqual(value['params'],dict(afterSequence='41',limit=256,sessionId='chat'))
+                    if case=='dead_endpoint':raise ConnectionRefusedError('synthetic endpoint down')
+                    result=poll(latest=41,sessionId='chat')
+                    if case=='owner_before_action' and len(requests)==2:
+                        result=poll([message(42,'Stop',channel='WHISPER')],sessionId='chat')
+                    class Response:
+                        def __enter__(self):return self
+                        def __exit__(self,*_):return False
+                        def read(self,limit):
+                            if case=='slow_success':time.sleep(.55)
+                            return json.dumps(dict(jsonrpc='2.0',id=value['id'],result=result)).encode()
+                    return Response()
+                statuses=[];loop=converse.Conversation(rpc,Brain(),status=lambda **kw:statuses.append(kw))
+                loop.session_id='chat';loop.cursor=41
+                clock=(patch.object(converse.time,'monotonic',side_effect=[0,.89,1,1.89])
+                    if case=='owner_before_action' else nullcontext())
+                with patch.object(rpc.opener,'open',side_effect=opened),clock:
+                    if case=='slow_success':
+                        self.assertEqual(loop.generate_reply([],{})['text'],'fresh')
+                        self.assertEqual(actions,['admitted_once']);self.assertEqual(len(requests),1)
+                    else:
+                        with self.assertRaises(converse.OwnerInputPending):loop.generate_reply([],{})
+                        self.assertEqual(actions,[])
+                        self.assertEqual(len(requests),2 if case=='owner_before_action' else 1)
+                self.assertTrue(all(timeout==1.5 for _,timeout in requests))
+                self.assertEqual(loop.cursor,41)
+                if case=='dead_endpoint':
+                    self.assertEqual(statuses[-1]['generationInterruptReason'],'chat_freshness_unavailable')
+                    self.assertEqual(statuses[-1]['generationFreshnessFailure'],'unavailable_or_invalid_response')
 
     def test_later_sampling_cannot_drop_owner_or_failed_read_latch(self):
         for outcome,category in [(poll([message(42,'Stop',channel='WHISPER')],sessionId='chat'),None),
