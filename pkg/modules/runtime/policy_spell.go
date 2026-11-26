@@ -54,6 +54,7 @@ type policySpell struct {
 	corpse         *policyCorpse
 	gather         *policyGather
 	instanceEntry  *policyInstanceEntry
+	summoning      *policySummoning
 	genericRequest *actionsv1.CastSpellRequest
 	cancelRequest  *actionsv1.CancelSpellRequest
 	token          string
@@ -68,6 +69,8 @@ type policySpell struct {
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
 	switch capability {
+	case "select_target", "use_summoning_object", "respond_to_summon":
+		return p.resolveSummoning(action, capability)
 	case "area_trigger_reference", "area_trigger_observation", "notify_area_trigger", "instance_entry_status", "plan_route_leg", "travel_to":
 		return p.resolveInstanceEntry(action, capability)
 	}

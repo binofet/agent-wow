@@ -119,8 +119,11 @@ message MovementOwnerLease {
 message SelectTargetRequest {
   string session_id = 1;
   uint64 self_guid = 2;
-  // Zero clears selection. Nonzero must be an observed same-map unit/corpse.
+  // Zero clears selection. Otherwise use an observed local target or exact group binding.
   uint64 target_guid = 3;
+  // Optional for a party UI selection, including members outside visibility.
+  uint64 expected_group_guid = 4;
+  uint64 visit_id = 5;
 }
 message SelectTargetResponse {
   string session_id = 1;
@@ -774,6 +777,8 @@ message EncounterObservationResponse {
   repeated warcraftbuddy.world.v1.SpellGroundEffect ground_effects = 29;
   bool ground_effects_supported = 30;
   bool ground_effects_overflow = 31;
+  SummoningObservation summoning = 32;
+  repeated warcraftbuddy.world.v1.GameObjectState summoning_objects = 33;
 }
 message BodyMovementRequest {
   string session_id = 1;
@@ -1496,6 +1501,9 @@ service BuddyActions {
   rpc CastBuff(CastBuffRequest) returns (State);
   rpc Melee(MeleeRequest) returns (State);
   rpc SelfManaObservation(google.protobuf.Empty) returns (SelfManaObservationResponse);
+  rpc ObserveSummoning(google.protobuf.Empty) returns (SummoningObservation);
+  rpc UseSummoningObject(UseSummoningObjectRequest) returns (SummoningObservation);
+  rpc RespondToSummon(RespondToSummonRequest) returns (SummoningObservation);
 }
 
 // Actor-authored temporary circular exclusions; data only, never movement authority.
@@ -1521,4 +1529,49 @@ message MovementPointsStepRequest {
  // Optional explicit HARD geometry, never a preferred attack range.
  // Behind/LOS/stop are not supported on this single-input seam.
  ApproachTargetRequest target_constraints = 8;
+}
+
+message UseSummoningObjectRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint64 expected_use_revision = 4;
+  uint64 object_guid = 5;
+  uint64 expected_creator_guid = 6;
+  uint64 expected_group_guid = 7;
+  // Required for a meeting stone. Zero for an assisting ritual channel.
+  uint64 selected_member_guid = 8;
+}
+message SummoningObjectUse {
+  UseSummoningObjectRequest request = 1;
+  bool transport_written = 2;
+  bool transport_unknown = 3;
+}
+message SummonOffer {
+  uint64 sequence = 1;
+  uint64 visit_id = 2;
+  uint64 summoner_guid = 3;
+  uint32 zone_id = 4;
+  uint32 timeout_ms = 5;
+  bool pending = 6;
+  optional bool requested_accept = 7;
+  bool transport_written = 8;
+  bool transport_unknown = 9;
+}
+message SummoningObservation {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint64 use_revision = 4;
+  SummoningObjectUse last_use = 5;
+  SummonOffer offer = 6;
+}
+message RespondToSummonRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint64 offer_sequence = 4;
+  uint64 summoner_guid = 5;
+  // A missing choice must never silently decline a real offer.
+  optional bool accept = 6;
 }

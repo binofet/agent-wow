@@ -42,14 +42,19 @@ func fishingBobber(p *observed) bool {
 func ownFishingBobber(p *observed, self uint64) bool {
 	return self != 0 && fishingBobber(p) && p.known[gameObjectCreatedBy] && p.known[gameObjectCreatedBy+1] && uint64(p.fields[gameObjectCreatedBy])|uint64(p.fields[gameObjectCreatedBy+1])<<32 == self
 }
+func summoningObject(p *observed) bool {
+	t := p.fields[gameObjectBytes] >> 8 & 0xff
+	return gameObjectGUID(p.guid) && p.known[gameObjectBytes] && p.known[objectEntry] &&
+		uint64(p.fields[objectEntry]) == p.guid>>24&0xffffff && (t == 18 || t == 23)
+}
 func importantGameObject(p *observed) bool {
-	return mailbox(p) || questContainer(p) || lostGuardQuestGiver(p) || spellFocus(p) || fishingBobber(p)
+	return mailbox(p) || questContainer(p) || lostGuardQuestGiver(p) || spellFocus(p) || fishingBobber(p) || summoningObject(p)
 }
 func gameObjectPriority(p *observed, self uint64) int {
 	if ownFishingBobber(p, self) {
 		return 3
 	}
-	if mailbox(p) || questContainer(p) || lostGuardQuestGiver(p) || spellFocus(p) {
+	if mailbox(p) || questContainer(p) || lostGuardQuestGiver(p) || spellFocus(p) || summoningObject(p) {
 		if questContainer(p) {
 			r, known := gamecatalog.Default().Container(p.fields[objectEntry])
 			if !known || len(r.QuestItems) == 0 {
@@ -99,7 +104,9 @@ func (s *observations) appendGameObjects(r *worldv1.SnapshotResponse, now time.T
 			continue
 		}
 		v := gameObjectSnapshot(p, now)
-		if mailbox(p) {
+		if summoningObject(p) {
+			r.SummoningObjects = append(r.SummoningObjects, v)
+		} else if mailbox(p) {
 			r.Mailboxes = append(r.Mailboxes, v)
 		} else if questContainer(p) || lostGuardQuestGiver(p) {
 			r.QuestObjects = append(r.QuestObjects, v)
@@ -126,6 +133,10 @@ func (s *observations) appendGameObjects(r *worldv1.SnapshotResponse, now time.T
 			}
 			return a.guid < b.guid
 		})
+	}
+	sortObjects(r.SummoningObjects)
+	if len(r.SummoningObjects) > 32 {
+		r.SummoningObjects = r.SummoningObjects[:32]
 	}
 	sortObjects(r.Mailboxes)
 	sortObjects(r.QuestObjects)

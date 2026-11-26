@@ -10,7 +10,7 @@
 EmptyB}
 com.google.protobufB
 EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.Protobuf.WellKnownTypesbproto3
-ê
+ƒ
 api/module/v1/session.protoagentwow.module.v1google/protobuf/any.protogoogle/protobuf/empty.proto"å
 WorldPacket
 opcode (Ropcode
@@ -19,7 +19,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacketRequest
 opcode (Ropcode
 payload (RpayloadK
-transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"ß
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"€
 TransportScope#
 connection_id (	RconnectionId
 	self_guid (RselfGuid
@@ -35,7 +35,8 @@ visitBound%
  (RsplineSourceRevision#
 spline_active (RsplineActive0
 spline_source_opcode (RsplineSourceOpcodeP
-world_transfer (2).agentwow.module.v1.ObservedWorldTransferRworldTransfer"†	
+world_transfer (2).agentwow.module.v1.ObservedWorldTransferRworldTransfer2
+summon_offer_sequence (RsummonOfferSequence"†	
 ObservedWorldTransfer
 revision (Rrevision
 phase (	Rphase

@@ -164,3 +164,27 @@ func TestMailboxPopulationBoundAndNPCIsolation(t *testing.T) {
 		t.Fatal("NPC typebyte leaked into mailboxcache")
 	}
 }
+
+func TestSummoningObjectsInWorldSnapshot(t *testing.T) {
+	s := NewService(1)
+	packet(t, s, opcode.SMSGLoginVerifyWorld, login())
+	for i, stage := range []struct{ entry, kind uint32 }{{194108, 18}, {194097, 23}, {179944, 18}} {
+		guid := uint64(0xf110)<<48 | uint64(stage.entry)<<24 | 7
+		r := packet(t, s, opcode.SMSGUpdateObject, gameObjectFixture(guid, map[int]uint32{objectEntry: stage.entry, gameObjectBytes: stage.kind << 8, gameObjectCreatedBy: 42}))
+		if len(r.SummoningObjects) != i+1 {
+			t.Fatal("summoning stage did not appear", r.SummoningObjects)
+		}
+		found := false
+		for _, object := range r.SummoningObjects {
+			if object.Guid == guid && object.CreatedByKnown && object.CreatedByGuid == 42 && object.GameObjectType == stage.kind {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("missing actual object or creator", r.SummoningObjects)
+		}
+	}
+	if r := packet(t, s, opcode.SMSGNewWorld, login()); len(r.SummoningObjects) != 0 {
+		t.Fatal("ritual leaked into a new visit")
+	}
+}

@@ -45,6 +45,7 @@ type sessionAPI interface {
 }
 
 type Service struct {
+	summoning        summoningState
 	ordinaryMovement *ordinaryMovementAttempt
 	movementPoints   movementPointInput
 
@@ -1535,6 +1536,13 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 	s.expireMeleeOperationLocked()
 	s.meleeWorldBoundaryLocked(packet.Opcode, p)
 	s.observeEncounterVisitLocked(packet.Opcode, p)
+	if (packet.Opcode == opcode.SMSGLoginVerifyWorld || packet.Opcode == opcode.SMSGNewWorld) && validEncounterWorldEntry(p) {
+		s.summoning.visitScope = clonePortalScope(packet.TransportScope)
+	}
+	if packet.Opcode == opcode.SMSGSummonRequest || packet.Opcode == opcode.SMSGSummonCancel {
+		s.observeSummonLocked(packet)
+		return &emptypb.Empty{}, nil
+	}
 	if handled, err := s.flightpathActivationPacketLocked(packet.Opcode, p, packet.TransportScope); handled {
 		if err != nil {
 			s.state.MalformedPackets++

@@ -6,6 +6,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
@@ -26,20 +27,35 @@ func (s *Service) SelectTarget(ctx context.Context, r *actionsv1.SelectTargetReq
 	if s.closed || s.session == nil || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID {
 		return nil, status.Error(codes.FailedPrecondition, "current connected body required")
 	}
+	var scope *modv1.TransportScope
+	if r.ExpectedGroupGuid != 0 {
+		if r.VisitId == 0 || r.TargetGuid == 0 || r.TargetGuid == s.selfGUID || !s.summonPartyLocked(ctx, r.ExpectedGroupGuid)[r.TargetGuid] {
+			return nil, status.Error(codes.FailedPrecondition, "exact current online group member required")
+		}
+	}
 	w, err := s.readWorldSnapshot(ctx, r.TargetGuid)
 	self := w.GetSelf()
 	if err != nil || self.GetGuid() != s.selfGUID || !self.GetPresent() ||
-		r.TargetGuid != 0 && (!self.GetMapKnown() || !observedSelectionTarget(w, r.TargetGuid, self.MapId)) {
+		r.ExpectedGroupGuid == 0 && r.TargetGuid != 0 && (!self.GetMapKnown() || !observedSelectionTarget(w, r.TargetGuid, self.MapId)) {
 		return nil, status.Error(codes.FailedPrecondition, "current body and observed same-map unit or corpse required")
+	}
+	if r.ExpectedGroupGuid != 0 {
+		if !s.summonVisitCurrent(w, r.VisitId) {
+			return nil, status.Error(codes.FailedPrecondition, "current selected party visit required")
+		}
+		scope = s.summoning.visitScope
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
 	out := &actionsv1.SelectTargetResponse{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: r.TargetGuid,
 		Phase: "transport_unconfirmed", ObservedTargetKnown: self.TargetKnown, ObservedTargetGuid: self.TargetGuid}
-	_, err = s.session.SendPacket(ctx, &modv1.SendPacketRequest{
-		Opcode: opcode.CMSGSetSelection, Payload: binary.LittleEndian.AppendUint64(nil, r.TargetGuid),
+	_, err = s.session.SendPacket(modcb.ForwardPolicySpell(ctx), &modv1.SendPacketRequest{
+		Opcode: opcode.CMSGSetSelection, Payload: binary.LittleEndian.AppendUint64(nil, r.TargetGuid), TransportScope: scope,
 	})
+	if modcb.PacketWasNotDispatched(err) {
+		return nil, err
+	}
 	if err != nil {
 		// Do not turn a failed UI-selection write into a gameplay intent change.
 		return out, nil
