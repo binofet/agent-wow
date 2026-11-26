@@ -45,7 +45,12 @@ class ToolOutcomeUnknown(RuntimeError):
 
 class LMStudioPromptCounter:
     """Bounded local SDK utility only, querying an already loaded exact model."""
-    def __init__(self, sdk_url, model, runner=subprocess.run):
+    phases = frozenset(('input', 'connect', 'model_lookup', 'render', 'count', 'model_recheck'))
+    failures = frozenset(('input_invalid', 'configuration_invalid', 'runtime_unsupported',
+        'sdk_timeout', 'sdk_connection_failed', 'sdk_protocol_invalid', 'sdk_rpc_failed',
+        'sdk_failed', 'loaded_model_unavailable', 'loaded_model_changed', 'sdk_render_invalid', 'sdk_count_invalid'))
+
+    def __init__(self, sdk_url, model, runner=subprocess.run, *, process_timeout=30, sdk_timeout=10):
         try:
             url = urllib.parse.urlsplit(sdk_url)
             valid = (url.scheme == 'ws' and url.hostname in ('127.0.0.1','localhost','::1')
@@ -53,22 +58,67 @@ class LMStudioPromptCounter:
                 and not url.query and not url.fragment and url.path == '')
         except (ValueError, TypeError): valid = False
         if not valid: raise ModelError('explicit_loopback_sdk_url_required')
+        if (type(process_timeout) is not int or not 2 <= process_timeout <= 60 or
+                type(sdk_timeout) is not int or not 1 <= sdk_timeout <= 30 or sdk_timeout >= process_timeout):
+            raise ModelError('local_prompt_meter_requires_sdk_1_to_30_process_2_to_60_seconds_and_sdk_less_than_process')
+        self.process_timeout, self.sdk_timeout = process_timeout, sdk_timeout
         self.sdk_url, self.model, self.runner, self.last_measurement = sdk_url, model, runner, None
 
+    def _phase(self, raw):
+        if not isinstance(raw, bytes): return None
+        for line in reversed(raw[-4096:].splitlines()):
+            try: value = _decode(line)
+            except (ValueError, UnicodeError, RecursionError): continue
+            if isinstance(value, dict) and set(value) == {'meterPhase'} and isinstance(value['meterPhase'], str) and value['meterPhase'] in self.phases:
+                return value['meterPhase']
+        return None
+
     def __call__(self, payload):
-        if payload.get('model') != self.model: raise ModelError('prompt_meter_model_mismatch')
         self.last_measurement = None
+        if not isinstance(payload, dict) or payload.get('model') != self.model: raise ModelError('prompt_meter_model_mismatch')
+        started = time.monotonic()
+        def failure(code, phase=None):
+            self.last_measurement = dict(status='failed', reason='local_prompt_meter_'+code,
+                phase=phase, processElapsedMs=round((time.monotonic()-started)*1000),
+                processTimeoutSeconds=self.process_timeout, sdkTimeoutSeconds=self.sdk_timeout)
+            return ModelError('local_prompt_meter_'+code, receipt={'promptMeter':self.last_measurement})
+        try: raw = _packed(payload, 8*1024*1024)
+        except (ModelError, ValueError, UnicodeError, RecursionError):
+            raise failure('input_invalid', 'input') from None
         try:
-            result = self.runner(['node', str(Path(__file__).with_name('local_prompt_meter.mjs')), self.sdk_url],
-                input=_packed(payload, 8*1024*1024), capture_output=True, timeout=6, check=False)
-            if result.returncode or len(result.stdout) > 4096: raise ValueError()
+            result = self.runner(['node', str(Path(__file__).with_name('local_prompt_meter.mjs')),
+                self.sdk_url, str(self.sdk_timeout*1000)], input=raw, capture_output=True,
+                timeout=self.process_timeout, check=False)
+        except subprocess.TimeoutExpired as error:
+            phase = self._phase(error.stderr)
+            raise failure('process_timeout' if phase else 'startup_timeout', phase) from None
+        except OSError:
+            raise failure('runtime_unavailable') from None
+        except subprocess.SubprocessError:
+            raise failure('process_failed') from None
+        try:
+            if len(result.stdout) > 4096: raise ValueError()
             measured = _decode(result.stdout)
+        except (ValueError, UnicodeError, RecursionError, TypeError):
+            raise failure('response_invalid', self._phase(getattr(result, 'stderr', None))) from None
+        if result.returncode:
+            error = measured.get('error') if isinstance(measured, dict) else None
+            if isinstance(error, dict) and isinstance(error.get('code'), str) and error['code'] in self.failures and (error.get('phase') is None or isinstance(error['phase'], str) and error['phase'] in self.phases):
+                raise failure(error['code'], error.get('phase')) from None
+            raise failure('process_failed', self._phase(getattr(result, 'stderr', None))) from None
+        try:
             if (not isinstance(measured, dict) or measured.get('model') != self.model or measured.get('scope') != 'sdk_tool_aware_template'
-                    or type(measured.get('tokens')) is not int or measured['tokens'] < 0): raise ValueError()
-            self.last_measurement = measured
-            return measured['tokens']
-        except (OSError, ValueError, UnicodeError, RecursionError, subprocess.SubprocessError):
-            raise ModelError('local_prompt_meter_unavailable_or_unsupported') from None
+                    or type(measured.get('tokens')) is not int or measured['tokens'] < 0
+                    or not isinstance(measured.get('instanceReference'), str) or not measured['instanceReference']): raise ValueError()
+        except (ValueError, TypeError):
+            raise failure('response_invalid') from None
+        if type(measured.get('sdkTimeoutMs')) is not int or measured['sdkTimeoutMs'] != self.sdk_timeout*1000:
+            raise failure('helper_configuration_mismatch') from None
+        self.last_measurement = {key:measured[key] for key in ('tokens','model','instanceReference','scope',
+            'renderedBytes','renderedSHA256','sdkElapsedMs','sdkTimeoutMs') if key in measured}
+        self.last_measurement.update(processElapsedMs=round((time.monotonic()-started)*1000),
+            processTimeoutSeconds=self.process_timeout, sdkTimeoutSeconds=self.sdk_timeout)
+        return measured['tokens']
 
 
 class _Transcript:
@@ -288,7 +338,7 @@ class DirectModel:
                  max_tool_rounds=None, max_request_bytes=8*1024*1024, max_response_bytes=1024*1024,
                  max_output_tokens=8192, local_prompt_budget_bytes=None,
                  local_prompt_token_limit=None, local_token_counter=None, local_max_output_tokens=None,
-                 local_sdk_url=None):
+                 local_sdk_url=None, local_prompt_meter_timeout=None, local_prompt_meter_sdk_timeout=None):
         if provider not in ("local", "openai", "claude", "gemini"):
             raise ModelError("unsupported_provider")
         if not isinstance(model, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", model) is None:
@@ -324,10 +374,14 @@ class DirectModel:
                 type(local_prompt_budget_bytes) is not int or local_prompt_budget_bytes <= 0):
             raise ModelError("local_positive_prompt_byte_budget_required")
         self.local_prompt_budget_bytes = local_prompt_budget_bytes
+        if (local_prompt_meter_timeout is not None or local_prompt_meter_sdk_timeout is not None) and local_sdk_url is None:
+            raise ModelError('local_prompt_meter_timeouts_require_explicit_local_sdk')
         if local_sdk_url is not None:
             if provider != 'local' or local_prompt_token_limit is None or local_token_counter is not None:
                 raise ModelError('local_sdk_requires_token_limit_without_custom_counter')
-            local_token_counter = LMStudioPromptCounter(local_sdk_url, model)
+            local_token_counter = LMStudioPromptCounter(local_sdk_url, model,
+                process_timeout=30 if local_prompt_meter_timeout is None else local_prompt_meter_timeout,
+                sdk_timeout=10 if local_prompt_meter_sdk_timeout is None else local_prompt_meter_sdk_timeout)
         if ((local_prompt_token_limit is not None and (provider != "local" or
                 type(local_prompt_token_limit) is not int or local_prompt_token_limit <= 0 or not callable(local_token_counter)))
                 or local_token_counter is not None and local_prompt_token_limit is None
@@ -685,6 +739,8 @@ class DirectModel:
                 except Exception as error:
                     self.last_receipt['promptMeterFailure'] = dict(reason=_safe(
                         getattr(error,'reason',type(error).__name__)))
+                    if isinstance(self.local_token_counter, LMStudioPromptCounter):
+                        self.last_receipt['promptMeterFailure']['meter'] = copy.deepcopy(self.local_token_counter.last_measurement)
                     raise ModelError("local_prompt_count_unavailable") from error
                 if type(tokens) is not int or tokens < 0:
                     raise ModelError("local_prompt_count_invalid")

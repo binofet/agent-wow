@@ -103,7 +103,8 @@ def endpoint(value, local=False):
 
 
 def model_settings(base, override):
-    local_fields = {'local_prompt_budget_bytes', 'local_prompt_token_limit', 'local_max_output_tokens', 'local_sdk_url'}
+    local_fields = {'local_prompt_budget_bytes', 'local_prompt_token_limit', 'local_max_output_tokens', 'local_sdk_url',
+                    'local_prompt_meter_timeout', 'local_prompt_meter_sdk_timeout'}
     allowed = {"provider", "base_url", "model", "api_key_env"} | local_fields
     keys(base, allowed, "model settings")
     keys(override, allowed, "actor model override")
@@ -137,6 +138,13 @@ def model_settings(base, override):
             raise Error(name+' must be a positive integer')
     if ('local_prompt_token_limit' in result) != ('local_sdk_url' in result):
         raise Error('local_prompt_token_limit requires explicit local_sdk_url and vice versa')
+    if {'local_prompt_meter_timeout','local_prompt_meter_sdk_timeout'} & result.keys():
+        if 'local_sdk_url' not in result:
+            raise Error('Local prompt meter timeouts require explicit local_sdk_url')
+        total=result.get('local_prompt_meter_timeout',30)
+        sdk=result.get('local_prompt_meter_sdk_timeout',10)
+        if not 2 <= total <= 60 or not 1 <= sdk <= 30 or sdk >= total:
+            raise Error('Local prompt meter requires total2..60s, SDK1..30s, SDK less than total')
     if 'local_sdk_url' in result:
         try:
             sdk = urllib.parse.urlsplit(result['local_sdk_url'])
@@ -235,7 +243,8 @@ def commands(actor):
     for key, flag in (("base_url", "--model-base-url"), ("api_key_env", "--model-api-key-env")):
         if model.get(key):
             run += [flag, model[key]]
-    for key in ('local_prompt_budget_bytes','local_prompt_token_limit','local_max_output_tokens','local_sdk_url'):
+    for key in ('local_prompt_budget_bytes','local_prompt_token_limit','local_max_output_tokens','local_sdk_url',
+                'local_prompt_meter_timeout','local_prompt_meter_sdk_timeout'):
         if key in model: run += ['--'+key.replace('_','-'), str(model[key])]
     if actor["workspace"]:
         run += ["--developer-workspace", actor["workspace"]]
