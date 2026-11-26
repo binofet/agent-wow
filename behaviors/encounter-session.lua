@@ -23,6 +23,7 @@ local commands = encounter_commands
 local spell_invocation = encounter_spell_invocation
 local transient_tasks = encounter_tasks
 local intent = encounter_intent or {}
+if encounter_priors and encounter_priors.set_role then encounter_priors.set_role(intent.role) end
 local state = {bindings={}, defeated={}, controls={}, engaged={}}
 -- A recovery channel requires a new sample after reload or action settlement.
 local mana_observation, mana_sequence

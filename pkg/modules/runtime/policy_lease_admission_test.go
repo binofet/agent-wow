@@ -11,10 +11,24 @@ import (
 	"time"
 )
 
+// Exercise admission with a deliberately requested finite lease. A visible
+// creature alone does not ask the encounter policy to hold the body.
+func requestAdmissionTestLease(t *testing.T, host *SessionPolicy) {
+	t.Helper()
+	_, err := host.Enqueue(behavior.Event{Kind: "command", Value: map[string]any{
+		"task": "ranged_only", "id": "admission-fixture", "mapId": 349, "visitId": "1", "creatureEntry": 12222,
+		"minRangeYards": 14, "maxRangeYards": 36, "clearanceYards": 2, "durationMs": 60000,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // These fixtures prove admission/receipt custody, not the actor callback deadline.
 // Keep production budgets and their separate strict tests unchanged.
 func TestSelectedLeaseAdmissionFailureMustNotOrphanLuaOperation(t *testing.T) {
 	r := newMovementPointsActorRig(t, followFallbackBundle(t), "4", behavior.SessionOptions{ExecutionLimit: time.Second})
+	requestAdmissionTestLease(t, r.host)
 	obs := pointActorObservation("4")
 	obs["sessionId"] = "points"
 	target := obs["targets"].(map[string]any)["100"].(map[string]any)
@@ -80,6 +94,7 @@ func TestLeaseRejectionsKeepPreflightAndBackpressureTruth(t *testing.T) {
 	for _, kind := range []string{"lease_timeout", "fenced_by_ingress", "queue_full_canceled"} {
 		t.Run(kind, func(t *testing.T) {
 			r := newMovementPointsActorRig(t, followFallbackBundle(t), "4", behavior.SessionOptions{ExecutionLimit: time.Second})
+			requestAdmissionTestLease(t, r.host)
 			obs := pointActorObservation("4")
 			obs["sessionId"] = "points"
 			target := obs["targets"].(map[string]any)["100"].(map[string]any)
@@ -163,6 +178,7 @@ func TestLeaseRejectionsKeepPreflightAndBackpressureTruth(t *testing.T) {
 
 func TestEnteredUnknownLeaseIsNeverReclassifiedByAdmissionRepair(t *testing.T) {
 	r := newMovementPointsActorRig(t, followFallbackBundle(t), "4", behavior.SessionOptions{ExecutionLimit: time.Second})
+	requestAdmissionTestLease(t, r.host)
 	obs := pointActorObservation("4")
 	obs["sessionId"] = "points"
 	target := obs["targets"].(map[string]any)["100"].(map[string]any)

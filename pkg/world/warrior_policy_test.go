@@ -5,6 +5,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"google.golang.org/protobuf/proto"
 	"os"
 	"testing"
 )
@@ -153,5 +154,43 @@ func TestWarriorShieldBlockUsesImplicitSelfOnlyUnderObservedPressure(t *testing.
 	targets, _ := a["targets"].(map[string]any)
 	if a["spellId"] != float64(2565) || len(targets) != 0 || a["targetGuid"] != "4" {
 		t.Fatal(out)
+	}
+}
+
+func TestCreepingSludgeHonorsAssignedTankAndExplicitRangedOrder(t *testing.T) {
+	for _, mode := range []string{"tank", "backline", "explicit_ranged"} {
+		t.Run(mode, func(t *testing.T) {
+			role := "tank"
+			if mode == "backline" {
+				role = "damage"
+			}
+			p, obs := warriorPolicy(t, `{spec="protection",role="`+role+`"}`)
+			warriorShield(t, p)
+			obs.MapId = proto.Uint32(349)
+			for _, unit := range obs.Players {
+				unit.MapId = proto.Uint32(349)
+			}
+			obs.Navigation = &actionsv1.NavigationObservation{BodyMovementSupported: true, MovementOwner: &actionsv1.MovementOwnerState{}}
+			obs.Spells["23922"] = warriorRank(23922, 1, 200)
+			n := obs.Targets[fallbackGUID(fallbackNPC)]
+			n.Entry, n.MapId, n.PositionRevision = 12222, proto.Uint32(349), 1
+			n.AttackObservation = &actionsv1.EncounterAttackObservation{VictimKnown: true, VictimGuid: 4}
+			if mode == "explicit_ranged" {
+				waitTaskCommand(t, p, map[string]any{"task": "ranged_only", "id": "assigned-tank-at-range", "mapId": 349, "visitId": "1", "creatureEntry": 12222,
+					"minRangeYards": 14, "maxRangeYards": 36, "clearanceYards": 2, "durationMs": 60000})
+			}
+			out := p.decide(observeRanged(t, p, obs, false)).Output
+			a, _ := out["action"].(map[string]any)
+			if mode == "tank" {
+				if a["capability"] != "cast_spell" || a["spellId"] != float64(23922) || out["encounterPrior"] != nil {
+					t.Fatal("assigned tank lost its ordinary Shield Slam", out)
+				}
+			} else if a["capability"] != "melee_stop" {
+				t.Fatal("backline or explicitly ranged warrior kept swinging", out)
+			}
+			if mode == "explicit_ranged" && out["rangedStance"].(map[string]any)["origin"] != "explicit" {
+				t.Fatal(out)
+			}
+		})
 	}
 }

@@ -119,7 +119,12 @@ func TestCloudPointDefaultRouteAndFollowExpiry(t *testing.T) {
 	owner.MapId = proto.Uint32(349)
 	owner.PositionKnown = true
 	owner.MovementKnown = true
-	owner.X = 30
+	owner.X = 130
+	o.Players["4"].PositionEstimated = true
+	addFallbackTarget(o, fallbackNPC, 0, 100)
+	npc := o.Targets[fallbackGUID(fallbackNPC)]
+	npc.Entry, npc.MapId, npc.PositionKnown, npc.X = 12222, proto.Uint32(349), true, 3
+	npc.AttackObservation = &actionsv1.EncounterAttackObservation{}
 	o.Players["3"] = owner
 	o.Navigation.FollowOwner = owner
 	o.Navigation.OwnerGuid = 3

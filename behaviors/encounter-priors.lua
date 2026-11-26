@@ -13,7 +13,12 @@ local rules = {
      clearanceYards=2, durationMs=600000, attackWitnessMaxAgeMs=5000,
      pulseRadiusYards=5, pulseIntervalMs=2000},
 }
+-- The accepted actor intent may designate another tank. Bind it when the
+-- modules are composed, including on source reload.
+local tank=false
+local function set_role(role) tank=role=="tank" end
 local function rule(obs)
+    if tank then return end
     for _,r in ipairs(rules) do
         if obs.mapId==r.mapId and obs.selfGuid~=r.tankGuid then
             for _,npc in pairs(obs.targets or {}) do
@@ -176,4 +181,4 @@ local function filter(obs,out,status,explicitPull,requestedSpell)
     local directed=action and (action.targetGuid or (action.targets or {}).objectGuid)
     if not cleanup and not withdrawal and (cap=="move_body" and r.automaticRange==true or directed and npc and npc.entry==r.creatureEntry) then out.action=nil end
 end
-return {rules=rules,rule=rule,admission=admission,positioning=positioning,pulse_radius=pulse_radius,pulse_points=pulse_points,filter=filter}
+return {rules=rules,set_role=set_role,rule=rule,admission=admission,positioning=positioning,pulse_radius=pulse_radius,pulse_points=pulse_points,filter=filter}
