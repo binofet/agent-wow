@@ -5,6 +5,9 @@
 local observation, sequence
 local request_pending = false
 local visit, proposed, refused = nil, nil, {}
+-- World supplies up to 64 nearby players plus self and owner. Keep no more
+-- identities than that across a visit, even as different patients come and go.
+local refusal_limit, refused_count, overflow = 66, 0, false
 local tuning = {heal_below_percent=85, self_urgent_percent=50, critical_percent=40,
                 rank_mode="effective_per_resource"}
 
@@ -107,9 +110,12 @@ local function needs_heal(patient, explicit)
     patient.health*100<patient.maxHealth*(explicit and 100 or tuning.heal_below_percent)
 end
 
-local function waiting_for_position(view, patient)
-  return refused[patient.guid] and
-    (patient.distance == nil or patient.guid == view.caster.guid and view.casterMotionUnknown == true)
+local function position_unknown(view, patient)
+  return patient.distance == nil or patient.guid == view.caster.guid and view.casterMotionUnknown == true
+end
+
+local function clear_refusal(guid)
+  if refused[guid] then refused[guid], refused_count = nil, refused_count - 1 end
 end
 
 local function choose_cast(view, explicit, allow_busy)
@@ -123,7 +129,8 @@ local function choose_cast(view, explicit, allow_busy)
   if #spells == 0 then return nil, nil end
   local target
   for _, patient in ipairs(view.patients) do
-    if needs_heal(patient,explicit) and not waiting_for_position(view, patient) and
+    if needs_heal(patient,explicit) and
+        not (position_unknown(view, patient) and (refused[patient.guid] or overflow or refused_count >= refusal_limit)) and
         (patient.guid == caster.guid or patient.distance == nil or
           type(patient.distance) == "number" and patient.distance >= 0 and patient.distance < math.huge) and
         prefer_patient(patient, target, caster.guid) and can_heal(patient, caster.guid, spells) then
@@ -207,15 +214,15 @@ return {
   on_event = function(event)
     if event.kind == "healing_observation" then
       observation, sequence = event.value, event.sequence
-      if observation.visitId ~= visit then visit, proposed, refused = observation.visitId, nil, {} end
+      if observation.visitId ~= visit then
+        visit, proposed, refused, refused_count, overflow = observation.visitId, nil, {}, 0, false
+      end
       if observation.caster and observation.caster.ready == true and type(observation.patients) == "table" then
-        -- A current measurement can support a new approach or cast. Busy or
-        -- incomplete views cannot clear a failed patient's outstanding doubt.
-        local still_unknown = {}
+        -- Only this patient's actual range/own motion can clear its refusal.
+        -- Temporary loss of a row or its unit fields supplies no such evidence.
         for _, patient in ipairs(observation.patients or {}) do
-          if waiting_for_position(observation, patient) then still_unknown[patient.guid] = true end
+          if not position_unknown(observation, patient) then clear_refusal(patient.guid) end
         end
-        refused = still_unknown
       end
     elseif event.kind == "healing_request" then
       request_pending = true
@@ -226,8 +233,17 @@ return {
           (not proposed.id or proposed.id == receipt.action_id) then
         proposed.id = receipt.action_id
         if receipt.outcome == "failed" or receipt.outcome == "unknown" or receipt.outcome == "not_dispatched" or
-            receipt.outcome == "settled_unverified" then refused[p.target_guid] = true
-        elseif receipt.outcome == "confirmed" then refused[p.target_guid] = nil end
+            receipt.outcome == "settled_unverified" then
+          if not refused[p.target_guid] then
+            if refused_count < refusal_limit then
+              refused[p.target_guid], refused_count = true, refused_count + 1
+            else
+              -- A measured cast may also fail while the set is full. Preserve
+              -- every earlier refusal and require measurements for this visit.
+              overflow = true
+            end
+          end
+        elseif receipt.outcome == "confirmed" then clear_refusal(p.target_guid) end
       end
     end
     return true
@@ -257,13 +273,19 @@ return {
     return {action = action}
   end,
   export_state = function()
-    return {version = 1, data = {requestPending=request_pending, visit=visit, proposed=proposed, refused=refused}}
+    return {version = 1, data = {requestPending=request_pending, visit=visit, proposed=proposed, refused=refused,
+      refusalOverflow=overflow or nil}}
   end,
   import_state = function(checkpoint)
     if checkpoint.version ~= 1 or type(checkpoint.data) ~= "table" then return false end
     request_pending = checkpoint.data.requestPending == true
     visit, proposed, refused = checkpoint.data.visit, checkpoint.data.proposed, checkpoint.data.refused or {}
     if type(refused) ~= "table" or proposed ~= nil and type(proposed) ~= "table" then return false end
+    refused_count, overflow = 0, checkpoint.data.refusalOverflow == true
+    for guid, held in pairs(refused) do
+      refused_count = refused_count + 1
+      if type(guid) ~= "string" or held ~= true or refused_count > refusal_limit then return false end
+    end
     return true
   end,
 }

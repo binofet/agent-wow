@@ -1,6 +1,7 @@
 package world
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -106,6 +107,13 @@ func TestEncounterUnknownRangeRejectionKeepsOtherPatientsEligible(t *testing.T) 
 	}}); err != nil {
 		t.Fatal(err)
 	}
+	p.expectNoAction(observeSparseEncounter(t, p, obs))
+	if _, err := p.host.Reload(context.Background(), readEncounterBundle(t)+"\n", p.host.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	obs.Healing.Patients = nil
+	p.expectNoAction(observeSparseEncounter(t, p, obs))
+	obs.Healing.Patients = []*actionsv1.HealingPatient{patient}
 	p.expectNoAction(observeSparseEncounter(t, p, obs))
 	self.HealthKnown, self.Health, self.MaxHealth = true, 70, 100
 	obs.Healing.Patients = append(obs.Healing.Patients, &actionsv1.HealingPatient{Guid: fallbackSelf,
