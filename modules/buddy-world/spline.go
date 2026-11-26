@@ -165,6 +165,7 @@ func monsterMove(c *cursor, p *observed, transport bool, now time.Time) error {
 		p.movementFlags |= 0x08000000
 	}
 	p.trajectory = t
+	p.stationaryPosition = t.stopped && !transport
 	if p.isSelf {
 		p.receivedSpline = true
 		p.receivedSplineHeader = t

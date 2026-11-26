@@ -31,7 +31,7 @@ type observed struct {
 	mapID, movementFlags, extraFlags, movementTime               uint32
 	x, y, z, orientation, walkSpeed, runSpeed                    float32
 	positionRevision                                             uint64
-	positionInferred                                             bool
+	positionInferred, stationaryPosition                         bool
 	positionAt, vitalsAt, observedAt                             time.Time
 	groundEffectFirstSeen                                        time.Time
 	// Only fields up to PLAYER_FLAGS are needed, regardless of nearby population.
@@ -223,6 +223,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 	transferBefore := s.captureWorldTransferBeforeLocked(packet, observedAt)
 	handled, err := parsePacket(packet.Opcode, packet.Payload, &next, observedAt)
 	if err != nil {
+		s.state.invalidateCreatureStationarity(packet.Opcode, packet.Payload)
 		if objectUpdate {
 			_ = grpc.SetTrailer(ctx, metadata.Pairs(modcb.BodyInputBarrierTrailer, modcb.BodyUpdateMalformed))
 			// The rejected batch could contain a new or moved unit.

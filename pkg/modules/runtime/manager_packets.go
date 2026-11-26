@@ -3,6 +3,7 @@ package modrt
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
@@ -52,6 +53,9 @@ func (m *Manager) publishObserved(op uint16, body []byte, scope *modv1.Transport
 		p := &modv1.WorldPacket{Opcode: uint32(op), Payload: bytesClone(body)}
 		if scope != nil {
 			p.TransportScope = proto.Clone(scope).(*modv1.TransportScope)
+		}
+		if name == "buddy-world" && m.worldPackets < math.MaxUint64 {
+			m.worldPackets++
 		}
 		inst.queue = append(inst.queue, p)
 		inst.queuedBytes += len(body)

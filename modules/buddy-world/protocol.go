@@ -132,6 +132,7 @@ func position(p *observed, x, y, z, o float32, now time.Time) error {
 		p.positionKnown = true
 		p.positionInferred = false
 		p.positionAt = now
+		p.stationaryPosition = false
 		p.positionRevision++
 		p.observedAt = now
 		p.trajectory = observedTrajectory{}
@@ -451,6 +452,34 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 	return false, nil
 }
 
+// An unread movement/lifecycle body cannot certify that an old stationary
+// creature is still at its last position. A keyed failure affects its mover;
+// an undecodable object batch can include any visible creature.
+func (s *observations) invalidateCreatureStationarity(op uint32, payload []byte) {
+	if op != opcode.SMSGUpdateObject && op != opcode.SMSGCompressedUpdateObject {
+		var guid uint64
+		c := cursor{b: payload}
+		switch {
+		case op == opcode.SMSGDestroyObject:
+			guid = c.u64()
+		case movementOpcode(op), op == opcode.MSGMoveTeleportAck, op == opcode.SMSGMonsterMove, op == opcode.SMSGMonsterMoveTransport,
+			op == opcode.SMSGMoveKnockBack, op == opcode.MSGMoveKnockBack:
+			guid = c.guid()
+		default:
+			return
+		}
+		if c.err == nil && guid != 0 {
+			if p := s.creatures[guid]; p != nil {
+				p.stationaryPosition = false
+			}
+			return
+		}
+	}
+	for _, p := range s.creatures {
+		p.stationaryPosition = false
+	}
+}
+
 func movementOpcode(op uint32) bool {
 	switch op {
 	case opcode.MSGMoveStartForward, opcode.MSGMoveStartBackward, opcode.MSGMoveStop,
@@ -488,6 +517,7 @@ func movement(c *cursor, p *observed, now time.Time, received *movementinfo.Info
 		p.movementKnown = true
 		p.movementFlags = info.Flags
 		p.extraFlags = uint32(info.ExtraFlags)
+		p.stationaryPosition = info.AllFinite() && movementflags.GroundCompatible(info.Flags, p.extraFlags) && info.Flags&0xff == 0
 		p.movementTime = info.Time
 		if p.isSelf {
 			p.receivedMovement = true
@@ -780,6 +810,10 @@ func movementUpdate(c *cursor, p *observed, now time.Time, owner *observations) 
 	} else if flags&0x40 != 0 {
 		if err := position(p, c.f32(), c.f32(), c.f32(), c.f32(), now); err != nil {
 			return err
+		}
+		if p != nil {
+			// UPDATEFLAG_STATIONARY_POSITION carries absolute stationary XYZ.
+			p.stationaryPosition = true
 		}
 	}
 	if flags&0x8 != 0 {

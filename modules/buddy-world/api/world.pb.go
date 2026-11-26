@@ -3594,8 +3594,10 @@ type CreatureState struct {
 	UnitFlagsKnown    bool                `protobuf:"varint,39,opt,name=unit_flags_known,json=unitFlagsKnown,proto3" json:"unit_flags_known,omitempty"`
 	DynamicFlagsKnown bool                `protobuf:"varint,40,opt,name=dynamic_flags_known,json=dynamicFlagsKnown,proto3" json:"dynamic_flags_known,omitempty"`
 	ActiveCast        *CreatureCast       `protobuf:"bytes,41,opt,name=active_cast,json=activeCast,proto3" json:"active_cast,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Latest received pose explicitly reported a stationary world-space creature.
+	StationaryPositionKnown bool `protobuf:"varint,42,opt,name=stationary_position_known,json=stationaryPositionKnown,proto3" json:"stationary_position_known,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *CreatureState) Reset() {
@@ -3913,6 +3915,13 @@ func (x *CreatureState) GetActiveCast() *CreatureCast {
 		return x.ActiveCast
 	}
 	return nil
+}
+
+func (x *CreatureState) GetStationaryPositionKnown() bool {
+	if x != nil {
+		return x.StationaryPositionKnown
+	}
+	return false
 }
 
 // A cast observed in a normal server spell-start event. An expired cast or
@@ -5941,7 +5950,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"stateKnown\x12\x14\n" +
 	"\x05state\x18\x17 \x01(\rR\x05state\x12D\n" +
 	"\x1ccreator_selected_target_guid\x18\x18 \x01(\x04H\x00R\x19creatorSelectedTargetGuid\x88\x01\x01B\x1f\n" +
-	"\x1d_creator_selected_target_guid\"\xa4\f\n" +
+	"\x1d_creator_selected_target_guid\"\xe0\f\n" +
 	"\rCreatureState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x1b\n" +
@@ -5993,7 +6002,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x10unit_flags_known\x18' \x01(\bR\x0eunitFlagsKnown\x12.\n" +
 	"\x13dynamic_flags_known\x18( \x01(\bR\x11dynamicFlagsKnown\x12E\n" +
 	"\vactive_cast\x18) \x01(\v2$.warcraftbuddy.world.v1.CreatureCastR\n" +
-	"activeCast\"\xa8\x01\n" +
+	"activeCast\x12:\n" +
+	"\x19stationary_position_known\x18* \x01(\bR\x17stationaryPositionKnown\"\xa8\x01\n" +
 	"\fCreatureCast\x12\x19\n" +
 	"\bspell_id\x18\x01 \x01(\rR\aspellId\x12\x1d\n" +
 	"\n" +

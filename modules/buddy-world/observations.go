@@ -282,6 +282,7 @@ func creatureSnapshot(p *observed, s *observations, now time.Time) *worldv1.Crea
 	r.AttackAgeMs = age(now, p.attackAt)
 	r.CombatReach = math.Float32frombits(p.fields[0x42])
 	r.CombatReachKnown = p.known[0x42] && validFloat(r.CombatReach) && r.CombatReach >= 0 && r.CombatReach <= 50
+	r.StationaryPositionKnown = p.present && p.positionKnown && !p.positionInferred && p.stationaryPosition
 	r.Level = p.fields[0x36]
 	r.LevelKnown = p.known[0x36] && r.Level > 0 && r.Level <= 80
 	if r.Alive && sameCreatureCastMap(p, &s.players[0]) {
