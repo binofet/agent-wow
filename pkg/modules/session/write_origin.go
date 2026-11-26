@@ -6,12 +6,13 @@ import "context"
 // runtime sets these values from its own action and writer state. They are
 // diagnostic metadata, never authority to send a packet.
 type WriteOrigin struct {
-	SessionID      string `json:"sessionId,omitempty"`
-	Module         string `json:"module,omitempty"`
-	Writer         string `json:"writer,omitempty"`
-	Generation     uint64 `json:"generation,string"`
-	PolicyRevision string `json:"policyRevision,omitempty"`
-	ActionID       string `json:"actionId,omitempty"`
+	MovementAttempt string `json:"movementAttempt,omitempty"`
+	SessionID       string `json:"sessionId,omitempty"`
+	Module          string `json:"module,omitempty"`
+	Writer          string `json:"writer,omitempty"`
+	Generation      uint64 `json:"generation,string"`
+	PolicyRevision  string `json:"policyRevision,omitempty"`
+	ActionID        string `json:"actionId,omitempty"`
 }
 
 type writeOriginKey struct{}
