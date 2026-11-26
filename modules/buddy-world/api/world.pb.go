@@ -4677,8 +4677,10 @@ type SnapshotResponse struct {
 	NearbyCreaturesComplete bool `protobuf:"varint,64,opt,name=nearby_creatures_complete,json=nearbyCreaturesComplete,proto3" json:"nearby_creatures_complete,omitempty"`
 	// At most 32 actually observed summoning rituals (18) and meeting stones (23).
 	SummoningObjects []*GameObjectState `protobuf:"bytes,65,rep,name=summoning_objects,json=summoningObjects,proto3" json:"summoning_objects,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The exact requested creature has a still-valid, explicitly stationary world-space pose.
+	RequestedCreatureStationaryPositionKnown bool `protobuf:"varint,66,opt,name=requested_creature_stationary_position_known,json=requestedCreatureStationaryPositionKnown,proto3" json:"requested_creature_stationary_position_known,omitempty"`
+	unknownFields                            protoimpl.UnknownFields
+	sizeCache                                protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -5164,6 +5166,13 @@ func (x *SnapshotResponse) GetSummoningObjects() []*GameObjectState {
 		return x.SummoningObjects
 	}
 	return nil
+}
+
+func (x *SnapshotResponse) GetRequestedCreatureStationaryPositionKnown() bool {
+	if x != nil {
+		return x.RequestedCreatureStationaryPositionKnown
+	}
+	return false
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.
@@ -6063,7 +6072,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xae \n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\x8e!\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -6134,7 +6143,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x18ground_effects_supported\x18> \x01(\bR\x16groundEffectsSupported\x126\n" +
 	"\x17ground_effects_overflow\x18? \x01(\bR\x15groundEffectsOverflow\x12:\n" +
 	"\x19nearby_creatures_complete\x18@ \x01(\bR\x17nearbyCreaturesComplete\x12T\n" +
-	"\x11summoning_objects\x18A \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x10summoningObjects\"q\n" +
+	"\x11summoning_objects\x18A \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x10summoningObjects\x12^\n" +
+	",requested_creature_stationary_position_known\x18B \x01(\bR(requestedCreatureStationaryPositionKnown\"q\n" +
 	"\x13CombatEventsRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +

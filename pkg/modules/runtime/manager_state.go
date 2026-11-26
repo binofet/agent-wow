@@ -48,6 +48,7 @@ type Manager struct {
 	closeErr                              error
 	wg                                    sync.WaitGroup
 	pendingPackets                        int
+	worldPackets                          uint64
 	packetsIdle                           chan struct{}
 	healthInterval, timeHealth            time.Duration
 	policyObserver                        PolicyObserver

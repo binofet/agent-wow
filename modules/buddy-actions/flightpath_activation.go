@@ -148,7 +148,7 @@ func (s *Service) ActivateFlightpath(ctx context.Context, request *actionsv1.Fli
 		op.MoneyBeforeKnown, op.MoneyBeforeCopper, op.MoneyBeforeRevision = true, w.SelfCopper, w.SelfCopperRevision
 	}
 	query := &actionsv1.FlightpathQueryRequest{SessionId: r.SessionId, SelfGuid: r.SelfGuid, VisitId: r.VisitId, Token: r.Token, NpcGuid: r.NpcGuid}
-	if reason := s.flightpathQueryGuardLocked(ctx, query, w, now); reason != "" {
+	if reason := s.flightpathQueryGuardLocked(ctx, query, w, now, nil); reason != "" {
 		return refuse(reason)
 	}
 	if w.Self.PositionInferred {

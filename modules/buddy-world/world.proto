@@ -709,6 +709,8 @@ message SnapshotResponse {
   bool nearby_creatures_complete = 64;
   // At most 32 actually observed summoning rituals (18) and meeting stones (23).
   repeated GameObjectState summoning_objects = 65;
+  // The exact requested creature has a still-valid, explicitly stationary world-space pose.
+  bool requested_creature_stationary_position_known = 66;
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.

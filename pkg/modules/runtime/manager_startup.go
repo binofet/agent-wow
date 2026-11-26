@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -131,6 +132,18 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 		if scope == nil || m.session.SendScopedPacket == nil {
 			return modcb.PacketNotDispatchedError("transport scope is unsupported by this host")
 		}
+		if count, valid, supplied := modcb.IncomingFlightpathWorldPackets(ctx); supplied || modcb.FlightpathQueryPacket(opcode, payload) {
+			if module != actionsModule || !modcb.FlightpathQueryPacket(opcode, payload) || !valid || count == math.MaxUint64 || !routeScopeBound(scope) {
+				return modcb.PacketNotDispatchedError("current native flightmaster observation required")
+			}
+			ctx = modsession.WithFlightpathWorldCheck(ctx, func() bool {
+				m.mu.Lock()
+				defer m.mu.Unlock()
+				return m.ctx.Err() == nil && !m.closing && !m.preparing && !m.prepared && m.err == nil &&
+					filepath.Base(m.dir) == sessionID && m.session.Identity.CharacterGUID == scope.SelfGuid &&
+					m.instances["buddy-world"] != nil && m.worldPackets == count
+			})
+		}
 		followsOwner, route, marked := modcb.IncomingRouteBodyInput(ctx)
 		if marked && (!route || module != actionsModule || modcb.IncomingMovementAttempt(ctx) == "" || ctx.Err() != nil || !buddynav.RouteBodyFrame(opcode, payload, scope.SelfGuid)) {
 			return modcb.PacketNotDispatchedError("invalid scoped route body frame")
@@ -165,6 +178,9 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 
 func (m *Manager) modulePacketWriter(sessionID, module string) func(context.Context, uint32, []byte) error {
 	return func(ctx context.Context, opcode uint32, payload []byte) error {
+		if _, _, supplied := modcb.IncomingFlightpathWorldPackets(ctx); supplied {
+			return modcb.PacketNotDispatchedError("flightmaster observation requires its physical STOP scope")
+		}
 		if _, _, marked := modcb.IncomingRouteBodyInput(ctx); marked {
 			return modcb.PacketNotDispatchedError("route body input requires its physical source scope")
 		}
