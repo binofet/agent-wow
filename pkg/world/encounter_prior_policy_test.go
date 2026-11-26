@@ -12,6 +12,23 @@ import (
 	"testing"
 )
 
+// These cases exercise an actor-authored standing ranged rule, including
+// migration from the previously shipped rule. The stock profile is exercised
+// separately against idle sightings, actual hazards and released checkpoints.
+func withStandingRange(source string) string {
+	return strings.Replace(source, "automaticRange=false", "automaticRange=true", 1)
+}
+
+func standingRangePolicy(t *testing.T, prefix string) *fallbackPolicyTest {
+	t.Helper()
+	host, err := behavior.NewSession(context.Background(), fallbackSession, prefix+withStandingRange(readEncounterBundle(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(host.Close)
+	return &fallbackPolicyTest{t: t, host: host}
+}
+
 func sludgePriorObservation() *actionsv1.EncounterObservationResponse {
 	o := rangedObservation()
 	o.MapId = proto.Uint32(349)
@@ -55,7 +72,7 @@ func settlePriorLease(t *testing.T, p *fallbackPolicyTest, o *actionsv1.Encounte
 func TestEncounterPriorAssistCannotOpenSludgePull(t *testing.T) {
 	for _, modern := range []bool{false, true} {
 		t.Run(map[bool]string{false: "old_native", true: "band_native"}[modern], func(t *testing.T) {
-			p := newFallbackPolicyTest(t, "")
+			p := standingRangePolicy(t, "")
 			o := sludgePriorObservation()
 			_, err := p.host.Enqueue(behavior.Event{Kind: "command", Value: map[string]any{"task": "engage", "targetGuid": fallbackGUID(fallbackNPC)}})
 			if err != nil {
@@ -83,7 +100,7 @@ func TestEncounterPriorAssistCannotOpenSludgePull(t *testing.T) {
 func TestEncounterPriorWitnessIsPerCreatureAndCurrent(t *testing.T) {
 	for _, mode := range []string{"tank", "self_defense", "party_defense", "unknown_roster", "not_in_group", "stale", "contradicted", "other_guid"} {
 		t.Run(mode, func(t *testing.T) {
-			p := newFallbackPolicyTest(t, "")
+			p := standingRangePolicy(t, "")
 			o := sludgePriorObservation()
 			n := o.Targets[fallbackGUID(fallbackNPC)]
 			n.AttackObservation = &actionsv1.EncounterAttackObservation{VictimKnown: true, VictimGuid: 3, AgeMs: 1}
@@ -135,7 +152,7 @@ func TestEncounterPriorWitnessIsPerCreatureAndCurrent(t *testing.T) {
 func TestEncounterPriorWithdrawalAndDeliberatePull(t *testing.T) {
 	for _, mode := range []string{"withdraw", "no_mana", "deliberate_pull"} {
 		t.Run(mode, func(t *testing.T) {
-			p := newFallbackPolicyTest(t, "")
+			p := standingRangePolicy(t, "")
 			o := sludgePriorObservation()
 			if mode == "withdraw" || mode == "no_mana" {
 				o.Targets[fallbackGUID(fallbackNPC)].X = 3
@@ -162,7 +179,7 @@ func TestEncounterPriorWithdrawalAndDeliberatePull(t *testing.T) {
 func TestEncounterPriorUnknownMovementCustodyCannotOpen(t *testing.T) {
 	for _, unknown := range []bool{false, true} {
 		t.Run(map[bool]string{false: "entered", true: "unknown"}[unknown], func(t *testing.T) {
-			p := newFallbackPolicyTest(t, "")
+			p := standingRangePolicy(t, "")
 			o := sludgePriorObservation()
 			d := p.decide(observeRanged(t, p, o, false))
 			id, err := p.host.ReserveAction(d)
@@ -187,7 +204,7 @@ func TestEncounterPriorUnknownMovementCustodyCannotOpen(t *testing.T) {
 }
 
 func TestEncounterPriorLegacyWithdrawalWithoutOpening(t *testing.T) {
-	p := newFallbackPolicyTest(t, "")
+	p := standingRangePolicy(t, "")
 	o := sludgePriorObservation()
 	o.Navigation.BodyMovementSupported = true
 	o.Targets[fallbackGUID(fallbackNPC)].X = 3
@@ -202,7 +219,7 @@ func TestEncounterPriorLegacyWithdrawalWithoutOpening(t *testing.T) {
 }
 
 func TestEncounterPriorKeepsUrgentStationaryFriendlyHealing(t *testing.T) {
-	p := newFallbackPolicyTest(t, "")
+	p := standingRangePolicy(t, "")
 	o := positionedHealObservation()
 	o.MapId = proto.Uint32(349)
 	for _, player := range o.Players {
@@ -233,7 +250,7 @@ func TestEncounterPriorStaleObservationAndCancellationScope(t *testing.T) {
 		}
 		return string(b)
 	}
-	source := "local encounter_priors=(function()\n" + read("encounter-priors.lua") + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
+	source := "local encounter_priors=(function()\n" + withStandingRange(read("encounter-priors.lua")) + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
 end)()
 return {on_event=commands.on_event,export_state=commands.export_state,import_state=commands.import_state,decide=function(frame)
  local obs={sessionId="fixture",selfGuid="4",mapId=349,visitId="1",targets={a={guid="9",entry=12222,present=true,aliveKnown=true,alive=true}}}
@@ -281,7 +298,7 @@ func TestEncounterPriorExactExplicitSpellWinsWithoutAuthorizingAutomaticPull(t *
 	if e != nil {
 		t.Fatal(e)
 	}
-	p := newFallbackPolicyTest(t, "local encounter_spell_invocation=(function()\n"+string(raw)+"\nend)()\n")
+	p := standingRangePolicy(t, "local encounter_spell_invocation=(function()\n"+string(raw)+"\nend)()\n")
 	o := sludgePriorObservation()
 	settlePriorLease(t, p, o, true)
 	_, e = p.host.Enqueue(behavior.Event{Kind: "command", Value: map[string]any{"task": "cast_spell", "id": "owner-explicit-cast", "spellId": float64(133), "targets": map[string]any{"mask": float64(2), "objectGuid": fallbackGUID(fallbackNPC)}, "requirements": map[string]any{"stationary": false}}})
@@ -304,7 +321,7 @@ func TestEncounterPriorReacquireUnknownRetainsSelectedLeaseHorizon(t *testing.T)
 		}
 		return string(b)
 	}
-	source := "local encounter_priors=(function()\n" + read("encounter-priors.lua") + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
+	source := "local encounter_priors=(function()\n" + withStandingRange(read("encounter-priors.lua")) + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
 end)()
 return {on_event=commands.on_event,export_state=commands.export_state,import_state=commands.import_state,decide=function(frame)
  local owner="ranged:maraudon_sludge_backline"
@@ -359,7 +376,7 @@ func TestStandingPriorFreshObservationsTuningAndExplicitOverlay(t *testing.T) {
 		}
 		return string(b)
 	}
-	source := "local encounter_priors=(function()\n" + read("encounter-priors.lua") + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
+	source := "local encounter_priors=(function()\n" + withStandingRange(read("encounter-priors.lua")) + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
 end)()
 return {on_event=commands.on_event,export_state=commands.export_state,import_state=commands.import_state,decide=function(frame)
  local obs={sessionId="fixture",selfGuid="4",mapId=349,visitId="1",targets={a={guid="9",entry=12222,present=true,aliveKnown=true,alive=true}}}
@@ -425,7 +442,7 @@ func TestStandingPriorRefreshCannotMoveCommittedUnknownLeaseHorizon(t *testing.T
 		}
 		return string(b)
 	}
-	source := "local encounter_priors=(function()\n" + read("encounter-priors.lua") + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
+	source := "local encounter_priors=(function()\n" + withStandingRange(read("encounter-priors.lua")) + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
 end)()
 return {on_event=commands.on_event,export_state=commands.export_state,import_state=commands.import_state,decide=function(frame)
  local owner="ranged:maraudon_sludge_backline"
@@ -480,7 +497,7 @@ func TestStandingPriorAcceptedTuningReloadAndLegacyFiniteMigration(t *testing.T)
 		}
 		return string(b)
 	}
-	source := "local encounter_priors=(function()\n" + read("encounter-priors.lua") + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
+	source := "local encounter_priors=(function()\n" + withStandingRange(read("encounter-priors.lua")) + "\nend)()\nlocal commands=(function()\n" + read("encounter-commands.lua") + `
 end)()
 return {on_event=commands.on_event,export_state=commands.export_state,import_state=commands.import_state,decide=function(frame)
  local obs={sessionId=frame.session_id,selfGuid="4",mapId=349,visitId="1",targets={a={guid="9",entry=12222,present=true,aliveKnown=true,alive=true}}}
@@ -539,7 +556,7 @@ end}`
 }
 
 func TestStandingPriorRealOldNativeEntryRetreatsAfterTenMinuteBoundary(t *testing.T) {
-	source := strings.Replace(readEncounterBundle(t), "local function decide(frame)", "local function decide(frame)\nframe.clock={monotonicMs=frame.input.fixtureClock or 0,unixMs=frame.input.fixtureClock or 0}", 1)
+	source := strings.Replace(withStandingRange(readEncounterBundle(t)), "local function decide(frame)", "local function decide(frame)\nframe.clock={monotonicMs=frame.input.fixtureClock or 0,unixMs=frame.input.fixtureClock or 0}", 1)
 	host, e := behavior.NewSession(context.Background(), fallbackSession, source)
 	if e != nil {
 		t.Fatal(e)
@@ -623,7 +640,7 @@ func TestStandingPriorRealOldNativeEntryRetreatsAfterTenMinuteBoundary(t *testin
 func TestStandingPriorYieldsToDistantRallyAndPausesForNearbyHazard(t *testing.T) {
 	for _, unknown := range []bool{false, true} {
 		t.Run(map[bool]string{false: "confirmed_resume", true: "unknown_hold"}[unknown], func(t *testing.T) {
-			p := newFallbackPolicyTest(t, "")
+			p := standingRangePolicy(t, "")
 			o := sludgePriorObservation()
 			o.Navigation.BodyMovementSupported = true
 			self := o.Players["4"]
@@ -771,7 +788,7 @@ func TestStandingPriorYieldsToDistantRallyAndPausesForNearbyHazard(t *testing.T)
 func TestStandingPriorRallyExceptionRequiresHarmlessFactsAndAutomaticOrigin(t *testing.T) {
 	for _, condition := range []string{"unknown_combat", "unknown_hazard", "engaged_hazard", "explicit_finite"} {
 		t.Run(condition, func(t *testing.T) {
-			p := newFallbackPolicyTest(t, "")
+			p := standingRangePolicy(t, "")
 			o := sludgePriorObservation()
 			self := o.Players["4"]
 			self.CombatKnown = true
@@ -807,7 +824,7 @@ func TestStandingPriorRallyExceptionRequiresHarmlessFactsAndAutomaticOrigin(t *t
 }
 
 func TestStandingPriorRallyCompletesThroughHarmlessSpacingBand(t *testing.T) {
-	p := newFallbackPolicyTest(t, "")
+	p := standingRangePolicy(t, "")
 	o := sludgePriorObservation()
 	self := o.Players["4"]
 	self.CombatKnown = true
@@ -843,5 +860,119 @@ func TestStandingPriorRallyCompletesThroughHarmlessSpacingBand(t *testing.T) {
 	task, _ := d.Output["task"].(map[string]any)
 	if a["mode"] != "release" || a["owner"] != "task:whole-rally" || task["reason"] != "rendezvous_observed" {
 		t.Fatal("actual stopped witness within response radius did not finish", d.Output)
+	}
+}
+
+func TestCreepingSludgeKeepsReadyRangedDamageAndOrdinaryCare(t *testing.T) {
+	for _, kind := range []string{"cast", "shoot", "shot_refused", "shot_not_dispatched", "shot_unknown", "inside", "not_ready", "no_ranged_option", "normal_melee", "heal"} {
+		t.Run(kind, func(t *testing.T) {
+			source := strings.Replace(readEncounterBundle(t), "local function decide(frame)", "local function decide(frame)\nif frame.input.testUnixMs then frame.clock.unixMs=frame.input.testUnixMs end", 1)
+			host, err := behavior.NewSession(context.Background(), fallbackSession, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(host.Close)
+			p := &fallbackPolicyTest{t: t, host: host}
+			o := sludgePriorObservation()
+			n := o.Targets[fallbackGUID(fallbackNPC)]
+			n.PositionKnown, n.PositionRevision, n.MeleeReady = true, 1, true
+			n.AttackObservation = &actionsv1.EncounterAttackObservation{VictimKnown: true, VictimGuid: 4}
+			self := o.Players["4"]
+			self.X, self.Y, self.Z = 0, 0, 0
+			self.MovementKnown = true
+			n.X, n.Y, n.Z = 10, 0, 0
+			o.Navigation.BodyMovementSupported = true
+			if kind != "cast" {
+				o.Spells = map[string]*actionsv1.EncounterSpell{"3018": {Known: true, Available: true, Ready: kind != "not_ready", MetadataKnown: true, Capability: "generic", MinRange: 5, MaxRange: 35}}
+			}
+			switch kind {
+			case "inside":
+				n.X = 3
+			case "no_ranged_option", "normal_melee":
+				o.Spells = map[string]*actionsv1.EncounterSpell{}
+				if kind == "normal_melee" {
+					n.Entry = 1
+				}
+			case "heal":
+				o = positionedHealObservation()
+				o.MapId = proto.Uint32(349)
+				for _, unit := range o.Players {
+					unit.MapId = proto.Uint32(349)
+				}
+				n.X = o.Players["4"].X + 25
+				o.Targets[fallbackGUID(fallbackNPC)] = n
+				o.Navigation = &actionsv1.NavigationObservation{Following: true, MovementOwner: &actionsv1.MovementOwnerState{}}
+			}
+			d := p.decide(observeRanged(t, p, o, false))
+			a, _ := d.Output["action"].(map[string]any)
+			switch kind {
+			case "cast":
+				if a["capability"] != "offense" || a["spellId"] != float64(133) {
+					t.Fatal("suppressed available ordinary damage", d.Output)
+				}
+			case "shoot", "shot_refused", "shot_not_dispatched", "shot_unknown":
+				if a["capability"] != "cast_spell" || a["spellId"] != float64(3018) || a["targets"].(map[string]any)["objectGuid"] != fallbackGUID(fallbackNPC) {
+					t.Fatal("missing admitted Shoot", d.Output)
+				}
+				if kind != "shoot" {
+					id, err := p.host.ReserveAction(d)
+					if err != nil {
+						t.Fatal(err)
+					}
+					outcome := behavior.ActionFailed
+					if kind == "shot_not_dispatched" {
+						outcome = behavior.ActionNotDispatched
+					}
+					if kind == "shot_unknown" {
+						outcome = behavior.ActionUnknown
+					}
+					_, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: outcome, Payload: map[string]any{"capability": "cast_spell", "target_guid": fallbackGUID(fallbackNPC), "spell_id": 3018}}})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err = p.host.Reload(context.Background(), source+"\n-- retained shot", p.host.Status().Revision); err != nil {
+						t.Fatal(err)
+					}
+					again := p.decide(observeRanged(t, p, o, false))
+					if kind == "shot_not_dispatched" {
+						if act, _ := again.Output["action"].(map[string]any); act["spellId"] != float64(3018) {
+							t.Fatal("did not retry a known unsent shot", again.Output)
+						}
+						return
+					}
+					if again.Output["action"] != nil {
+						t.Fatal("replayed refused or unknown shot at the same pose", again.Output)
+					}
+					if kind == "shot_refused" {
+						later, err := p.host.Decide(context.Background(), map[string]any{"kind": "encounter", "observationSequence": observeRanged(t, p, o, false), "testUnixMs": 9999999999999})
+						if err != nil {
+							t.Fatal(err)
+						}
+						if act, _ := later.Output["action"].(map[string]any); act["spellId"] != float64(3018) {
+							t.Fatal("resolved server refusal suppressed future shots", later.Output)
+						}
+					}
+					if kind == "shot_unknown" && (len(p.host.Outstanding()) != 1 || p.host.Outstanding()[0].ActionID != id) {
+						t.Fatal("lost shot custody")
+					}
+				}
+			case "inside":
+				if a["capability"] != "move_body" || a["durationMs"] != float64(200) {
+					t.Fatal("did not step clear of a current carrier", d.Output)
+				}
+			case "not_ready", "no_ranged_option":
+				if a != nil {
+					t.Fatal("walked into pulse for a melee fallback", d.Output)
+				}
+			case "normal_melee":
+				if a["capability"] != "melee_start" {
+					t.Fatal("changed ordinary target", d.Output)
+				}
+			case "heal":
+				if a["capability"] != "heal" || a["targetGuid"] != "8" {
+					t.Fatal("suppressed existing care", d.Output)
+				}
+			}
+		})
 	}
 }

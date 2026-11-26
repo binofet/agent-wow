@@ -23,6 +23,7 @@ local commands = encounter_commands
 local spell_invocation = encounter_spell_invocation
 local transient_tasks = encounter_tasks
 local intent = encounter_intent or {}
+if encounter_priors and encounter_priors.set_role then encounter_priors.set_role(intent.role) end
 local state = {bindings={}, defeated={}, controls={}, engaged={}}
 -- A recovery channel requires a new sample after reload or action settlement.
 local mana_observation, mana_sequence
@@ -33,6 +34,7 @@ local task_view
 local ranged_config,ranged_status
 local prior_intent
 local prior_requested_spell
+local shot_proposal
 local task_support_action
 -- Existing interactions yield to observed needs chosen here, never a native
 -- emergency controller. Loot closes its actual window through corpse-loot.
@@ -93,6 +95,22 @@ local function on_event(event)
         state.healingSequence = event.sequence
     elseif self_mana and event.kind == "self_mana_observation" then
         mana_observation, mana_sequence = event.value, event.sequence
+    end
+    if state.pulseShot and event.receipt then
+        local receipt=event.receipt
+        local p=receipt.payload or {}
+        local shot=state.pulseShot
+        if p.capability=="cast_spell" and p.spell_id==3018 and p.target_guid==shot.target and
+           guid(receipt.action_id) and (not shot.actionId or shot.actionId==receipt.action_id) then
+            shot.actionId=receipt.action_id
+            if receipt.outcome=="confirmed" or receipt.outcome=="not_dispatched" then
+                state.pulseShot=nil
+            elseif receipt.outcome=="failed" then
+                shot.refused=true
+            elseif receipt.outcome=="settled_unverified" then
+                shot.settled=true
+            end
+        end
     end
     if event.receipt and terminal[event.receipt.outcome] then
         -- Wait for an updated observation before proposing another action.
@@ -203,6 +221,11 @@ local function active_aura(aura, row)
         (not aura.durationKnown or type(aura.remainingMs) == "number" and aura.remainingMs > 0)
 end
 
+local function pulse_radius(obs,target)
+    return not ranged_config and encounter_priors and encounter_priors.pulse_radius and
+        encounter_priors.pulse_radius(obs,target)
+end
+
 local function damage_spell(obs, target, options)
     if encounter_priors and target then
         local allowed=encounter_priors.admission(obs,tostring(target.guid),prior_intent and prior_intent.explicitPullGuid)
@@ -213,6 +236,8 @@ local function damage_spell(obs, target, options)
     if burst and target and tostring(target.guid) == burst.targetGuid then
         options.burst, options.burst_reason = true, burst.reason
     end
+    local radius=target and pulse_radius(obs,tostring(target.guid))
+    if radius then options.ranged_only=true;options.minimum_max_range=radius end
     if ranged_config and target and target.entry==ranged_config.creatureEntry then
         options.ranged_only=true;options.minimum_max_range=ranged_config.minRangeYards+2*ranged_config.clearanceYards
     end
@@ -639,13 +664,13 @@ local function decide_encounter(frame)
         function(proposed)return not transient_tasks or transient_tasks.allow(task_view,obs,proposed) end) end
     out.controlStatus = command_status
     if command_action then out.action = command_action; return out end
-    if warrior and out.focusGuid and (not active_melee or active_melee==out.focusGuid) then
+    if warrior and out.focusGuid and not pulse_radius(obs,out.focusGuid) and (not active_melee or active_melee==out.focusGuid) then
         local class_action=warrior.choose(frame,obs,obs.targets[out.focusGuid],state.sequence,intent,active_melee~=nil)
         if class_action then out.action=class_action;return out end
     end
     if active_melee then
         local held = targets[active_melee]
-        if obs.targetProtectionOverflow == true or not alive(held) or held.protected or
+        if obs.targetProtectionOverflow == true or not alive(held) or held.protected or pulse_radius(obs,active_melee) or
            not (held.engaged or held.pullRequested) or active_melee ~= out.focusGuid then
             out.action = proposal(obs, "melee_stop", active_melee)
         else
@@ -685,6 +710,51 @@ local function decide_encounter(frame)
         out.rangedOffenseEligible=not (task_view and task_view.hold)
         local available = damage_spell(obs, focus, {require_ready=false})
         local rank = available and (obs.spells or {})[tostring(available)]
+        -- Keep normal ranged damage available against the pulsing carrier.
+        -- Do not substitute a melee chase when its ranged rank is cooling.
+        local pulse=pulse_radius(obs,out.focusGuid)
+        if pulse then
+            local shot=(obs.spells or {})["3018"]
+            if not available and shot and shot.known==true and shot.capability=="generic" and
+               shot.metadataKnown==true and shot.available==true and type(shot.maxRange)=="number" and shot.maxRange>pulse then
+                available,rank=3018,shot
+            end
+            if not available then return out end
+            local from,to=movement and movement.current_pose(self),movement and movement.current_pose(focus)
+            if not from or not to or self.positionInferred==true or focus.positionInferred==true or focus.positionEstimated==true then return out end
+            local d2=(from.x-to.x)^2+(from.y-to.y)^2+(from.z-to.z)^2
+            local lower=math.max(pulse,rank.minRange or 0)
+            if d2<=lower^2 or d2>rank.maxRange^2 then
+                if d2>rank.maxRange^2 or obs.hostTargetRangeBandSupported==true then
+                    out.action=position_for(out.focusGuid,available,obs.hostTargetRangeBandSupported==true and {minRangeYards=lower} or {})
+                end
+                return out
+            end
+            if rank.capability=="generic" then
+                -- Shoot uses the reflected generic object-target contract.
+                -- Preserve a refusal at the same pose and reserve only the
+                -- action that survives task, release and hazard arbitration.
+                local key=obs.sessionId..":"..obs.selfGuid..":"..obs.visitId..":"..out.focusGuid..":"..
+                    tostring(self.positionRevision)..":"..tostring(focus.positionRevision)..":"..tostring(obs.spellbookRevision)
+                local last=state.pulseShot
+                local now=frame.clock.unixMs
+                if last and last.settled and last.key~=key then state.pulseShot=nil end
+                if last and last.refused and type(now)=="number" then
+                    last.retryAt=last.retryAt or now+2000
+                    if last.key~=key or now>=last.retryAt then state.pulseShot=nil end
+                end
+                if rank.ready==true and self.movementKnown==true and self.moving~=true and
+                   (obs.navigation or {}).motionUnconfirmed~=true and not state.pulseShot then
+                    out.action={capability="cast_spell",sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,
+                        observationSequence=state.sequence,spellId=available,targets={mask=2,objectGuid=out.focusGuid}}
+                    shot_proposal={action=out.action,key=key,target=out.focusGuid}
+                end
+            else
+                local ready=damage_spell(obs,focus)
+                if ready then out.action=proposal(obs,"offense",out.focusGuid,ready) end
+            end
+            return out
+        end
         -- Begin a legal swing before pursuing a positional weapon strike.
         -- Subsequent observations keep autoswing active while moving behind.
         if obs.meleeKnown == true and (not available or rank and rank.weaponStrike == true) then
@@ -842,71 +912,46 @@ local function interaction_access(frame, obs, out)
     out.followFormation, out.portalCatchup = nil, nil
 end
 
--- Current observed source positions are estimates of possible cloud locations,
--- never cast/emission evidence. Stable IDs/times survive repeated polls/reloads.
-local function cloud_sightings(obs,frame,scope)
-    if state.cloudSightingsScope~=scope or type(state.cloudSightings)~="table" then
-        state.cloudSightingsScope,state.cloudSightings=scope,{}
-    end
-    local now=frame.clock.unixMs
-    local result,kept={},{}
-    if obs.mapId~=349 or type(now)~="number" then return result end
-    local own=(obs.players or {})[obs.selfGuid]
-    local ordered={}
-    for id,n in pairs(obs.targets or {}) do
-        if n.entry==12221 and n.present==true and n.aliveKnown==true and n.alive==true and
-           n.mapKnown==true and n.mapId==obs.mapId and n.positionKnown==true and n.positionInferred~=true and
-           n.positionEstimated~=true and guid(n.positionRevision) then
-            local p=movement and movement.current_pose(n)
-            if p then
-                local d=own and own.positionKnown==true and ((own.x or 0)-p.x)^2+((own.y or 0)-p.y)^2 or math.huge
-                ordered[#ordered+1]={id=id,unit=n,pose=p,distance=d}
-            end
-        end
-    end
-    -- Only current factual inputs are bounded; the actor owns point retention.
-    for i=2,#ordered do local v,j=ordered[i],i-1
-        while j>=1 and (v.distance<ordered[j].distance or v.distance==ordered[j].distance and v.id<ordered[j].id) do ordered[j+1]=ordered[j];j=j-1 end
-        ordered[j+1]=v
-    end
-    for i=1,math.min(#ordered,64) do
-        local row=ordered[i];local p,n=row.pose,row.unit
-        local old=state.cloudSightings[row.id]
-        local changed=not old or type(old.x)~="number" or type(old.y)~="number" or type(old.z)~="number" or
-            (old.x-p.x)^2+(old.y-p.y)^2+(old.z-p.z)^2>.0625
-        if changed and (not old or old.revision~=n.positionRevision or (n.trajectory or {}).known==true) then
-            old={id=row.id..":"..n.positionRevision..":"..state.sequence,sourceGuid=row.id,spellId=21070,
-                observedAtMs=now,x=p.x,y=p.y,z=p.z,revision=n.positionRevision,
-                estimated=true,kind="source_position_estimate",castObserved=false}
-        end
-        if old and type(old.observedAtMs)=="number" and now>=old.observedAtMs then
-            kept[row.id]=old;result[#result+1]=old
-        end
-    end
-    local count=#result
-    for id,old in pairs(state.cloudSightings) do
-        if count<64 and not kept[id] and type(old)=="table" and type(old.observedAtMs)=="number" and
-           now>=old.observedAtMs and now-old.observedAtMs<20000 then kept[id]=old;count=count+1 end
-    end
-    state.cloudSightings=kept
-    return result
+-- The current observation replaces each moving Poison Shock center. Cloud
+-- points are produced separately from actual World ground-effect objects.
+local function pulse_points(frame,current)
+    if not encounter_priors or not encounter_priors.pulse_points or current.mapId~=349 then return {} end
+    local scope=current.sessionId..":"..current.selfGuid..":"..current.visitId..":"..tostring(current.mapId)
+    local prior=state.pulseScope==scope and state.pulsePositions or {}
+    local points,positions=encounter_priors.pulse_points(current,state.sequence,frame.clock.unixMs,prior)
+    state.pulsePositions,state.pulseScope=positions,scope
+    return points
 end
 
--- Optional actor-owned point hook. Advisory calls use this same persistent
--- closure and event stream, including cloud_points' existing retained history.
+local function authored_points(frame,current)
+    if type(intent.movement_points)=="function" then return intent.movement_points(frame,current) end
+    if type(intent.cloud_points)=="function" and encounter_movement_points then
+        local sightings=encounter_movement_points.ground_sightings(current)
+        if not sightings then return nil end
+        local scope=current.sessionId..":"..current.selfGuid..":"..current.visitId..":"..tostring(current.mapId)
+        return encounter_movement_points.bind_visible(intent.cloud_points(frame.clock.unixMs,scope,sightings),sightings)
+    end
+end
+
 local function movement_points(frame)
     local current=observation
     if not encounter_movement_points or not current or current.sessionId~=frame.session_id or
        frame.input.observationSequence~=state.sequence or not host_can_decide(current) or not current_visit(current) then return nil end
-    local points
-    if type(intent.movement_points)=="function" then points=intent.movement_points(frame,current)
-    elseif type(intent.cloud_points)=="function" then
-        local sightings=encounter_movement_points.ground_sightings(current)
-        if not sightings then return nil end
-        local scope=current.sessionId..":"..current.selfGuid..":"..current.visitId..":"..tostring(current.mapId)
-        points=encounter_movement_points.bind_visible(intent.cloud_points(frame.clock.unixMs,scope,sightings),sightings)
+    local input=encounter_movement_points.project(frame,current,authored_points(frame,current))
+    if input then
+        for _,p in ipairs(pulse_points(frame,current)) do
+            -- Native ordinary points are level disks. Project the pulse's
+            -- sphere onto this body's current elevation; the source NPC is
+            -- never labeled as a stationary World ground object.
+            local self=(current.players or {})[current.selfGuid]
+            local z=self and self.positionKnown==true and self.positionInferred~=true and (self.z or 0)
+            if type(z)=="number" and math.abs(z-p.z)<p.radiusYards then
+                input.points[#input.points+1]={x=p.x,y=p.y,z=z,
+                    radiusYards=math.sqrt(p.radiusYards^2-(z-p.z)^2),expiresAtUnixMs=p.expiresAtUnixMs}
+            end
+        end
     end
-    return encounter_movement_points.project(frame,current,points)
+    return input
 end
 
 local function decide(frame)
@@ -922,6 +967,7 @@ local function decide(frame)
         return out
     end
     ranged_config,ranged_status=nil,nil
+    shot_proposal=nil
     prior_intent=nil
     prior_requested_spell=nil
     if commands and commands.ranged_stance and observation then ranged_config,ranged_status=commands.ranged_stance(observation,frame) end
@@ -976,21 +1022,29 @@ local function decide(frame)
     if encounter_priors and current and host_can_decide(current) and current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence then
         encounter_priors.filter(current,out,ranged_status,prior_intent and prior_intent.explicitPullGuid,prior_requested_spell==out.action and prior_requested_spell or nil)
     end
-    if not encounter_movement_points and intent.cloud_points and movement and movement.adjust_cloud_points and current and (current.navigation or {}).movementPointsSupported~=true and host_can_decide(current) and
-       current.sessionId==frame.session_id and current_visit(current) and frame.input.observationSequence==state.sequence and
-       state.settledAt~=state.sequence then
-        local scope=current.sessionId..":"..current.selfGuid..":"..current.visitId..":"..tostring(current.mapId)
-        local sightings=cloud_sightings(current,frame,scope)
-        local points=intent.cloud_points(frame.clock.unixMs,scope,sightings)
-        out.cloudPointInput={sightings=#sightings,estimated=true,castObserved=false,
-            activeMovementOwner=((current.navigation or {}).movementOwner or {}).active==true and ((current.navigation or {}).movementOwner or {}).owner or nil}
-        local passive=ranged_config and ranged_config.origin=="learned_prior" and ranged_status and ranged_status.active==false and ranged_status.phase=="passive_distant_prior"
-        if not task_support_action and not prior_requested_spell and (not ranged_config or passive) and
-           not (task_view and (task_view.hold or task_view.action)) and not (out.consumable and out.consumable.hold) then
-            movement.adjust_cloud_points(frame,current,state.sequence,out,points,passive and ranged_config or nil)
-        elseif not task_support_action and not prior_requested_spell and commands and commands.cloud_point_step and
-           not (task_view and (task_view.hold or task_view.action)) and not (out.consumable and out.consumable.hold) then
-            commands.cloud_point_step(current,frame,state.sequence,out,ranged_config,ranged_status,points)
+    local pointProvider=type(intent.cloud_points)=="function" or type(intent.movement_points)=="function"
+    if movement and movement.adjust_cloud_points and current and
+       (not pointProvider or not encounter_movement_points or (current.navigation or {}).movementPointsSupported~=true) and
+       host_can_decide(current) and current.sessionId==frame.session_id and current_visit(current) and
+       frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence and
+       not task_support_action and not prior_requested_spell and not (task_view and (task_view.hold or task_view.action)) and
+       not (out.consumable and out.consumable.hold) then
+        local points=pulse_points(frame,current)
+        if pointProvider then
+            local authored=authored_points(frame,current)
+            if type(authored)=="table" then
+                if #points==0 then points=authored else for _,p in ipairs(authored) do points[#points+1]=p end end
+            end
+        end
+        if #points>0 then
+            local passive=ranged_config and ranged_config.origin=="learned_prior" and ranged_status and ranged_status.phase=="passive_distant_prior"
+            if not ranged_config or passive then
+                local owner,blocked
+                if commands and commands.movement_point_owner then owner,blocked=commands.movement_point_owner(current,frame) end
+                if not blocked then movement.adjust_cloud_points(frame,current,state.sequence,out,points,passive and ranged_config or nil) end
+            elseif commands and commands.cloud_point_step then
+                commands.cloud_point_step(current,frame,state.sequence,out,ranged_config,ranged_status,points)
+            end
         end
     end
     if encounter_movement_points and current and (type(intent.cloud_points)=="function" or type(intent.movement_points)=="function") and current.groundEffectsSupported~=true then
@@ -1008,6 +1062,7 @@ local function decide(frame)
                 ownMovement,task_support_action or protectedMovement or task_view and (task_view.hold or task_view.action) or out.consumable and out.consumable.hold)
         end
     end
+    if shot_proposal and shot_proposal.action==out.action then state.pulseShot={key=shot_proposal.key,target=shot_proposal.target} end
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then transient_tasks.commit(task_view,out.action) end
     if spell_invocation then spell_invocation.commit(out.action) end

@@ -13,7 +13,7 @@ import (
 func TestRangedFirstNativeEstimateHandoffKeepsGroundCorrelation(t *testing.T) {
 	for _, kind := range []string{"stopped", "spline", "triplet", "inferred", "moving", "motion_unknown", "foreign_owner", "wrong_self", "pending_lease", "unknown_step", "awaiting_pose", "old_visit", "wrong_completed_pose"} {
 		t.Run(kind, func(t *testing.T) {
-			p := newFallbackPolicyTest(t, "")
+			p := standingRangePolicy(t, "")
 			o := sludgePriorObservation()
 			self := o.Players["4"]
 			delete(o.Players, "4")
@@ -116,7 +116,7 @@ func TestRangedFirstNativeEstimateHandoffKeepsGroundCorrelation(t *testing.T) {
 			if kind == "wrong_completed_pose" {
 				o.Navigation.BodyMovement.X += 10
 			}
-			if _, e = p.host.Reload(context.Background(), readEncounterBundle(t)+"\n-- retained handoff", p.host.Status().Revision); e != nil {
+			if _, e = p.host.Reload(context.Background(), withStandingRange(readEncounterBundle(t))+"\n-- retained handoff", p.host.Status().Revision); e != nil {
 				t.Fatal(e)
 			}
 			d = p.decide(observeRanged(t, p, o, false))

@@ -2,18 +2,23 @@
 -- A deliberate `engage {pull=true}` overrides this default for that exact GUID.
 -- The exact current explicit cast_spell proposal also wins; automatic casts do not.
 -- These are roles and observed hazards, never inferred pack links or aggro.
--- Admission and automatic positioning are standing learned defaults on current
--- matching observations. durationMs bounds each native movement lease, not the
--- lifetime of this knowledge. Current source tuning is read for each default
--- decision. Explicit ranged_only orders remain separate finite overlays; their
--- expiry resumes the default rather than renewing the user's order. Cancel this
--- prior ID to suppress its automatic positioning in the current body/map/visit.
+-- Creeping Sludge carries Poison Shock (22638, triggering 22595 every 2 s).
+-- Its five-yard pulse follows the living carrier. Noxious Slime (12221)
+-- instead casts the stationary Noxious Cloud (21070) observed by World.
+-- The backline rule controls pull admission. An authored standing ranged
+-- stance is opt-in; the ranged_only command supplies its own finite order.
 local rules = {
     {id="maraudon_sludge_backline", mapId=349, creatureEntry=12222,
-     tankGuid="3", minRangeYards=14, maxRangeYards=36, clearanceYards=2,
-     durationMs=600000, attackWitnessMaxAgeMs=5000},
+     tankGuid="3", minRangeYards=14, maxRangeYards=36, automaticRange=false,
+     clearanceYards=2, durationMs=600000, attackWitnessMaxAgeMs=5000,
+     pulseRadiusYards=5, pulseIntervalMs=2000},
 }
+-- The accepted actor intent may designate another tank. Bind it when the
+-- modules are composed, including on source reload.
+local tank=false
+local function set_role(role) tank=role=="tank" end
 local function rule(obs)
+    if tank then return end
     for _,r in ipairs(rules) do
         if obs.mapId==r.mapId and obs.selfGuid~=r.tankGuid then
             for _,npc in pairs(obs.targets or {}) do
@@ -22,8 +27,8 @@ local function rule(obs)
         end
     end
 end
-local function admission(obs,id,explicitPull)
-    local r=rule(obs)
+local function admission(obs,id,explicitPull,r)
+    r=r or rule(obs)
     local npc=(obs.targets or {})[id]
     if not r or not npc or npc.entry~=r.creatureEntry then return true,"outside_prior" end
     if explicitPull==id then return true,"explicit_pull_override" end
@@ -83,6 +88,63 @@ local function positioning(obs,r)
     end
     return false,"passive_distant"
 end
+local function pulse_radius(obs,id,r)
+    r=r or rule(obs)
+    local n=(obs.targets or {})[id]
+    if r and r.automaticRange~=true and n and n.entry==r.creatureEntry and n.present==true and
+       n.aliveKnown==true and n.alive==true and n.mapKnown==true and n.mapId==obs.mapId and
+       admission(obs,id,nil,r) then return r.pulseRadiusYards end
+end
+
+-- A pulse has a moving carrier. Bind each center to the current pose
+-- revision, fresh party-attack witness and short observation horizon. A
+-- later observation replaces the center; there is no trail behind the NPC.
+local function pulse_points(obs,sequence,now,history)
+    local points,positions={},{}
+    local r=rule(obs)
+    if not r or r.automaticRange==true or type(r.pulseRadiusYards)~="number" or
+       type(r.pulseIntervalMs)~="number" or type(now)~="number" then return points,positions end
+    for id,n in pairs(obs.targets or {}) do
+        if n.entry==r.creatureEntry and n.present==true and n.aliveKnown==true and n.alive==true and
+           n.mapKnown==true and n.mapId==obs.mapId and n.positionKnown==true and
+           n.positionInferred~=true and n.positionEstimated~=true and type(n.positionRevision)=="string" and
+           n.positionRevision~="0" and n.positionRevision~="" then
+            local old=history[id]
+            local same=old and old.revision==n.positionRevision
+            local seenAt=same and old.seenAt or now
+            local attack=n.attackObservation
+            local age=attack and tonumber(attack.ageMs or "0")
+            local victim=attack and attack.victimGuid
+            local repeated=old and (old.sequence==sequence or old.worldRevision==obs.worldObservationRevision and
+                old.attackAge==age and old.victim==victim and same)
+            local sample=repeated and old.sample or now
+            positions[id]={revision=n.positionRevision,seenAt=seenAt,sequence=sequence,sample=sample,
+                worldRevision=obs.worldObservationRevision,attackAge=age,victim=victim}
+            local pose=encounter_movement and encounter_movement.current_pose(n)
+            if pose and age and age>=0 and pulse_radius(obs,id,r) then
+                local trajectory=n.trajectory
+                local traveled=trajectory and trajectory.known==true and tonumber(trajectory.ageMs or "0")
+                -- A fresh active spline also locates the carrier between
+                -- position revisions. Stop at its observed destination time.
+                local poseUntil=seenAt+r.pulseIntervalMs
+                if not trajectory or trajectory.known~=true or trajectory.stopped==true then
+                    -- A stationary visible carrier can pulse repeatedly at
+                    -- one unchanged revision. Each new witnessed attack
+                    -- corroborates that center for one more pulse interval.
+                    poseUntil=math.max(poseUntil,sample-age+r.pulseIntervalMs)
+                elseif traveled and traveled>=0 and type(trajectory.durationMs)=="number" and traveled<trajectory.durationMs then
+                    poseUntil=sample+math.min(r.pulseIntervalMs,trajectory.durationMs-traveled)
+                end
+                local expires=math.min(poseUntil,sample+r.attackWitnessMaxAgeMs-age)
+                if now<expires then
+                    points[#points+1]={x=pose.x,y=pose.y,z=pose.z,radiusYards=r.pulseRadiusYards,
+                        expiresAtUnixMs=expires,carrierGuid=id}
+                end
+            end
+        end
+    end
+    return points,positions
+end
 local function filter(obs,out,status,explicitPull,requestedSpell)
     local r=rule(obs)
     if not r then return end
@@ -93,11 +155,11 @@ local function filter(obs,out,status,explicitPull,requestedSpell)
        (requestedSpell.targets or {}).objectGuid==id then allowed,reason=true,"explicit_spell_request" end
     local waiting=false
     for target,npc in pairs(obs.targets or {}) do
-        if npc.entry==r.creatureEntry and not admission(obs,target,explicitPull) then waiting=true end
+        if npc.entry==r.creatureEntry and not admission(obs,target,explicitPull,r) then waiting=true end
     end
     if not id and waiting then allowed,reason=false,"waiting_for_tank_attack_witness" end
     out.encounterPrior={id=r.id,tankGuid=r.tankGuid,role="backline",targetGuid=id,allowed=allowed,reason=reason}
-    if waiting and positioning(obs,r) then out.followFormation,out.portalCatchup=nil,nil end
+    if waiting and r.automaticRange==true and positioning(obs,r) then out.followFormation,out.portalCatchup=nil,nil end
     if allowed then return end
     local cap=action and action.capability
     local npc=id and (obs.targets or {})[id]
@@ -116,6 +178,7 @@ local function filter(obs,out,status,explicitPull,requestedSpell)
         end
     end
     local cleanup=cap=="movement_owner" or cap=="stop_movement" or cap=="melee_stop" or cap=="cancel_spell"
-    if not cleanup and not withdrawal and (cap=="move_body" or npc and npc.entry==r.creatureEntry) then out.action=nil end
+    local directed=action and (action.targetGuid or (action.targets or {}).objectGuid)
+    if not cleanup and not withdrawal and (cap=="move_body" and r.automaticRange==true or directed and npc and npc.entry==r.creatureEntry) then out.action=nil end
 end
-return {rules=rules,rule=rule,admission=admission,positioning=positioning,filter=filter}
+return {rules=rules,set_role=set_role,rule=rule,admission=admission,positioning=positioning,pulse_radius=pulse_radius,pulse_points=pulse_points,filter=filter}
