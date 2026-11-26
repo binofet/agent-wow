@@ -441,6 +441,7 @@ class DirectModel:
                 connection.close()
         self.last_receipt["httpRequests"] += 1
         threading.Thread(target=worker, name="direct-model-http", daemon=True).start()
+        waiting = getattr(cancelled, "waiting", None)
         try:
             while True:
                 self._check(cancelled, deadline)
@@ -448,7 +449,7 @@ class DirectModel:
                     status, raw, error = result.get(timeout=.05)
                     break
                 except queue.Empty:
-                    continue
+                    if waiting is not None: waiting()
             self._check(cancelled, deadline)
         except BaseException:
             aborted.set()

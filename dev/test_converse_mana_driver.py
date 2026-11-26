@@ -6,12 +6,15 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import threading
 import unittest
 from unittest.mock import patch
 
 import test_party_mana_supply as supply_fixture
+from test_combat_review import Tracker
+from test_direct_brain import FakeHTTP, spoken
 
 
 _loader = importlib.machinery.SourceFileLoader(
@@ -320,6 +323,84 @@ class ManaDriverTests(unittest.TestCase):
         self.assertEqual(self.loop.cursor, 0)
         self.assert_actual_policy_bounds()
 
+    def test_safe_supply_turn_precedes_mission_repair(self):
+        phases = []
+        def repair():
+            phases.append(self.controls.water_supply_phase)
+            return True
+        self.loop.maybe_repair_mission = repair
+        self.loop.tick()
+        self.assertEqual(phases, ["conjure_requested"])
+        self.assertEqual(len(self.fixture.calls), 1)
+
+    def test_rest_window_in_actual_combat_review_then_owner_and_restart_keep_unknown(self):
+        mage = self.fixture.mira
+        mage["inventory"]["manaDrinkCount"] = 0
+        mage["actions"]["moving"] = True
+        bag = mage["inventory"]["inventoryBags"][0]
+        bag.update(slotCount=16, slots=[dict(bag=0, slot=i) for i in range(16)])
+        self.fixture.fail_method = "buddy-actions.create_item"
+        original_rpc = self.fixture.rpc
+        entered, release = threading.Event(), threading.Event()
+        writes_in_model_wait = []
+
+        def native(port, method, params):
+            if method == "buddy-actions.create_item":
+                writes_in_model_wait.append(entered.is_set() and not release.is_set())
+                self.owner_pending = True
+            return original_rpc(port, method, params)
+
+        def model_wait(_):
+            mage["actions"]["moving"] = False
+            entered.set()
+            release.wait(15)
+            return spoken()
+
+        self.fixture.rpc = native
+        self.refresh_rpc = lambda method, params, timeout: self.clients[8087].call(method, params, timeout)
+        self.controls.combat_context = Tracker()
+        self.controls.actions, self.controls.party_session = mage["actions"], "aw-4"
+        self.controls.actions_available = self.controls.party_available = True
+        del self.loop.maybe_review_combat  # Exercise the normal listener's review selection.
+        workspace = self.profile_dir / "synthetic-actor"
+        subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
+        with FakeHTTP([model_wait]) as provider, patch.object(converse, "ROOT", workspace), \
+             patch.object(converse, "RPC", return_value=self.rpc):
+            self.loop.brain = converse.DirectBrain(self.profile_dir, character_name="Mira",
+                character_class="mage", developer_workspace=workspace, provider="local",
+                model="fixture-mage", base_url=provider.base)
+            try:
+                self.loop.tick()
+                self.assertTrue(entered.is_set())
+                self.assertEqual(writes_in_model_wait, [True])
+                self.assertTrue(any(row.get("combatReviewPhase") == "yielded_to_input" for row in self.statuses))
+                self.assertEqual(self.loop.cursor, 0)
+            finally:
+                release.set()
+
+        reports = [row for row in self.statuses if "waterSupplyObservation" in row]
+        first = reports[0]["waterSupplyObservation"]
+        self.assertEqual(reports[0]["waterSupplyPhase"], "mage_busy")
+        self.assertGreater(first["observedAtUnixMs"], 0)
+        self.assertTrue(first["clients"]["4"]["actions"]["moving"])
+        self.assertEqual(first["clients"]["4"]["inventory"], dict(freeSlots=16, totalSlots=16, manaDrinkCount=0))
+        self.assertEqual(first["clients"]["1"]["inventory"]["manaDrinkCount"], 0)
+        final = reports[-1]["waterSupplyObservation"]["clients"]["4"]
+        self.assertFalse(final["actions"]["moving"])
+        self.assertEqual(self.controls.lua_water_supply["last"]["outcome"], "transport_unconfirmed")
+        self.loop.brain = self.brain
+        self.loop.tick()
+        self.assertEqual(self.loop.cursor, 1)
+        self.assertEqual(len(self.brain.calls), 1)
+
+        self.profile_lock.close()
+        self.lock_profile()
+        self.new_listener()
+        self.loop.tick()
+        self.loop.tick()
+        self.assertEqual(self.controls.water_supply_phase, "conjure_outcome_unconfirmed")
+        self.assertEqual(writes_in_model_wait, [True])
+
     def test_idle_ticks_share_the_exact_lua_selected_stack(self):
         supply_fixture.carried(self.fixture.mira, 2136, 8)
         self.loop.tick()
@@ -363,6 +444,34 @@ class ManaDriverTests(unittest.TestCase):
         self.assertEqual(self.loop.cursor, 1)
         self.assertEqual(len(self.brain.calls), 1)
         self.assertEqual(self.controls.lua_water_supply, {})
+
+    def test_selected_owner_keeps_priority_while_its_actual_model_is_waiting(self):
+        self.owner_text = "Mira, wait for my direction before making more water."
+        self.owner_pending = True
+        entered, polled = threading.Event(), threading.Event()
+        chat = self.rpc.call
+        def current_chat(method, params, timeout=None):
+            result = chat(method, params, timeout)
+            if method == "buddy-chat.poll" and timeout == 1.5 and entered.is_set():
+                polled.set()
+            return result
+        def model_wait(_):
+            entered.set()
+            polled.wait(5)
+            return spoken("I will wait here.")
+        self.refresh_rpc = lambda method, params, timeout: self.fixture.rpc(8087, method, params)
+        with FakeHTTP([model_wait]) as provider, patch.object(converse, "RPC", return_value=self.rpc), \
+             patch.object(self.rpc, "call", side_effect=current_chat):
+            self.loop.brain = converse.DirectBrain(self.profile_dir, character_name="Mira",
+                character_class="mage", provider="local", model="fixture-mage", base_url=provider.base)
+            self.loop.tick()
+        self.assertTrue(polled.is_set())
+        self.assertEqual(self.loop.cursor, 1)
+        self.assertTrue(any(method == "buddy-chat.send" and params["text"] == "I will wait here."
+            for method, params, _ in self.chat_requests))
+        self.assertEqual(self.requests, [])
+        self.assertEqual(self.fixture.calls, [])
+        self.assertFalse((self.profile_dir / "mana-supply.json").exists())
 
     def test_owner_arriving_between_observations_sends_nothing_and_keeps_cursor(self):
         def owner_after_first_read(port, method, params):
@@ -426,6 +535,33 @@ class ManaDriverTests(unittest.TestCase):
         self.assertEqual(self.fixture.calls, [])
         self.assertEqual(len(self.brain.calls), 1)
         self.assert_actual_policy_bounds()
+
+    def test_chat_timeout_at_final_dispatch_records_a_known_unsent_conjure(self):
+        chat = self.rpc.call
+        timeouts = []
+        def timeout_before_create(method, params, timeout=None):
+            state = self.controls.lua_water_supply
+            if (method == "buddy-chat.poll" and not timeouts and self.requests
+                    and self.requests[-1][:2] == (8087, "buddy-actions.status")
+                    and state.get("last", {}).get("outcome") == "transport_unconfirmed"):
+                timeouts.append(True)
+                raise converse.ChatPollTimeout("Synthetic chat freshness timeout")
+            return chat(method, params, timeout)
+        with patch.object(self.rpc, "call", side_effect=timeout_before_create):
+            self.loop.tick()
+        self.assertEqual(timeouts, [True])
+        self.assertEqual(self.controls.water_supply_phase, "yielded_for_chat_refresh")
+        record = json.loads((self.profile_dir / "mana-supply.json").read_text())["state"]
+        self.assertEqual(record["last"]["outcome"], "not_dispatched")
+        self.assertEqual(record["last"]["reason"], "chat_freshness_unavailable")
+        self.assertEqual(self.fixture.calls, [])
+        self.loop.tick()
+        memory = self.controls.lua_water_supply["memory"]
+        self.assertIsNone(memory.get("pending"))
+        self.assertEqual(self.fixture.calls, [])
+        with patch.object(self.supply.time, "monotonic", return_value=memory["nextAtMs"]/1000 + 1):
+            self.loop.tick()
+        self.assertEqual([method for _, method, _ in self.fixture.calls], ["buddy-actions.create_item"])
 
     def test_restart_loads_durable_unknown_before_reading_edited_policy_without_replay(self):
         self.fixture.fail_method = "buddy-actions.create_item"
