@@ -4949,7 +4949,6 @@ class Conversation:
         # One synchronous model process remains; a cheap read interrupts it
         # without advancing the chat cursor or undoing already-written code.
         next_poll = [0.0]
-        freshness_retry_used = [False]
         freshness_failure = [None]
         interruption_latched = [False]
         interrupt_reason = ["owner_input_waiting"]
@@ -4963,15 +4962,15 @@ class Conversation:
                 try:
                     result = self.rpc.call("buddy-chat.poll", params, timeout=0.5)
                 except ChatPollTimeout:
-                    # Only a failed pure read may retry, once, on the same bound cursor.
+                    # Each due poll may retry one failed pure read on the same bound cursor.
+                    # A recovered earlier poll does not consume later polls' retry.
                     remaining = now + 0.8 - time.monotonic()
                     if (self.stopped() or self.session_id != bound_chat or self.cursor != bound_cursor
                             or self.character_guid != bound_guid):
                         interrupt_reason[0] = "owned_body_changed"
                         return True
-                    if remaining <= 0 or freshness_retry_used[0]:
+                    if remaining <= 0:
                         raise
-                    freshness_retry_used[0] = True
                     result = self.rpc.call("buddy-chat.poll", dict(params), timeout=min(0.3, remaining))
                     if time.monotonic() > now + 0.8:
                         raise ChatPollTimeout("Chat freshness read deadline elapsed")

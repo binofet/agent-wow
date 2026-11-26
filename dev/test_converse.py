@@ -4357,12 +4357,22 @@ class OwnerPreemptionTests(unittest.TestCase):
                 self.assertIsNone(result);self.assertEqual(len(calls),1)
                 self.assertEqual(seen,[(True,reason)])
 
-    def test_retry_is_once_per_generation_and_rejects_late_read_result(self):
-        _,calls,_,seen,result=self.freshness_case([converse.ChatPollTimeout('first'),
-            poll(latest=41,sessionId='chat'),converse.ChatPollTimeout('later')],
-            checks=2,clock_times=[0,.2,.2,1,1.1])
-        self.assertIsNone(result);self.assertEqual(len(calls),3)
-        self.assertEqual(seen,[(False,'owner_input_waiting'),(True,'chat_freshness_unavailable')])
+    def test_each_poll_has_one_bounded_retry_and_rejects_late_read_result(self):
+        for outcome,reason in [(poll(latest=41,sessionId='chat'),None),
+                (converse.ChatPollTimeout('persistent'),'chat_freshness_unavailable'),
+                (poll([message(42,'Stop',channel='WHISPER')],sessionId='chat'),'owner_input_waiting'),
+                (poll(latest=41,sessionId='other'),'chat_body_changed')]:
+            with self.subTest(reason=reason):
+                _,calls,_,seen,result=self.freshness_case([converse.ChatPollTimeout('first'),
+                    poll(latest=41,sessionId='chat'),converse.ChatPollTimeout('later'),outcome],
+                    checks=2,clock_times=[0,.2,.2,1,1.1,1.1])
+                self.assertEqual(len(calls),4)
+                self.assertTrue(all(params == calls[0][0] for params,_ in calls))
+                if reason is None:
+                    self.assertEqual(result['text'],'fresh')
+                    self.assertEqual(seen,[(False,'owner_input_waiting')]*2)
+                else:
+                    self.assertIsNone(result);self.assertEqual(seen[-1],(True,reason))
         _,calls,_,seen,result=self.freshness_case([converse.ChatPollTimeout('first'),
             poll(latest=41,sessionId='chat')],clock_times=[0,.5,.81])
         self.assertIsNone(result);self.assertEqual(len(calls),2)
