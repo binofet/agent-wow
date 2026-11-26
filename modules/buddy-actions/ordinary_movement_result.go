@@ -63,6 +63,7 @@ func (s *Service) reconcileOrdinaryMovementLocked(ctx context.Context, w *worldv
 	s.swimming = a.swimming
 	s.state.Moving = a.moving
 	s.state.MotionUnconfirmed = false
+	s.state.TransportWrites++
 	s.lastStep = s.now()
 	s.followNav.Reset()
 	s.ordinaryMovement = nil

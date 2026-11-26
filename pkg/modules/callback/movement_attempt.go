@@ -10,6 +10,9 @@ const movementAttemptKey = "agentwow-own-movement-attempt"
 
 // Movement attempt IDs correlate transport evidence only; they grant no authority.
 func ValidMovementAttempt(id string) bool {
+	if len(id) != 64 {
+		return false
+	}
 	b, e := hex.DecodeString(id)
 	return e == nil && len(b) == 32 && hex.EncodeToString(b) == id
 }

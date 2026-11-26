@@ -30,6 +30,12 @@ func (x *ordinaryResultSession) SendPacket(ctx context.Context, r *modv1.SendPac
 	if _, err := x.f.SendPacket(context.Background(), r, o...); err != nil {
 		return nil, err
 	}
+	// Existing legacy fake retains only START/heartbeat/STOP. Core's actual
+	// normal body image also accepts this stationary facing packet.
+	if r.Opcode == opcode.MSGMoveSetFacing {
+		x.f.portalCoreScope.MotionRevision++
+		x.f.ownMovementReport = &modv1.WorldPacket{Opcode: r.Opcode, Payload: append([]byte(nil), r.Payload...), TransportScope: clonePortalScope(x.f.portalCoreScope)}
+	}
 	return nil, status.Error(codes.DeadlineExceeded, "caller expired after write")
 }
 func (x *ordinaryResultSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, o ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
@@ -83,8 +89,12 @@ func TestOrdinaryFollowExactWriteReconcilesWithoutReplayOrUnknownRewrite(t *test
 					t.Fatal("replayed or rewrote UNKNOWN", f.packets, s.state.LastTransportFailure)
 				}
 				if mode == "exact" {
-					if s.state.MotionUnconfirmed || s.state.Moving != moving || s.ordinaryMovement != nil {
+					if s.state.MotionUnconfirmed || s.state.Moving != moving || s.ordinaryMovement != nil || s.state.TransportWrites != 1 {
 						t.Fatal("known write not restored", s.stateLocked())
+					}
+					s.reconcileOrdinaryMovementLocked(context.Background(), f.world)
+					if s.state.TransportWrites != 1 || len(f.packets) != 1 {
+						t.Fatal("exact result counted or sent twice", s.stateLocked(), f.packets)
 					}
 				} else if !s.state.MotionUnconfirmed {
 					t.Fatal("unverified attempt released custody", mode)

@@ -42,3 +42,16 @@ func TestOwnMovementAttemptNeverBorrowsAnotherWrite(t *testing.T) {
 		t.Fatal("old attempt crossed visit")
 	}
 }
+
+func TestOwnMovementAttemptRetainsActualFacingImage(t *testing.T) {
+	e := scopeEngine(t, &scopeWriteConn{})
+	e.publishTransportScope()
+	id := strings.Repeat("c", 64)
+	ctx := modsession.WithWriteOrigin(context.Background(), modsession.WriteOrigin{MovementAttempt: id})
+	if _, _, err := e.writeContext(ctx, opcode.MSGMoveSetFacing, ownReportPacket(t, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.s.OwnMovementAttempt(id); r == nil || r.Opcode != opcode.MSGMoveSetFacing {
+		t.Fatal("actual normal-facing wire image lost", r)
+	}
+}
