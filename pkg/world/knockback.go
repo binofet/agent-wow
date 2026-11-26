@@ -142,8 +142,11 @@ func (e *engine) impulseOrigin() (movementinfo.Info, bool) {
 		return movementinfo.Info{}, false
 	}
 	i, ok := movementinfo.OwnFrame(source.Payload, current.GetSelfGuid())
-	// A transport-relative or flying body needs a different coordinate model.
-	return i, ok && !i.TransportPresent && i.ExtraFlags == 0 && i.Flags & ^uint32(0x1ff|0x1000|0x2000|movementinfo.SwimmingFlag) == 0
+	// Scope continuity preserves a stationary position. A last ordinary
+	// heartbeat with active motion does not locate a subsequently moving
+	// body. Only the measured in-flight continuation above supplies that.
+	const stationary = uint32(0x100) | movementinfo.SwimmingFlag // walk mode or resting in water
+	return i, ok && i.ExtraFlags == 0 && i.Flags & ^stationary == 0
 }
 
 // Unit::KnockbackFrom / WorldSession::HandleMoveKnockBackAck use the supplied

@@ -183,6 +183,37 @@ func TestCopiedOwnKnockbackRegainsPhysicalContactWithoutRealmSelfEcho(t *testing
 	}
 }
 
+func TestKnockbackRequiresLocatedMovingOrigin(t *testing.T) {
+	for _, source := range []string{"realm", "known_write"} {
+		for _, flags := range []uint32{1, 0x10, 0x1000, movementinfo.SwimmingFlag | 1} {
+			c, conn := newBodyContinuitySession(t)
+			c.e.s.started = time.Now().Add(-time.Second)
+			knockbackToWorld(t, c, opcode.SMSGLoginVerifyWorld, positionBody(349, 5, 15, 200, 0))
+			knockbackToWorld(t, c, opcode.SMSGUpdateObject, bodyPlayerCreate(99, 5, 15, 200, 0))
+			i := movementinfo.Info{Flags: flags, Time: c.e.timestamp() - 220, X: 5, Y: 15, Z: 180, JumpPresent: flags == 0x1000, PitchPresent: flags&movementinfo.SwimmingFlag != 0}
+			if i.JumpPresent {
+				i.FallTime = 800
+				i.Jump = movementinfo.Jump{CosAngle: 1, XYSpeed: 12}
+			}
+			wire, _ := movementinfo.MoverFrame(99, i)
+			if source == "realm" {
+				knockbackToWorld(t, c, opcode.MSGMoveHeartbeat, wire)
+			} else {
+				// A raw unscoped movement can be known to the transport even
+				// when it is outside the narrower normal route-report contract.
+				if _, _, err := c.e.writeContext(context.Background(), opcode.MSGMoveHeartbeat, wire); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := conn.writes
+			knockbackToWorld(t, c, opcode.SMSGMoveKnockBack, impulseOrder(99, 4, 1, 0, 10, -8))
+			if c.e.impulse != nil || conn.writes != before {
+				t.Fatalf("used stale %s 0x%x pose for a new impulse", source, flags)
+			}
+		}
+	}
+}
+
 func TestSocketOwnerClocksKnockbackAndResumesOrdinaryInput(t *testing.T) {
 	c, conn := newBodyContinuitySession(t)
 	e := c.e
