@@ -129,7 +129,8 @@ func TestPolicyColdridgeLifecycleFullBundlePriorityAndObjectiveCAS(t *testing.T)
 	input["stage"] = "observe"
 	input["goal"] = map[string]any{"questId": float64(170), "counts": []any{float64(0), float64(0)}, "neededEntries": []any{float64(707), float64(724)}}
 	rows[1].(map[string]any)["objectiveCounts"] = []any{float64(3), float64(0), float64(0), float64(0)}
-	x.reload(t, "[170]={{entry=707,count=6},{entry=724,count=6}}", "[170]={{entry=707,count=3},{entry=724,count=6}}")
+	// The default is sparse; this CAS deliberately keeps the legacy numeric override.
+	x.reload(t, `["170"]={{entry=707,count=6},{entry=724,count=6}}`, "[170]={{entry=707,count=3},{entry=724,count=6}}")
 	out := practiceLifecycleCallback(t, x, input)
 	entries, ok := out["neededEntries"].([]any)
 	if !ok || len(entries) != 1 || entries[0] != float64(724) || out["active"] != true || out["needed"] != true {
