@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/modules/runner"
 	"github.com/agent-wow/agent-wow/pkg/modules/session"
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
-	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
@@ -132,7 +132,7 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 			return modcb.PacketNotDispatchedError("transport scope is unsupported by this host")
 		}
 		followsOwner, route, marked := modcb.IncomingRouteBodyInput(ctx)
-		if marked && (!route || module != actionsModule || modcb.IncomingMovementAttempt(ctx) == "" || ctx.Err() != nil || !movementinfo.RouteBodyFrame(opcode, payload, scope.SelfGuid)) {
+		if marked && (!route || module != actionsModule || modcb.IncomingMovementAttempt(ctx) == "" || ctx.Err() != nil || !buddynav.RouteBodyFrame(opcode, payload, scope.SelfGuid)) {
 			return modcb.PacketNotDispatchedError("invalid scoped route body frame")
 		}
 		if token, supplied := modcb.IncomingPolicySpell(ctx); supplied {

@@ -435,7 +435,7 @@ func TestBodyRefusalReportsParsedOwnFieldsInOriginalOrder(t *testing.T) {
 		want   string
 	}{
 		{"stand_and_health", [][]byte{bodyValuesBlock(99, 0x4a, 1), bodyValuesBlock(99, 0x18, 0), bodyValuesBlock(99, 0x18, 100)},
-			"own_restricted_field 0x004a=0x00000000>0x00000001 0x0018=0x00000064>0x00000000 0x0018=0x00000000>0x00000064"},
+			"own_restricted_field 0x0018=0x00000064>0x00000000 0x0018=0x00000000>0x00000064"},
 		{"unknown_prior_and_private", [][]byte{bodyValuesBlock(99, 0x41, 7), bodyValuesBlock(99, 0x0c, 0xabcdef99)},
 			"own_restricted_field 0x0041=?>0x00000007 0x000c"},
 		{"bounded", [][]byte{bodyValuesBlock(99, 0x4a, 7), bodyValuesBlock(99, 0x4a, 8), bodyValuesBlock(99, 0x4a, 9), bodyValuesBlock(99, 0x4a, 10), bodyValuesBlock(99, 0x4a, 11)},
@@ -462,5 +462,100 @@ func TestBodyRefusalReportsParsedOwnFieldsInOriginalOrder(t *testing.T) {
 	}
 	if got := modcb.BodyUpdateDetail(modcb.BodyUpdateHarmless, []string{"0x0018"}); got != modcb.BodyUpdateHarmless {
 		t.Fatal("diagnostic changed admission", got)
+	}
+}
+
+func TestOwnPoseAndDestinationAreDistinctPhysicalSources(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		subject              byte
+		op                   uint16
+		settled, own, follow bool
+	}{
+		{"bystander leaves", 28, opcode.SMSGDestroyObject, true, true, true},
+		{"owner leaves", 3, opcode.SMSGDestroyObject, true, true, false},
+		{"self disappears", 99, opcode.SMSGDestroyObject, false, false, false},
+		{"normal sit", 1, opcode.SMSGStandstateUpdate, true, false, false},
+		{"genuine death stance", 7, opcode.SMSGStandstateUpdate, false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := newBodyContinuitySession(t)
+			c.observe(opcode.SMSGLoginVerifyWorld, positionBody(349, 1, 2, 3, .5))
+			ctx := modsession.WithBodyInput(context.Background())
+			if _, _, err := c.e.writeContext(ctx, opcode.MSGMoveStop, scopedBodyPacket(t, opcode.MSGMoveStop), c.e.transport.snapshot()); err != nil {
+				t.Fatal(err)
+			}
+			packet := []byte{tc.subject}
+			if tc.op == opcode.SMSGDestroyObject {
+				packet = append(binary.LittleEndian.AppendUint64(nil, uint64(tc.subject)), 0)
+			}
+			c.observe(tc.op, packet)
+			for _, view := range []struct {
+				name string
+				ctx  context.Context
+				want bool
+			}{
+				{"new settled source", modsession.WithSettledBodySource(ctx), tc.settled},
+				{"ongoing direct", (modsession.WithSelfBodyInput(ctx)), tc.own},
+				{"continuing follow", ctx, tc.follow},
+			} {
+				r, why := c.e.s.bodyInputReport(view.ctx, "")
+				if (r != nil) != view.want {
+					t.Fatal(view.name, why, r)
+				}
+			}
+		})
+	}
+}
+
+func TestCopiedMeasuredInputRespectsPhysicalCapabilitiesAtSelection(t *testing.T) {
+	root := os.Getenv("BUDDY_NAV_POOL_TEST_DATA_DIR")
+	if root == "" {
+		t.Skip("set BUDDY_NAV_POOL_TEST_DATA_DIR to copied client assets")
+	}
+	for _, tc := range []struct {
+		name              string
+		field             int
+		value             uint32
+		crossing, allowed bool
+	}{
+		{"non-swimmer at ledge", 0x3b, 8 | 0x4000, true, false}, {"cannot turn toward pool", 0x3c, 0x8000, true, false},
+		{"non-swimmer walks on supported ground", 0x3b, 8 | 0x4000, false, true}, {"no-turn straight ahead", 0x3c, 0x8000, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, conn := newBodyContinuitySession(t)
+			a := actions.NewService(c, 99, "physical-capability")
+			a.SetNavigationDataDir(root)
+			ctx := context.Background()
+			x, y, z, o := float32(475.6561), float32(50.766533), float32(-96.19031), float32(.18)
+			if !tc.crossing {
+				x, y, z = 480.098, 48.420002, -96.25103
+			}
+			for _, p := range []struct {
+				op   uint16
+				wire []byte
+			}{
+				{opcode.SMSGLoginVerifyWorld, positionBody(349, x, y, z, o)}, {opcode.SMSGUpdateObject, bodyPlayerCreate(99, x, y, z, o)},
+				{opcode.SMSGUpdateObject, bodyPlayerCreate(3, 390.99612, 27.22958, -130.92584, .5)},
+				{opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, bodyValuesBlock(99, tc.field, tc.value))},
+			} {
+				_, p0 := c.observe(p.op, p.wire)
+				if _, err := a.OnPacket(ctx, p0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mode := "ground_or_water"
+			if tc.crossing {
+				mode = "follow_water"
+				if _, err := a.Follow(ctx, &actionsv1.ToggleRequest{Enabled: true}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			md, _ := metadata.FromOutgoingContext(modcb.WithPolicySpell(ctx, strings.Repeat("f", 64)))
+			out, err := a.MoveBody(metadata.NewIncomingContext(ctx, md), &actionsv1.BodyMovementRequest{SessionId: "physical-capability", SelfGuid: 99, VisitId: 1, SequenceId: 37, DurationMs: 120, Landing: mode})
+			if err != nil || (conn.writes > 0) != tc.allowed || (out.GetBodyMovement().GetPhase() == "body_input_written") != tc.allowed {
+				t.Fatal(err, conn.opcodes, out)
+			}
+		})
 	}
 }

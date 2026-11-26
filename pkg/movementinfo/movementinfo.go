@@ -247,3 +247,13 @@ func (i Info) BodyWaterEntry(forward bool) bool {
 	}
 	return i.Flags == flags && i.ExtraFlags == 0 && i.PitchPresent && i.Pitch == 0 && i.FallTime == 0 && i.AllFinite()
 }
+
+// OwnFrame reads the entire normal MovementInfo, including its enclosing mover.
+func OwnFrame(payload []byte, self uint64) (Info, bool) {
+	c := reader{b: payload}
+	if self == 0 || c.guid() != self || c.short {
+		return Info{}, false
+	}
+	i, n, err := DecodePrefix(payload[c.off:])
+	return i, err == nil && n == len(payload)-c.off && i.AllFinite()
+}

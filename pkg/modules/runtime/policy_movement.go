@@ -190,13 +190,13 @@ func (m *Manager) invokePolicyMovement(ctx context.Context, inst *instance, md m
 	return outcome, payload
 }
 
-// Only a native idle-bound body/travel invocation may supply these scopes.
-// Lua chooses the input, never a transport scope or an unscoped fallback.
 func routeScopeBound(scope *modv1.TransportScope) bool {
 	return scope != nil && scope.ConnectionId != "" && scope.VisitBound && scope.VisitRevision != 0 &&
 		scope.MotionRevision != 0 && scope.SelfGuid != 0 && !scope.SplineActive
 }
 
+// The native Actions handler attaches each physical source. Lua supplies the
+// selected operation and its bound dispatch token.
 func (m *Manager) writePolicyScopedMovement(ctx context.Context, token, sessionID, module string, code uint32, payload []byte, scope *modv1.TransportScope) (bool, error) {
 	registry := &m.policySpells
 	registry.mu.Lock()
