@@ -248,7 +248,7 @@ func TestEncounterObservationCannotCombineOlderAliveWithNewResurrectionGo(t *tes
 	}
 }
 
-func TestEncounterObservationExistingResurrectionGoThenLifeRetainsSettlement(t *testing.T) {
+func TestEncounterObservationExistingResurrectionEffectThenLifeRetainsOfferEvidence(t *testing.T) {
 	s, f, _ := resRig(t)
 	s.encounterVisit = encounterVisit{bound: true, revision: 1, mapID: f.world.Self.MapId}
 	f.world.VisitRevision = 1
@@ -262,10 +262,11 @@ func TestEncounterObservationExistingResurrectionGoThenLifeRetainsSettlement(t *
 	if !s.supportOp.view.ServerCastGo || s.supportOp.view.EffectObserved {
 		t.Fatal("GO invented life", s.supportOp)
 	}
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpelllogexecute, Payload: resurrectionExecute(s.selfGUID, 2006, 113, 3)})
 	f.world.Owner.Alive = true
 	f.world.Owner.Health = 100
 	out, err := s.EncounterObservation(context.Background(), &emptypb.Empty{})
-	if err != nil || out.Reason != "" || !s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "confirmed_alive" || s.resurrectionBindings[3] || countPackets(f, opcode.CMSGCastSpell) != 1 {
-		t.Fatalf("existing GO then observed life lost normal settlement: out=%v operation=%v err=%v", out, s.supportOp, err)
+	if err != nil || out.Reason != "" || !s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "confirmed_resurrection_offer_effect" || s.resurrectionBindings[3] || countPackets(f, opcode.CMSGCastSpell) != 1 {
+		t.Fatalf("observed life lost the caster's offer evidence: out=%v operation=%v err=%v", out, s.supportOp, err)
 	}
 }

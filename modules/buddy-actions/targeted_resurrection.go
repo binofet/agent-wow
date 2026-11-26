@@ -2,6 +2,8 @@ package buddyactions
 
 import (
 	"context"
+	"encoding/binary"
+	"errors"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -9,6 +11,65 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func (s *Service) pendingResurrectionLocked() *supportAttempt {
+	op := s.supportOp
+	if s.closed || op == nil || op.resurrectionEffect == 0 || !s.state.CastPending ||
+		op.count != s.castCount || op.view.SpellId != s.pendingSpell || op.view.TargetGuid != s.pendingTarget || !s.resurrectionBindings[op.owner] {
+		return nil
+	}
+	return op
+}
+
+func (s *Service) endResurrectionLocked(phase string) {
+	if op := s.pendingResurrectionLocked(); op != nil {
+		op.view.Phase = phase
+		s.state.CastPending = false
+		s.pendingSpell, s.pendingTarget = 0, 0
+	}
+}
+
+func (s *Service) expireResurrectionLogLocked() {
+	if op := s.pendingResurrectionLocked(); op != nil && op.view.ServerCastGo && !s.now().Before(op.until) {
+		// Keep the actual GO hit observation as the unverified terminal phase.
+		s.endResurrectionLocked(op.view.Phase)
+	}
+}
+
+func (s *Service) observeResurrectionLogLocked(p []byte) error {
+	// The log has no cast count. Require a preceding count-bearing GO on
+	// this active cast, within its original deadline and death binding.
+	op := s.pendingResurrectionLocked()
+	if op == nil || !op.view.ServerCastGo {
+		return nil
+	}
+	bad := errors.New("malformed resurrection execute log")
+	caster, n, err := readGUID(p)
+	if err != nil || len(p)-n < 4 {
+		return bad
+	}
+	p = p[n:]
+	if caster != s.selfGUID || binary.LittleEndian.Uint32(p) != op.view.SpellId {
+		return nil
+	}
+	// AzerothCore SendLogExecute writes one record for this direct spell:
+	// effect count, DBC effect ID, victim count and packed player GUID.
+	if len(p) < 16 {
+		return bad
+	}
+	if binary.LittleEndian.Uint32(p[4:]) != 1 || binary.LittleEndian.Uint32(p[8:]) != op.resurrectionEffect || binary.LittleEndian.Uint32(p[12:]) != 1 {
+		return nil
+	}
+	patient, n, err := readGUID(p[16:])
+	if err != nil || len(p) != 16+n {
+		return bad
+	}
+	if patient == op.owner {
+		op.view.EffectObserved = true
+		s.endResurrectionLocked("confirmed_resurrection_offer_effect")
+	}
+	return nil
+}
 
 func playerTeamForRace(race uint32) uint8 {
 	switch race {
