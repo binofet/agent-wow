@@ -1674,6 +1674,40 @@ def inventory_context(state, character_guid, names=None):
     return result
 
 
+def water_supply_facts(view, guid):
+    """Current native facts alongside the accepted policy's last returned phase."""
+    actions, inventory, trade = view["actions"], view["inventory"], view["trade"]
+    sid = actions.get("sessionId")
+    if (not sid or str(actions.get("selfGuid")) != str(guid) or str(inventory.get("selfGuid")) != str(guid)
+            or any(view[key].get("sessionId") != sid for key in ("inventory", "trade", "party"))):
+        return None
+    facts = dict(sessionId=sid)
+    for name, source, keys in (
+        ("actions", actions, ("moving", "motionUnconfirmed", "traveling", "castPending",
+            "autoAttacking", "autoAttackRequested", "autoAttackUnconfirmed", "interactionOwner")),
+        ("trade", trade, ("phase", "waterGiftArmed", "reason", "junkReason")),
+        ("inventory", inventory, ("active", "closing", "blockedReason", "drinkingSupported")),
+    ):
+        facts[name] = {key: source[key] for key in keys if key in source}
+    receipts = [trade.get("lastJunkDisposal"), *(trade.get("junkOperations") or [])]
+    phases = {row["status"] for row in receipts if isinstance(row, dict) and isinstance(row.get("status"), str)}
+    if phases: facts["trade"]["junkOperationStatuses"] = sorted(phases)
+    actor = view["world"].get("self", {})
+    if str(actor.get("guid")) == str(guid):
+        facts["body"] = {key: actor[key] for key in ("present", "aliveKnown", "alive", "unitFlagsKnown",
+            "unitFlags", "powerKnown", "power", "maxPower", "channelSpellId") if key in actor}
+    if inventory.get("inventoryKnown") and "manaDrinkCount" in inventory:
+        facts["inventory"]["manaDrinkCount"] = inventory["manaDrinkCount"]
+    consumables = inventory.get("consumableContext") or {}
+    if "bodyReady" in consumables: facts["inventory"]["bodyReady"] = consumables["bodyReady"]
+    try:
+        bags = inventory_context(inventory, guid)
+        facts["inventory"].update({key: bags[key] for key in ("freeSlots", "totalSlots") if key in bags})
+    except ConversationError:
+        pass  # Incomplete bag frames do not prove zero space.
+    return facts
+
+
 def quest_task_snapshot(character_guid, rpc_url=None, quest_id=0, stop=False, restore_follow=True):
     unknown = {"active": False}
     try:
@@ -2875,6 +2909,7 @@ class DirectBrain(AgentBrain):
             seal = getattr(cancelled, 'entered', None)
             if callable(seal): seal()
         interrupted.entered = entered
+        interrupted.waiting = getattr(cancelled, "waiting", None)
         private_context = getattr(self, '_generation_context', None) or {}
         literal_command=private_context.get('literalGMCommand')
         if literal_command is not None:
@@ -3276,11 +3311,12 @@ class CodexBrain(AgentBrain):
                     process.stdin.close()
                     timeout=self.timeout if self.timeout is not None else (None if developer else 120)
                     deadline=None if timeout is None else time.monotonic()+timeout
+                    waiting = getattr(cancelled, "waiting", None)
                     while process.poll() is None:
                         if self.stopped():
                             reason='stop_requested'
                             raise Stopped("Conversation stop requested")
-                        if cancelled and cancelled():
+                        if cancelled and (cancelled() or waiting and waiting()):
                             reason='owner_input_waiting'
                             raise OwnerInputPending("Fresh owner input is waiting")
                         if deadline is not None and time.monotonic() >= deadline:
@@ -3455,6 +3491,7 @@ class BuddyControls:
         self.mission_follow_binding = None
         self.lua_water_supply = {}
         self.water_supply_phase = "idle"
+        self.water_supply_observation = {}
         self.supply_state_dir = Path(supply_state_dir).absolute() if supply_state_dir is not None else None
         self.supply_profile_identity = copy.deepcopy(profile_identity)
         self._water_supply_loaded = False
@@ -3497,6 +3534,7 @@ class BuddyControls:
         if self.character_guid != 4:
             return
         yielded = False
+        self.water_supply_observation = {}
         try:
             supply = mana_supply_module()
             self.load_water_supply(supply)
@@ -3532,10 +3570,20 @@ class BuddyControls:
                     observations[port] = view
                 except supply.runtime.Error:
                     continue
+            observed_at = int(time.time()*1000)
             # B's adapter commits Lua reservations before the write and retains
             # uncertain receipts. Even a zero-send preemption must not clear it.
             self.water_supply_phase = supply.maintain_supply(call, observations, self.lua_water_supply,
                                                            persist=self.persist_water_supply)
+            self.water_supply_observation = dict(observedAtUnixMs=observed_at, clients={})
+            for port, view in observations.items():
+                guid = supply.MIRA_GUID if port == supply.MIRA else supply.RECIPIENTS[port]
+                try:
+                    facts = water_supply_facts(view, guid)
+                except (AttributeError, KeyError, TypeError, ValueError, ConversationError):
+                    continue
+                if facts is not None:
+                    self.water_supply_observation["clients"][str(guid)] = facts
         except OwnerInputPending:
             pass
         except Exception as error:
@@ -4608,7 +4656,7 @@ class BuddyControls:
 
 
 class Conversation:
-    def __init__(self, rpc, brain, player_guid=3, status=lambda **kw: None, stopped=lambda: False, player_name="Joel", controls=None, banter_seconds=0, character_name="Arlen", character_class="priest", character_guid=1, party_agents=None, resume_whispers=False, continue_owner_whisper=None):
+    def __init__(self, rpc, brain, player_guid=3, status=lambda **kw: None, stopped=lambda: False, player_name="Joel", controls=None, banter_seconds=0, character_name="Arlen", character_class="priest", character_guid=1, party_agents=None, resume_whispers=False, continue_owner_whisper=None, poll_seconds=1):
         self.rpc, self.brain, self.player_guid, self._status_callback = rpc, brain, player_guid, status
         self.cursor = 0
         self.session_id = ""
@@ -4617,6 +4665,8 @@ class Conversation:
         self.party_agents = dict(party_agents or {})
         self.peer_remaining, self.peer_until, self.next_peer = 0, 0, 0
         self.controls = controls
+        self.poll_seconds = poll_seconds
+        self.next_water_poll = 0
         self.banter_seconds = banter_seconds
         self.last_activity = time.monotonic()
         self.next_banter = self.last_activity + banter_seconds
@@ -5029,6 +5079,14 @@ class Conversation:
         cancelled.prepare = prepare
         def entered(): preparing[0] = False
         cancelled.entered = entered
+        def waiting():
+            if self.service_water_supply(during_model_wait=True):
+                interruption_latched[0] = True
+                if self.session_id != bound_chat:
+                    interrupt_reason[0] = "chat_body_changed"
+                return cancelled()
+            return False
+        cancelled.waiting = waiting
         development=state.get('development',{}) if isinstance(state,dict) else {}
         sid=development.get('sessionId') if isinstance(development,dict) else None
         context=dict(sessionId=sid if isinstance(sid,str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid) else self.session_id,
@@ -5167,6 +5225,25 @@ class Conversation:
         self.status()  # First baseline status precedes these actual Core reads.
         return True
 
+    def service_water_supply(self, *, during_model_wait=False):
+        if not self.session_id or self.character_guid != 4 or not isinstance(self.controls, BuddyControls):
+            return False
+        if during_model_wait and time.monotonic() < self.next_water_poll:
+            return False
+        # Idle and model waits share this listener thread, profile lock and
+        # durable reservation. A fresh unread owner packet preempts each RPC.
+        self.controls.maintain_water_supply(still_current=lambda:
+            not self.stopped() and self.same_body(timeout=.25))
+        self.next_water_poll = time.monotonic() + self.poll_seconds
+        phase = self.controls.water_supply_phase
+        error = self.controls.lua_water_supply.get("error") if phase in (
+            "accepted_water_policy_unavailable", "water_supply_unavailable", "water_supply_not_dispatched",
+            "water_supply_rpc_unconfirmed", "water_supply_persistence_unconfirmed") else None
+        self.status(waterSupplyPhase=phase,
+                    waterSupplyObservation=self.controls.water_supply_observation,
+                    waterSupplyError=error[:256] if isinstance(error, str) else None)
+        return phase == "yielded_to_owner"
+
     def tick(self):
         resumed = not self.initialized
         if not self.initialized:
@@ -5260,14 +5337,10 @@ class Conversation:
             if not self.refresh_controls():return
             self.poll_shared_quest()
             self.status(phase="listening", cursor=self.cursor)
+            if self.service_water_supply():return
             if self.maybe_repair_mission():return
             if self.maybe_review_combat():return
             if self.maybe_review_learned_spells():return
-            if isinstance(self.controls, BuddyControls) and self.character_guid == 4:
-                self.controls.maintain_water_supply(still_current=lambda:
-                    not self.stopped() and self.same_body(timeout=.25))
-                self.status(waterSupplyPhase=self.controls.water_supply_phase)
-                if self.controls.water_supply_phase == "yielded_to_owner":return
             self.maybe_initiate()
             return
         if result.get("cursorLost", False):
@@ -6281,7 +6354,7 @@ def main(argv=None):
         record["modelSelection"] = brain.model_selection()
         controls = BuddyControls(rpc, args.player_name, args.character_class, args.owner_quest_context, args.character_guid,
                                  supply_state_dir=state, profile_identity=identity)
-        conversation = Conversation(rpc, brain, args.player_guid, status, stopped,
+        conversation = Conversation(rpc, brain, args.player_guid, status, stopped, poll_seconds=args.poll_seconds,
                                     controls=controls, banter_seconds=args.banter_seconds, player_name=args.player_name, character_name=args.character_name, character_class=args.character_class, character_guid=args.character_guid, party_agents=roster, resume_whispers=args.resume_whispers, continue_owner_whisper=args.continue_owner_whisper)
         deadline = time.monotonic() + args.max_hours * 3600
         status()

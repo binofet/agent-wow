@@ -6,12 +6,15 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import threading
 import unittest
 from unittest.mock import patch
 
 import test_party_mana_supply as supply_fixture
+from test_combat_review import Tracker
+from test_direct_brain import FakeHTTP, spoken
 
 
 _loader = importlib.machinery.SourceFileLoader(
@@ -319,6 +322,84 @@ class ManaDriverTests(unittest.TestCase):
         self.assertEqual(self.brain.calls, [])
         self.assertEqual(self.loop.cursor, 0)
         self.assert_actual_policy_bounds()
+
+    def test_safe_supply_turn_precedes_mission_repair(self):
+        phases = []
+        def repair():
+            phases.append(self.controls.water_supply_phase)
+            return True
+        self.loop.maybe_repair_mission = repair
+        self.loop.tick()
+        self.assertEqual(phases, ["conjure_requested"])
+        self.assertEqual(len(self.fixture.calls), 1)
+
+    def test_rest_window_in_actual_combat_review_then_owner_and_restart_keep_unknown(self):
+        mage = self.fixture.mira
+        mage["inventory"]["manaDrinkCount"] = 0
+        mage["actions"]["moving"] = True
+        bag = mage["inventory"]["inventoryBags"][0]
+        bag.update(slotCount=16, slots=[dict(bag=0, slot=i) for i in range(16)])
+        self.fixture.fail_method = "buddy-actions.create_item"
+        original_rpc = self.fixture.rpc
+        entered, release = threading.Event(), threading.Event()
+        writes_in_model_wait = []
+
+        def native(port, method, params):
+            if method == "buddy-actions.create_item":
+                writes_in_model_wait.append(entered.is_set() and not release.is_set())
+                self.owner_pending = True
+            return original_rpc(port, method, params)
+
+        def model_wait(_):
+            mage["actions"]["moving"] = False
+            entered.set()
+            release.wait(15)
+            return spoken()
+
+        self.fixture.rpc = native
+        self.refresh_rpc = lambda method, params, timeout: self.clients[8087].call(method, params, timeout)
+        self.controls.combat_context = Tracker()
+        self.controls.actions, self.controls.party_session = mage["actions"], "aw-4"
+        self.controls.actions_available = self.controls.party_available = True
+        del self.loop.maybe_review_combat  # Exercise the normal listener's review selection.
+        workspace = self.profile_dir / "synthetic-actor"
+        subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
+        with FakeHTTP([model_wait]) as provider, patch.object(converse, "ROOT", workspace), \
+             patch.object(converse, "RPC", return_value=self.rpc):
+            self.loop.brain = converse.DirectBrain(self.profile_dir, character_name="Mira",
+                character_class="mage", developer_workspace=workspace, provider="local",
+                model="fixture-mage", base_url=provider.base)
+            try:
+                self.loop.tick()
+                self.assertTrue(entered.is_set())
+                self.assertEqual(writes_in_model_wait, [True])
+                self.assertTrue(any(row.get("combatReviewPhase") == "yielded_to_input" for row in self.statuses))
+                self.assertEqual(self.loop.cursor, 0)
+            finally:
+                release.set()
+
+        reports = [row for row in self.statuses if "waterSupplyObservation" in row]
+        first = reports[0]["waterSupplyObservation"]
+        self.assertEqual(reports[0]["waterSupplyPhase"], "mage_busy")
+        self.assertGreater(first["observedAtUnixMs"], 0)
+        self.assertTrue(first["clients"]["4"]["actions"]["moving"])
+        self.assertEqual(first["clients"]["4"]["inventory"], dict(freeSlots=16, totalSlots=16, manaDrinkCount=0))
+        self.assertEqual(first["clients"]["1"]["inventory"]["manaDrinkCount"], 0)
+        final = reports[-1]["waterSupplyObservation"]["clients"]["4"]
+        self.assertFalse(final["actions"]["moving"])
+        self.assertEqual(self.controls.lua_water_supply["last"]["outcome"], "transport_unconfirmed")
+        self.loop.brain = self.brain
+        self.loop.tick()
+        self.assertEqual(self.loop.cursor, 1)
+        self.assertEqual(len(self.brain.calls), 1)
+
+        self.profile_lock.close()
+        self.lock_profile()
+        self.new_listener()
+        self.loop.tick()
+        self.loop.tick()
+        self.assertEqual(self.controls.water_supply_phase, "conjure_outcome_unconfirmed")
+        self.assertEqual(writes_in_model_wait, [True])
 
     def test_idle_ticks_share_the_exact_lua_selected_stack(self):
         supply_fixture.carried(self.fixture.mira, 2136, 8)
