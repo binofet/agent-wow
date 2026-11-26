@@ -304,6 +304,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		return false, nil
 	}
 	rejected := false
+	var rejectionResult uint32
 	switch code {
 	case opcode.SMSGCastFailed:
 		if len(p) < 6 || p[0] != op.count || binary.LittleEndian.Uint32(p[1:]) != op.view.SpellId {
@@ -313,6 +314,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, bad
 		}
 		rejected = true
+		rejectionResult = uint32(p[5])
 	case opcode.SMSGSpellFailure, opcode.SMSGSpellFailedOther:
 		guid, n, e := readGUID(p)
 		if e != nil || len(p) < n+6 || guid != s.selfGUID || p[n] != op.count || binary.LittleEndian.Uint32(p[n+1:]) != op.view.SpellId {
@@ -322,6 +324,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, bad
 		}
 		rejected = true
+		rejectionResult = uint32(p[n+5])
 	case opcode.SMSGSpellStart, opcode.SMSGSpellGo:
 		guid, count, spell, off, e := castEvent(p)
 		if e != nil || guid != s.selfGUID || count != op.count || spell != op.view.SpellId {
@@ -407,8 +410,8 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		if starterSelf && op == s.starterSpells.uncertainStrike && !op.view.ServerCastGo && !op.view.EffectObserved {
 			s.starterSpells.uncertainStrike = nil
 		}
-		if (op.genericSpell || op.view.Capability == pickLockCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && code == opcode.SMSGCastFailed {
-			s.state.LastCastFailure = uint32(p[5])
+		if op.genericSpell || (op.view.Capability == pickLockCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && code == opcode.SMSGCastFailed {
+			s.state.LastCastFailure = rejectionResult
 		}
 		if op.view.Capability == string(spellcatalog.Resurrect) {
 			delete(s.resurrectionBindings, op.owner)
