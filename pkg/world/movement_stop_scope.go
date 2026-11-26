@@ -35,6 +35,9 @@ func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []by
 			return nil
 		}
 	}
+	if qualified && bodyMovementScopeOpcode(op) {
+		return e.transport.reserveBodyMovement(op, body, requested, true)
+	}
 	if op == opcode.MSGMoveStop && requested != nil {
 		return e.transport.reserveMovementStop(body, requested, prior, qualified && prior != nil && e.s.bodyProof(ctx, prior.TransportScope, e.transport.scope) == "", route)
 	}
