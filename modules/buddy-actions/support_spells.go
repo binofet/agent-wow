@@ -39,6 +39,8 @@ type supportAttempt struct {
 	starterBinding        *practiceLifecycleBinding
 	lifecycleSession      string
 	lifecycleSelf         uint64
+
+	resurrectionPatientHit bool
 }
 type resurrectionOffer struct {
 	caster, revision, epoch uint64
@@ -116,7 +118,7 @@ func (s *Service) settleResurrectionLifeLocked(w *worldv1.SnapshotResponse, allo
 					s.state.CastPending = false
 					s.pendingSpell, s.pendingTarget = 0, 0
 				}
-				if s.supportOp.view.ServerCastGo && allowAttribution {
+				if s.supportOp.resurrectionPatientHit && allowAttribution {
 					s.supportOp.view.EffectObserved = true
 					s.supportOp.view.Phase = "confirmed_alive"
 				} else {
@@ -215,7 +217,7 @@ func (op *supportAttempt) reportPolicySpellEffect(ctx context.Context, castPendi
 		if !op.view.ServerCastGo || !op.view.EffectObserved {
 			return
 		}
-	case "server_cast_go_effect_unverified":
+	case "server_cast_go_effect_unverified", "server_cast_go_without_patient_hit":
 		if castPending {
 			return
 		}
@@ -389,6 +391,14 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, nil
 		}
 		op.view.Phase = "server_cast_go_effect_unverified"
+		if op.view.Capability == string(spellcatalog.Resurrect) {
+			// The explicit target can be a corpse. AzerothCore puts its player
+			// owner in the GO hit list when admitting the resurrection effect.
+			op.resurrectionPatientHit = castGoListsHit(p[off+8:], op.owner)
+			if !op.resurrectionPatientHit {
+				op.view.Phase = "server_cast_go_without_patient_hit"
+			}
+		}
 		if op.cleanseAura != 0 {
 			op.view.Phase = "waiting_cleanse_effect"
 		}

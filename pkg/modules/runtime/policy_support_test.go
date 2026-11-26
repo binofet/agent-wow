@@ -34,6 +34,7 @@ func TestPolicyResurrectionBindsPatientToExactCorpsePacketAndEffect(t *testing.T
 	}{
 		{corpse, "confirmed_alive", true, behavior.ActionConfirmed},
 		{corpse, "server_cast_go_effect_unverified", false, behavior.ActionSettledUnverified},
+		{corpse, "server_cast_go_without_patient_hit", false, behavior.ActionSettledUnverified},
 		{corpse + 1, "confirmed_alive", true, ""},
 	} {
 		raw, _ := proto.Marshal(&actionsv1.SpellOperation{Capability: "resurrect", SpellId: 2006, TargetGuid: test.target, Phase: test.phase, TransportWritten: true, ServerCastGo: true, EffectObserved: test.observed})

@@ -90,6 +90,69 @@ func TestTargetedResurrectionCastsLearnedRedemptionOnExactAllianceNonpartyTarget
 	}
 }
 
+func TestCorpseRedemptionRequiresThePatientsHitForLaterLifeAttribution(t *testing.T) {
+	const patient, corpse = uint64(31), uint64(0xf1010000000008ac)
+	for _, tc := range []struct {
+		name       string
+		hits       []uint64
+		missed     bool
+		patientHit bool
+	}{
+		{name: "zero hits"}, {name: "patient missed", missed: true},
+		{name: "other hit", hits: []uint64{77}},
+		{name: "explicit corpse only", hits: []uint64{corpse}},
+		{name: "patient hit", hits: []uint64{patient}, patientHit: true},
+		{name: "patient among hits", hits: []uint64{77, patient}, patientHit: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f, _ := resRig(t)
+			f.world.Self.MapId, f.world.Self.ClassId, f.world.Self.Level = 349, 2, 40
+			f.world.Owner = nil
+			f.world.PlayerCorpses = []*worldv1.CorpseState{{Guid: corpse, OwnerGuid: patient, Present: true, MapKnown: true,
+				MapId: 349, PositionKnown: true, X: f.world.Self.X + 2, Y: f.world.Self.Y, Z: f.world.Self.Z,
+				FlagsKnown: true, RaceKnown: true, RaceId: 1}}
+			learnSpells(s, 10324)
+			req := &actionsv1.ResurrectOnceRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: patient, SpellId: 10324}
+			if _, err := s.ResurrectOnce(context.Background(), req); err != nil {
+				t.Fatal(err)
+			}
+
+			header := smiteEvent(false, s.castCount, corpse)
+			_, _, _, off, _ := castEvent(header)
+			binary.LittleEndian.PutUint32(header[off-4:], req.SpellId)
+			goPacket := append(header[:off+8], byte(len(tc.hits)))
+			for _, hit := range tc.hits {
+				goPacket = binary.LittleEndian.AppendUint64(goPacket, hit)
+			}
+			if tc.missed {
+				goPacket = append(goPacket, 1)
+				goPacket = binary.LittleEndian.AppendUint64(goPacket, patient)
+				goPacket = append(goPacket, 7) // SPELL_MISS_IMMUNE
+			} else {
+				goPacket = append(goPacket, 0)
+			}
+			goPacket = binary.LittleEndian.AppendUint32(goPacket, 0x8000)
+			goPacket = append(goPacket, packedGUID(corpse)...)
+			s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: goPacket})
+			op := state(t, s).GetLastSpellOperation()
+			phase := "server_cast_go_without_patient_hit"
+			if tc.patientHit {
+				phase = "server_cast_go_effect_unverified"
+			}
+			if !op.GetServerCastGo() || op.GetEffectObserved() || op.GetPhase() != phase || !s.resurrectionBindings[patient] {
+				t.Fatal("GO lost target facts or retired this death", op)
+			}
+
+			f.world.NearbyPlayers = []*worldv1.PlayerState{{Guid: patient, MapId: 349, MapKnown: true, Present: true,
+				AliveKnown: true, Alive: true, HealthKnown: true, Health: 100, MaxHealth: 100}}
+			op = state(t, s).GetLastSpellOperation()
+			if op.GetEffectObserved() != tc.patientHit || s.resurrectionBindings[patient] || countPackets(f, opcode.CMSGCastSpell) != 1 {
+				t.Fatal("later life misattributed or cast replayed", op)
+			}
+		})
+	}
+}
+
 func TestExplicitNonpartyResurrectionOfferRequiresExactCasterAndConsumesOnce(t *testing.T) {
 	ctx := context.Background()
 	s, f, _ := rig(t)
