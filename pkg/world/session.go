@@ -77,9 +77,10 @@ type logoutOperation struct {
 	err  error
 }
 type packet struct {
-	opcode uint16
-	body   []byte
-	err    error
+	opcode     uint16
+	body       []byte
+	err        error
+	receivedAt time.Time
 }
 
 // Enter consumes an authenticated transport from worldconn.Dial, including on
@@ -295,11 +296,15 @@ func (s *Session) run(ready chan struct{}, timing timings) {
 		defer close(readerDone)
 		for {
 			op, body, err := s.conn.ReadPacket()
+			p := packet{opcode: op, body: body, err: err}
+			if op == opcode.SMSGMoveKnockBack && err == nil {
+				p.receivedAt = time.Now()
+			}
 			if err == nil {
 				logPacket(s.logger, "read", uint32(op), len(body))
 			}
 			select {
-			case packets <- packet{op, body, err}:
+			case packets <- p:
 			case <-readerStop:
 				return
 			}
