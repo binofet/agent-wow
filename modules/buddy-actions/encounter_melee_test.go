@@ -49,6 +49,131 @@ func TestLeaseMeleeCustodyRejectsUnrelatedStopAndOrdinaryMovement(t *testing.T) 
 	}
 }
 
+func TestLeaseMeleeResumesAfterOwnControlLossStopsTheSwing(t *testing.T) {
+	s, f, request, ctx, _ := leasedMeleeFixture(t)
+	if _, err := s.Melee(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	if _, receipt := deliverMeleeReceipt(t, s, opcode.SMSGAttackstart, meleeReceiptStart(s.selfGUID, request.TargetGuid)); receipt.GetPhase() != "confirmed_attack_start" {
+		t.Fatal("missing original START receipt", receipt)
+	}
+	if _, receipt := deliverMeleeReceipt(t, s, opcode.SMSGAttackstop, meleeReceiptStop(s.selfGUID, 0, 0)); receipt != nil {
+		t.Fatal("unsolicited stop produced an operation receipt", receipt)
+	}
+	sendClientControl(s, s.selfGUID, 0)
+	if s.state.AutoAttacking || s.encounterSwing.target != 0 || s.meleeOp.view.Phase != "confirmed_attack_start" {
+		t.Fatal("server control left the acknowledged swing active or changed its receipt", s.stateLocked())
+	}
+	if _, err := s.Melee(ctx, request); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal("melee admitted during loss of control", err)
+	}
+	sendClientControl(s, s.selfGUID, 1)
+	f.world.Self.UnitFlags |= unitFlagsForcedMovement
+	s.Tick(ctx)
+	if _, err := s.Melee(ctx, request); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal("melee admitted before the body recovered", err)
+	}
+	f.world.Self.UnitFlags &^= unitFlagsForcedMovement
+	s.Tick(ctx)
+	if countPackets(f, opcode.CMSGAttackswing) != 1 || countPackets(f, opcode.CMSGAttackstop) != 0 {
+		t.Fatal("the native controller issued an unsolicited attack", f.packets)
+	}
+	if _, err := s.Melee(ctx, request); err != nil || countPackets(f, opcode.CMSGAttackswing) != 2 {
+		t.Fatal("new exact policy attack after recovery", err, f.packets)
+	}
+	if _, err := s.Melee(ctx, request); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal("replayed the newly written attack before its own acknowledgement", err)
+	}
+	acknowledgeExactMeleeStart(t, s, request.TargetGuid)
+	if !s.state.AutoAttacking || s.state.AutoAttackTargetGuid != request.TargetGuid {
+		t.Fatal("new exact START was not confirmed", s.stateLocked())
+	}
+}
+
+func TestLeaseMeleeControlStopRequiresCurrentOwnEvidence(t *testing.T) {
+	for _, name := range []string{
+		"stop alone", "control alone", "already under control", "foreign stop", "foreign control",
+		"noncanonical victim", "noncanonical attacker", "noncanonical mover", "expired stop",
+		"new start", "different target start", "new swing", "control granted", "transfer",
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f, request, ctx, advance := leasedMeleeFixture(t)
+			if _, err := s.Melee(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+			acknowledgeExactMeleeStart(t, s, request.TargetGuid)
+			attacker, mover := s.selfGUID, s.selfGUID
+			if name == "foreign stop" {
+				attacker++
+			}
+			if name == "foreign control" {
+				mover++
+			}
+			if name == "already under control" {
+				sendClientControl(s, mover, 0)
+			}
+			if name != "control alone" {
+				stop := meleeReceiptStop(attacker, 0, 0)
+				switch name {
+				case "noncanonical victim":
+					stop = append(packedGUID(attacker), 1, 0, 0, 0, 0, 0)
+				case "noncanonical attacker":
+					stop = []byte{3, byte(attacker), 0, 0, 0, 0, 0, 0}
+				}
+				deliverMeleeReceipt(t, s, opcode.SMSGAttackstop, stop)
+			}
+			switch name {
+			case "expired stop":
+				advance(meleeReceiptLimit)
+			case "new start":
+				acknowledgeExactMeleeStart(t, s, request.TargetGuid)
+			case "different target start":
+				acknowledgeExactMeleeStart(t, s, request.TargetGuid+1)
+			case "new swing":
+				deliverMeleeReceipt(t, s, opcode.SMSGAttackerstateupdate, meleeDamageFixture(s.selfGUID, request.TargetGuid, 5, 0))
+			case "control granted":
+				sendClientControl(s, s.selfGUID, 1)
+			case "transfer":
+				deliverMeleeReceipt(t, s, opcode.SMSGTransferPending, make([]byte, 4))
+			}
+			if name == "noncanonical mover" {
+				deliverMeleeReceipt(t, s, opcode.SMSGClientControlUpdate, []byte{3, byte(mover), 0, 0})
+			} else if name != "stop alone" {
+				sendClientControl(s, mover, 0)
+			}
+			if !s.state.AutoAttacking || s.encounterSwing.target != request.TargetGuid || countPackets(f, opcode.CMSGAttackswing) != 1 {
+				t.Fatal("unrelated or stale events retired the original swing", s.stateLocked())
+			}
+		})
+	}
+}
+
+func TestLeaseMeleeControlStopNeverSettlesOutstandingWrites(t *testing.T) {
+	for _, name := range []string{"pending start", "unknown start", "pending stop", "unknown stop"} {
+		t.Run(name, func(t *testing.T) {
+			s, f, request, ctx, _ := leasedMeleeFixture(t)
+			f.failSend = name == "unknown start"
+			if _, err := s.Melee(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+			if name == "pending stop" || name == "unknown stop" {
+				acknowledgeExactMeleeStart(t, s, request.TargetGuid)
+				request.Stop = true
+				f.failSend = name == "unknown stop"
+				if _, err := s.Melee(ctx, request); err != nil {
+					t.Fatal(err)
+				}
+			}
+			phase := s.meleeOp.view.Phase
+			deliverMeleeReceipt(t, s, opcode.SMSGAttackstop, meleeReceiptStop(s.selfGUID, 0, 0))
+			sendClientControl(s, s.selfGUID, 0)
+			if s.meleeOp.view.Phase != phase || s.encounterSwing.target != request.TargetGuid {
+				t.Fatal("control settled a directed operation without its exact receipt", s.stateLocked())
+			}
+		})
+	}
+}
+
 func TestLeaseMeleeLossStopsOnceAndWaitsForExactAck(t *testing.T) {
 	for _, name := range []string{"release acknowledged start", "expiry with ambiguous start", "expiry with explicit stop in flight"} {
 		t.Run(name, func(t *testing.T) {

@@ -114,7 +114,7 @@ local recovery
 -- Only the last native positioning result is cached. A rejected cast revokes
 -- that spatial evidence until an approach rechecks it; it never changes the
 -- encounter target queue or invents a successful cast.
-local invalid_target, checked_target
+local invalid_target, checked_target, failed_action
 function M.on_event(event)
     local receipt = event.receipt
     if not receipt then return true end
@@ -135,7 +135,10 @@ function M.on_event(event)
     if (receipt.outcome == "failed" or receipt.outcome == "not_dispatched") and
        (capability == "offense" or capability == "polymorph" or capability == "sap" or capability == "heal" or capability == "cleanse") and
        type(target) == "string" then
-        invalid_target, checked_target = target, nil
+        invalid_target, checked_target, failed_action = target, nil, receipt.action_id
+    elseif receipt.outcome=="confirmed" and target==invalid_target and
+           (capability=="offense" or capability=="heal" or capability=="cleanse" or capability=="polymorph") then
+        failed_action=nil
     elseif capability == "approach_target" and receipt.outcome == "settled_unverified" and target == invalid_target then
         checked_target = target
     end
@@ -381,6 +384,7 @@ function M.decide(obs,sequence,target,options)
     return {ready=false,phase="positioning",action=action(obs,sequence,target,options,false)}
 end
 function M.needs_position(target) return invalid_target == target end
+function M.position_failure(target) return invalid_target==target and failed_action or nil end
 function M.for_spell(obs,sequence,target,spell,options)
     options = options or {}
     local range = spell and spell.maxRange

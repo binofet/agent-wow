@@ -12,12 +12,16 @@
 -- aura; the creature never leaves a ground effect behind.
 local sonic={id="maraudon_sonic_burst",mapId=349,creatureEntry=13323,combatStandoff=true,
     minRangeYards=10,maxRangeYards=26,clearanceYards=4,durationMs=5000,attackWitnessMaxAgeMs=5000}
+-- Princess channels 21909 for eight seconds. Each 21868 pulse damages and
+-- knocks back enemies within 20 yards of her current position.
+local princess={id="maraudon_princess_dust_field",mapId=349,creatureEntry=12201,combatStandoff=true,
+    bodyStandoff=true,minRangeYards=23,maxRangeYards=32,clearanceYards=2,durationMs=5000,attackWitnessMaxAgeMs=5000}
 local rules = {
     {id="maraudon_sludge_backline", mapId=349, creatureEntry=12222,
      tankGuid="3", minRangeYards=14, maxRangeYards=36, automaticRange=false,
      clearanceYards=2, durationMs=600000, attackWitnessMaxAgeMs=5000,
      pulseRadiusYards=5, pulseIntervalMs=2000},
-    sonic,
+    sonic,princess,
 }
 -- The accepted actor intent may designate another tank. Bind it when the
 -- modules are composed, including on source reload.
@@ -72,24 +76,28 @@ local function fighting_carrier(obs,id,n,r)
 end
 local function caster_standoff(obs)
     local self=(obs.players or {})[obs.selfGuid]
-    if tank or obs.mapId~=sonic.mapId or obs.hostTargetRangeBandSupported~=true or
+    if tank or obs.mapId~=sonic.mapId or
        (obs.navigation or {}).motionUnconfirmed==true or not self or
        self.movementKnown~=true or self.swimming==true or type(self.groundRunSpeed)~="number" or self.groundRunSpeed<=0 or
        self.classKnown~=true or self.classId~=5 and self.classId~=8 and self.classId~=9 or
        self.aliveKnown~=true or self.alive~=true or self.mapKnown~=true or self.mapId~=obs.mapId or
        self.positionInferred==true or not encounter_movement or not encounter_movement.current_pose(self) then return end
-    local fighting=false
+    local prior
     for id,n in pairs(obs.targets or {}) do
-        if fighting_carrier(obs,id,n,sonic) then fighting=true;break end
+        if n.entry==princess.creatureEntry and (obs.hostTargetRangeBandSupported==true or
+           (obs.navigation or {}).bodyMovementSupported==true) and fighting_carrier(obs,id,n,princess) then
+            prior=princess;break
+        end
+        if obs.hostTargetRangeBandSupported==true and fighting_carrier(obs,id,n,sonic) then prior=sonic end
     end
-    if not fighting then return end
+    if not prior then return end
     local capability=self.classId==5 and "heal" or "offense"
     local reach=0
     for _,spell in pairs(obs.spells or {}) do
         if spell.known==true and spell.metadataKnown==true and spell.capability==capability and spell.weaponStrike~=true and
            type(spell.maxRange)=="number" and spell.maxRange>reach then reach=spell.maxRange end
     end
-    if self.classId~=5 then return sonic,nil,reach>0 and reach or nil end
+    if self.classId~=5 then return prior,nil,reach>0 and reach or nil end
     -- Use a currently visible party tank. The followed owner is the ordinary
     -- party's anchor when its roster carries no tank assignment.
     local group=(obs.party or {}).group or {}
@@ -107,7 +115,7 @@ local function caster_standoff(obs)
         end
     end
     if not assigned then anchor=owner end
-    if anchor and reach>0 then return sonic,anchor,reach end
+    if anchor and reach>0 then return prior,anchor,reach end
 end
 -- Pull admission is standing knowledge; positioning is needed only for an
 -- observed near hazard or an actual current party fight. Visibility alone is

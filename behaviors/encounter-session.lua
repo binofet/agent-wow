@@ -583,6 +583,12 @@ local function decide_encounter(frame)
         if not movement or not obs.worldObservationRevision then return end
         local rank = spell and (obs.spells or {})[tostring(spell)]
         if not rank or rank.metadataKnown ~= true then return end
+        if ranged_config and ranged_config.bodyStandoff and obs.hostTargetRangeBandSupported~=true then
+            -- The outer filter validates finite body inputs against the boss.
+            -- A max-range-only native route can run through the pulse on bad LOS.
+            out.rangedSpellPosition={targetGuid=target,spellId=spell,rangeYards=rank.maxRange}
+            return
+        end
         options = options or {}
         if rank.requiresBehind == true then options.behind = true end
         if ranged_config and commands.ranged_options then
@@ -638,7 +644,7 @@ local function decide_encounter(frame)
                 (support.needsApproach or not support.rangeUnknown and movement and movement.needs_position(support.targetGuid))
             local ready = true
             if needs_position then out.action, ready = position_for(support.targetGuid, support.spellId) end
-            if ready and not support.needsApproach then out.action = proposal(obs, "heal", support.targetGuid, support.spellId) end
+            if (ready or out.rangedSpellPosition) and not support.needsApproach then out.action = proposal(obs, "heal", support.targetGuid, support.spellId) end
         end
         return out
     end
@@ -651,8 +657,10 @@ local function decide_encounter(frame)
         task_support_action=true
         local needs=cleanse.targetGuid~=obs.selfGuid and
             (cleanse.needsApproach or movement and movement.needs_position(cleanse.targetGuid))
-        if needs then out.action=position_for(cleanse.targetGuid,cleanse.spellId)
-        else cleanse.needsApproach=nil;cleanse.observationSequence=state.sequence;out.action=cleanse end
+        if needs then out.action=position_for(cleanse.targetGuid,cleanse.spellId) end
+        if not needs or out.rangedSpellPosition then
+            cleanse.needsApproach=nil;cleanse.observationSequence=state.sequence;out.action=cleanse
+        end
         return out
     end
     local resurrection = support_policy and support_policy.resurrect(obs,frame)
@@ -799,10 +807,10 @@ local function decide_encounter(frame)
     end
     local buff = not out.action and not out.focusGuid and buffs and buffs.choose(obs,frame)
     if buff then
-        if buff.targetGuid ~= obs.selfGuid and (buff.needsApproach or
-           (obs.navigation or {}).following~=true and movement and movement.needs_position(buff.targetGuid)) then
-            out.action=position_for(buff.targetGuid,buff.spellId)
-        else
+        local needs=buff.targetGuid~=obs.selfGuid and (buff.needsApproach or
+            (obs.navigation or {}).following~=true and movement and movement.needs_position(buff.targetGuid))
+        if needs then out.action=position_for(buff.targetGuid,buff.spellId) end
+        if not needs or out.rangedSpellPosition then
             buff.observationSequence=state.sequence
             out.action=buff
         end
