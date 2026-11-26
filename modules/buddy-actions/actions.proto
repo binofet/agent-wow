@@ -774,6 +774,8 @@ message EncounterObservationResponse {
   repeated warcraftbuddy.world.v1.SpellGroundEffect ground_effects = 29;
   bool ground_effects_supported = 30;
   bool ground_effects_overflow = 31;
+  // All creatures observed in this visit were accounted for in this projection.
+  bool nearby_creatures_complete = 32;
 }
 message BodyMovementRequest {
   string session_id = 1;
@@ -923,6 +925,8 @@ message EncounterPlayer {
   bool position_age_known = 38;
   bool combat_reach_known = 39;
   float combat_reach = 40;
+  // Current self ground run speed in yards/second, when observed.
+  optional float ground_run_speed = 41;
 }
 message EncounterCreature {
   uint64 guid = 1;
@@ -956,6 +960,8 @@ message EncounterCreature {
   repeated uint32 own_damage_families = 24;
   float orientation = 25;
   EncounterAttackObservation attack_observation = 26;
+  // Observed unit field in yards, including large creature hitboxes.
+  optional float combat_reach = 27;
 }
 // Raw cached ATTACKSTART and selected-target observations. A present empty
 // object means no current known attack; absence identifies a legacy backend.

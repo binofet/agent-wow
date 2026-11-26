@@ -94,6 +94,70 @@ func TestDiscoveryCacheAdmissionAndAttackersCannotBeHidden(t *testing.T) {
 	}
 }
 
+func TestNearbyCreatureCoverageReflectsMissingRowsAndCacheEviction(t *testing.T) {
+	s, _ := discoveryRig(t)
+	complete := func(want bool) {
+		t.Helper()
+		w, err := s.Snapshot(context.Background(), nil)
+		if err != nil || w.GetNearbyCreaturesComplete() != want {
+			t.Fatalf("want complete=%t, got %t (%d rows), err=%v", want, w.GetNearbyCreaturesComplete(), len(w.GetNearbyCreatures()), err)
+		}
+	}
+	for i := 1; i <= 32; i++ {
+		discoveryNPC(s, i, float32(i))
+	}
+	complete(true)
+	last := discoveryNPC(s, 33, 33)
+	complete(false)
+	s.state.remove(last.guid, s.now())
+	complete(true)
+	last = discoveryNPC(s, 33, 33)
+	last.known[objectEntry] = false
+	complete(false)
+	for i := 34; i <= maxCreatures+1; i++ {
+		discoveryNPC(s, i, float32(i))
+	}
+	for guid := range s.state.creatures {
+		s.state.remove(guid, s.now())
+	}
+	complete(false) // The evicted observation can still be in this visit.
+	packet(t, s, opcode.SMSGNewWorld, login())
+	complete(true)
+}
+
+func TestNearbyCreatureCoverageIncludesUnreflectedPublicUnits(t *testing.T) {
+	for name, high := range map[string]uint64{"pet": 0xf140, "vehicle": 0xf150, "unknown_unit": 0xf190} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := discoveryRig(t)
+			guid := high<<48 | 0x12300001a
+			w := packet(t, s, opcode.SMSGUpdateObject, objectFixture(guid, 3, npcFields(0)))
+			if w.MalformedPackets != 0 || w.NearbyCreaturesComplete || len(w.NearbyCreatures) != 0 {
+				t.Fatal("unreflected UNIT disappeared from coverage", w)
+			}
+			destroy := append(binary.LittleEndian.AppendUint64(nil, guid), 0)
+			if w := packet(t, s, opcode.SMSGDestroyObject, destroy); !w.NearbyCreaturesComplete {
+				t.Fatal("observed removal did not restore full coverage", w)
+			}
+		})
+	}
+	s, _ := discoveryRig(t)
+	w := packet(t, s, opcode.SMSGUpdateObject, deltaFixture(npcGUID, npcFields(0)))
+	if w.NearbyCreaturesComplete {
+		t.Fatal("a unit update before its CREATE was treated as an empty field")
+	}
+	w = packet(t, s, opcode.SMSGUpdateObject, objectFixture(npcGUID, 3, npcFields(0)))
+	if !w.NearbyCreaturesComplete || len(w.NearbyCreatures) != 1 {
+		t.Fatal("full unit CREATE did not restore its row", w)
+	}
+	w = packet(t, s, opcode.SMSGUpdateObject, []byte{1})
+	if w.NearbyCreaturesComplete || w.MalformedPackets != 1 {
+		t.Fatal("a dropped object update left coverage complete", w)
+	}
+	if w := packet(t, s, opcode.SMSGNewWorld, login()); !w.NearbyCreaturesComplete {
+		t.Fatal("next visit inherited missing creature coverage", w)
+	}
+}
+
 func TestDiscoveryRejectsStaleForeignInvalidAndOutOfOrderReports(t *testing.T) {
 	s, req := discoveryRig(t)
 	publishDiscovery(t, s, req)

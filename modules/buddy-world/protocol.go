@@ -183,6 +183,8 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		markAbsent(&players[1], now)
 		state.nearbyPlayers = make(map[uint64]*observed)
 		state.creatures = make(map[uint64]*observed)
+		state.creatureCoverageLost = false
+		state.unreflectedUnits = nil
 		state.gameObjects = make(map[uint64]*observed)
 		state.groundEffects = nil
 		state.groundEffectsOverflow = false
@@ -200,6 +202,8 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		markAbsent(&players[1], now)
 		state.nearbyPlayers = make(map[uint64]*observed)
 		state.creatures = make(map[uint64]*observed)
+		state.creatureCoverageLost = false
+		state.unreflectedUnits = nil
 		state.gameObjects = make(map[uint64]*observed)
 		state.groundEffects = nil
 		state.groundEffectsOverflow = false
@@ -487,6 +491,9 @@ func updates(c *cursor, state *observations, now time.Time) error {
 			p := state.target(guid)
 			newCreature, newItem, newGameObject, newPlayer, newCorpse := false, false, false, false, false
 			newGroundEffect := false
+			if typ == 0 || typ == 1 {
+				state.noteUnitWithoutCreate(guid)
+			}
 			if typ == 2 || typ == 3 {
 				objectType := c.u8()
 				if objectType > 7 || p != nil && p.publicPlayer && objectType != 4 || state.corpses[guid] != nil && objectType != 7 || state.groundEffects[guid] != nil && objectType != 6 {
@@ -597,6 +604,9 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					}
 					newItem = true
 				} else {
+					if objectType == 3 {
+						state.noteUnreflectedUnit(guid)
+					}
 					p = nil
 				}
 			}
@@ -650,6 +660,8 @@ func updates(c *cursor, state *observations, now time.Time) error {
 				guid := c.guid()
 				if typ == 4 {
 					state.remove(guid, now)
+				} else {
+					state.noteUnitWithoutCreate(guid)
 				}
 			}
 		default:

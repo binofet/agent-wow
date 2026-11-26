@@ -665,7 +665,8 @@ local function decide_encounter(frame)
     out.controlStatus = command_status
     if command_action then out.action = command_action; return out end
     if warrior and out.focusGuid and not pulse_radius(obs,out.focusGuid) and (not active_melee or active_melee==out.focusGuid) then
-        local class_action=warrior.choose(frame,obs,obs.targets[out.focusGuid],state.sequence,intent,active_melee~=nil)
+        local class_action=warrior.choose(frame,obs,obs.targets[out.focusGuid],state.sequence,intent,active_melee~=nil,
+            targets,movement and movement.current_pose)
         if class_action then out.action=class_action;return out end
     end
     if active_melee then

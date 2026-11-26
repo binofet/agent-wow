@@ -12,6 +12,7 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/channelstate"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -269,6 +270,10 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 		}
 		if guid == s.selfGUID {
 			view.ComboKnown, view.ComboTargetGuid, view.ComboPoints = s.weaponCombo.known, s.weaponCombo.target, s.weaponCombo.points
+			if p.MovementFlagsKnown && movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) &&
+				!s.swimming && !s.clientControlLost && !s.clientControlRestoring && observedRunSpeed(p) > 0 {
+				view.GroundRunSpeed = proto.Float32(p.RunSpeed)
+			}
 		}
 		out.Players[encounterGUID(guid)] = view
 	}
@@ -283,13 +288,20 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, out *actionsv1
 	if len(w.NearbyCreatures) > 32 {
 		return
 	}
+	out.NearbyCreaturesComplete = w.NearbyCreaturesComplete
 	// This advertises admission to start autoattack, not physical hit readiness.
 	// Current positions/orientations remain available to Lua for approach/chase.
 	meleeCaster := out.MeleeKnown && s.exactMeleeCasterObservedLocked(w)
 	for _, rows := range [][]*worldv1.CreatureState{w.NearbyCreatures, {w.OwnerTarget}} {
 		for _, c := range rows {
-			if c == nil || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId ||
-				c.Guid>>48 != 0xf130 || c.Guid&0xffffff == 0 {
+			if c == nil || !c.Present {
+				continue
+			}
+			if !c.MapKnown || c.Guid>>48 != 0xf130 || c.Guid&0xffffff == 0 {
+				out.NearbyCreaturesComplete = false
+				continue
+			}
+			if c.MapId != w.Self.MapId {
 				continue
 			}
 			key := encounterGUID(c.Guid)
@@ -310,6 +322,9 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, out *actionsv1
 			}
 			if view.PositionKnown {
 				view.X, view.Y, view.Z, view.Orientation, view.PositionRevision = c.X, c.Y, c.Z, c.Orientation, c.PositionRevision
+			}
+			if c.CombatReachKnown {
+				view.CombatReach = proto.Float32(c.CombatReach)
 			}
 			if c.AliveKnown {
 				view.Alive = proto.Bool(c.Alive)
