@@ -8,14 +8,26 @@ import (
 	"time"
 )
 
+// These are state/CAS isolation fixtures, not a replacement for the unchanged
+// production-default watchdog tests. Initialization-budget refusal is exercised
+// separately below even on a cache hit.
+func compileCacheSemanticRuntime(t *testing.T) *Runtime {
+	t.Helper()
+	r, err := NewWithOptions(SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
 func TestCompiledPrototypeReuseKeepsFreshVMAndRuntimeCustody(t *testing.T) {
 	const source = `local count=0 local private={} return {decide=function(input) count=count+1 private.id=input.id input.id="mutated" return {count=count,id=private.id} end}`
-	first := New()
+	first := compileCacheSemanticRuntime(t)
 	rev, err := first.Reload(source, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second := New()
+	second := compileCacheSemanticRuntime(t)
 	if _, err = second.Reload(source, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +69,7 @@ func TestCompiledPrototypeReuseKeepsFreshVMAndRuntimeCustody(t *testing.T) {
 }
 
 func TestCompiledPrototypeCacheRetainsOnlyLastAcceptedChunk(t *testing.T) {
-	a, b := New(), New()
+	a, b := compileCacheSemanticRuntime(t), compileCacheSemanticRuntime(t)
 	const sourceA = `return {decide=function(input)return {value="A"}end}`
 	const sourceB = `return {decide=function(input)return {value="B"}end}`
 	_, err := a.Reload(sourceA, "")
@@ -84,7 +96,7 @@ func TestCompiledPrototypeCacheRetainsOnlyLastAcceptedChunk(t *testing.T) {
 	if cached.revision != bRevision {
 		t.Fatal("failed chunk replaced accepted cache entry")
 	}
-	c := New()
+	c := compileCacheSemanticRuntime(t)
 	if _, err = c.Reload(sourceA, ""); err != nil {
 		t.Fatal(err)
 	}
