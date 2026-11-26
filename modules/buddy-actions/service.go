@@ -832,7 +832,12 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 	if motion != nil {
 		scope, err := s.idleMotionBeforeWriteLocked(ctx, motion, op, payload)
 		if err != nil {
-			if motion.writes > 0 && !errors.Is(err, errNavigationSpeedChanged) {
+			if motion.writes > 0 && errors.Is(err, errIdleMotionReadUnavailable) {
+				// The unsent checkpoint cannot be retried through this captured scope.
+				// Only fresh fully validated cleanup of its prior writes remains.
+				motion.cleanupOnly = true
+			}
+			if motion.writes > 0 && !errors.Is(err, errNavigationSpeedChanged) && !errors.Is(err, errIdleMotionReadUnavailable) && !errors.Is(err, errIdleMotionStopOnly) {
 				motion.broken = true
 				s.state.MotionUnconfirmed = true
 			}
@@ -1176,12 +1181,17 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 	if s.bodyMoving {
 		return s.stopLocked(ctx)
 	}
-	if s.state.MotionUnconfirmed {
+	priorUnknown := s.state.MotionUnconfirmed
+	if priorUnknown {
 		// A fresh user stop/logout command authorizes one new stop attempt.
 		s.state.MotionUnconfirmed = false
 		s.state.Moving = true
 	}
-	return s.stopLocked(ctx)
+	stopped := s.stopLocked(ctx)
+	if !stopped && priorUnknown {
+		s.state.MotionUnconfirmed = true
+	}
+	return stopped
 }
 
 func (s *Service) Tick(ctx context.Context) {
