@@ -87,10 +87,46 @@ func (p *SessionPolicy) close() {
 	if done != nil {
 		<-done
 	}
+	// A failed module cannot reconcile an unverified source reservation.
+	// Keep its original pending ticket and queued result inspectable; closing
+	// the VM still fences every future proposal and releases Lua resources.
+	if p.preserveFailedGatherCustody() {
+		p.vm.Close()
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
 	_ = p.vm.Drain(ctx)
 	p.vm.Close()
+}
+
+func (p *SessionPolicy) preserveFailedGatherCustody() bool {
+	if p.lifetime.Err() == nil || p.manager.Err() == nil {
+		return false
+	}
+	state, pending := p.vm.Inspect()
+	record := p.dispatchSnapshot(state)
+	if record == nil || record.SessionID != state.SessionID || record.CharacterGUID != p.body ||
+		record.Module != "buddy-loot" || record.TransportOutcome != behavior.ActionSettledUnverified ||
+		record.Payload["capability"] != "loot_gather" || record.Payload["reconciliationRequired"] != true {
+		return false
+	}
+	source, sourceKnown := record.Payload["source_guid"].(string)
+	request, requestKnown := record.Payload["request_id"].(string)
+	guid, guidErr := strconv.ParseUint(source, 10, 64)
+	id, idErr := strconv.ParseUint(record.ActionID, 10, 64)
+	if !sourceKnown || guidErr != nil || guid == 0 || strconv.FormatUint(guid, 10) != source ||
+		!requestKnown || request == "" || len(request) > 128 || idErr != nil || id == 0 {
+		return false
+	}
+	// Pending IDs survive a source reload. The immutable dispatch retains its
+	// original revision/epoch, rather than borrowing the replacement source.
+	for _, operation := range pending {
+		if operation.ActionID == id && !operation.NeverDispatched {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *SessionPolicy) observe(_ context.Context, sessionID, guid string) (PolicySnapshot, error) {
