@@ -52,8 +52,12 @@ func TestRequestedCreatureOutsideNearbyLimitDoesNotChangeDiscovery(t *testing.T)
 	if r.Owner != nil || r.OwnerTarget != nil || len(s.state.creatures) != 40 {
 		t.Fatal("lookup restored owner or changed cache", r)
 	}
+	if before.RequestedCreatureStationaryPositionKnown || !r.RequestedCreatureStationaryPositionKnown {
+		t.Fatal("stationary evidence must belong to the requested creature", before.RequestedCreatureStationaryPositionKnown, r.RequestedCreatureStationaryPositionKnown)
+	}
 	copy := proto.Clone(r).(*worldv1.SnapshotResponse)
 	copy.RequestedCreature = nil
+	copy.RequestedCreatureStationaryPositionKnown = false
 	if !proto.Equal(before, copy) {
 		t.Fatal("lookup changed ordinary snapshot", before, copy)
 	}
