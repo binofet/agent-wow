@@ -508,6 +508,33 @@ class ManaDriverTests(unittest.TestCase):
         self.assertEqual(len(self.brain.calls), 1)
         self.assert_actual_policy_bounds()
 
+    def test_chat_timeout_at_final_dispatch_records_a_known_unsent_conjure(self):
+        chat = self.rpc.call
+        timeouts = []
+        def timeout_before_create(method, params, timeout=None):
+            state = self.controls.lua_water_supply
+            if (method == "buddy-chat.poll" and not timeouts and self.requests
+                    and self.requests[-1][:2] == (8087, "buddy-actions.status")
+                    and state.get("last", {}).get("outcome") == "transport_unconfirmed"):
+                timeouts.append(True)
+                raise converse.ChatPollTimeout("Synthetic chat freshness timeout")
+            return chat(method, params, timeout)
+        with patch.object(self.rpc, "call", side_effect=timeout_before_create):
+            self.loop.tick()
+        self.assertEqual(timeouts, [True])
+        self.assertEqual(self.controls.water_supply_phase, "yielded_for_chat_refresh")
+        record = json.loads((self.profile_dir / "mana-supply.json").read_text())["state"]
+        self.assertEqual(record["last"]["outcome"], "not_dispatched")
+        self.assertEqual(record["last"]["reason"], "chat_freshness_unavailable")
+        self.assertEqual(self.fixture.calls, [])
+        self.loop.tick()
+        memory = self.controls.lua_water_supply["memory"]
+        self.assertIsNone(memory.get("pending"))
+        self.assertEqual(self.fixture.calls, [])
+        with patch.object(self.supply.time, "monotonic", return_value=memory["nextAtMs"]/1000 + 1):
+            self.loop.tick()
+        self.assertEqual([method for _, method, _ in self.fixture.calls], ["buddy-actions.create_item"])
+
     def test_restart_loads_durable_unknown_before_reading_edited_policy_without_replay(self):
         self.fixture.fail_method = "buddy-actions.create_item"
         self.loop.tick()

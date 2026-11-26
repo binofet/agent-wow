@@ -3533,7 +3533,7 @@ class BuddyControls:
         """Drive one accepted Lua turn; native RPCs execute its exact choice."""
         if self.character_guid != 4:
             return
-        yielded = False
+        yield_reason = None
         self.water_supply_observation = {}
         try:
             supply = mana_supply_module()
@@ -3546,12 +3546,16 @@ class BuddyControls:
                     for port in (supply.MIRA, *supply.RECIPIENTS)}
 
             def call(port, method, params):
-                nonlocal yielded
+                nonlocal yield_reason
                 # Do not consume chat here. The next normal tick acknowledges
                 # the owner before doing any more background work.
-                if yielded or not still_current():
-                    yielded = True
-                    raise supply.NotDispatched("owner_input_pending")
+                if yield_reason is None:
+                    try:
+                        if not still_current(): yield_reason = "owner_input_pending"
+                    except ConversationError:
+                        yield_reason = "chat_freshness_unavailable"
+                if yield_reason:
+                    raise supply.NotDispatched(yield_reason)
                 return clients[port].call(method, params, timeout=1.5)
 
             observations = {}
@@ -3589,8 +3593,10 @@ class BuddyControls:
         except Exception as error:
             self.water_supply_phase = "accepted_water_policy_unavailable"
             self.lua_water_supply["error"] = str(error)
-        if yielded:
+        if yield_reason == "owner_input_pending":
             self.water_supply_phase = "yielded_to_owner"
+        elif yield_reason:
+            self.water_supply_phase = "yielded_for_chat_refresh"
 
     def observe_learned_spells(self, raw):
         """One factual same-body ID delta; eligibility/coalescing stays in Lua."""
@@ -5242,7 +5248,9 @@ class Conversation:
         self.status(waterSupplyPhase=phase,
                     waterSupplyObservation=self.controls.water_supply_observation,
                     waterSupplyError=error[:256] if isinstance(error, str) else None)
-        return phase == "yielded_to_owner"
+        # A failed supply-only chat read yields an idle tick. In flight, the
+        # model's own bound freshness check determines whether to interrupt it.
+        return phase == "yielded_to_owner" or (phase == "yielded_for_chat_refresh" and not during_model_wait)
 
     def tick(self):
         resumed = not self.initialized
