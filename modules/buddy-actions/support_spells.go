@@ -37,6 +37,8 @@ type supportAttempt struct {
 	breakItem             uint64
 	cooldown              *cooldownReservation
 	starterBinding        *practiceLifecycleBinding
+	lifecycleSession      string
+	lifecycleSelf         uint64
 }
 type resurrectionOffer struct {
 	caster, revision, epoch uint64

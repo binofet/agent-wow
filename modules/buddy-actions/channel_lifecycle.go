@@ -37,6 +37,7 @@ func (s *Service) initializeSpellLifecycleLocked(op *supportAttempt, channel boo
 	s.spellOperationSequence++
 	op.view.OperationRevision = s.spellOperationEpoch + s.spellOperationSequence
 	op.view.VisitId = visit
+	op.lifecycleSession, op.lifecycleSelf = s.sessionID, s.selfGUID
 	op.selfChannel = channel
 	return nil
 }

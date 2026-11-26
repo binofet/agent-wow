@@ -143,7 +143,16 @@ func (s *Service) idleInteractionGuardLocked(r *actionsv1.IdleInteractionRequest
 	}
 	if op := s.supportOp; op != nil {
 		switch op.view.Phase {
-		case "waiting_server", "waiting_channel_observation", "channeling", "waiting_cleanse_effect", "waiting_created_item", "transport_unconfirmed_no_retry", "outcome_unconfirmed_no_retry":
+		case "outcome_unconfirmed_no_retry":
+			// A validated later world entry invalidates the old visit's
+			// physical cast, not its UNKNOWN outcome. Admission still needs
+			// fresh current living/stationary/channel-idle World below.
+			if op.view.OperationRevision != 0 && op.view.VisitId != 0 && op.view.VisitId < r.VisitId &&
+				op.lifecycleSession == r.SessionId && op.lifecycleSelf == r.SelfGuid {
+				break
+			}
+			return "previous cast or channel is unsettled"
+		case "waiting_server", "waiting_channel_observation", "channeling", "waiting_cleanse_effect", "waiting_created_item", "transport_unconfirmed_no_retry":
 			return "previous cast or channel is unsettled"
 		}
 	}
