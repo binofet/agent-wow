@@ -145,3 +145,30 @@ func TestOwnedRouteWetHeartbeatRetainsExactPhysicalStopAndShore(t *testing.T) {
 	send(opcode.MSGMoveStartForward, wet, true)
 	send(opcode.MSGMoveStopSwim, movementinfo.Info{Flags: 1, X: 5, Y: 4, Z: -31}, true)
 }
+
+func TestExtendedReleasedGravityRequiresMeasuredFrameOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		op uint32
+		i  movementinfo.Info
+	}{
+		{opcode.MSGMoveStartSwim, movementinfo.Info{Flags: movementinfo.SwimmingFlag, PitchPresent: true}},
+		{opcode.MSGMoveHeartbeat, movementinfo.Info{Flags: 0x1000, JumpPresent: true, FallTime: 3200, Jump: movementinfo.Jump{CosAngle: 1}}},
+	} {
+		raw, err := movementinfo.Encode(tc.i)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire := append([]byte{1, 99}, raw...)
+		e := scopedBodyEngine(t, &scopeWriteConn{})
+		if _, _, err = e.writeContext(context.Background(), tc.op, wire, e.transport.snapshot()); !modcb.PacketWasNotDispatched(err) {
+			t.Fatal("unmarked input acquired gravity release", tc.op, err)
+		}
+		ctx := modsession.WithBodyInput(context.Background())
+		if _, _, err = e.writeContext(ctx, tc.op, wire, e.transport.snapshot()); err != nil {
+			t.Fatal("measured body refused", tc.op, err)
+		}
+		if got, _ := e.s.bodyInputReport(ctx, ""); got.GetOpcode() != tc.op {
+			t.Fatal("lost measured original", tc.op, got)
+		}
+	}
+}

@@ -1,7 +1,9 @@
 package world
 
 import (
+	"context"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
+	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
@@ -16,7 +18,7 @@ func ownMovementReportOpcode(op uint32) bool {
 // Called only after a successful transport write and its scope advancement.
 // Keep the exact original packet, including packed-GUID encoding and clock;
 // never seed this report from an incoming pose or canonical re-encoding.
-func (e *engine) retainOwnMovementReport(op uint32, body []byte, route bool) {
+func (e *engine) retainOwnMovementReport(ctx context.Context, op uint32, body []byte) {
 	if !ownMovementReportOpcode(op) {
 		return
 	}
@@ -32,7 +34,7 @@ func (e *engine) retainOwnMovementReport(op uint32, body []byte, route bool) {
 	legacyGround := (op == opcode.MSGMoveStartForward || op == opcode.MSGMoveHeartbeat || op == opcode.MSGMoveStop) &&
 		movementflags.GroundCompatible(info.Flags, uint32(info.ExtraFlags))
 	waterStop := op == opcode.MSGMoveStop && info.BodyWaterEntry(false)
-	if !(route && buddynav.RouteBodyFrame(op, body, scope.SelfGuid)) && !legacyGround && !waterStop && !normalBodyMovementImage(op, body, scope.SelfGuid) {
+	if !(modsession.IsRouteBodyInput(ctx) && buddynav.RouteBodyFrame(op, body, scope.SelfGuid)) && !legacyGround && !waterStop && !normalBodyMovementImage(op, body, scope.SelfGuid, modsession.IsBodyInput(ctx)) {
 		return
 	}
 	e.ownMovementReport = &modv1.WorldPacket{Opcode: op, Payload: append([]byte(nil), body...), TransportScope: cloneTransportScope(scope)}

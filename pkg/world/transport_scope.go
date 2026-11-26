@@ -291,7 +291,7 @@ func (t *transportScopeState) reserve(op uint32, payload []byte, requested *modv
 		return t.reserveMovementStop(payload, requested, nil, false, false)
 	}
 	if requested != nil && bodyMovementScopeOpcode(op) {
-		return t.reserveBodyMovement(op, payload, requested)
+		return t.reserveBodyMovement(op, payload, requested, false)
 	}
 	if op == opcode.CMSGAreatrigger && requested != nil {
 		return t.reserveAreaTrigger(payload, requested)

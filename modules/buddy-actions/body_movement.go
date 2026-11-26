@@ -204,11 +204,14 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		}
 		return s.stateLocked(), nil
 	}
+	if points[0].Settling && w.Self.UnitFlags_2&movementflags.CannotTurn != 0 {
+		bearing = float64(from.o)
+	}
 	needsWater := r.Landing == "follow_water" || points[len(points)-1].Swimming
 	allowsInput := func(p *worldv1.PlayerState) bool {
 		return p != nil && p.UnitFlags_2&movementflags.ForcedOrFeign == 0 && p.DynamicFlags&0x20 == 0 && p.PlayerFlags&ghostFlag == 0 &&
 			(!needsWater || p.UnitFlags&movementflags.CannotSwim == 0) &&
-			(points[0].Settling || p.UnitFlags_2&movementflags.CannotTurn == 0 || math.Abs(math.Remainder(float64(from.o)-bearing, 2*math.Pi)) < .00001)
+			(p.UnitFlags_2&movementflags.CannotTurn == 0 || math.Abs(math.Remainder(float64(from.o)-bearing, 2*math.Pi)) < .00001)
 	}
 	if !allowsInput(w.Self) {
 		view.Phase, view.Detail = "body_scope_not_dispatched", "observed body cannot perform the selected turn or movement mode"
