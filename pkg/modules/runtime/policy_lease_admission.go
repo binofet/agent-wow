@@ -3,6 +3,7 @@ package modrt
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 )
 
@@ -13,6 +14,9 @@ func (p *SessionPolicy) rejectUnenteredLease(ctx context.Context, decision behav
 	if action["capability"] != "movement_owner" {
 		return decision.Output, nil, cause
 	}
+	// Preserve the original typed error while naming the exact no-Send gate.
+	mode, _ := action["mode"].(string)
+	cause = fmt.Errorf("unentered movement_owner %s admission (%s): %w", mode, phase, cause)
 	id, err := p.vm.RejectAction(decision)
 	if err != nil {
 		return decision.Output, nil, errors.Join(cause, err)

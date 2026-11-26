@@ -11,8 +11,10 @@ import (
 	"time"
 )
 
+// These fixtures prove admission/receipt custody, not the actor callback deadline.
+// Keep production budgets and their separate strict tests unchanged.
 func TestSelectedLeaseAdmissionFailureMustNotOrphanLuaOperation(t *testing.T) {
-	r := newMovementPointsActorRig(t, followFallbackBundle(t), "4", behavior.SessionOptions{ExecutionLimit: 250 * time.Millisecond})
+	r := newMovementPointsActorRig(t, followFallbackBundle(t), "4", behavior.SessionOptions{ExecutionLimit: time.Second})
 	obs := pointActorObservation("4")
 	obs["sessionId"] = "points"
 	target := obs["targets"].(map[string]any)["100"].(map[string]any)
@@ -71,5 +73,127 @@ func TestSelectedLeaseAdmissionFailureMustNotOrphanLuaOperation(t *testing.T) {
 	})
 	if err != nil || nextReceipt == nil || nextReceipt.ActionID == receipt.ActionID || calls != 1 {
 		t.Fatal("fresh admissible operation could not progress exactly once", nextReceipt, err, calls)
+	}
+}
+
+func TestLeaseRejectionsKeepPreflightAndBackpressureTruth(t *testing.T) {
+	for _, kind := range []string{"lease_timeout", "fenced_by_ingress", "queue_full_canceled"} {
+		t.Run(kind, func(t *testing.T) {
+			r := newMovementPointsActorRig(t, followFallbackBundle(t), "4", behavior.SessionOptions{ExecutionLimit: time.Second})
+			obs := pointActorObservation("4")
+			obs["sessionId"] = "points"
+			target := obs["targets"].(map[string]any)["100"].(map[string]any)
+			target["entry"] = 12222
+			target["x"] = 3
+			target["attackObservation"] = map[string]any{}
+			seq, e := r.host.Enqueue(behavior.Event{Kind: "encounter_observation", Value: obs})
+			if e != nil {
+				t.Fatal(e)
+			}
+			input := map[string]any{"kind": "encounter", "observationSequence": strconv.FormatUint(seq, 10)}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			call := context.Context(ctx)
+			if kind == "lease_timeout" {
+				r.leaseError = status.Error(codes.DeadlineExceeded, "synthetic lease prerequisite outcome unknown")
+				call = context.WithValue(call, policyEncounterVisitKey{}, policyEncounterObservation{visit: 1, sequence: strconv.FormatUint(seq, 10)})
+			}
+			sends := 0
+			out, receipt, err := r.host.Step(call, input, func(a map[string]any) (PolicyDispatch, error) {
+				if a["capability"] != "movement_owner" {
+					t.Fatal(a)
+				}
+				if kind == "fenced_by_ingress" || kind == "queue_full_canceled" {
+					count := 1
+					if kind == "queue_full_canceled" {
+						count = 256
+					}
+					for i := 0; i < count; i++ {
+						if _, e := r.host.Enqueue(behavior.Event{Kind: "command", Value: map[string]any{"note": "synthetic newer ingress"}}); e != nil {
+							t.Fatal(e)
+						}
+					}
+				}
+				if kind == "queue_full_canceled" {
+					cancel()
+					return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "synthetic unentered refusal")
+				}
+				return PolicyDispatch{Module: actionsModule, Send: func(context.Context) (behavior.ActionOutcome, map[string]any) {
+					sends++
+					return behavior.ActionUnknown, map[string]any{}
+				}}, nil
+			})
+			if err == nil || receipt == nil || receipt.Outcome != behavior.ActionNotDispatched || !receipt.NeverDispatched || sends != 0 || r.host.lastDispatch.Load() != nil {
+				t.Fatal("unentered rejection lost truth", out, receipt, err, sends)
+			}
+			view, e := r.host.observe(context.Background(), "points", "4")
+			if e != nil || len(view.PendingActionIDs) != 0 {
+				t.Fatal("rejection acquired native permission", view, e)
+			}
+			if kind == "lease_timeout" && receipt.Payload["prerequisiteOutcomeUnverified"] != true {
+				t.Fatal("prerequisite timeout falsely called effect-free", receipt)
+			}
+			if kind == "queue_full_canceled" {
+				if r.host.rejectedReceipt != receipt || r.host.vm.Status().Buffered != 256 {
+					t.Fatal("backpressure lost exact receipt", r.host.vm.Status())
+				}
+				if _, _, e = r.host.Step(context.Background(), input, nil); e != nil {
+					t.Fatal("receipt could not progress without replay", e)
+				}
+			} else if e = r.host.vm.Drain(context.Background()); e != nil {
+				t.Fatal(e)
+			}
+			state, e := r.host.vm.State(context.Background())
+			if e != nil {
+				t.Fatal(e)
+			}
+			hold := state.Checkpoint["data"].(map[string]any)["commands"].(map[string]any)["data"].(map[string]any)["rangedHold"].(map[string]any)
+			if hold["operation"] != nil || hold["uncertain"] == true || len(state.Pending) != 0 || r.host.rejectedReceipt != nil || sends != 0 {
+				t.Fatal("known rejection remained orphaned or replayed", hold, state.Status, sends)
+			}
+		})
+	}
+}
+
+func TestEnteredUnknownLeaseIsNeverReclassifiedByAdmissionRepair(t *testing.T) {
+	r := newMovementPointsActorRig(t, followFallbackBundle(t), "4", behavior.SessionOptions{ExecutionLimit: time.Second})
+	obs := pointActorObservation("4")
+	obs["sessionId"] = "points"
+	target := obs["targets"].(map[string]any)["100"].(map[string]any)
+	target["entry"] = 12222
+	target["x"] = 3
+	target["attackObservation"] = map[string]any{}
+	seq, e := r.host.Enqueue(behavior.Event{Kind: "encounter_observation", Value: obs})
+	if e != nil {
+		t.Fatal(e)
+	}
+	input := map[string]any{"kind": "encounter", "observationSequence": strconv.FormatUint(seq, 10)}
+	sends := 0
+	_, receipt, e := r.host.Step(context.Background(), input, func(a map[string]any) (PolicyDispatch, error) {
+		return PolicyDispatch{Module: actionsModule, Send: func(context.Context) (behavior.ActionOutcome, map[string]any) {
+			sends++
+			return behavior.ActionUnknown, map[string]any{"capability": "movement_owner", "mode": "acquire", "owner": a["owner"], "error": "synthetic entered transport unknown"}
+		}}, nil
+	})
+	if e != nil || receipt == nil || receipt.Outcome != behavior.ActionUnknown || receipt.NeverDispatched || sends != 1 {
+		t.Fatal(receipt, e, sends)
+	}
+	if e = r.host.vm.Drain(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	seq, e = r.host.Enqueue(behavior.Event{Kind: "encounter_observation", Value: obs})
+	if e != nil {
+		t.Fatal(e)
+	}
+	input["observationSequence"] = strconv.FormatUint(seq, 10)
+	if _, _, e = r.host.Step(context.Background(), input, func(map[string]any) (PolicyDispatch, error) {
+		t.Fatal("unknown action replayed")
+		return PolicyDispatch{}, nil
+	}); e != nil {
+		t.Fatal(e)
+	}
+	pending := r.host.vm.Outstanding()
+	if len(pending) != 1 || pending[0].ActionID != receipt.ActionID || pending[0].Outcome != behavior.ActionUnknown || pending[0].NeverDispatched || sends != 1 {
+		t.Fatal(pending, sends)
 	}
 }

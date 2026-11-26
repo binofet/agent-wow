@@ -46,7 +46,9 @@ func TestRejectActionCannotRewriteEnteredUnknownOrReplacement(t *testing.T) {
 	s := newTestSession(t)
 	d := sessionDecide(t, s)
 	id := sessionReserve(t, s, d)
-	sessionEnqueue(t, s, 1, sessionReceipt(id, ActionUnknown))
+	spoofed := sessionReceipt(id, ActionUnknown)
+	spoofed.Receipt.NeverDispatched = true // Caller metadata cannot rewrite an entered reservation.
+	sessionEnqueue(t, s, 1, spoofed)
 	if err := s.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -67,5 +69,27 @@ func TestRejectActionCannotRewriteEnteredUnknownOrReplacement(t *testing.T) {
 	}
 	if _, err := s.RejectAction(next); !errors.Is(err, ErrFenced) {
 		t.Fatal("old revision rejection", err)
+	}
+}
+
+func TestRejectedReceiptSurvivesReloadWithoutNativePermission(t *testing.T) {
+	s := newTestSession(t)
+	d := sessionDecide(t, s)
+	id, err := s.RejectAction(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionEnqueue(t, s, 1, sessionReceipt(id, ActionNotDispatched))
+	if _, err = s.Reload(context.Background(), sessionPolicyV1+"\n-- exact rejected receipt", s.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Outstanding()) != 0 {
+		t.Fatal(s.Outstanding())
+	}
+	if got := sessionDecide(t, s).Output["transcript"]; got != "/1:not_dispatched:1" {
+		t.Fatal(got)
+	}
+	if _, err = s.ReserveAction(d); !errors.Is(err, ErrFenced) {
+		t.Fatal("old rejected ticket survived reload", err)
 	}
 }
