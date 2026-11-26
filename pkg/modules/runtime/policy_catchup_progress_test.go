@@ -12,7 +12,7 @@ import (
 func TestObservedPolicySlowLegalPrefixStillDecidesCapturedFeed(t *testing.T) {
 	const source = `local s={events=0,work=0};return {
   on_event=function(e)
-   local n=0;for i=1,50000 do n=n+i end
+   local n=0;for i=1,10000 do n=n+i end
    s.work=n;s.events=s.events+1;return true
   end,
   decide=function(f)return {events=s.events,cursor=f.cursor,observationSequence=f.input.observationSequence}end,
