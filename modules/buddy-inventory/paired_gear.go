@@ -8,6 +8,7 @@ const (
 	mainhandSlot       = 15
 	offhandSlot        = 16
 	dualWieldSkill     = 118
+	shieldSkill        = 433
 	uniqueEquippedFlag = 0x00080000
 )
 
@@ -24,10 +25,17 @@ func (m itemMetadata) oneHandDagger() bool {
 	return m.ordinaryMainhandWeapon() && m.subclass == 15 && m.inventoryType == 13
 }
 
+func (m itemMetadata) shield() bool {
+	return m.class == 4 && m.subclass == 6 && m.inventoryType == 14
+}
+
 // No ordering preference: enumerate legal physical destinations in slot order.
 func gearDestinationSlots(w *worldv1.SnapshotResponse, m itemMetadata, equipment [19]*worldv1.EquipmentSlotState, templates map[uint32]itemMetadata) []uint32 {
 	if !m.known {
 		return nil
+	}
+	if m.shield() {
+		return []uint32{offhandSlot}
 	}
 	if m.class == 4 && m.inventoryType == 11 {
 		if m.flags&uniqueEquippedFlag != 0 || m.maxCount == 1 {

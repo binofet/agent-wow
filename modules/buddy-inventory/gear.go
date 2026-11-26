@@ -194,7 +194,16 @@ func (s *Service) exactGearDestinationLocked(i *worldv1.BackpackSlot, slot uint3
 		return "item_does_not_fit_requested_equipment_slot"
 	}
 	proficiency := m.weaponProficiency()
-	if m.class == 4 && m.subclass >= 1 && m.subclass <= 4 {
+	if m.shield() {
+		proficiency = shieldSkill
+		main := equipment[mainhandSlot]
+		if main.ItemGuid != 0 {
+			weapon := s.metadata[main.Entry]
+			if !main.MetadataKnown || !weapon.known || weapon.class != 2 || (weapon.inventoryType != 13 && weapon.inventoryType != 21) {
+				return "shield_requires_known_empty_or_one_handed_mainhand"
+			}
+		}
+	} else if m.class == 4 && m.subclass >= 1 && m.subclass <= 4 {
 		proficiency = [5]uint32{0, 415, 414, 413, 293}[m.subclass]
 	}
 	if reason := gearUsability(s.view.w, m, proficiency); reason != "" {
