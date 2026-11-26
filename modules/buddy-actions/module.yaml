@@ -108,6 +108,7 @@ packets:
   SMSG_CAST_FAILED: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_START: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_GO: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELLLOGEXECUTE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELLHEALLOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   MSG_CHANNEL_START: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   MSG_CHANNEL_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket

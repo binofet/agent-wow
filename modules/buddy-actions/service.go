@@ -617,6 +617,7 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.finishDungeonTraceLocked(s.now(), "observer_logout")
+	s.endResurrectionLocked("outcome_unconfirmed_no_retry")
 	s.closed = true
 	s.state.Buffing = false
 	s.buffUnconfirmedLocked("logout_buff_outcome_unconfirmed")
@@ -1250,6 +1251,7 @@ func (s *Service) tickLocked(ctx context.Context) {
 	s.buffTimeoutLocked()
 	s.cancelProtectedCastLocked(ctx)
 	s.expireSelfChannelLocked()
+	s.expireResurrectionLogLocked()
 	s.expireExplicitCastLocked()
 	s.expireMeleeOperationLocked()
 	if !s.closed && !s.hostEncounterActiveLocked() {

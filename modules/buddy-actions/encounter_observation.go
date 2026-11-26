@@ -130,7 +130,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	// Reuse normal death-custody settlement without claiming this cast's effect.
 	if supportOp != nil && s.supportOp == supportOp &&
 		!supportView.(*actionsv1.SpellOperation).ServerCastGo && supportOp.view.ServerCastGo && !supportOp.view.EffectObserved {
-		s.settleResurrectionLifeLocked(w, false)
+		s.settleResurrectionLifeLocked(w)
 	}
 	// Neither a new operation nor a receipt transition (for example GO)
 	// may consume World evidence read before that transition. Packet handling

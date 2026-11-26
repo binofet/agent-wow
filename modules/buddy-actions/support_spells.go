@@ -39,6 +39,8 @@ type supportAttempt struct {
 	starterBinding        *practiceLifecycleBinding
 	lifecycleSession      string
 	lifecycleSelf         uint64
+
+	resurrectionEffect uint32
 }
 type resurrectionOffer struct {
 	caster, revision, epoch uint64
@@ -102,9 +104,9 @@ func (s *Service) resurrectionBodyLocked(w *worldv1.SnapshotResponse, owner uint
 	return 0, position{}, false
 }
 
-// settleResurrectionLifeLocked retires a witnessed death without attributing
-// life which was already observed before this operation's GO to that cast.
-func (s *Service) settleResurrectionLifeLocked(w *worldv1.SnapshotResponse, allowAttribution bool) {
+// A living patient retires this death. Life alone cannot identify which
+// healer sent an offer or which recovery the patient chose.
+func (s *Service) settleResurrectionLifeLocked(w *worldv1.SnapshotResponse) {
 	for owner := range s.resurrectionBindings {
 		if p := observedHealingPlayer(w, owner); p != nil && p.Present && p.AliveKnown && p.Alive && p.HealthKnown && p.Health > 0 && p.PlayerFlags&0x10 == 0 {
 			delete(s.resurrectionBindings, owner)
@@ -116,13 +118,7 @@ func (s *Service) settleResurrectionLifeLocked(w *worldv1.SnapshotResponse, allo
 					s.state.CastPending = false
 					s.pendingSpell, s.pendingTarget = 0, 0
 				}
-				if s.supportOp.view.ServerCastGo && allowAttribution {
-					s.supportOp.view.EffectObserved = true
-					s.supportOp.view.Phase = "confirmed_alive"
-				} else {
-					// Another player or the server may have revived this patient.
-					// Retire custody without attributing an unconfirmed own cast.
-					s.supportOp.view.EffectObserved = false
+				if !s.supportOp.view.EffectObserved {
 					s.supportOp.view.Phase = "observed_alive_without_cast_confirmation"
 				}
 			}
@@ -131,7 +127,8 @@ func (s *Service) settleResurrectionLifeLocked(w *worldv1.SnapshotResponse, allo
 }
 
 func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
-	s.settleResurrectionLifeLocked(w, true)
+	s.settleResurrectionLifeLocked(w)
+	s.expireResurrectionLogLocked()
 	if op := s.supportOp; op != nil && (op.view.Phase == "waiting_server" || op.view.Phase == "waiting_cleanse_effect" || op.view.Capability == fearBreakCapability && op.view.Phase == "transport_unconfirmed_no_retry") && !s.now().Before(op.until) {
 		op.view.Phase = "outcome_unconfirmed_no_retry"
 		if s.pendingSpell == op.view.SpellId && s.castCount == op.count {
@@ -163,6 +160,9 @@ func (s *Service) castSupportPacketLocked(ctx context.Context, r spellcatalog.Sp
 	s.reserveSpellCooldownLocked(r)
 	until := s.now().Add(time.Duration(r.CastMs)*time.Millisecond + 3*time.Second)
 	s.supportOp = &supportAttempt{view: actionsv1.SpellOperation{SpellId: r.ID, TargetGuid: target, Capability: capability, Phase: "waiting_server"}, owner: owner, count: s.castCount, until: until}
+	if capability == string(spellcatalog.Resurrect) && len(r.Effects) == 1 {
+		s.supportOp.resurrectionEffect = r.Effects[0].Kind
+	}
 	if item == nil {
 		s.supportOp.policySpellToken = modcb.PolicySpellToken(ctx)
 	}
@@ -211,11 +211,11 @@ func (s *Service) castSupportPacketLocked(ctx context.Context, r spellcatalog.Sp
 // during a pending operation does not by itself settle its effect.
 func (op *supportAttempt) reportPolicySpellEffect(ctx context.Context, castPending bool) {
 	switch op.view.Phase {
-	case "confirmed_aura", "confirmed_heal", "confirmed_effect", "confirmed_alive", "confirmed_loot_window", "confirmed_item":
+	case "confirmed_aura", "confirmed_heal", "confirmed_effect", "confirmed_resurrection_offer_effect", "confirmed_loot_window", "confirmed_item":
 		if !op.view.ServerCastGo || !op.view.EffectObserved {
 			return
 		}
-	case "server_cast_go_effect_unverified":
+	case "server_cast_go_effect_unverified", "server_cast_go_without_patient_hit":
 		if castPending {
 			return
 		}
@@ -232,6 +232,22 @@ func (op *supportAttempt) reportPolicySpellEffect(ctx context.Context, castPendi
 
 func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 	bad := errors.New("malformed support spell event")
+	s.expireResurrectionLogLocked()
+	if code == opcode.SMSGSpelllogexecute {
+		return true, s.observeResurrectionLogLocked(p)
+	}
+	if (code == opcode.SMSGTransferPending && (len(p) == 4 || len(p) == 12)) ||
+		(code == opcode.SMSGNewWorld || code == opcode.SMSGLoginVerifyWorld) && validEncounterWorldEntry(p) {
+		s.endResurrectionLocked("world_transfer_outcome_unconfirmed")
+	}
+	if op := s.pendingResurrectionLocked(); op != nil && op.view.ServerCastGo {
+		switch code {
+		case opcode.SMSGCastFailed, opcode.SMSGSpellFailure, opcode.SMSGSpellFailedOther, opcode.SMSGSpellStart, opcode.SMSGSpellGo:
+			// Cast frames following GO cannot settle the effect or relinquish
+			// the later execute log to the generic cast handler.
+			return true, nil
+		}
+	}
 	if code == opcode.MSGChannelStart || code == opcode.MSGChannelUpdate {
 		return true, s.observeSelfChannelLocked(code, p)
 	}
@@ -353,10 +369,10 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 				return true, nil
 			}
 		}
-		if op.view.Capability == selfCastCapability || starterSelf {
+		if op.view.Capability == selfCastCapability || starterSelf || op.view.Capability == string(spellcatalog.Resurrect) {
 			source, _, _ := readGUID(p)
 			if source != s.selfGUID {
-				return false, nil
+				return op.view.Capability == string(spellcatalog.Resurrect), nil
 			}
 		}
 		if !validCastTargetBody(p, off, code == opcode.SMSGSpellGo, op.view.TargetGuid, op.view.Capability == selfCastCapability || op.view.Capability == fearBreakCapability || s.implicitSelfSpellLocked(spell, op.view.TargetGuid)) {
@@ -389,6 +405,16 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, nil
 		}
 		op.view.Phase = "server_cast_go_effect_unverified"
+		if op.view.Capability == string(spellcatalog.Resurrect) {
+			// The explicit target can be a corpse. Only the player appears in
+			// this spell's unit hit list. GO precedes the actual offer effect.
+			if !castGoListsHit(p[off+8:], op.owner) {
+				op.view.Phase = "server_cast_go_without_patient_hit"
+			}
+			if op.resurrectionEffect == 18 || op.resurrectionEffect == 113 {
+				return true, nil // Retain custody for the following execute log.
+			}
+		}
 		if op.cleanseAura != 0 {
 			op.view.Phase = "waiting_cleanse_effect"
 		}
@@ -397,9 +423,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, nil
 		}
 		if op.view.EffectObserved {
-			if op.view.Capability == string(spellcatalog.Resurrect) {
-				op.view.Phase = "confirmed_alive"
-			} else if op.view.Capability == pickLockCapability {
+			if op.view.Capability == pickLockCapability {
 				op.view.Phase = "confirmed_loot_window"
 			} else {
 				op.view.Phase = "confirmed_effect"
