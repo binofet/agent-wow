@@ -53,6 +53,7 @@ func (e *engine) write(op uint32, body []byte) error {
 
 func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scopes ...*modv1.TransportScope) (GameplayWriteOutcome, bool, error) {
 	prior := e.ownMovementReport
+	priorAttempt := e.ownMovementAttempt
 	if ownMovementReportOpcode(op) {
 		// A failed or unsupported new write must not leave the prior report
 		// available as the most recent known own movement during transport.
@@ -105,6 +106,14 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	// No callback, deadline setter or owner-state transition follows the final
 	// scope comparison and attempt reservation before entering WritePacket.
 	if err := e.reserveGameplayPacket(ctx, op, body, requested, prior); err != nil {
+		// A followed destination was revoked without writing. Expose the
+		// original physical report only while its own body still proves it.
+		if _, bound := modsession.FollowPosition(ctx); bound && modcb.RouteOwnerChangeBeforeWrite(err) &&
+			prior != nil && e.ownMovementReport == nil && e.lastWrittenPose.packet == prior &&
+			e.s.bodyProof(modsession.WithSelfBodyInput(ctx), prior.TransportScope, e.transport.scope) == "" {
+			e.ownMovementReport, e.ownMovementAttempt = prior, priorAttempt
+			e.publishTransportScope()
+		}
 		return "", false, err
 	}
 	e.writeSerial++

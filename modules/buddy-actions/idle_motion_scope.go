@@ -155,7 +155,9 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 	}
 	if owner, ok := ctx.Value(destinationOwnerKey{}).(destinationOwner); ok && landing {
 		b.destination = &owner
-		b.selfOnly = owner.token != "" || owner.lastSeen
+		// This is a new selection. The caller checked its current destination
+		// against World; the prior exact report supplies only this body's pose.
+		b.selfOnly = true
 		b.binding = idleInteractionBinding{sessionID: s.sessionID, selfGUID: s.selfGUID, visit: w.GetVisitRevision(), token: token}
 	}
 	b.current = clonePortalScope(b.initial)
@@ -177,7 +179,8 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 		if !valid || !idleMotionOpcode(prior.Opcode) || !samePortalCoreVisit(b.initial, prior.TransportScope) || !landing && prior.TransportScope.MotionRevision < b.initial.MotionRevision || needPose && p != b.pose {
 			return nil, modcb.PacketNotDispatchedError("idle motion prior report no longer matches the captured body")
 		}
-		if !settled || prior.TransportScope.MotionRevision > b.initial.MotionRevision {
+		freshFollow := b.destination != nil && b.destination.token == "" && !b.destination.lastSeen
+		if !settled && !freshFollow || prior.TransportScope.MotionRevision > b.initial.MotionRevision {
 			b.current = clonePortalScope(prior.TransportScope)
 		}
 	} else if status.Code(err) != codes.FailedPrecondition || needPose {
@@ -237,7 +240,11 @@ func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotion
 
 func (s *Service) idleMotionAfterWriteLocked(ctx context.Context, b *idleMotionScope, op uint32, payload []byte) error {
 	b.writes++
-	if b.landing && (op == opcode.MSGMoveHeartbeat || op == opcode.MSGMoveJump) {
+	if b.destination != nil {
+		// The completed write is a fact about our body. Any next voluntary
+		// route frame separately checks its owner at the socket reservation.
+		b.selfOnly = true
+	} else if b.landing && (op == opcode.MSGMoveHeartbeat || op == opcode.MSGMoveJump) {
 		if _, n, e := readGUID(payload); e == nil && len(payload) >= n+4 && binary.LittleEndian.Uint32(payload[n:])&0x1000 != 0 {
 			b.selfOnly = true
 		}

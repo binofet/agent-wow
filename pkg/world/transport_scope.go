@@ -391,10 +391,17 @@ func (e *engine) observeTransportScope(op uint16, body []byte) {
 	e.publishTransportScope()
 	if e.transport.scope.GetMotionRevision() != before && !objectUpdate {
 		reason := "own_motion_or_control"
+		var positions []movementinfo.FollowPosition
 		if ownerChange {
 			reason = modcb.BodyUpdateOwnerMovement
 			if op == opcode.SMSGDestroyObject {
 				reason = modcb.BodyUpdateOwnerLifecycle
+			} else if movementinfo.OrdinaryFollowMovement(uint32(op)) {
+				if i, complete := movementinfo.OwnFrame(body, buddyidentity.CompanionOwnerGUID); complete {
+					if p, ordinary := i.FollowPosition(); ordinary {
+						reason, positions = modcb.BodyUpdateOwnerTravel, []movementinfo.FollowPosition{p}
+					}
+				}
 			}
 		} else if op == opcode.SMSGStandstateUpdate {
 			if len(body) == 1 && body[0] >= 1 && body[0] <= 6 {
@@ -403,7 +410,7 @@ func (e *engine) observeTransportScope(op uint16, body []byte) {
 				reason = "own_restricted_stand_state"
 			}
 		}
-		e.s.recordParsedBodyUpdate(e.transport.scope, reason)
+		e.s.recordParsedBodyUpdate(e.transport.scope, reason, positions...)
 	}
 }
 

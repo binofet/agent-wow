@@ -24,6 +24,7 @@ import (
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc"
@@ -850,7 +851,7 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 					f := s.destinationFlight
 					followsOwner := d.token == "" && !d.lastSeen && (f == nil || !f.airborne && !f.release)
 					motion.selfOnly = !followsOwner
-					sendCtx = modcb.WithRouteBodyInput(sendCtx, followsOwner)
+					sendCtx = modcb.WithRouteBodyInput(sendCtx, followsOwner, movementinfo.FollowPosition{d.target.x, d.target.y, d.target.z})
 				}
 			}
 		}
@@ -875,7 +876,10 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 		motion.lastOpcode, motion.lastPayload = op, append([]byte(nil), payload...)
 	}
 	if _, err := s.session.SendPacket(sendCtx, request); err != nil {
-		if motion != nil && (!modcb.PacketWasNotDispatched(err) || motion.writes > 0) {
+		f := s.destinationFlight
+		if motion != nil && motion.destination != nil && !motion.selfOnly && f != nil && !f.airborne && !f.release && modcb.RouteOwnerChangeBeforeWrite(err) {
+			f.release = true
+		} else if motion != nil && (!modcb.PacketWasNotDispatched(err) || motion.writes > 0) {
 			motion.broken = true
 			s.state.MotionUnconfirmed = true
 		}

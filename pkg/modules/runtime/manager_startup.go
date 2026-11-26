@@ -155,6 +155,9 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 			}
 			origin.MovementAttempt = modcb.IncomingMovementAttempt(ctx)
 			ctx = modsession.WithRouteBodyInput(ctx, followsOwner)
+			if p, ok := modcb.IncomingFollowPosition(ctx); ok {
+				ctx = modsession.WithFollowPosition(ctx, p)
+			}
 		}
 		return m.session.SendScopedPacket(modsession.WithWriteOrigin(ctx, origin), opcode, append([]byte(nil), payload...), proto.Clone(scope).(*modv1.TransportScope))
 	}

@@ -285,6 +285,11 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 	sourceAge := fallTime
 	inWater := false
 	var write func(uint32, position, time.Duration, bool, bool) bool
+	stopGrounded := func() {
+		if view.TransportWritten && s.state.Moving {
+			write(opcode.MSGMoveStop, s.pos, 0, false, false)
+		}
+	}
 	write = func(code uint32, p position, elapsed time.Duration, falling, moving bool) bool {
 		if ctx.Err() != nil {
 			view.Phase = "body_input_interrupted"
@@ -305,9 +310,7 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 			return false
 		}
 		if f := s.destinationFlight; f != nil && f.release && !f.airborne && code != opcode.MSGMoveStop {
-			if view.TransportWritten && s.state.Moving {
-				write(opcode.MSGMoveStop, s.pos, 0, false, false)
-			}
+			stopGrounded()
 			return false
 		}
 		if guard, ok := ctx.Value(movementPointsBodyGuardKey{}).(func(position, bool) bool); ok && !guard(p, moving) {
@@ -331,8 +334,15 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 		if landing && (!settling || s.destinationFlight != nil) {
 			packetTime = fallTime
 		}
+		f := s.destinationFlight
+		groundStop := code == opcode.MSGMoveStop && f != nil && f.release && !f.airborne
+		if groundStop {
+			// The rejected sample never started its fall or entered water.
+			packetTime = 0
+		}
 		packet := bodyMovementPacket(s.selfGUID, stamp, p, passive, packetTime, bearing, horizontalSpeed, verticalSpeed, falling, moving)
-		if inWater {
+		wetWrite := inWater && !groundStop
+		if wetWrite {
 			flags := passive | swimMovementFlag
 			if moving {
 				flags |= 1
@@ -346,6 +356,10 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 			_, sendErr = s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: code, Payload: packet})
 		}
 		if sendErr != nil {
+			if f := s.destinationFlight; f != nil && f.release && !f.airborne && code != opcode.MSGMoveStop && modcb.RouteOwnerChangeBeforeWrite(sendErr) {
+				stopGrounded()
+				return false
+			}
 			if motion != nil && motion.writes == 0 && modcb.PacketWasNotDispatched(sendErr) {
 				view.Phase, view.Detail = "body_scope_not_dispatched", boundedPolicyDiagnostic(sendErr.Error(), 240)
 				return false
@@ -363,7 +377,7 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 		if code == opcode.MSGMoveStartForward && points[len(points)-1].Swimming {
 			landingStarted = true
 		}
-		ownFalling, ownSwimming = ownFalling || falling, inWater
+		ownFalling, ownSwimming = ownFalling || falling, wetWrite
 		if f := s.destinationFlight; f != nil && falling {
 			f.airborne = true
 		}
@@ -375,7 +389,7 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 			s.state.TransportWrites++
 		}
 		s.pos, s.posEstimated, s.posAt, s.state.Moving = p, true, s.now(), moving || falling
-		s.swimming = inWater
+		s.swimming = wetWrite
 		s.posRevision++
 		s.publishClientMovementLocked(ctx, w, p, true)
 		return true
