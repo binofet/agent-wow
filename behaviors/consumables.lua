@@ -13,9 +13,10 @@ local function value(v) return tonumber(v) or 0 end
 local function guid(v) return type(v)=="string" and #v>0 and v~="0" end
 local function newer(a,b) return type(a)=="string" and type(b)=="string" and (#a>#b or #a==#b and a>b) end
 local function alive(p) return p and p.present==true and p.aliveKnown==true and p.alive==true end
-local function aura(set,id)
+local function aura(set,id,caster)
   for _,a in ipairs((set or {}).auras or {}) do
-    if a.spellId==id and a.positive==true and (a.durationKnown~=true or value(a.remainingMs)>0) then return a end
+    if a.spellId==id and a.positive==true and (not caster or a.casterGuid==caster) and
+       (a.durationKnown~=true or value(a.remainingMs)>0) then return a end
   end
 end
 local function quiet(obs)
@@ -61,9 +62,17 @@ function M.choose(view,obs,requested,fallback_food)
   if kind=="drink" and tuning.drink_reserve>0 and
      (view.manaDrinkCount==nil or value(view.manaDrinkCount)<=tuning.drink_reserve) then return end
   if kind=="eat_buff_food" and tuning.food_reserve>0 and (not food_known or food_count<=tuning.food_reserve) then return end
-  -- Any carried food's observed Well Fed aura prevents wasting another food.
+  -- The last bottle can leave the bag while its drink aura is still active.
+  local check_drink=kind=="drink" and set and set.targetGuid==obs.selfGuid
+  local last=view.lastConsumableUse
+  if check_drink and last and last.kind=="drink" and aura(set,last.spellId,obs.selfGuid) then
+    return nil,"drink_aura_active"
+  end
   for _,item in ipairs(view.items or {}) do for _,spell in ipairs((item.consumable or {}).spells or {}) do
-    if spell.foodSupported==true and aura(set,spell.foodAuraSpellId) then if kind=="eat_buff_food" then return end end
+    if check_drink and item.metadataKnown==true and spell.drinkSupported==true and aura(set,spell.spellId,obs.selfGuid) then
+      return nil,"drink_aura_active"
+    end
+    if kind=="eat_buff_food" and spell.foodSupported==true and aura(set,spell.foodAuraSpellId) then return end
   end end
   local best
   for _,item in ipairs(view.items or {}) do
@@ -196,10 +205,10 @@ function M.decide(frame,obs,available)
   if not attempt then
     if owner.active==true then return {phase="other_movement_owner"} end
     if state.retryAt and now<state.retryAt then return {phase="retry_wait"} end
-    local choice=M.choose(view,obs,state.requested)
+    local choice,reason=M.choose(view,obs,state.requested)
     if not choice then
       if view.inventoryKnown==true and (view.consumableContext or {}).bodyReady==true then state.requested=nil end
-      return {phase="no_consumable_needed_or_available"}
+      return {phase=reason or "no_consumable_needed_or_available"}
     end
     choice.id="consume_"..tostring(frame.cursor).."_"..tostring(now)
     choice.visit=obs.visitId
@@ -215,8 +224,8 @@ function M.decide(frame,obs,available)
   if not (view.consumableContext or {}).bodyReady then return {phase="awaiting_stationary_body",hold=true} end
   -- Custody may have required several observations. Re-run this same selector
   -- against the current facts/source before the first irreversible item use.
-  local selected=M.choose(view,obs,attempt.requested)
-  if not selected then return release(frame,obs,available,"rest_no_longer_needed",true) end
+  local selected,reason=M.choose(view,obs,attempt.requested)
+  if not selected then return release(frame,obs,available,reason or "rest_no_longer_needed",true) end
   selected.id,selected.visit,selected.requested=attempt.id,attempt.visit,attempt.requested
   state.attempt=selected;attempt=selected
   return {phase="using_selected_item",hold=true,action={capability="consume",sessionId=frame.session_id,selfGuid=obs.selfGuid,
