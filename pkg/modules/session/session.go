@@ -5,6 +5,7 @@ import (
 	"context"
 
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 )
 
 // Session supplies character identity, packet transport, and the shared monotonic
@@ -22,7 +23,7 @@ type Session struct {
 	OwnMovementReport  func() *modv1.WorldPacket
 	OwnMovementAttempt func(string) *modv1.WorldPacket
 	BodyInputReport    func(context.Context, string) (*modv1.WorldPacket, string)
-	ParsedBodyUpdate   func(*modv1.TransportScope, string)
+	ParsedBodyUpdate   func(*modv1.TransportScope, string, ...movementinfo.FollowPosition)
 	ParsedOwnPose      func(*modv1.TransportScope, []byte)
 	KnockbackReport    func(*modv1.WorldPacket, bool) *modv1.WorldPacket
 	MeasuredKnockback  func(*modv1.WorldPacket, []byte)

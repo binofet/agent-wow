@@ -8,6 +8,7 @@ import (
 
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
@@ -76,11 +77,11 @@ func (s *Service) swimFollowTickLocked(ctx context.Context, target position, now
 	s.lastStep = now
 	valid := len(route.path) != 0 && !route.owner.lastSeen && route.owner.followRevision == s.followRevision && route.owner.guid == s.lastWorld.GetOwner().GetGuid() && route.mapID == s.posMap &&
 		route.revision == s.positionRevision && distance(route.expected, s.pos) <= .05
-	if valid && route.drop != nil && distance(route.target, target) > 1.5 {
+	if valid && route.drop != nil && distance(route.target, target) > movementinfo.FollowDestinationRadius {
 		*route = swimFollowRoute{}
 		valid = false
 	}
-	if !valid || distance(route.target, target) > 1.5 {
+	if !valid || distance(route.target, target) > movementinfo.FollowDestinationRadius {
 		if now.Before(route.nextPlan) {
 			if !valid {
 				return pause("swim_follow_replan_wait")

@@ -10,6 +10,7 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 )
 
 // UNIT_FLAG_CANNOT_SWIM is a unit capability, independent of the current
@@ -208,7 +209,7 @@ func (s *Service) destinationFallLocked(ctx context.Context, route *swimFollowRo
 		s.state.Reason = "destination_fall_source_changed"
 		return false
 	}
-	if owner.token == "" && !owner.lastSeen && distance(playerPosition(snapshot.Owner), owner.target) > 1.5 {
+	if owner.token == "" && !owner.lastSeen && distance(playerPosition(snapshot.Owner), owner.target) > movementinfo.FollowDestinationRadius {
 		s.state.Reason = "destination_changed_before_fall"
 		return false
 	}
@@ -265,7 +266,7 @@ func (s *Service) destinationFallLocked(ctx context.Context, route *swimFollowRo
 		}
 		if valid && !owner.lastSeen && owner.token == "" && !flightState.release && !flightState.airborne {
 			p := w.GetOwner()
-			valid = (p.GetPresent() && p.GetGuid() == owner.guid && p.GetAliveKnown() && p.GetAlive() && p.GetMapKnown() && p.GetMapId() == mapID && p.GetPositionKnown() && !p.GetPositionInferred() && finite(playerPosition(p)) && p.GetMovementFlagsKnown() && swimFollowCompatible(p.GetMovementFlags(), p.GetExtraMovementFlags()) && distance(playerPosition(p), owner.target) <= 1.5)
+			valid = (p.GetPresent() && p.GetGuid() == owner.guid && p.GetAliveKnown() && p.GetAlive() && p.GetMapKnown() && p.GetMapId() == mapID && p.GetPositionKnown() && !p.GetPositionInferred() && finite(playerPosition(p)) && p.GetMovementFlagsKnown() && swimFollowCompatible(p.GetMovementFlags(), p.GetExtraMovementFlags()) && distance(playerPosition(p), owner.target) <= movementinfo.FollowDestinationRadius)
 		}
 		if !valid && motion.writes > 0 && !flightState.airborne && !flightState.release && e == nil && s.matchesCurrentEncounterVisitLocked(w) && w.Self.MapId == mapID && w.Self.PositionRevision == revision && owner.token == "" && safeSelfMovement(w, s.selfGUID, compatible) == "" {
 			flightState.release = true
@@ -278,11 +279,17 @@ func (s *Service) destinationFallLocked(ctx context.Context, route *swimFollowRo
 	}
 	view := new(actionsv1.BodyMovementState)
 	if !s.executeBodyTrajectoryLocked(ctx, s.pos, entry.Fall, entry.Bearing, entry.RunSpeed, false, true, 0, view, motion, check) {
+		if flightState.release && !flightState.airborne && !s.state.Moving && !s.state.MotionUnconfirmed && !motion.broken {
+			*route = swimFollowRoute{}
+			s.state.Reason = "destination_recheck_before_takeoff"
+			s.state.NavReason = ""
+			return true
+		}
 		s.state.Reason = "destination_fall_interrupted"
 		s.state.NavReason = boundedPolicyDiagnostic(view.Phase+" "+view.Detail, 240)
 		return false
 	}
-	if flightState.release || owner.token == "" && (!owner.voluntaryCurrent(s, s.now()) || !owner.lastSeen && (!s.lastWorld.GetOwner().GetPresent() || distance(playerPosition(s.lastWorld.Owner), owner.target) > 1.5)) {
+	if flightState.release || owner.token == "" && (!owner.voluntaryCurrent(s, s.now()) || !owner.lastSeen && (!s.lastWorld.GetOwner().GetPresent() || distance(playerPosition(s.lastWorld.Owner), owner.target) > movementinfo.FollowDestinationRadius)) {
 		*route = swimFollowRoute{}
 		s.state.Reason = "destination_recheck_after_contact"
 		return true

@@ -1,6 +1,10 @@
 package modsession
 
-import "context"
+import (
+	"context"
+
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
+)
 
 // WriteOrigin associates a transport attempt with a runtime dispatch. The
 // runtime sets these values from its own action and writer state. They are
@@ -50,6 +54,17 @@ func WithBodyInput(ctx context.Context) context.Context {
 func IsBodyInput(ctx context.Context) bool { yes, _ := ctx.Value(bodyInputKey{}).(bool); return yes }
 
 type routeBodyInputKey struct{}
+type followPositionKey struct{}
+
+// Only a normal scoped follow callback can supply its selected destination.
+func WithFollowPosition(ctx context.Context, p movementinfo.FollowPosition) context.Context {
+	return context.WithValue(ctx, followPositionKey{}, p)
+}
+
+func FollowPosition(ctx context.Context) (movementinfo.FollowPosition, bool) {
+	p, ok := ctx.Value(followPositionKey{}).(movementinfo.FollowPosition)
+	return p, ok && IsRouteBodyInput(ctx) && !IsSelfBodyInput(ctx) && p.Valid()
+}
 
 // Only the authenticated native route callback enables full surface travel.
 func WithRouteBodyInput(ctx context.Context, followsOwner bool) context.Context {
