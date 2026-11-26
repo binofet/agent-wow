@@ -32,7 +32,8 @@ func TestPolicyResurrectionBindsPatientToExactCorpsePacketAndEffect(t *testing.T
 		observed bool
 		want     behavior.ActionOutcome
 	}{
-		{corpse, "confirmed_alive", true, behavior.ActionConfirmed},
+		{corpse, "confirmed_resurrection_offer_effect", true, behavior.ActionConfirmed},
+		{corpse, "confirmed_alive", true, behavior.ActionSettledUnverified}, // Older native receipt based solely on life after GO.
 		{corpse, "server_cast_go_effect_unverified", false, behavior.ActionSettledUnverified},
 		{corpse, "server_cast_go_without_patient_hit", false, behavior.ActionSettledUnverified},
 		{corpse + 1, "confirmed_alive", true, ""},
@@ -44,6 +45,9 @@ func TestPolicyResurrectionBindsPatientToExactCorpsePacketAndEffect(t *testing.T
 		}
 		if got != "" && payload["target_guid"] != "3" {
 			t.Fatal("receipt lost patient identity", payload)
+		}
+		if got != "" && test.phase == "confirmed_alive" && payload["effect_observed"] != false {
+			t.Fatal("older receipt attributed the patient's later life to this cast", payload)
 		}
 	}
 }

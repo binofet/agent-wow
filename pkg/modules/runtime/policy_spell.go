@@ -599,12 +599,17 @@ func (op *policySpell) decodeEffect(body []byte) (behavior.ActionOutcome, map[st
 	if native.SpellId != op.spell || native.TargetGuid != target || native.Capability != op.capability {
 		return "", nil, nil
 	}
+	if native.Capability == "resurrect" && native.Phase == "confirmed_alive" {
+		// Older native clients used GO plus subsequent life as their only
+		// evidence. Neither identifies which healer produced the offer.
+		native.Phase, native.EffectObserved = "observed_alive_without_cast_confirmation", false
+	}
 	return spellEffectOutcome(&native), op.payload(native.Phase, native.TransportWritten, native.ServerCastGo, native.EffectObserved), nil
 }
 
 func spellEffectOutcome(effect *actionsv1.SpellOperation) behavior.ActionOutcome {
 	switch effect.Phase {
-	case "confirmed_aura", "confirmed_effect", "confirmed_heal", "confirmed_alive":
+	case "confirmed_aura", "confirmed_effect", "confirmed_heal", "confirmed_resurrection_offer_effect":
 		if effect.ServerCastGo && effect.EffectObserved {
 			return behavior.ActionConfirmed
 		}
