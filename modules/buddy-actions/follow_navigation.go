@@ -288,6 +288,15 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		f.nextPlanAt = now.Add(750 * time.Millisecond)
 		planCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 		path, arrival, arrivalStop, ownerArrival, err := s.formationNavigationPath(planCtx, target, stopDistance, ownerFallback...)
+		if err != nil && len(ownerFallback) == 1 && ownerFallback[0].z < s.pos.z && followRouteLengthExceeded(err) && waterMovementAllowed(s.lastWorld) {
+			// Try a complete lower route before following a prefix of a long
+			// ground detour that may lead away from the actual destination.
+			if s.planSwimFollowLocked(ctx, ownerFallback[0], now) {
+				cancel()
+				f.Reset()
+				return s.swimFollowTickLocked(ctx, ownerFallback[0], now)
+			}
+		}
 		intermediate := false
 		legVisit := uint64(0)
 		if err != nil && len(ownerFallback) == 1 && followRouteLengthExceeded(err) &&
@@ -312,7 +321,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		}
 		cancel()
 		if err != nil {
-			if len(ownerFallback) == 1 && swimFallbackError(err) && s.swimFollowTickLocked(ctx, ownerFallback[0], now) {
+			if len(ownerFallback) == 1 && (swimFallbackError(err) || target.z < s.pos.z && followRouteLengthExceeded(err)) && s.swimFollowTickLocked(ctx, ownerFallback[0], now) {
 				f.Reset()
 				return true
 			}

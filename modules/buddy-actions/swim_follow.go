@@ -30,6 +30,10 @@ type swimFollowRoute struct {
 	mapID    uint32
 	revision uint64
 	nextPlan time.Time
+	drop     *buddynav.DestinationRoute
+	motion   *idleMotionScope
+	owner    destinationOwner
+	runSpeed float64
 }
 
 func swimFollowCompatible(flags, extra uint32) bool {
@@ -65,13 +69,17 @@ func (s *Service) swimFollowTickLocked(ctx context.Context, target position, now
 		s.state.Reason = reason
 		return false
 	}
-	if !s.posKnown || !finite(target) || distance(s.pos, target) > 200 {
+	if !waterMovementAllowed(s.lastWorld) || !s.posKnown || !finite(target) || (distance(s.pos, target) > 200 && (target.z >= s.pos.z || followHorizontalDistance(s.pos, target) > 200)) {
 		return pause("swim_follow_owner_position_unavailable")
 	}
 	elapsed := now.Sub(s.posAt).Seconds()
 	s.lastStep = now
-	valid := len(route.path) != 0 && route.mapID == s.posMap &&
+	valid := len(route.path) != 0 && !route.owner.lastSeen && route.owner.followRevision == s.followRevision && route.owner.guid == s.lastWorld.GetOwner().GetGuid() && route.mapID == s.posMap &&
 		route.revision == s.positionRevision && distance(route.expected, s.pos) <= .05
+	if valid && route.drop != nil && distance(route.target, target) > 1.5 {
+		*route = swimFollowRoute{}
+		valid = false
+	}
 	if !valid || distance(route.target, target) > 1.5 {
 		if now.Before(route.nextPlan) {
 			if !valid {
@@ -91,6 +99,19 @@ func (s *Service) swimFollowTickLocked(ctx context.Context, target position, now
 			}
 		}
 	}
+	if ctx.Err() != nil && len(route.path) > 0 {
+		s.state.Reason = "destination_route_ready"
+		return false
+	}
+	return s.advanceDestinationLocked(ctx, route, elapsed)
+}
+
+func (s *Service) advanceDestinationLocked(ctx context.Context, route *swimFollowRoute, elapsed float64) bool {
+	pause := func(reason string) bool { s.stopLocked(ctx); s.state.Reason = reason; return false }
+	ctx = context.WithValue(ctx, destinationOwnerKey{}, route.owner)
+	if route.motion != nil {
+		ctx = context.WithValue(ctx, idleMotionScopeKey{}, route.motion)
+	}
 	if len(route.path) == 0 {
 		return false
 	}
@@ -99,6 +120,9 @@ func (s *Service) swimFollowTickLocked(ctx context.Context, target position, now
 		route.index++
 	}
 	if route.index == len(route.path) {
+		if route.drop != nil {
+			return s.destinationFallLocked(ctx, route)
+		}
 		if !s.swimming {
 			*route = swimFollowRoute{}
 		}
@@ -106,7 +130,11 @@ func (s *Service) swimFollowTickLocked(ctx context.Context, target position, now
 		s.state.Reason = "within_swim_follow_distance"
 		return true
 	}
-	speed := observedRunSpeed(s.lastWorld.GetSelf())
+	runSpeed := observedRunSpeed(s.lastWorld.GetSelf())
+	speed := runSpeed
+	if route.runSpeed > 0 {
+		speed = math.Min(speed, route.runSpeed)
+	}
 	if s.swimming || route.wet[route.index] {
 		speed = followSwimSpeed
 	}
@@ -160,47 +188,36 @@ func (s *Service) swimFollowTickLocked(ctx context.Context, target position, now
 	case !s.state.Moving:
 		op = opcode.MSGMoveStartForward
 	}
+	if s.state.Moving && !s.swimming && !wet {
+		ctx = context.WithValue(ctx, navigationSpeedProofKey{}, &navigationSpeedProof{from: s.pos, elapsed: elapsed, speed: speed})
+	}
 	if !s.writeMovementLocked(ctx, op, p, true, &move) {
 		*route = swimFollowRoute{}
 		s.stopLocked(ctx)
 		return false
 	}
-	route.index, route.expected = index, s.pos
+	route.index, route.expected, route.runSpeed = index, s.pos, runSpeed
 	s.state.Reason = "following_mixed_swim_route"
 	return true
 }
 
 func (s *Service) planSwimFollowLocked(ctx context.Context, target position, now time.Time) bool {
+	if parent, ok := ctx.Value(followRunParentKey{}).(context.Context); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parent, 10*time.Second)
+		defer cancel()
+	}
 	route := &s.swimFollow
 	*route = swimFollowRoute{nextPlan: now.Add(750 * time.Millisecond)}
-	plan := s.planSwimPath
-	if plan == nil {
-		plan = buddynav.PlanSwimContext
-	}
-	samples, err := plan(ctx, s.navDataDir, s.posMap, swimPoint(s.pos), swimPoint(target))
-	if disconnectedSwimRoute(err) {
-		if trail := s.swimRouteViaLeaderLocked(ctx, swimPoint(target), plan); len(trail) > 0 {
-			samples, err = trail, nil
-		}
-	}
+	planned, err := s.planMixedDestination(ctx, s.navDataDir, s.posMap, s.pos, target, observedRunSpeed(s.lastWorld.GetSelf()), s.swimming, destinationGravitySource(s.lastWorld, s.pos), s.swimRouteViaLeaderLocked)
 	if err != nil {
 		s.state.NavAvailable = false
 		s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
 		return false
 	}
-	var hasWater bool
-	path, wet := make([]position, len(samples)), make([]bool, len(samples))
-	for i, sample := range samples {
-		path[i], wet[i] = position{x: sample.X, y: sample.Y, z: sample.Z}, sample.Swimming
-		hasWater = hasWater || sample.Swimming
-	}
-	// A dry result is useful only for exiting an already-observed swim. Let
-	// the original ground planner keep ownership of ordinary dry movement.
-	if (!hasWater && !s.swimming) || !validMapNavigationPath(path, s.pos, target) {
-		return false
-	}
-	route.path, route.wet, route.target = path, wet, target
-	route.mapID, route.revision, route.expected = s.posMap, s.positionRevision, s.pos
+	planned.owner = destinationOwner{guid: s.lastWorld.GetOwner().GetGuid(), followRevision: s.followRevision, target: target, formation: !s.state.Following}
+	planned.revision, planned.nextPlan = s.positionRevision, route.nextPlan
+	*route = planned
 	s.state.NavAvailable = true
 	s.state.NavReason = "client_mixed_ground_swim_navmesh"
 	return true

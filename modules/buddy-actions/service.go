@@ -97,7 +97,9 @@ type Service struct {
 	targetMovement                             targetMovementIntent
 	targetMovementExecuting                    bool
 	bodyMoving                                 bool
+	destinationFlight                          *destinationFlight
 	bodyMotionPlan                             func(context.Context, string, uint32, buddynav.Point, float64, float64, time.Duration, bool) ([]buddynav.BodyMotionSample, error)
+	planWaterEntry                             func(context.Context, string, uint32, buddynav.Point, buddynav.Point, float64) (buddynav.DestinationRoute, error)
 	bodyMotionWait                             func(context.Context, time.Duration) error
 	navigationGoal                             position
 	navigationGoalKnown                        bool
@@ -171,6 +173,7 @@ type Service struct {
 	portalWitnessRevision                uint64
 	swimFollow                           swimFollowRoute
 	swimTrail                            swimTrail
+	lastSeenFollow                       followObservation
 	planSwimPath                         func(context.Context, string, uint32, buddynav.Point, buddynav.Point) ([]buddynav.SwimPoint, error)
 	swimming                             bool
 	meleeNav                             followNavigation
@@ -674,6 +677,7 @@ func (s *Service) snapshot(ctx context.Context, creatureGUID ...uint64) (*worldv
 	s.observeDungeonWorld(out)
 	if s.state.Following && s.navDataDir != "" {
 		s.swimTrail.observe(out, s.selfGUID)
+		s.rememberFollowDestinationLocked(out)
 	}
 	s.lastWorld = out
 	s.observeRecoveryLifeLocked(out)
@@ -727,6 +731,13 @@ func safePlayers(snapshot *worldv1.SnapshotResponse, selfGUID uint64) string {
 }
 
 func safePlayerMovement(snapshot *worldv1.SnapshotResponse, selfGUID uint64, swimFollow bool) string {
+	compatible := movementflags.GroundCompatible
+	if swimFollow {
+		compatible = swimFollowCompatible
+	}
+	return safePlayerMovementModes(snapshot, selfGUID, compatible, compatible)
+}
+func safePlayerMovementModes(snapshot *worldv1.SnapshotResponse, selfGUID uint64, selfMode, ownerMode func(uint32, uint32) bool) string {
 	if snapshot == nil || snapshot.Self == nil || snapshot.Owner == nil {
 		return "players_unknown"
 	}
@@ -751,11 +762,7 @@ func safePlayerMovement(snapshot *worldv1.SnapshotResponse, selfGUID uint64, swi
 	}
 	// Passive water-walk/slow-fall/hover status is compatible with ground
 	// movement. Actual transports, swimming, falling and flight remain excluded.
-	compatible := movementflags.GroundCompatible
-	if swimFollow {
-		compatible = swimFollowCompatible
-	}
-	if !compatible(a.MovementFlags, a.ExtraMovementFlags) || !compatible(b.MovementFlags, b.ExtraMovementFlags) {
+	if !selfMode(a.MovementFlags, a.ExtraMovementFlags) || !ownerMode(b.MovementFlags, b.ExtraMovementFlags) {
 		return "unsupported_movement_state"
 	}
 	if b.MovementFlags&(0xff|swimAscendingFlag|swimDescendingFlag) != 0 && b.PositionAgeMs > 2000 {
@@ -837,6 +844,11 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 				err = modcb.PacketNotDispatchedError("body input attempt identity unavailable")
 			} else {
 				sendCtx = modcb.WithMovementAttempt(sendCtx, motion.lastAttempt)
+				if d := motion.destination; d != nil {
+					f := s.destinationFlight
+					followsOwner := d.token == "" && !d.lastSeen && (f == nil || !f.airborne && !f.release)
+					sendCtx = modcb.WithRouteBodyInput(sendCtx, followsOwner)
+				}
 			}
 		}
 		if err != nil {
@@ -964,7 +976,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		return false
 	}
 	if moving && s.followGoalExecuting != nil &&
-		(!s.currentFollowFormationGoalLocked(*s.followGoalExecuting, w) || safeFollowPlayers(w, s.selfGUID, s.navDataDir != "") != "") {
+		(!s.currentFollowFormationGoalLocked(*s.followGoalExecuting, w) || swim == nil && safeFollowPlayers(w, s.selfGUID, s.navDataDir != "") != "" || swim != nil && s.safeRouteFollowLocked(w) != "") {
 		s.state.Reason = "follow_formation_goal_changed_before_movement"
 		return false
 	}
@@ -984,7 +996,8 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		}
 		w = latest
 	}
-	if moving && !s.targetMovementExecuting && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.followPortal.movementInProgress {
+	destOwner, _ := ctx.Value(destinationOwnerKey{}).(destinationOwner)
+	if moving && !destOwner.lastSeen && !s.targetMovementExecuting && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.followPortal.movementInProgress {
 		s.state.Reason = "movement_owner_map_changed"
 		return false
 	}
@@ -1010,9 +1023,12 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 			return false
 		}
 	}
-	if moving && swim != nil && (!s.state.Following || !s.now().Before(s.followUntil) || safePlayerMovement(w, s.selfGUID, true) != "") {
-		s.state.Reason = "swim_follow_observation_changed"
-		return false
+	if moving && swim != nil {
+		owner, bound := ctx.Value(destinationOwnerKey{}).(destinationOwner)
+		if bound && (!owner.surfaceCurrent(ctx, s, w) || (swim.wet || s.swimming) && !waterMovementAllowed(w)) || !bound && (!s.state.Following || !s.now().Before(s.followUntil) || safePlayerMovement(w, s.selfGUID, true) != "") {
+			s.state.Reason = "swim_follow_observation_changed"
+			return false
+		}
 	}
 	// Refuse a stale faster checkpoint after clock/World callbacks. STOP remains
 	// available; no packet was dispatched by this failed mechanical check.
@@ -1024,7 +1040,8 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		s.state.Reason = "movement_current_ground_mode_unsupported"
 		return false
 	}
-	if moving && swim == nil && !s.recoveryOwnsLocked() && w.GetSelf().GetAliveKnown() && w.GetSelf().GetAlive() {
+	_, destination := ctx.Value(destinationOwnerKey{}).(destinationOwner)
+	if moving && (swim == nil || destination) && !s.recoveryOwnsLocked() && w.GetSelf().GetAliveKnown() && w.GetSelf().GetAlive() {
 		if points := s.currentMovementPointsLocked(); len(points) != 0 {
 			leg := p
 			if distance(s.pos, leg) < .001 {
@@ -1212,6 +1229,9 @@ func (s *Service) stopLocked(ctx context.Context) bool {
 
 func (s *Service) explicitStopLocked(ctx context.Context) bool {
 	if s.bodyMoving {
+		if s.destinationFlight != nil {
+			s.destinationFlight.release = true
+		}
 		return s.stopLocked(ctx)
 	}
 	priorUnknown := s.state.MotionUnconfirmed
@@ -1238,7 +1258,7 @@ func (s *Service) runTick(ctx context.Context) {
 	}
 	call, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
 	defer cancel()
-	s.tickLocked(call)
+	s.tickLocked(context.WithValue(call, followRunParentKey{}, ctx))
 }
 
 func (s *Service) Tick(ctx context.Context) {
@@ -1435,13 +1455,18 @@ func (s *Service) tickLocked(ctx context.Context) {
 	}
 	ownedFollow := s.currentFollowFormationGoalLocked(s.followGoal, snapshot)
 	following := s.state.Following || ownedFollow
-	swimFollow := s.state.Following && s.navDataDir != "" && (s.swimming ||
+	if s.followLastSeenLocked(ctx, snapshot, now) {
+		formationUsed = true
+		return
+	}
+	swimFollow := following && s.navDataDir != "" && (s.swimming ||
 		snapshot.GetSelf().GetMovementFlags()&swimMovementFlag != 0 ||
+		snapshot.GetSelf() != nil && destinationGravitySource(snapshot, playerPosition(snapshot.Self)).falling ||
 		snapshot.GetOwner().GetMovementFlags()&swimMovementFlag != 0 ||
 		len(s.swimFollow.path) != 0)
 	reason := ""
 	if swimFollow {
-		reason = safePlayerMovement(snapshot, s.selfGUID, true)
+		reason = s.safeRouteFollowLocked(snapshot)
 	} else {
 		reason = safeFollowPlayers(snapshot, s.selfGUID, following && s.navDataDir != "")
 	}

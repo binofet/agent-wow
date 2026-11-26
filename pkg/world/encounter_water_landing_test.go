@@ -2,90 +2,65 @@ package world
 
 import (
 	"context"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"os"
+	"path/filepath"
 	"testing"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
-	"github.com/agent-wow/agent-wow/pkg/behavior"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
-func TestEncounterFollowSelectsMeasuredWaterInput(t *testing.T) {
-	for _, mode := range []string{"swimmer", "lower_shore", "inferred", "unseen", "foreign_mover", "disabled", "uncertain", "known_refusal", "unknown_receipt"} {
-		t.Run(mode, func(t *testing.T) {
-			p := newFallbackPolicyTest(t, "")
-			o := fallbackObservation()
-			self := o.Players[fallbackGUID(fallbackSelf)]
-			self.MovementKnown, self.PositionKnown, self.PositionRevision = true, true, 1
-			owner := fallbackPlayer(fallbackLeader)
-			owner.MovementKnown, owner.PositionKnown, owner.Swimming = true, true, true
-			owner.X, owner.Z = 10, -34
-			n := &actionsv1.NavigationObservation{Following: true, BodyMovementSupported: true, BodyLandingSupported: true, FollowRevision: 1, OwnerGuid: fallbackLeader, FollowOwner: owner, Phase: "swim_follow_route_unavailable"}
-			o.Navigation = n
-			switch mode {
-			case "inferred":
-				owner.PositionInferred = true
-			case "unseen":
-				owner.Present = false
-			case "foreign_mover":
-				n.MovementOwner = &actionsv1.MovementOwnerState{Active: true}
-			case "disabled":
-				n.BodyLandingSupported = false
-			case "uncertain":
-				n.MotionUnconfirmed = true
-			case "lower_shore":
-				owner.Swimming = false
-				n.Phase = "follow_enabled_waiting_for_safe_observations"
-			}
-			seq := p.observe(o)
-			decision := p.decide(seq)
-			action, _ := decision.Output["action"].(map[string]any)
-			switch mode {
-			case "inferred", "unseen", "foreign_mover", "disabled", "uncertain":
-				if action != nil {
-					t.Fatal("did not yield", action)
-				}
-				return
-			}
-			if action["capability"] != "move_body" || action["landing"] != "follow_water" || action["durationMs"] != float64(500) || action["sequenceId"] != seq {
-				t.Fatal("normal follow did not propose a measured crossing", decision.Output)
-			}
-			if mode != "known_refusal" && mode != "unknown_receipt" {
-				return
-			}
-			id, err := p.host.ReserveAction(decision)
-			if err != nil {
-				t.Fatal(err)
-			}
-			outcome := behavior.ActionNotDispatched
-			payload := map[string]any{"capability": "move_body", "phase": "local_physics_refused", "sequence_id": seq}
-			if mode == "unknown_receipt" {
-				outcome = behavior.ActionSettledUnverified
-				payload["phase"] = "transport_unconfirmed_no_retry"
-				payload["reconciliationRequired"] = true
-			}
-			_, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: outcome, Payload: payload}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			p.expectNoAction(p.observe(o))
-			if _, err := p.host.Reload(context.Background(), readEncounterBundle(t)+"\n-- retain crossing", p.host.Status().Revision); err != nil {
-				t.Fatal(err)
-			}
-			p.expectNoAction(p.observe(o))
-			owner.X++
-			if mode == "unknown_receipt" {
-				p.expectNoAction(p.observe(o))
-				self.PositionRevision++
-			}
-			next, _ := p.decide(p.observe(o)).Output["action"].(map[string]any)
-			if next["landing"] != "follow_water" {
-				t.Fatal("fresh corrected geometry did not regain normal follow", next)
-			}
-		})
+func TestEncounterFollowLeavesWaterEntryToDestinationPlanner(t *testing.T) {
+	p := newFallbackPolicyTest(t, "")
+	o := fallbackObservation()
+	self := o.Players[fallbackGUID(fallbackSelf)]
+	self.MovementKnown, self.PositionKnown, self.PositionRevision = true, true, 1
+	owner := fallbackPlayer(fallbackLeader)
+	owner.MovementKnown, owner.PositionKnown, owner.Swimming = true, true, true
+	owner.X, owner.Z = 10, -34
+	o.Navigation = &actionsv1.NavigationObservation{Following: true, BodyMovementSupported: true, BodyLandingSupported: true, FollowRevision: 1, OwnerGuid: fallbackLeader, FollowOwner: owner}
+	for _, phase := range []string{"swim_follow_route_unavailable", "follow_navigation_unavailable", "following_formation"} {
+		o.Navigation.Phase = phase
+		p.expectNoAction(p.observe(o))
 	}
 }
+
+func TestFollowWaterHistoricalCheckpointAndLateReceipt(t *testing.T) {
+	module, e := os.ReadFile(filepath.Join("..", "..", "behaviors", "encounter-movement.lua"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	source := "local movement=(function()\n" + string(module) + waterCheckpointFixture
+	h, e := behavior.NewSession(context.Background(), "water-history", source)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer h.Close()
+	for i := 0; i < 2; i++ {
+		d, e := h.Decide(context.Background(), map[string]any{})
+		if e != nil || d.Output["retained"] != true || d.Output["unrelated"] != true {
+			t.Fatal(d, e)
+		}
+		if i == 0 {
+			if _, e = h.Reload(context.Background(), source+"\n-- reload", h.Status().Revision); e != nil {
+				t.Fatal(e)
+			}
+		}
+	}
+}
+
+const waterCheckpointFixture = `
+end)()
+return {on_event=movement.on_event,export_state=function() return {version=1,data=movement.export_state()} end,import_state=function(s) return movement.import_state(s.data) end,decide=function(frame)
+  local state=movement.export_state()
+  if not state.waterProbe then movement.import_state({identity="old",waterProbe={epoch="s:4:1:2:1",sequence="8",geometry="prior"}}) end
+  movement.on_event({receipt={outcome="unknown",payload={capability="move_body",sequence_id="8",reconciliationRequired=true}}})
+  local after=movement.export_state()
+  return {retained=after.waterProbe.epoch=="s:4:1:2:1" and after.waterProbe.geometry=="prior" and after.waterProbe.uncertain==true,unrelated=after.identity=="old"}
+end}`
 
 func TestScopedWaterStopRequiresExactKnownEntry(t *testing.T) {
 	e := scopedBodyEngine(t, &scopeWriteConn{})

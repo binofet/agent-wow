@@ -319,24 +319,8 @@ function M.idle_recovery(obs,sequence)
     local nav = obs.navigation or {}
     local self = (obs.players or {})[obs.selfGuid]
     if nav.following ~= true or not self then return {} end
-    local owner=nav.followOwner
     local epoch=obs.sessionId..":"..obs.selfGuid..":"..obs.visitId..":"..(nav.followRevision or "0")..":"..(self.positionRevision or "0")
     if water_probe and water_probe.epoch==epoch and water_probe.uncertain then return {} end
-    if nav.bodyLandingSupported==true and nav.motionUnconfirmed~=true and (nav.movementOwner or {}).active~=true and
-       (nav.phase=="swim_follow_route_unavailable" or nav.phase=="follow_navigation_unavailable" or
-        nav.phase=="follow_enabled_waiting_for_safe_observations" or nav.phase=="follow_route_leg_complete" or
-        nav.phase=="follow_water_approach_written" or nav.phase=="players_missing" or nav.phase=="following_formation") and
-       self.movementKnown==true and self.moving~=true and self.swimming~=true and self.inCombat~=true and
-       self.positionKnown==true and self.positionInferred~=true and owner and owner.guid==nav.ownerGuid and owner.present==true and
-       owner.aliveKnown==true and owner.alive==true and owner.mapKnown==true and owner.mapId==obs.mapId and
-       owner.movementKnown==true and owner.positionKnown==true and owner.positionInferred~=true and (owner.z or 0)<(self.z or 0) then
-        local geometry=owner.guid..":"..(self.x or 0)..":"..(self.y or 0)..":"..(self.z or 0)..":"..(owner.x or 0)..":"..(owner.y or 0)..":"..(owner.z or 0)
-        if not (water_probe and water_probe.epoch==epoch and water_probe.refused and water_probe.geometry==geometry) then
-            water_probe={epoch=epoch,geometry=geometry,sequence=sequence}
-            return {action={capability="move_body",sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,
-                observationSequence=sequence,sequenceId=sequence,durationMs=500,landing="follow_water"}}
-        end
-    end
     if nav.goalKnown~=true then return {} end
     local action = recovery_probe(obs,sequence,"follow",nav.phase,{x=nav.goalX or 0,y=nav.goalY or 0,z=nav.goalZ or 0})
     return {action=action}

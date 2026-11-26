@@ -61,7 +61,7 @@ func (s *Service) explorationContextLocked(ctx context.Context, token string, ma
 			return reason
 		}
 	}
-	if reason := safeQuestCharacter(w, s.selfGUID); reason != "" {
+	if reason := safeQuestCharacterMode(w, s.selfGUID, func(f, x uint32) bool { return destinationSelfMode(w, f, x) }); reason != "" {
 		return "exploration_" + reason
 	}
 	if w.Self.MapId != mapID {
@@ -158,9 +158,11 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		call = context.WithValue(call, idleMotionScopeKey{}, scope)
 	}
 	from, revision, root := s.pos, s.positionRevision, s.navDataDir
+	swimming, allowWater := s.swimming, !s.state.InteractionHarvest && root != "" && waterMovementAllowed(s.lastWorld)
 	// Navmesh geometry is speed-independent. Retain the observed speed across
 	// its unlocked planning interval; every following checkpoint refreshes it.
 	intervalSpeed := observedRunSpeed(s.lastWorld.GetSelf())
+	gravity := destinationGravitySource(s.lastWorld, s.pos)
 	if distance(from, to) > 200 {
 		s.state.Reason = "exploration_destination_exceeds_200_yards"
 		s.mu.Unlock()
@@ -172,7 +174,17 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		return nil, nil
 	}
 	s.mu.Unlock()
+	var mixed *swimFollowRoute
 	path, planErr := s.mapNavigationPath(call, root, mapID, from, to)
+	if allowWater && (planErr != nil || swimming) && call.Err() == nil {
+		r, e := s.planMixedDestination(call, root, mapID, from, to, intervalSpeed, swimming, gravity, nil)
+		if e == nil {
+			r.owner, r.revision = destinationOwner{token: token, target: to}, revision
+			mixed, path, planErr = &r, r.path, nil
+		} else if swimming {
+			planErr = e
+		}
+	}
 	s.mu.Lock()
 	// Planning runs without the controller lock. Neither a revoked token nor
 	// an accepted explicit stop may publish a plan or restart movement.
@@ -201,12 +213,31 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 	// The planner can normalize the destination onto validated ground. A
 	// precise request must fit that actual endpoint; never append caller Z or
 	// bypass the physical route to manufacture a closer arrival.
-	if distance(path[len(path)-1], to) > arrival {
+	endpoint := path[len(path)-1]
+	if mixed != nil && mixed.drop != nil {
+		terminal := mixed.drop
+		for terminal.Next != nil {
+			terminal = terminal.Next
+		}
+		endpoint = navPosition(terminal.Onward[len(terminal.Onward)-1].Point)
+	}
+	if distance(endpoint, to) > arrival {
 		s.state.NavAvailable = false
 		s.state.NavReason = "verified_route_endpoint_outside_requested_arrival_distance"
 		s.state.Reason = "exploration_navigation_endpoint_outside_arrival_distance"
 		s.mu.Unlock()
 		return nil, nil
+	}
+	if mixed != nil && s.idleInteraction.token != "" {
+		scoped := context.WithValue(call, destinationOwnerKey{}, mixed.owner)
+		motion, e := s.newBodyMotionScopeLocked(scoped, token, s.lastWorld, false, true)
+		if e != nil {
+			s.state.Reason = "exploration_idle_scope_unavailable"
+			s.mu.Unlock()
+			return nil, nil
+		}
+		call = context.WithValue(scoped, idleMotionScopeKey{}, motion)
+		ctx = context.WithValue(ctx, idleMotionScopeKey{}, motion)
 	}
 	s.state.NavAvailable, s.state.NavReason = true, "client_navmesh_route_verified"
 	s.mu.Unlock()
@@ -224,10 +255,10 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		if why == "" && (s.posMap != mapID || s.positionRevision != revision || distance(s.pos, expected) > .05) {
 			why = "exploration_position_changed_after_planning"
 		}
-		if why == "" && distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
+		if why == "" && (mixed == nil || mixed.drop == nil) && distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
 			why = "exploration_within_distance"
 		}
-		if why == "" && index >= len(path) {
+		if why == "" && (mixed == nil || mixed.drop == nil) && index >= len(path) {
 			why = "exploration_route_ended_outside_range"
 		}
 		if why != "" {
@@ -243,7 +274,14 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		// the elapsed interval. Never apply a newly faster speed retroactively.
 		intervalSpeed = math.Min(intervalSpeed, speed)
 		before := s.posAt
-		advanced, stepReason := s.navigationStepResultLocked(call, path, &index, finite, intervalSpeed, true)
+		var advanced bool
+		var stepReason string
+		if mixed == nil {
+			advanced, stepReason = s.navigationStepResultLocked(call, path, &index, finite, intervalSpeed, true)
+		} else {
+			advanced = s.advanceDestinationLocked(call, mixed, s.now().Sub(s.posAt).Seconds())
+			path, index, stepReason = mixed.path, mixed.index, s.state.Reason
+		}
 		if !advanced {
 			s.state.Reason = "exploration_" + stepReason
 			s.mu.Unlock()
@@ -253,7 +291,7 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 			intervalSpeed = speed
 		}
 		expected = s.pos
-		if distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
+		if (mixed == nil || mixed.drop == nil) && distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
 			s.state.Reason = "exploration_within_distance"
 			s.mu.Unlock()
 			return nil, nil

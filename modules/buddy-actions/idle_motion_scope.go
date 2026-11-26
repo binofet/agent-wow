@@ -22,6 +22,7 @@ type idleMotionScopeKey struct{}
 // Latest mechanical source for an already-owned idle lease, not a movement
 // controller or operation ledger. Only actual known-written reports advance it.
 type idleMotionScope struct {
+	destination                                      *destinationOwner
 	binding                                          idleInteractionBinding
 	initial, current                                 *modv1.TransportScope
 	rawPose, pose                                    position
@@ -65,7 +66,11 @@ func (s *Service) idleMotionLocalFailureLocked(b *idleMotionScope, now time.Time
 	if s.closed || s.sessionID != b.binding.sessionID || s.selfGUID != b.binding.selfGUID {
 		return "body_changed"
 	}
-	if b.landing && b.binding.token == "" {
+	if b.destination != nil {
+		if !b.destination.localCurrent(s, now) {
+			return "destination_writer_changed"
+		}
+	} else if b.landing && b.binding.token == "" {
 		if s.state.InteractionOwner != "" || s.movementOwner.owner != "" || s.state.CastPending || s.state.Traveling {
 			return "body_writer_changed"
 		}
@@ -101,6 +106,12 @@ func (s *Service) idleMotionCurrentFailureLocked(b *idleMotionScope, w *worldv1.
 		return "observed_pose_changed"
 	}
 	compatible := movementflags.GroundCompatible
+	if b.destination != nil {
+		if !waterMovementAllowed(w) {
+			return "water_movement_unavailable"
+		}
+		compatible = func(f, x uint32) bool { return destinationSelfMode(w, f, x) }
+	}
 	if b.landing && b.writes > 0 {
 		compatible = func(flags, extra uint32) bool {
 			return movementflags.GroundCompatible(flags, extra) || extra == 0 && (flags == 0x1000 || flags == 0x1001 || flags == swimMovementFlag || flags == swimMovementFlag|1)
@@ -140,6 +151,10 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 	if landing && token == "" {
 		b.binding = idleInteractionBinding{sessionID: s.sessionID, selfGUID: s.selfGUID, visit: w.GetVisitRevision()}
 	}
+	if owner, ok := ctx.Value(destinationOwnerKey{}).(destinationOwner); ok && landing {
+		b.destination = &owner
+		b.binding = idleInteractionBinding{sessionID: s.sessionID, selfGUID: s.selfGUID, visit: w.GetVisitRevision(), token: token}
+	}
 	b.current = clonePortalScope(b.initial)
 	if token == "" && !landing || token != b.binding.token || b.clientRevision == 0 || b.initial == nil {
 		return nil, modcb.PacketNotDispatchedError("idle motion source mapping unavailable")
@@ -167,7 +182,7 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 }
 
 func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotionScope, op uint32, payload []byte) (*modv1.TransportScope, error) {
-	if !idleMotionOpcode(op) && !(b.landing && op == opcode.MSGMoveStartSwim) {
+	if !idleMotionOpcode(op) && !(b.landing && (op == opcode.MSGMoveStartSwim || b.destination != nil && op == opcode.MSGMoveStopSwim)) {
 		return nil, modcb.PacketNotDispatchedError("packet outside idle motion scope")
 	}
 	if b.cleanupOnly && op != opcode.MSGMoveStop {
