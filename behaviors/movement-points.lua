@@ -12,14 +12,21 @@ local function unix_ms(v)
 end
 -- Reference rule is actor-owned Lua. These are visible ground objects, not
 -- inferred slime centers or a claim that an unseen area is globally absent.
-M.reference_spells={[21070]=true}
+-- Decimal string keys avoid a dense VM array through the spell ID. Numeric
+-- overrides remain supported, including an explicit false override.
+M.reference_spells={["21070"]=true}
 M.reference_duration_ms=20000
 function M.ground_sightings(obs)
     if obs.groundEffectsSupported~=true or obs.groundEffectsOverflow==true then return nil end
     local rows={}
     for _,effect in ipairs(obs.groundEffects or {}) do
         if type(effect)~="table" then return nil end
-        if M.reference_spells[effect.spellId] then
+        local enabled
+        if type(effect.spellId)=="number" then
+            enabled=M.reference_spells[effect.spellId]
+            if enabled==nil then enabled=M.reference_spells[tostring(effect.spellId)] end
+        end
+        if enabled then
             if type(effect.guid)~="string" or #effect.guid==0 or not number(effect.x) or not number(effect.y) or not number(effect.z) or
                not number(effect.radiusYards) or effect.radiusYards<=0 or not unix_ms(effect.firstObservedAtUnixMs) then return nil end
             rows[#rows+1]={id=effect.guid..":"..obs.visitId,sourceGuid=effect.casterGuid,casterGuid=effect.casterGuid,groundEffectGuid=effect.guid,spellId=effect.spellId,

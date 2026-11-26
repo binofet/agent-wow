@@ -436,9 +436,22 @@ func TestMalformedAndForeignCastPacketsCannotClaimSuccess(t *testing.T) {
 
 func TestBeforeLogoutStopsAndRejectsNewControls(t *testing.T) {
 	s, f, _ := rig(t)
+	// Exercise logout custody after healthy movement, separately from the
+	// unchanged production-default follow watchdog tests.
+	runtime, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
+		t.Fatal(err)
+	}
+	s.formation.runtime = runtime
 	toggle(t, s, true)
 	s.Tick(context.Background())
-	_, err := s.BeforeLogout(context.Background(), &emptypb.Empty{})
+	if !s.state.Moving || len(f.packets) != 1 || f.packets[0].Opcode != opcode.MSGMoveStartForward {
+		t.Fatal("healthy follow did not establish movement before logout", s.stateLocked(), f.packets)
+	}
+	_, err = s.BeforeLogout(context.Background(), &emptypb.Empty{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,8 +462,8 @@ func TestBeforeLogoutStopsAndRejectsNewControls(t *testing.T) {
 		t.Fatal("follow enabled during logout")
 	}
 	s.Tick(context.Background())
-	if len(f.packets) != 2 {
-		t.Fatalf("writes after logout %d", len(f.packets))
+	if len(f.packets) != 2 || f.packets[1].Opcode != opcode.MSGMoveStop {
+		t.Fatalf("logout must stop once without subsequent writes: %v", f.packets)
 	}
 }
 
