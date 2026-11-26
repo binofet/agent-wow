@@ -47,14 +47,15 @@ local function admission(obs,id,explicitPull)
     return false,"waiting_for_tank_attack_witness"
 end
 -- Pull admission is standing knowledge; positioning is needed only for an
--- observed near hazard or an actual current party fight. Visibility alone is
+-- observed near hazard or an actual current party fight. Unrelated personal
+-- combat does not identify a matching creature as a nearby hazard. Visibility alone is
 -- not a movement request. Unknown geometry remains conservative.
 local function positioning(obs,r)
     r=r or rule(obs)
     if not r then return false,"outside_prior" end
     local self=(obs.players or {})[obs.selfGuid]
     if not self or self.present~=true or self.aliveKnown~=true or self.alive~=true or
-       self.combatKnown~=true or self.inCombat==true or self.mapKnown~=true or
+       self.combatKnown~=true or self.mapKnown~=true or
        self.mapId~=obs.mapId or self.positionKnown~=true or self.positionInferred==true then
         return true,"positioning_facts_unavailable"
     end

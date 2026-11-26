@@ -1062,6 +1062,19 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
         ranged_hold(obs,frame,out,row,status,false)
         return
     end
+    -- A stationary, already range-checked friendly spell needs no new movement
+    -- lease merely because a matching creature is fighting elsewhere. Keep all
+    -- existing custody and near-hazard withdrawal ahead of this exception.
+    if row.origin=="learned_prior" and complete and distance and
+       distance>=row.minRangeYards+row.clearanceYards and
+       self.movementKnown==true and self.moving==false and
+       nav.motionUnconfirmed~=true and type(nav.movementOwner)=="table" and
+       nav.movementOwner.active~=true and not hold and
+       not (ground and (ground.operation or ground.uncertain or ground.awaiting)) and
+       ranged_friendly_support(obs,action) then
+        status.phase="stationary_friendly_support";status.positionReady=false
+        return
+    end
     if ranged_hold(obs,frame,out,row,status,true,nearest) then return end
     if obs.hostTargetRangeBandSupported~=true then
         if action and (action.capability=="heal" or action.capability=="buff") and action.targetGuid==obs.selfGuid then return end
