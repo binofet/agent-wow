@@ -56,7 +56,12 @@ func (s *Service) CastSpell(ctx context.Context, r *actionsv1.CastSpellRequest) 
 		return nil, err
 	}
 	target := r.GetTargets().GetObjectGuid()
-	w, err := s.readWorldSnapshotRequest(ctx, &worldv1.SnapshotRequest{CreatureGuid: target, IncludeGatheringObjects: true})
+	query := &worldv1.SnapshotRequest{IncludeGatheringObjects: true}
+	// World creature_guid is NPC-only; players and corpses are normal rows.
+	if target>>48 == 0xf130 && target&0xffffff != 0 {
+		query.CreatureGuid = target
+	}
+	w, err := s.readWorldSnapshotRequest(ctx, query)
 	if err != nil || !s.matchesCurrentEncounterVisitLocked(w) || w.VisitRevision != r.VisitId {
 		return nil, status.Error(codes.FailedPrecondition, "current caster and observed visit required")
 	}
