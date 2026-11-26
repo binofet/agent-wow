@@ -46,6 +46,7 @@ packets:
   SMSG_FORCE_RUN_SPEED_CHANGE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_FORCE_WALK_SPEED_CHANGE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_MOVE_KNOCK_BACK: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_KNOCK_BACK: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_MONSTER_MOVE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_MONSTER_MOVE_TRANSPORT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_CLIENT_CONTROL_UPDATE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket

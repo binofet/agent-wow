@@ -49,6 +49,9 @@ type Session struct {
 	ownMovementReportSnapshot  *modv1.WorldPacket
 	ownMovementAttemptSnapshot string
 	bodyUpdates                parsedBodyUpdates
+	knockbackReports           knockbackReports
+	knockbackReady             chan struct{}
+	parsedOwnPose              *modv1.WorldPacket
 }
 
 // Options injects a session-owned module runtime and separate startup budgets.
@@ -123,12 +126,14 @@ func enter(ctx context.Context, conn *worldconn.Conn, realm Realm, character Cha
 	lifetime, stop := context.WithCancel(context.Background())
 	s := &Session{conn: conn, logger: logger, gameplayTrace: opts.GameplayTrace, state: State{Status: EnteringWorld, Realm: realm, Character: character}, done: make(chan struct{}), abort: make(chan struct{}), logout: make(chan chan *logoutOperation), modules: opts.Modules, started: time.Now(), startLogin: make(chan struct{}), startupDone: make(chan struct{}), closed: make(chan struct{}), writes: make(chan writeRequest), ctx: lifetime, cancel: stop}
 	s.transportScopeSnapshot = initialScope
+	s.knockbackReady = make(chan struct{}, 1)
 	ready := make(chan struct{})
 	go s.run(ready, timing)
 	startup, endStartup := context.WithTimeout(ctx, opts.ModuleTimeout)
 	stopStartup := context.AfterFunc(lifetime, endStartup)
 	err = s.modules.Start(startup, modsession.Session{Identity: modsession.Identity{CharacterGUID: character.GUID, CharacterName: character.Name, RealmID: realm.ID, RealmName: realm.Name}, SendPacket: s.SendPacket, Clock: s.Clock,
-		SendScopedPacket: s.SendScopedPacket, TransportScope: s.TransportScope, OwnMovementReport: s.OwnMovementReport, OwnMovementAttempt: s.OwnMovementAttempt, BodyInputReport: s.bodyInputReport, ParsedBodyUpdate: s.recordParsedBodyUpdate})
+		SendScopedPacket: s.SendScopedPacket, TransportScope: s.TransportScope, OwnMovementReport: s.OwnMovementReport, OwnMovementAttempt: s.OwnMovementAttempt, BodyInputReport: s.bodyInputReport, ParsedBodyUpdate: s.recordParsedBodyUpdate,
+		ParsedOwnPose: s.recordOwnPose, KnockbackReport: s.readKnockback, MeasuredKnockback: s.acceptKnockbackContact})
 	endStartup()
 	stopStartup()
 	close(s.startupDone)
@@ -211,7 +216,7 @@ func (s *Session) sendPacket(ctx context.Context, op uint32, body []byte, scope 
 		opcode.CMSGPlayerLogin, opcode.CMSGCheatPlayerLogin, opcode.CMSGCheckLoginCriteria,
 		opcode.CMSGPing, opcode.CMSGKeepAlive, opcode.CMSGTimeSyncResp, opcode.CMSGWardenData,
 		opcode.MSGMoveTeleportAck, opcode.MSGMoveWorldportAck,
-		opcode.CMSGForceMoveRootAck, opcode.CMSGForceMoveUnrootAck,
+		opcode.CMSGForceMoveRootAck, opcode.CMSGForceMoveUnrootAck, opcode.CMSGMoveKnockBackAck,
 		opcode.CMSGPlayerLogout, opcode.CMSGLogoutRequest, opcode.CMSGLogoutCancel:
 		return status.Error(codes.PermissionDenied, "opcode is owned by the session")
 	}

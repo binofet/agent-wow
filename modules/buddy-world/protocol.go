@@ -396,17 +396,32 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			return true, nil
 		}
 		return true, monsterMove(c, p, op == opcode.SMSGMonsterMoveTransport, now)
-	case opcode.SMSGMoveKnockBack:
-		// Spline and knockback trajectories are deliberately not predicted.
-		// Invalidate a tracked player's position until the next actual position.
-		guid := c.guid()
-		if op == opcode.SMSGMoveKnockBack {
-			c.skip(20)
-		} else {
-			c.skip(1)
+	case opcode.MSGMoveKnockBack:
+		// The realm forwards the acknowledging player's MovementInfo to
+		// their peers, followed by sin, cos, horizontal and vertical speeds.
+		p := state.target(c.guid())
+		if err := movement(c, p, now); err != nil {
+			return true, err
 		}
-		if c.err != nil {
-			return true, c.err
+		for i := 0; i < 4; i++ {
+			if !validFloat(c.f32()) {
+				return true, errFloat
+			}
+		}
+		if err := c.done(); err != nil {
+			return true, err
+		}
+		if p != nil {
+			p.present = true
+			setMap(p, players[0])
+		}
+		return true, nil
+	case opcode.SMSGMoveKnockBack:
+		// The order carries an impulse, never a new body position.
+		guid := c.guid()
+		c.skip(20)
+		if err := c.done(); err != nil {
+			return true, err
 		}
 		if p := state.target(guid); p != nil {
 			p.positionKnown = false

@@ -11,6 +11,9 @@ import (
 // The core handles connection lifecycle and server-commanded movement ACKs.
 // Gameplay payloads are still routed unchanged to registered modules.
 func (e *engine) handle(op uint16, body []byte) (bool, error) {
+	if op == opcode.SMSGMoveKnockBack && !transportClearlyForeign(op, body, e.transport.scope.GetSelfGuid()) {
+		return false, e.knockbackOrder(body)
+	}
 	e.observeTransportScope(op, body)
 	switch op {
 	case opcode.SMSGLoginVerifyWorld, opcode.SMSGTransferPending, opcode.SMSGNewWorld, opcode.MSGMoveTeleportAck:

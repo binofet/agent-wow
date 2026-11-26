@@ -489,6 +489,7 @@ func (s *Service) clientPositionLocked() *actionsv1.ClientPosition {
 	result.Orientation = w.Orientation
 	result.AgeMs = w.PositionAgeMs
 	result.Revision = w.PositionRevision
+	result.Estimated = w.PositionInferred
 	if s.posKnown && s.posMap == w.MapId && s.positionRevision == w.PositionRevision && !s.state.MotionUnconfirmed {
 		result.X = s.pos.x
 		result.Y = s.pos.y
@@ -791,7 +792,7 @@ func (s *Service) refreshPositionLocked(snapshot *worldv1.SnapshotResponse) bool
 		s.pos = playerPosition(p)
 		s.positionRevision = p.PositionRevision
 		s.observePositionLocked(p)
-		if p.MovementFlagsKnown && p.MovementFlags&0xff == 0 {
+		if !p.PositionInferred && p.MovementFlagsKnown && p.MovementFlags&0xff == 0 {
 			s.state.MotionUnconfirmed = false
 		}
 		if s.state.Moving {
@@ -806,7 +807,7 @@ func (s *Service) observePositionLocked(p *worldv1.PlayerState) {
 	s.posMap = p.MapId
 	s.swimming = p.MovementFlagsKnown && p.MovementFlags&swimMovementFlag != 0
 	s.swimFollow = swimFollowRoute{}
-	s.posEstimated = false
+	s.posEstimated = p.PositionInferred
 	s.posAt = s.now().Add(-time.Duration(min(p.PositionAgeMs, uint64(24*time.Hour/time.Millisecond))) * time.Millisecond)
 	s.posRevision++
 }
@@ -1545,6 +1546,10 @@ func (s *Service) tickLocked(ctx context.Context) {
 }
 
 func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
+	if packet.GetOpcode() == opcode.SMSGMoveKnockBack {
+		s.measureKnockback(ctx, packet)
+		return &emptypb.Empty{}, nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if packet == nil {

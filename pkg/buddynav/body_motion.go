@@ -41,9 +41,17 @@ func PlanBodyLandingContext(ctx context.Context, dataDir string, mapID uint32, s
 	return planBodyMotionContext(ctx, dataDir, mapID, start, bearing, speed, duration, jump, true, nil)
 }
 
+// KnockbackPoint is the free-flight position at the given age. Only a fully
+// collision-measured trajectory authorizes reporting this position.
+func KnockbackPoint(start Point, bearing, horizontal, initial float64, elapsed time.Duration) Point {
+	t := elapsed.Seconds()
+	return Point{X: start.X + float32(math.Cos(bearing)*horizontal*t), Y: start.Y + float32(math.Sin(bearing)*horizontal*t), Z: start.Z + float32(bodyElevation(t, initial))}
+}
+
 type bodyFallSource struct {
 	elapsed time.Duration
 	initial float64
+	impulse bool
 }
 
 // PlanBodyGravityContext measures gravity from an unsupported observed pose
@@ -54,7 +62,17 @@ func PlanBodyGravityContext(ctx context.Context, dataDir string, mapID uint32, s
 		math.IsNaN(initialJumpVelocity) || !BodyFlightInRange(elapsedFall, 0, initialJumpVelocity) {
 		return nil, errors.New("invalid observed fall source")
 	}
-	return planBodyMotionContext(ctx, dataDir, mapID, start, bearing, 0, 0, false, true, &bodyFallSource{elapsedFall, initialJumpVelocity})
+	return planBodyMotionContext(ctx, dataDir, mapID, start, bearing, 0, 0, false, true, &bodyFallSource{elapsed: elapsedFall, initial: initialJumpVelocity})
+}
+
+// PlanKnockbackContext measures an actual server impulse to its first
+// physical contact. Initial velocity is positive upward in world coordinates.
+func PlanKnockbackContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, horizontal, initial float64) ([]BodyMotionSample, error) {
+	if math.IsNaN(horizontal) || math.IsInf(horizontal, 0) || horizontal < 0 || horizontal > MaxRouteLength ||
+		math.IsNaN(initial) || math.IsInf(initial, 0) || math.Abs(initial) > math.Sqrt(4*BodyGravity*worldVerticalLimit) {
+		return nil, errors.New("impulse exceeds measured map envelope")
+	}
+	return planBodyMotionContext(ctx, dataDir, mapID, start, bearing, horizontal, 0, false, true, &bodyFallSource{initial: initial, impulse: true})
 }
 
 func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, speed float64, duration time.Duration, jump, allowDrop bool, gravity *bodyFallSource) ([]BodyMotionSample, error) {
@@ -119,6 +137,9 @@ func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, st
 		}
 		if gravity != nil {
 			feet := bodyFootprintFloor(floor)
+			if gravity.impulse {
+				return traceBodyFall(ctx, []BodyMotionSample{{Point: start}}, bearing, speed, gravity.initial, 0, true, feet, clear, water)
+			}
 			if h, supported, err := feet(start, .025, .025); err != nil || supported && finite(h) {
 				if err != nil {
 					return nil, err

@@ -38,7 +38,11 @@ type engine struct {
 	writeSerial           uint64
 	beforeScopedWrite     func() error
 	ownMovementReport     *modv1.WorldPacket
-	ownMovementAttempt    string
+	// Last supported physical write survives a later known-not-dispatched
+	// selection. It supplies a new realm order only through source continuity.
+	lastWrittenPose    *modv1.WorldPacket
+	ownMovementAttempt string
+	impulse            *knockbackMotion
 }
 
 func (e *engine) write(op uint32, body []byte) error {
@@ -105,6 +109,13 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	e.writeSerial++
 	anyBytes, err := e.s.conn.WritePacket(op, body)
 	if err != nil {
+		if ownMovementReportOpcode(op) || op == opcode.CMSGMoveKnockBackAck {
+			e.lastWrittenPose = nil
+			e.s.mu.Lock()
+			e.s.parsedOwnPose = nil
+			e.s.knockbackReports = knockbackReports{}
+			e.s.mu.Unlock()
+		}
 		return GameplayWriteFailed, anyBytes, err
 	}
 	if op == opcode.CMSGSetSelection && len(body) == 8 {
@@ -116,6 +127,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	e.retainOwnMovementReport(ctx, op, body)
 	if ownMovementReportOpcode(op) {
 		e.ownMovementAttempt = modsession.WriteOriginFromContext(ctx).MovementAttempt
+		e.lastWrittenPose = e.ownMovementReport
 	}
 	e.publishTransportScope()
 	logPacket(e.s.logger, "write", op, len(body))
@@ -164,8 +176,38 @@ func (e *engine) loop(packets <-chan packet) error {
 	ping := time.NewTimer(e.timing.ping)
 	defer ping.Stop()
 	e.pongTimer = time.NewTimer(e.timing.pong)
+	drain := func() error {
+		for packets != nil {
+			select {
+			case p := <-packets:
+				complete, err := e.processIncoming(p)
+				if err != nil {
+					return err
+				}
+				if complete {
+					packets = nil
+				}
+			default:
+				return nil
+			}
+		}
+		return nil
+	}
 	for {
+		var knockbackDue <-chan time.Time
+		if e.impulse != nil {
+			knockbackDue = e.impulse.next
+		}
 		select {
+		case <-e.s.knockbackReady:
+			e.startKnockbackPlan()
+		case <-knockbackDue:
+			e.beforeScopedWrite = drain
+			err := e.advanceKnockback()
+			e.beforeScopedWrite = nil
+			if err != nil {
+				return err
+			}
 		case <-e.s.abort:
 			return ErrClosed
 		case <-e.s.modules.Done():
@@ -186,23 +228,7 @@ func (e *engine) loop(packets <-chan packet) error {
 				continue
 			}
 			if r.transportScope != nil || r.op == opcode.CMSGMoveSplineDone {
-				e.beforeScopedWrite = func() error {
-					for packets != nil {
-						select {
-						case p := <-packets:
-							complete, err := e.processIncoming(p)
-							if err != nil {
-								return err
-							}
-							if complete {
-								packets = nil
-							}
-						default:
-							return nil
-						}
-					}
-					return nil
-				}
+				e.beforeScopedWrite = drain
 			}
 			outcome, anyBytes, err := e.writeContext(r.ctx, r.op, r.body, r.transportScope)
 			e.beforeScopedWrite = nil

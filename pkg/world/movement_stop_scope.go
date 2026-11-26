@@ -10,12 +10,22 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/protobuf/proto"
+	"strings"
 )
 
 // A portal's STOP must still belong to the exact observed source visit when
 // the owner loop writes it. World/Actions queues can lag a same-map entry.
 // Legacy unscoped STOP remains available through its existing path.
 func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []byte, requested *modv1.TransportScope, prior *modv1.WorldPacket) error {
+	if k, ok := ctx.Value(knockbackFrameKey{}).(*knockbackMotion); ok {
+		if e.impulse != k || k.finished || requested == nil || !proto.Equal(requested, k.lastScope) || e.s.bodyProof(ctx, requested, e.transport.scope) != "" {
+			return modcb.PacketNotDispatchedError("knockback movement source changed")
+		}
+		return nil
+	}
+	if k := e.impulse; k != nil && !k.finished && strings.HasPrefix(opcode.WorldName(op), "MSG_MOVE_") && op != opcode.MSGMoveTeleportAck && op != opcode.MSGMoveWorldportAck && e.s.bodyProof(modsession.WithSelfBodyInput(ctx), k.lastScope, e.transport.scope) == "" {
+		return modcb.PacketNotDispatchedError("server knockback owns the moving body")
+	}
 	qualified := modsession.IsBodyInput(ctx) && requested != nil
 	if qualified {
 		if reason := e.s.bodyProof(ctx, requested, e.transport.scope); reason != "" {

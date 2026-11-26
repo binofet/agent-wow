@@ -36,7 +36,7 @@ func BodyFlightInRange(elapsed time.Duration, speed, initial float64) bool {
 }
 
 func bodyElevation(seconds, initial float64) float64 {
-	accelerating := math.Min(seconds, (normalTerminalVelocity+initial)/BodyGravity)
+	accelerating := math.Max(0, math.Min(seconds, (normalTerminalVelocity+initial)/BodyGravity))
 	return initial*accelerating - BodyGravity*accelerating*accelerating/2 - normalTerminalVelocity*(seconds-accelerating)
 }
 
@@ -132,7 +132,7 @@ func traceBodyFall(ctx context.Context, points []BodyMotionSample, bearing, spee
 			return nil, err
 		}
 		landed := hit && q.Z <= h && q.Z < previous.Z
-		if hit && q.Z < h && q.Z >= previous.Z {
+		if hit && !wet && q.Z < h && q.Z >= previous.Z {
 			return nil, errors.New("body hits solid terrain during ascent")
 		}
 		if landed {
