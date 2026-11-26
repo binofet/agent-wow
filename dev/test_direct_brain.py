@@ -118,6 +118,15 @@ class PublicRPC:
 
 
 class DirectBrainIntegrationTests(unittest.TestCase):
+    def test_local_meter_deadlines_reach_real_brain_without_model_or_game_call(self):
+        with patch.object(converse, "ROOT", self.workspace):
+            brain=converse.DirectBrain(self.state,developer_workspace=self.workspace,model='loaded-exact',provider='local',base_url='http://127.0.0.1:1/v1',
+                local_sdk_url='ws://127.0.0.1:1234',local_prompt_token_limit=24000,local_max_output_tokens=4096,
+                local_prompt_meter_timeout=40,local_prompt_meter_sdk_timeout=15)
+            self.assertEqual((brain.client.local_token_counter.process_timeout,brain.client.local_token_counter.sdk_timeout),(40,15))
+            self.assertEqual(brain.local_prompt_limits['local_prompt_meter_timeout'],40)
+            self.assertEqual(brain.local_prompt_limits['local_prompt_meter_sdk_timeout'],15)
+
     def test_combat_review_initial_ordinary_wire_keeps_material_peer_damage(self):
         from combat_context import CombatContext
         tracker=CombatContext('4',spell_names={700101:'Synthetic public damage label'})

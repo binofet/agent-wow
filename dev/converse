@@ -2776,13 +2776,15 @@ class DirectBrain(AgentBrain):
                  character_class="priest", developer_workspace=None, model=None, *,
                  provider="local", base_url=None, api_key_env=None, local_prompt_budget_bytes=None,
                  local_prompt_token_limit=None, local_token_counter=None, local_max_output_tokens=None,
-                 local_sdk_url=None):
+                 local_sdk_url=None, local_prompt_meter_timeout=None, local_prompt_meter_sdk_timeout=None):
         super().__init__(state_dir, timeout, stopped, character_name, character_class,
                          developer_workspace, model, None)
         from direct_model import DirectModel
         limits = {key:value for key,value in dict(local_prompt_budget_bytes=local_prompt_budget_bytes,
             local_prompt_token_limit=local_prompt_token_limit, local_token_counter=local_token_counter,
-            local_max_output_tokens=local_max_output_tokens, local_sdk_url=local_sdk_url).items() if value is not None}
+            local_max_output_tokens=local_max_output_tokens, local_sdk_url=local_sdk_url,
+            local_prompt_meter_timeout=local_prompt_meter_timeout,
+            local_prompt_meter_sdk_timeout=local_prompt_meter_sdk_timeout).items() if value is not None}
         self.client = DirectModel(provider, self.model, base_url, api_key_env, timeout, **limits)
         self.local_prompt_limits = {key:value for key,value in limits.items() if key != 'local_token_counter'}
         self.transport = dict(provider=provider, baseURL=self.client.base_url)
@@ -6141,6 +6143,10 @@ def main(argv=None):
     parser.add_argument("--local-prompt-token-limit", type=int,
                         help="Input token budget metered with the explicit already-loaded LM Studio SDK model")
     parser.add_argument("--local-sdk-url", help="Explicit loopback ws://host:port for read-only template/token metering; no model load")
+    parser.add_argument("--local-prompt-meter-timeout", type=int,
+                        help="Local SDK utility total seconds including Node startup (2..60; default30)")
+    parser.add_argument("--local-prompt-meter-sdk-timeout", type=int,
+                        help="Local SDK connect/render/count seconds (1..30; default10; less than total)")
     parser.add_argument("--included-usage-only", action="store_true",
                         help="For the Codex provider, start replies only while included usage is available")
     parser.add_argument("--model", type=explicit_model, help="Explicit model ID for the selected provider")
@@ -6163,7 +6169,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     local_limits = {key:value for key,value in dict(local_prompt_budget_bytes=args.local_prompt_budget_bytes,
         local_max_output_tokens=args.local_max_output_tokens, local_prompt_token_limit=args.local_prompt_token_limit,
-        local_sdk_url=args.local_sdk_url).items() if value is not None}
+        local_sdk_url=args.local_sdk_url, local_prompt_meter_timeout=args.local_prompt_meter_timeout,
+        local_prompt_meter_sdk_timeout=args.local_prompt_meter_sdk_timeout).items() if value is not None}
     if local_limits and args.model_provider != 'local':
         parser.error('Local prompt/output limits require the local provider')
     if args.continue_owner_whisper is not None:
