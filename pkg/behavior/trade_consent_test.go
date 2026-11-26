@@ -146,8 +146,8 @@ func TestTradeConsentDefaultOwnerAndConsentFacts(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixtureRuntime := tradeConsentFixtureRuntime
-			if tc.name == "explicit_outgoing" {
-				// Separate the observed instrumented semantic case from its
+			if tc.name == "explicit_outgoing" || tc.name == "accept_written" {
+				// Separate observed instrumented semantic cases from their
 				// unchanged normal default-5ms CLI proof below.
 				fixtureRuntime = disposalArmorSemanticRuntime
 			}
