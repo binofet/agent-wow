@@ -3,7 +3,9 @@ package modcb
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strconv"
+	"strings"
 
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -14,6 +16,27 @@ const OwnMovementReportMethod = "own_movement_report"
 const BodyInputReportMethod = "body_input_movement_report"
 const BodyInputUpdateTrailer = "agentwow-parsed-body-input-update"
 const BodyInputBarrierTrailer = "agentwow-body-input-barrier"
+const BodyInputFieldTrailer = "agentwow-body-input-field"
+const MaxBodyInputFields = 3
+
+// A row carries only a parsed field index and optionally its public numeric
+// values. The World parser never emits actor identifiers or private values.
+var bodyFieldDetail = regexp.MustCompile(`^0x[01][0-9a-f]{3}(=(0x[0-9a-f]{8}|[?])>0x[0-9a-f]{8})?$`)
+
+func BodyUpdateDetail(class string, fields []string) string {
+	if class != BodyUpdateSelfField || len(fields) == 0 || len(fields) > MaxBodyInputFields+1 {
+		return class
+	}
+	for i, field := range fields {
+		if i == MaxBodyInputFields && field == "more" {
+			continue
+		}
+		if i == MaxBodyInputFields || !bodyFieldDetail.MatchString(field) {
+			return class
+		}
+	}
+	return class + " " + strings.Join(fields, " ")
+}
 
 const (
 	BodyUpdateHarmless       = "harmless_values"

@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"math/bits"
@@ -483,7 +484,7 @@ func movement(c *cursor, p *observed, now time.Time) error {
 func updates(c *cursor, state *observations, now time.Time) error {
 	players := &state.players
 	count := c.u32()
-	state.bodyInputBarrier = ""
+	state.bodyInputBarrier, state.bodyInputFields = "", nil
 	if count == 0 {
 		state.bodyInputBarrier = modcb.BodyUpdateUnknownSubject
 	}
@@ -630,11 +631,12 @@ func updates(c *cursor, state *observations, now time.Time) error {
 			if typ != 1 {
 				// Classify each VALUES block before mutation. A later block can
 				// restore a field without undoing an intervening death or control change.
-				var restricted *string
+				var restricted *observations
 				if !publicPlayerGUID(guid) && !creatureGUID(guid) {
 					state.bodyInputBarrier = modcb.BodyUpdateUnknownSubject
-				} else if state.bodyInputBarrier == "" && (guid == players[0].guid || guid == players[1].guid) {
-					restricted = &state.bodyInputBarrier
+				} else if state.bodyInputBarrier == "" && (guid == players[0].guid || guid == players[1].guid) ||
+					state.bodyInputBarrier == modcb.BodyUpdateSelfField && guid == players[0].guid {
+					restricted = state
 				}
 				if err := values(c, p, now, typ == 2 || typ == 3, restricted); err != nil {
 					return err
@@ -828,7 +830,30 @@ func bodyInputValueUnchanged(p *observed, field int, value uint32) bool {
 		byte(value) == 0 && p.fields[field]>>8 == value>>8
 }
 
-func values(c *cursor, p *observed, now time.Time, create bool, bodyInputBarrier *string) error {
+// Field indices are bounded by the packet's one-byte mask count. Public
+// non-identity scalars may include their values. Other fields reveal only
+// their index, including private fields outside our cached player prefix.
+func (s *observations) recordBodyField(p *observed, field int, value uint32) {
+	if len(s.bodyInputFields) >= modcb.MaxBodyInputFields {
+		if len(s.bodyInputFields) == modcb.MaxBodyInputFields {
+			s.bodyInputFields = append(s.bodyInputFields, "more")
+		}
+		return
+	}
+	row := fmt.Sprintf("0x%04x", field)
+	switch field {
+	case unitBytes0, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags, unitBytes1, unitShapeshiftBytes, unitChannelSpell,
+		0x36, 0x37, 0x3c, 0x3d, 0x3e, 0x3f, 0x41, 0x42, 0x43, 0x44, 0x45, unitNPCFlags, 0x53: // level, faction, flags2, aura, attack times, size, displays, emote
+		old := "?"
+		if p.known[field] {
+			old = fmt.Sprintf("0x%08x", p.fields[field])
+		}
+		row += fmt.Sprintf("=%s>0x%08x", old, value)
+	}
+	s.bodyInputFields = append(s.bodyInputFields, row)
+}
+
+func values(c *cursor, p *observed, now time.Time, create bool, restricted *observations) error {
 	n := int(c.u8())
 	masks := make([]uint32, n)
 	total := 0
@@ -846,10 +871,11 @@ func values(c *cursor, p *observed, now time.Time, create bool, bodyInputBarrier
 			}
 			v := c.u32()
 			field := block*32 + bit
-			if bodyInputBarrier != nil && !bodyInputValueUnchanged(p, field, v) {
-				*bodyInputBarrier = modcb.BodyUpdateOwnerField
+			if restricted != nil && !bodyInputValueUnchanged(p, field, v) {
+				restricted.bodyInputBarrier = modcb.BodyUpdateOwnerField
 				if p != nil && p.isSelf {
-					*bodyInputBarrier = modcb.BodyUpdateSelfField
+					restricted.bodyInputBarrier = modcb.BodyUpdateSelfField
+					restricted.recordBodyField(p, field, v)
 				}
 			}
 			if p != nil && p.isContainer && field == containerSlots && v > maxBagSlots {

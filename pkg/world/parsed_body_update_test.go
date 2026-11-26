@@ -99,7 +99,7 @@ func (c *bodyContinuitySession) observe(op uint16, wire []byte) (string, *modv1.
 	}
 	result := modcb.BodyUpdateResult(tr.md.Get(modcb.BodyInputUpdateTrailer), tr.md.Get(modcb.BodyInputBarrierTrailer))
 	if op == opcode.SMSGUpdateObject || op == opcode.SMSGCompressedUpdateObject {
-		c.e.s.recordParsedBodyUpdate(p.TransportScope, result)
+		c.e.s.recordParsedBodyUpdate(p.TransportScope, modcb.BodyUpdateDetail(result, tr.md.Get(modcb.BodyInputFieldTrailer)))
 	}
 	return result, p
 }
@@ -211,7 +211,8 @@ func TestParsedWorldUpdateRetainsOnlyExactQualifiedPhysicalSource(t *testing.T) 
 				want = "body_or_visit_changed"
 			}
 			got, reason := c.e.s.bodyInputReport(ctx, strings.Repeat("a", 64))
-			if reason != want || (got != nil) != (want == "") || (got != nil && !proto.Equal(got, prior)) || c.e.s.OwnMovementReport() != nil {
+			class, _, _ := strings.Cut(reason, " ")
+			if class != want || (got != nil) != (want == "") || (got != nil && !proto.Equal(got, prior)) || c.e.s.OwnMovementReport() != nil {
 				t.Fatal("lost provenance", reason, want, got, prior)
 			}
 			writes := conn.writes
@@ -387,5 +388,42 @@ func TestPhysicalDrainAfterWaitingForWorld(t *testing.T) {
 				t.Fatal(mode, err, drains, conn.writes)
 			}
 		})
+	}
+}
+
+func TestBodyRefusalReportsParsedOwnFieldsInOriginalOrder(t *testing.T) {
+	for _, row := range []struct {
+		name   string
+		blocks [][]byte
+		want   string
+	}{
+		{"stand_and_health", [][]byte{bodyValuesBlock(99, 0x4a, 1), bodyValuesBlock(99, 0x18, 0), bodyValuesBlock(99, 0x18, 100)},
+			"own_restricted_field 0x004a=0x00000000>0x00000001 0x0018=0x00000064>0x00000000 0x0018=0x00000000>0x00000064"},
+		{"unknown_prior_and_private", [][]byte{bodyValuesBlock(99, 0x53, 7), bodyValuesBlock(99, 0x162, 0xabcdef99)},
+			"own_restricted_field 0x0053=?>0x00000007 0x0162"},
+		{"bounded", [][]byte{bodyValuesBlock(99, 0x18, 3), bodyValuesBlock(99, 0x18, 4), bodyValuesBlock(99, 0x18, 5), bodyValuesBlock(99, 0x18, 6), bodyValuesBlock(99, 0x18, 7)},
+			"own_restricted_field 0x0018=0x00000064>0x00000003 0x0018=0x00000003>0x00000004 0x0018=0x00000004>0x00000005 more"},
+		{"owner", [][]byte{bodyValuesBlock(3, 0x18, 0)}, modcb.BodyUpdateOwnerField},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			c, conn := newBodyContinuitySession(t)
+			c.observe(opcode.SMSGLoginVerifyWorld, positionBody(349, 1, 2, 3, .5))
+			c.observe(opcode.SMSGUpdateObject, bodyPlayerCreate(99, 1, 2, 3, .5))
+			prior := c.e.transport.snapshot()
+			c.observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, row.blocks...))
+			c.observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, bodyValuesBlock(23, 0x19, 15)))
+			_, _, err := c.e.writeContext(modsession.WithBodyInput(context.Background()), opcode.MSGMoveHeartbeat, scopedBodyPacket(t, opcode.MSGMoveHeartbeat), prior)
+			if !modcb.PacketWasNotDispatched(err) || !strings.HasSuffix(err.Error(), "body input before write: "+row.want) || conn.writes != 0 {
+				t.Fatal(row.name, err, conn.writes)
+			}
+		})
+	}
+	for _, fields := range [][]string{{"malformed"}, {"0x2100"}, {"0x0018=not-a-value"}, {strings.Repeat("0", 512)}, {"more"}, {"0x0018", "0x0018", "0x0018", "0x0018"}} {
+		if got := modcb.BodyUpdateDetail(modcb.BodyUpdateSelfField, fields); got != modcb.BodyUpdateSelfField {
+			t.Fatal("unexpected diagnostic", got)
+		}
+	}
+	if got := modcb.BodyUpdateDetail(modcb.BodyUpdateHarmless, []string{"0x0018"}); got != modcb.BodyUpdateHarmless {
+		t.Fatal("diagnostic changed admission", got)
 	}
 }
