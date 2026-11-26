@@ -120,9 +120,14 @@ func policyMeleeFixture(t *testing.T, observed bool) (*Manager, context.Context,
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The normal query path fills Actions' verified weapon cache before any
-	// hosted operation. Both query packets and no spell write are checked.
-	primePackagedSap(t, ctx, manager, writes, catalog.SessionID)
+	if observed {
+		// The hosted encounter reads equipped weapon metadata on its own tick.
+		checkPackagedWrite(t, ctx, writes, opcode.CMSGItemQuerySingle, binary.LittleEndian.AppendUint32(nil, fixtureDagger),
+			modsession.WriteOrigin{SessionID: catalog.SessionID, Module: actionsModule, Writer: "module"})
+		deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGItemQuerySingleResponse, packagedDaggerResponse())
+	} else {
+		primePackagedSap(t, ctx, manager, writes, catalog.SessionID)
+	}
 	noPackagedWrites(t, writes)
 	world.combat.Store(!observed)
 	return manager, ctx, writes, world
