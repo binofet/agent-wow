@@ -658,9 +658,7 @@ func (s *Service) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			call, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
-			s.Tick(call)
-			cancel()
+			s.runTick(ctx)
 		}
 	}
 }
@@ -1217,9 +1215,29 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 	return stopped
 }
 
+// The internal work budget starts only after this body's single writer is
+// admitted. Waiting behind another RPC must not turn a healthy World callback
+// into an already-expired read. The parent deadline/cancellation still wins.
+func (s *Service) runTick(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
+	call, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+	defer cancel()
+	s.tickLocked(call)
+}
+
 func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Explicit callers retain their exact supplied deadline, including queue
+	// time. Only Run owns the internal periodic work budget above.
+	s.tickLocked(ctx)
+}
+
+func (s *Service) tickLocked(ctx context.Context) {
 	s.expireMovementOwnerLocked()
 	s.observeHostWeaponMetadataLocked(ctx)
 	if s.bodyMoving {
