@@ -112,7 +112,9 @@ func toLua(L *lua.LState, value any, b *budget) (lua.LValue, error) {
 		return number(n)
 	case map[string]any:
 		if L != nil {
-			table = L.NewTable()
+			// The pinned Lua table normally starts at capacity 32. Give
+			// smaller observed rows an exact hint; larger rows still grow.
+			table = L.CreateTable(0, min(len(v), 32))
 		}
 		b.depth++
 		defer func() { b.depth-- }()
@@ -130,7 +132,7 @@ func toLua(L *lua.LState, value any, b *budget) (lua.LValue, error) {
 		}
 	case []any:
 		if L != nil {
-			table = L.NewTable()
+			table = L.CreateTable(min(len(v), 32), 0)
 		}
 		b.depth++
 		defer func() { b.depth-- }()

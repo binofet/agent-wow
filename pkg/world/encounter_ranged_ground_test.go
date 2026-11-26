@@ -95,7 +95,7 @@ func TestRangedLegacyGroundFarApproachAndFacing(t *testing.T) {
 	}
 }
 func TestRangedLegacyGroundAllHazardsAndNoMana(t *testing.T) {
-	for _, mode := range []string{"two_hazards", "coincident", "oom", "rogue", "unrelated", "unknown", "estimated", "no_abi"} {
+	for _, mode := range []string{"two_hazards", "coincident", "oom", "rogue", "unrelated", "unknown", "estimated", "inferred", "no_abi"} {
 		t.Run(mode, func(t *testing.T) {
 			p, o := legacyGround(t)
 			switch mode {
@@ -116,6 +116,9 @@ func TestRangedLegacyGroundAllHazardsAndNoMana(t *testing.T) {
 				o.Targets[fallbackGUID(fallbackNPC)].PositionKnown = false
 			case "estimated":
 				o.Players[fallbackGUID(fallbackSelf)].PositionEstimated = true
+			case "inferred":
+				o.Players[fallbackGUID(fallbackSelf)].PositionEstimated = true
+				o.Players[fallbackGUID(fallbackSelf)].PositionInferred = true
 			case "no_abi":
 				o.Navigation.BodyMovementSupported = false
 			}
@@ -123,7 +126,7 @@ func TestRangedLegacyGroundAllHazardsAndNoMana(t *testing.T) {
 			if mode == "unrelated" {
 				return
 			} // Normal policy remains outside the scope.
-			if mode == "unknown" || mode == "estimated" || mode == "no_abi" {
+			if mode == "unknown" || mode == "inferred" || mode == "no_abi" {
 				if a != nil {
 					t.Fatal("uncertain facts entered movement", d.Output)
 				}
@@ -131,6 +134,12 @@ func TestRangedLegacyGroundAllHazardsAndNoMana(t *testing.T) {
 			}
 			if a["capability"] != "move_body" {
 				t.Fatal(d.Output)
+			}
+			if mode == "estimated" {
+				status, _ := d.Output["rangedStance"].(map[string]any)
+				if status["poseSource"] != "native_self_estimate" || status["positionReady"] != false {
+					t.Fatal("native estimate became an arrival claim", d.Output)
+				}
 			}
 			// Check the ENTIRE worst-case 14yd/s ray, not merely an endpoint at an
 			// assumed 7yd/s speed. The second hazard constrains the westward retreat.
