@@ -111,7 +111,7 @@ func (s *Service) idleMotionCurrentFailureLocked(b *idleMotionScope, w *worldv1.
 		if !waterMovementAllowed(w) {
 			return "water_movement_unavailable"
 		}
-		compatible = func(f, x uint32) bool { return destinationSelfMode(w, f, x) }
+		compatible = func(f, x uint32) bool { return destinationSelfMode(w, f, x) || b.destination.gravity.current(w) }
 	}
 	if b.landing && b.writes > 0 {
 		compatible = func(flags, extra uint32) bool {

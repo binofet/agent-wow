@@ -26,8 +26,16 @@ type destinationFlight struct {
 type destinationOwnerKey struct{}
 type followRunParentKey struct{}
 
+func destinationPlanningContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if parent, ok := ctx.Value(followRunParentKey{}).(context.Context); ok {
+		return context.WithTimeout(parent, 10*time.Second)
+	}
+	return context.WithCancel(ctx)
+}
+
 type destinationOwner struct {
 	lastSeen, formation  bool
+	gravity              destinationGravity
 	token                string
 	guid, followRevision uint64
 	target               position
@@ -37,15 +45,19 @@ func (d destinationOwner) localCurrent(s *Service, now time.Time) bool {
 	if s.closed || s.state.CastPending || s.state.MotionUnconfirmed || s.clientControlLost || s.clientControlRestoring || s.recovery.state.Active || s.movementOwner.owner != "" {
 		return false
 	}
-	if flight := s.destinationFlight; flight != nil && flight.owner == d && flight.release && s.bodyMoving {
-		// Only this writer can retire its own horizontal input and finish an
-		// already committed fall. A replacement interaction keeps precedence.
+	if flight := s.destinationFlight; flight != nil && flight.owner == d && (flight.airborne || flight.release) && s.bodyMoving {
+		// A changed destination cannot change the physical trajectory once
+		// airborne. An explicit release switches it to gravity-only inputs.
 		return s.state.InteractionOwner == "" || d.token != "" && s.ownsExploration(d.token)
 	}
+	return d.voluntaryCurrent(s, now)
+}
+
+func (d destinationOwner) voluntaryCurrent(s *Service, now time.Time) bool {
 	if d.token != "" {
 		return s.ownsExploration(d.token) && s.state.Traveling && !s.state.InteractionHarvest && now.Before(s.interactionUntil)
 	}
-	formation := d.formation && s.followGoal.target.Valid && s.followGoal.owner == d.guid && s.followGoal.followRevision == d.followRevision && s.hostEncounterActiveLocked() && now.Before(s.followGoal.until)
+	formation := d.formation && s.followGoal.target.Valid && !s.followGoal.target.Hold && s.followGoal.owner == d.guid && s.followGoal.followRevision == d.followRevision && s.hostEncounterActiveLocked() && now.Before(s.followGoal.until)
 	return d.guid != 0 && (s.state.Following && now.Before(s.followUntil) || formation) && s.followRevision == d.followRevision && s.state.InteractionOwner == "" && !s.state.Traveling
 }
 func (d destinationOwner) surfaceCurrent(ctx context.Context, s *Service, w *worldv1.SnapshotResponse) bool {
@@ -59,7 +71,7 @@ func (d destinationOwner) surfaceCurrent(ctx context.Context, s *Service, w *wor
 		return false
 	}
 	if d.token != "" {
-		return s.explorationIdleBindingCurrentLocked(d.token, w) && safeQuestCharacterMode(w, s.selfGUID, func(f, x uint32) bool { return destinationSelfMode(w, f, x) }) == ""
+		return s.explorationIdleBindingCurrentLocked(d.token, w) && safeQuestCharacterMode(w, s.selfGUID, func(f, x uint32) bool { return destinationSelfMode(w, f, x) || d.gravity.current(w) }) == ""
 	}
 	return s.safeRouteFollowLocked(w) == "" && w.GetOwner().GetGuid() == d.guid
 }
@@ -67,10 +79,14 @@ func (d destinationOwner) surfaceCurrent(ctx context.Context, s *Service, w *wor
 // An incoming airborne pose supplies its own fall clock and vertical impulse.
 // A stationary observed body may settle from rest only if measured unsupported.
 type destinationGravity struct {
-	known, falling bool
-	elapsed        time.Duration
-	initial        float64
-	bearing        float64
+	known, falling                  bool
+	self, visit, movement, position uint64
+	mapID                           uint32
+	raw                             position
+	wire                            string
+	elapsed                         time.Duration
+	initial                         float64
+	bearing                         float64
 }
 
 func destinationGravitySource(w *worldv1.SnapshotResponse, p position) destinationGravity {
@@ -89,11 +105,19 @@ func destinationGravitySource(w *worldv1.SnapshotResponse, p position) destinati
 	f := w.GetSelfMovementFacts()
 	info := f.GetInfo()
 	jump := info.GetJump()
-	if !f.GetKnown() || f.GetSelfGuid() != me.Guid || f.GetVisitRevision() != w.GetVisitRevision() || !f.GetMapKnown() || f.GetMapId() != me.MapId || f.GetAgeMs() > 500 || info.GetFlags() != me.MovementFlags || info.GetExtraFlags() != 0 || jump == nil || jump.XySpeed != 0 || info.X != p.x || info.Y != p.y || info.Z != p.z {
+	if len(f.GetWireImage()) == 0 || !f.GetKnown() || f.GetSelfGuid() != me.Guid || f.GetVisitRevision() != w.GetVisitRevision() || !f.GetMapKnown() || f.GetMapId() != me.MapId || f.GetAgeMs() > 500 || info.GetFlags() != me.MovementFlags || info.GetExtraFlags() != 0 || jump == nil || jump.XySpeed != 0 || info.X != p.x || info.Y != p.y || info.Z != p.z {
 		return g
 	}
+	g.self, g.visit, g.movement, g.position, g.mapID, g.raw, g.wire = me.Guid, w.VisitRevision, f.Revision, me.PositionRevision, me.MapId, playerPosition(me), string(f.WireImage)
 	g.known, g.falling, g.elapsed, g.initial = true, true, time.Duration(info.FallTime)*time.Millisecond, float64(jump.Velocity)
 	return g
+}
+
+// Source freshness is checked on selection. Planning may take longer than
+// the initial age band; only the same complete received frame may continue.
+func (g destinationGravity) current(w *worldv1.SnapshotResponse) bool {
+	p, f := w.GetSelf(), w.GetSelfMovementFacts()
+	return g.falling && f.GetKnown() && p.GetPresent() && !p.GetPositionInferred() && p.GetPositionKnown() && p.GetGuid() == g.self && w.GetVisitRevision() == g.visit && p.GetMapKnown() && p.GetMapId() == g.mapID && p.GetPositionRevision() == g.position && playerPosition(p) == g.raw && f.GetSelfGuid() == g.self && f.GetRevision() == g.movement && f.GetVisitRevision() == g.visit && f.GetMapKnown() && f.GetMapId() == g.mapID && f.GetInfo().GetFlags() == p.GetMovementFlags() && p.GetExtraMovementFlags() == 0 && g.wire == string(f.GetWireImage())
 }
 
 // The last checked socket receipt pins the estimate after a stationary fall.
@@ -105,7 +129,7 @@ func (s *Service) routeProvesPriorFall(w *worldv1.SnapshotResponse, b *idleMotio
 }
 func (s *Service) safeRouteFollowLocked(w *worldv1.SnapshotResponse) string {
 	return safePlayerMovementModes(w, s.selfGUID, func(f, x uint32) bool {
-		return destinationSelfMode(w, f, x) || x == 0 && (f == 0x1000 || f == 0x3000) && s.routeProvesPriorFall(w, s.swimFollow.motion)
+		return destinationSelfMode(w, f, x) || x == 0 && (f == 0x1000 || f == 0x3000) && (s.swimFollow.owner.gravity.current(w) || s.routeProvesPriorFall(w, s.swimFollow.motion))
 	}, swimFollowCompatible)
 }
 
@@ -180,7 +204,7 @@ func (s *Service) destinationFallLocked(ctx context.Context, route *swimFollowRo
 	owner := route.owner
 	mapID, revision, destination := route.mapID, route.revision, route.target
 	snapshot, err := s.snapshot(ctx)
-	if err != nil || !owner.surfaceCurrent(ctx, s, snapshot) || !waterMovementAllowed(snapshot) || !s.matchesCurrentEncounterVisitLocked(snapshot) || !s.posKnown || s.positionRevision != route.revision || s.posMap != route.mapID || distance(s.pos, navPosition(entry.Fall[0].Point)) > .01 || s.swimming || s.bodyMoving || snapshot.Self.MovementFlags&movementflags.PassiveModifiers != 0 || !entry.Fall[0].Settling && snapshot.Self.UnitFlags_2&movementflags.CannotTurn != 0 && math.Abs(math.Remainder(float64(s.pos.o)-entry.Bearing, 2*math.Pi)) > .00001 || observedRunSpeed(snapshot.Self) != entry.RunSpeed || s.state.Moving && !s.stopLocked(ctx) {
+	if err != nil || owner.gravity.falling && !owner.gravity.current(snapshot) || !owner.surfaceCurrent(ctx, s, snapshot) || !waterMovementAllowed(snapshot) || !s.matchesCurrentEncounterVisitLocked(snapshot) || !s.posKnown || s.positionRevision != route.revision || s.posMap != route.mapID || distance(s.pos, navPosition(entry.Fall[0].Point)) > .01 || s.swimming || s.bodyMoving || snapshot.Self.MovementFlags&movementflags.PassiveModifiers != 0 || !entry.Fall[0].Settling && snapshot.Self.UnitFlags_2&movementflags.CannotTurn != 0 && math.Abs(math.Remainder(float64(s.pos.o)-entry.Bearing, 2*math.Pi)) > .00001 || observedRunSpeed(snapshot.Self) != entry.RunSpeed || s.state.Moving && !s.stopLocked(ctx) {
 		s.state.Reason = "destination_fall_source_changed"
 		return false
 	}
@@ -224,15 +248,16 @@ func (s *Service) destinationFallLocked(ctx context.Context, route *swimFollowRo
 	ctx = context.WithValue(ctx, idleMotionScopeKey{}, motion)
 	flightState := &destinationFlight{owner: owner}
 	s.bodyMoving, s.destinationFlight = true, flightState
+	s.state.Reason = "following_destination_fall"
 	defer func() { s.bodyMoving, s.destinationFlight = false, nil; s.lastStep = s.now() }()
 	check := func(started, falling, wet bool) (*worldv1.SnapshotResponse, bool) {
 		w, e := s.snapshot(ctx)
 		valid := e == nil && waterMovementAllowed(w) && owner.localCurrent(s, s.now()) && s.matchesCurrentEncounterVisitLocked(w) && w.Self.MapId == mapID && w.Self.PositionRevision == revision && observedRunSpeed(w.Self) == entry.RunSpeed && w.Self.MovementFlags&movementflags.PassiveModifiers == 0
 		compatible := func(f, x uint32) bool {
-			return movementflags.GroundCompatible(f, x) || s.routeProvesPriorFall(w, route.motion) && x == 0 && (f == 0x1000 || f == 0x3000) || entry.Fall[0].Settling && destinationSelfMode(w, f, x) || x == 0 && (falling && (f == 0x1000 || f == 0x1001) || wet && (f == swimMovementFlag || f == swimMovementFlag|1))
+			return movementflags.GroundCompatible(f, x) || s.routeProvesPriorFall(w, route.motion) && x == 0 && (f == 0x1000 || f == 0x3000) || entry.Fall[0].Settling && (destinationSelfMode(w, f, x) || owner.gravity.current(w)) || x == 0 && (falling && (f == 0x1000 || f == 0x1001) || wet && (f == swimMovementFlag || f == swimMovementFlag|1))
 		}
 		valid = valid && safeSelfMovement(w, s.selfGUID, compatible) == ""
-		if valid && owner.token != "" && !flightState.release {
+		if valid && owner.token != "" && !flightState.release && !flightState.airborne {
 			valid = s.explorationIdleBindingCurrentLocked(owner.token, w) && safeQuestCharacterMode(w, s.selfGUID, compatible) == ""
 		}
 		if valid && owner.lastSeen && !flightState.airborne && !flightState.release {
@@ -257,7 +282,7 @@ func (s *Service) destinationFallLocked(ctx context.Context, route *swimFollowRo
 		s.state.NavReason = boundedPolicyDiagnostic(view.Phase+" "+view.Detail, 240)
 		return false
 	}
-	if flightState.release || owner.token == "" && (!owner.localCurrent(s, s.now()) || !owner.lastSeen && (!s.lastWorld.GetOwner().GetPresent() || distance(playerPosition(s.lastWorld.Owner), owner.target) > 1.5)) {
+	if flightState.release || owner.token == "" && (!owner.voluntaryCurrent(s, s.now()) || !owner.lastSeen && (!s.lastWorld.GetOwner().GetPresent() || distance(playerPosition(s.lastWorld.Owner), owner.target) > 1.5)) {
 		*route = swimFollowRoute{}
 		s.state.Reason = "destination_recheck_after_contact"
 		return true
@@ -309,6 +334,6 @@ func (s *Service) planMixedDestination(ctx context.Context, root string, mapID u
 		}
 		route.setEntry(entry)
 	}
-	route.target, route.mapID, route.expected = to, mapID, from
+	route.target, route.mapID, route.expected, route.owner.gravity = to, mapID, from, gravity
 	return route, nil
 }

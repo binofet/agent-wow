@@ -61,7 +61,9 @@ func (s *Service) followLastSeenLocked(ctx context.Context, w *worldv1.SnapshotR
 			return true
 		}
 		*r = swimFollowRoute{owner: d, target: last.target, expected: s.pos, mapID: s.posMap, revision: s.positionRevision, nextPlan: now.Add(750 * time.Millisecond)}
-		path, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, last.target)
+		planCtx, cancel := destinationPlanningContext(ctx)
+		defer cancel()
+		path, err := s.mapNavigationPath(planCtx, s.navDataDir, s.posMap, s.pos, last.target)
 		if err == nil && !s.swimming {
 			r.path, r.wet = path, make([]bool, len(path))
 		} else {
@@ -70,7 +72,7 @@ func (s *Service) followLastSeenLocked(ctx context.Context, w *worldv1.SnapshotR
 				s.state.Reason = "last_seen_follow_route_unavailable"
 				return true
 			}
-			next, e := s.planMixedDestination(ctx, s.navDataDir, s.posMap, s.pos, last.target, observedRunSpeed(w.Self), s.swimming, destinationGravitySource(w, s.pos), nil)
+			next, e := s.planMixedDestination(planCtx, s.navDataDir, s.posMap, s.pos, last.target, observedRunSpeed(w.Self), s.swimming, destinationGravitySource(w, s.pos), nil)
 			if e != nil {
 				s.stopLocked(ctx)
 				s.state.Reason = "last_seen_follow_route_unavailable"
@@ -80,6 +82,10 @@ func (s *Service) followLastSeenLocked(ctx context.Context, w *worldv1.SnapshotR
 			r.path, r.wet, r.drop = next.path, next.wet, next.drop
 		}
 		s.state.NavAvailable = true
+		if ctx.Err() != nil {
+			s.state.Reason = "last_seen_destination_route_ready"
+			return true
+		}
 	}
 	s.lastStep = now
 	if s.advanceDestinationLocked(ctx, r, now.Sub(s.posAt).Seconds()) {

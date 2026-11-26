@@ -1026,7 +1026,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	}
 	if moving && swim != nil {
 		owner, bound := ctx.Value(destinationOwnerKey{}).(destinationOwner)
-		if bound && (!owner.surfaceCurrent(ctx, s, w) || (swim.wet || s.swimming) && !waterMovementAllowed(w)) || !bound && (!s.state.Following || !s.now().Before(s.followUntil) || safePlayerMovement(w, s.selfGUID, true) != "") {
+		if bound && (w.GetSelf().GetUnitFlags_2()&movementflags.CannotTurn != 0 && math.Abs(math.Remainder(float64(p.o-s.pos.o), 2*math.Pi)) > .00001 || !owner.surfaceCurrent(ctx, s, w) || (swim.wet || s.swimming) && !waterMovementAllowed(w)) || !bound && (!s.state.Following || !s.now().Before(s.followUntil) || safePlayerMovement(w, s.selfGUID, true) != "") {
 			s.state.Reason = "swim_follow_observation_changed"
 			return false
 		}

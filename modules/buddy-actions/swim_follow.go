@@ -202,11 +202,8 @@ func (s *Service) advanceDestinationLocked(ctx context.Context, route *swimFollo
 }
 
 func (s *Service) planSwimFollowLocked(ctx context.Context, target position, now time.Time) bool {
-	if parent, ok := ctx.Value(followRunParentKey{}).(context.Context); ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(parent, 10*time.Second)
-		defer cancel()
-	}
+	ctx, cancel := destinationPlanningContext(ctx)
+	defer cancel()
 	route := &s.swimFollow
 	*route = swimFollowRoute{nextPlan: now.Add(750 * time.Millisecond)}
 	planned, err := s.planMixedDestination(ctx, s.navDataDir, s.posMap, s.pos, target, observedRunSpeed(s.lastWorld.GetSelf()), s.swimming, destinationGravitySource(s.lastWorld, s.pos), s.swimRouteViaLeaderLocked)
@@ -215,7 +212,7 @@ func (s *Service) planSwimFollowLocked(ctx context.Context, target position, now
 		s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
 		return false
 	}
-	planned.owner = destinationOwner{guid: s.lastWorld.GetOwner().GetGuid(), followRevision: s.followRevision, target: target, formation: !s.state.Following}
+	planned.owner = destinationOwner{gravity: planned.owner.gravity, guid: s.lastWorld.GetOwner().GetGuid(), followRevision: s.followRevision, target: target, formation: !s.state.Following}
 	planned.revision, planned.nextPlan = s.positionRevision, route.nextPlan
 	*route = planned
 	s.state.NavAvailable = true

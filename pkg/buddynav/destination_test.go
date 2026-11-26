@@ -22,6 +22,7 @@ func TestDestinationWaterEntryCopiedMap(t *testing.T) {
 		{"north", Point{479.38, 49.15, -96.24}, pool},
 		{"south", Point{479.77, 55.86, -96.26}, pool},
 		{"east", Point{476.93, 55.58, -96.22}, pool},
+		{"detour_to_bank", Point{503.7, 156.4, -94.05}, Point{387.66702, 30.071173, -130.93233}},
 		{"offset", Point{482, 70, -96.31287}, pool},
 		{"shelf", Point{469.89444, 50.35286, -110.44878}, pool},
 		{"bank", Point{475.6561, 50.766533, -96.19031}, Point{391, 27.2, -130.93}},
@@ -38,7 +39,7 @@ func TestDestinationWaterEntryCopiedMap(t *testing.T) {
 			}
 			contact := r.Fall[len(r.Fall)-1]
 			end := r.Onward[len(r.Onward)-1]
-			if len(r.Approach) == 0 || r.Approach[0] != tc.from || !contact.Swimming || contact.FallTime <= 0 || !r.Onward[0].Swimming || distance(contact.Point, r.Onward[0].Point) > .025 || distance(end.Point, tc.to) > EndpointTolerance || (tc.name == "bank") == end.Swimming {
+			if len(r.Approach) == 0 || distance(r.Approach[0], tc.from) > .025 || !contact.Swimming || contact.FallTime <= 0 || !r.Onward[0].Swimming || distance(contact.Point, r.Onward[0].Point) > .025 || distance(end.Point, tc.to) > EndpointTolerance || (tc.name == "bank" || tc.name == "detour_to_bank") == end.Swimming {
 				t.Fatal("disconnected destination or incorrect contact medium", contact, end)
 			}
 		})

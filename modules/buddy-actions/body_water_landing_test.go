@@ -13,6 +13,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 func TestBodyLandingTransportAndFollowCustody(t *testing.T) {
@@ -160,7 +161,7 @@ func TestMaraudonFollowWaterExecutionFromMeasuredLedge(t *testing.T) {
 	if dir == "" {
 		t.Skip("copied client navigation assets not supplied")
 	}
-	for _, mode := range []string{"follow", "travel", "shore", "unsupported", "falling", "cannot_swim", "release", "last_seen", "visible_again", "offline"} {
+	for _, mode := range []string{"follow", "travel", "shore", "unsupported", "falling", "cannot_swim", "release", "last_seen", "visible_again", "offline", "formation"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _, _, advance := targetMovementFixture(t)
 			me, leader := f.world.Self, f.world.Owner
@@ -173,7 +174,11 @@ func TestMaraudonFollowWaterExecutionFromMeasuredLedge(t *testing.T) {
 				me.X, me.Y, me.Z, me.Orientation = 469.89444, 50.35286, -99.962814, 3.13
 				if mode == "falling" {
 					me.MovementFlags = 0x1000
-					f.world.SelfMovementFacts = &worldv1.OwnMovementFacts{Known: true, SelfGuid: me.Guid, VisitRevision: f.world.VisitRevision, Revision: 1, MapKnown: true, MapId: 349, Info: &worldv1.MovementInfoFacts{Flags: 0x1000, X: me.X, Y: me.Y, Z: me.Z, FallTime: 270, Jump: &worldv1.MovementJumpFacts{}}}
+					raw, e := movementinfo.Encode(movementinfo.Info{Flags: 0x1000, X: me.X, Y: me.Y, Z: me.Z, Orientation: me.Orientation, FallTime: 270, JumpPresent: true})
+					if e != nil {
+						t.Fatal(e)
+					}
+					f.world.SelfMovementFacts = &worldv1.OwnMovementFacts{WireImage: raw, Known: true, SelfGuid: me.Guid, VisitRevision: f.world.VisitRevision, Revision: 1, MapKnown: true, MapId: 349, Info: &worldv1.MovementInfoFacts{Flags: 0x1000, X: me.X, Y: me.Y, Z: me.Z, FallTime: 270, Jump: &worldv1.MovementJumpFacts{}}}
 				}
 			}
 			if mode == "cannot_swim" {
@@ -208,7 +213,7 @@ func TestMaraudonFollowWaterExecutionFromMeasuredLedge(t *testing.T) {
 					t.Fatal("normal destination", out, e, s.pos)
 				}
 			} else {
-				toggle(t, s, true)
+				toggle(t, s, mode != "formation")
 				if mode == "last_seen" || mode == "visible_again" || mode == "offline" {
 					leader.X, leader.Y, leader.Z, leader.MovementFlags = 388.42874, 29.081429, -130.93112, 0
 					s.mu.Lock()
@@ -220,6 +225,15 @@ func TestMaraudonFollowWaterExecutionFromMeasuredLedge(t *testing.T) {
 					}
 				}
 				for i := 0; i < 150; i++ {
+					if mode == "formation" {
+						host := encounterHostContext(testEncounterKey, 1)
+						if _, e := s.RenewPolicyEncounterLease(host, wrapperspb.UInt64(1)); e != nil {
+							t.Fatal(e)
+						}
+						if _, e := s.SetFollowFormation(host, &actionsv1.FollowFormationRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, VisitId: 1, FollowRevision: s.followRevision, OwnerGuid: leader.Guid, OwnerPositionRevision: leader.PositionRevision, X: leader.X, Y: leader.Y, Z: leader.Z, StartDistance: 2, StopDistance: 1, Ready: true}); e != nil {
+							t.Fatal(e)
+						}
+					}
 					if mode == "visible_again" && i == 9 {
 						leader.Present = true
 						leader.X, leader.Y, leader.Z, leader.MovementFlags = 444.1598, 48.505165, -132.1898, swimMovementFlag
@@ -326,5 +340,31 @@ func TestOrdinaryDestinationUsesMeasuredFallUnderExistingOwner(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDestinationGravityPinsOriginalFrameAcrossPlanning(t *testing.T) {
+	s, f, _, _, _ := targetMovementFixture(t)
+	w := f.world
+	me := w.Self
+	me.MovementFlags = 0x1000
+	packet, e := movementinfo.Encode(movementinfo.Info{Flags: 0x1000, X: me.X, Y: me.Y, Z: me.Z, Orientation: me.Orientation, JumpPresent: true, FallTime: 150})
+	if e != nil {
+		t.Fatal(e)
+	}
+	w.SelfMovementFacts = &worldv1.OwnMovementFacts{Known: true, SelfGuid: s.selfGUID, VisitRevision: w.VisitRevision, MapKnown: true, MapId: me.MapId, Revision: 8, WireImage: packet, Info: &worldv1.MovementInfoFacts{Flags: 0x1000, X: me.X, Y: me.Y, Z: me.Z, FallTime: 150, Jump: &worldv1.MovementJumpFacts{}}}
+	src := destinationGravitySource(w, playerPosition(me))
+	w.SelfMovementFacts.AgeMs = 4000
+	if !src.current(w) || destinationGravitySource(w, playerPosition(me)).known {
+		t.Fatal("planning time replaced a pinned original or admitted a newly stale fall")
+	}
+	w.SelfMovementFacts.Revision++
+	if src.current(w) {
+		t.Fatal("replacement frame admitted")
+	}
+	w.SelfMovementFacts.Revision--
+	w.SelfMovementFacts.WireImage[0] ^= 1
+	if src.current(w) {
+		t.Fatal("changed physical bytes admitted")
 	}
 }

@@ -61,7 +61,8 @@ func (s *Service) explorationContextLocked(ctx context.Context, token string, ma
 			return reason
 		}
 	}
-	if reason := safeQuestCharacterMode(w, s.selfGUID, func(f, x uint32) bool { return destinationSelfMode(w, f, x) }); reason != "" {
+	d, _ := ctx.Value(destinationOwnerKey{}).(destinationOwner)
+	if reason := safeQuestCharacterMode(w, s.selfGUID, func(f, x uint32) bool { return destinationSelfMode(w, f, x) || d.gravity.current(w) }); reason != "" {
 		return "exploration_" + reason
 	}
 	if w.Self.MapId != mapID {
@@ -179,7 +180,7 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 	if allowWater && (planErr != nil || swimming) && call.Err() == nil {
 		r, e := s.planMixedDestination(call, root, mapID, from, to, intervalSpeed, swimming, gravity, nil)
 		if e == nil {
-			r.owner, r.revision = destinationOwner{token: token, target: to}, revision
+			r.owner, r.revision = destinationOwner{token: token, target: to, gravity: r.owner.gravity}, revision
 			mixed, path, planErr = &r, r.path, nil
 		} else if swimming {
 			planErr = e
@@ -227,6 +228,9 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		s.state.Reason = "exploration_navigation_endpoint_outside_arrival_distance"
 		s.mu.Unlock()
 		return nil, nil
+	}
+	if mixed != nil {
+		call = context.WithValue(call, destinationOwnerKey{}, mixed.owner)
 	}
 	if mixed != nil && s.idleInteraction.token != "" {
 		scoped := context.WithValue(call, destinationOwnerKey{}, mixed.owner)
