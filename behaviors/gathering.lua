@@ -256,7 +256,8 @@ end
 -- Practice is the same profession policy's pure choice surface. The caller
 -- retains durable reservations; native Attempt validates the exact recipe and
 -- current body, inventory, skill and resulting game receipts.
-local practice_tuning={spells={[3275]=129,[2538]=185,[2540]=185,[7620]=356}}
+-- Spell IDs are sparse dictionary keys, not dense VM array indices.
+local practice_tuning={spells={["3275"]=129,["2538"]=185,["2540"]=185,["7620"]=356}}
 local function practice_uint(v,maximum)
     return type(v)=="number" and v>=0 and v<=maximum and v==math.floor(v)
 end
@@ -329,11 +330,14 @@ local function practice_choice(input)
         recipes[row.spellId]=row
     end
     if type(practice_tuning.spells)~="table" then return practice_blocked("invalid_practice_tuning") end
-    local configured=0
-    for spell,skill in pairs(practice_tuning.spells) do
-        configured=configured+1
-        if configured>7 or not practice_uint(spell,2147483647) or spell==0
+    local configured,seen=0,{}
+    for key,skill in pairs(practice_tuning.spells) do
+        local spell=type(key)=="string" and tonumber(key) or key
+        if not practice_uint(spell,2147483647) or spell==0 or type(key)=="string" and tostring(spell)~=key
            or not practice_uint(skill,65535) or skill==0 then return practice_blocked("invalid_practice_tuning") end
+        local canonical=tostring(spell)
+        if not seen[canonical] then configured=configured+1;seen[canonical]=true end
+        if configured>7 then return practice_blocked("invalid_practice_tuning") end
     end
     if s.closing then return practice_blocked("module_closing") end
     if s.active then return practice_blocked("another_operation_active") end
@@ -355,8 +359,10 @@ local function practice_choice(input)
         return practice_blocked("no_currently_ready_known_recipe")
     end
     local function eligible(row)
+        local configured=row and practice_tuning.spells[row.spellId]
+        if row and configured==nil then configured=practice_tuning.spells[tostring(row.spellId)] end
         return row and requested[row.skillId] and skills[row.skillId]
-           and practice_tuning.spells[row.spellId]==row.skillId
+           and configured==row.skillId
            and row.known==true and row.ready==true and row.requirementsVerified==true
     end
     if input.mode=="validate" then

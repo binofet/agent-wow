@@ -251,7 +251,7 @@ class SecondaryProfessionTests(unittest.TestCase):
         original, revision = self.http.source, self.http.source_revision
         self.assertEqual(self.practice()["phase"], "bounded_practice_finished")
         tuned = original.replace(
-            "local practice_tuning={spells={[3275]=129,[2538]=185,[2540]=185,[7620]=356}}",
+            'local practice_tuning={spells={["3275"]=129,["2538"]=185,["2540"]=185,["7620"]=356}}',
             "local practice_tuning={spells={[7620]=356}}", 1)
         self.assertNotEqual(tuned, original)
         self.http.publish(tuned)
