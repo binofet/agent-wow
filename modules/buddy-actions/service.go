@@ -265,7 +265,7 @@ func (s *Service) expireInteractionLocked() {
 	if s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
 		// An approach must stop before its expired lease can be discarded.
 		// Tick owns the bounded transport write; status remains read-only.
-		if s.state.Moving || s.state.MotionUnconfirmed && (s.state.InteractionHarvest || s.idleInteraction.token != "" && s.idleInteraction.token == s.interactionToken) {
+		if s.state.Moving || s.state.MotionUnconfirmed && (s.state.InteractionHarvest || s.idleInteraction.token != "" && s.idleInteraction.token == s.interactionToken || s.explorationStopAttemptCurrentLocked()) {
 			return
 		}
 		s.state.InteractionOwner = ""
@@ -1099,10 +1099,16 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		scopes = []*modv1.TransportScope{admission.scope}
 	}
 	var attempt *ordinaryMovementAttempt
-	// Only ordinary follow uses this recovery; leased/finite operations retain
-	// their existing receipt and cleanup custody.
+	// Ordinary follow and the exact legacy exploration terminal STOP share
+	// diagnostic evidence; idle/harvest/finite operations keep their custody.
 	if ctx.Value(ordinaryFollowMovementKey{}) == true && len(scopes) == 0 && !s.bodyMoving && swim == nil && ctx.Value(idleMotionScopeKey{}) == nil && s.state.Following && s.state.InteractionOwner == "" {
 		attempt = s.newOrdinaryMovementAttemptLocked(w, op, payload, p, moving, isSwimming)
+		if attempt != nil {
+			ctx = modcb.WithMovementAttempt(ctx, attempt.id)
+		}
+	}
+	if attempt == nil && len(scopes) == 0 && !s.bodyMoving && swim == nil && ctx.Value(idleMotionScopeKey{}) == nil && !moving {
+		attempt = s.newExplorationStopAttemptLocked(w, op, payload, p)
 		if attempt != nil {
 			ctx = modcb.WithMovementAttempt(ctx, attempt.id)
 		}
@@ -1111,6 +1117,10 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	// receipt. Errors from a callback already entered keep UNKNOWN handling.
 	if ctx.Value(ordinaryFollowMovementKey{}) == true && ctx.Err() != nil {
 		s.state.Reason = "ordinary_follow_context_ended_before_packet"
+		return false
+	}
+	if attempt != nil && attempt.explorationToken != "" && ctx.Err() != nil {
+		s.state.Reason = "exploration_stop_context_ended_before_packet"
 		return false
 	}
 	before := s.transportSequence
@@ -1147,6 +1157,13 @@ func (s *Service) stopLocked(ctx context.Context) bool {
 		// competing request has not written anything and cannot make it unknown.
 		s.state.Reason = "bounded_body_input_active"
 		return false
+	}
+	if s.state.MotionUnconfirmed && s.explorationStopAttemptCurrentLocked() {
+		// Read only: an exact already-written STOP can retire physical cleanup,
+		// including after lease expiry. It never grants a new movement write.
+		if w, err := s.snapshot(ctx); err == nil {
+			s.reconcileOrdinaryMovementLocked(ctx, w)
+		}
 	}
 	if s.idleInteraction.token != "" && s.state.MotionUnconfirmed {
 		s.observeIdleMotionStoppedLocked(ctx)
