@@ -259,6 +259,20 @@ def _development_context(source):
     return result
 
 
+def gm_spellbook_index(toolkit):
+    """Index large learned spell catalogs in the same order as their captured rows."""
+    from direct_model import protected_read_evidence
+    rows = toolkit.get("spells") if isinstance(toolkit, dict) else None
+    if not isinstance(rows, list) or len(encode(rows)) <= CONTEXT_BYTES:
+        return toolkit
+    index = [
+        _fields(row, ("spellId", "name", "rank", "metadataKnown"))
+        if isinstance(row, dict) and "spellId" in row and not protected_read_evidence(row) else row
+        for row in rows
+    ]
+    return dict(toolkit, spells=index, spellDetailsContextPath=["spell_toolkit", "spells"])
+
+
 def ordinary_context(state):
     """Lossless-access ordinary briefing; no model/window cap or history edit.
 
