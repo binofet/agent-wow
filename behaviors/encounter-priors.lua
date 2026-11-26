@@ -7,11 +7,17 @@
 -- instead casts the stationary Noxious Cloud (21070) observed by World.
 -- The backline rule controls pull admission. An authored standing ranged
 -- stance is opt-in; the ranged_only command supplies its own finite order.
+-- Build 12340 Sonic Burst (8281) hits enemies within 10 yards of the live
+-- Diemetradon, including the boundary. Its six-second silence is a target
+-- aura; the creature never leaves a ground effect behind.
+local sonic={id="maraudon_sonic_burst",mapId=349,creatureEntry=13323,combatStandoff=true,
+    minRangeYards=10,maxRangeYards=26,clearanceYards=4,durationMs=5000,attackWitnessMaxAgeMs=5000}
 local rules = {
     {id="maraudon_sludge_backline", mapId=349, creatureEntry=12222,
      tankGuid="3", minRangeYards=14, maxRangeYards=36, automaticRange=false,
      clearanceYards=2, durationMs=600000, attackWitnessMaxAgeMs=5000,
      pulseRadiusYards=5, pulseIntervalMs=2000},
+    sonic,
 }
 -- The accepted actor intent may designate another tank. Bind it when the
 -- modules are composed, including on source reload.
@@ -20,7 +26,7 @@ local function set_role(role) tank=role=="tank" end
 local function rule(obs)
     if tank then return end
     for _,r in ipairs(rules) do
-        if obs.mapId==r.mapId and obs.selfGuid~=r.tankGuid then
+        if not r.combatStandoff and obs.mapId==r.mapId and obs.selfGuid~=r.tankGuid then
             for _,npc in pairs(obs.targets or {}) do
                 if npc.entry==r.creatureEntry and npc.present==true and npc.aliveKnown==true and npc.alive==true then return r end
             end
@@ -43,13 +49,65 @@ local function admission(obs,id,explicitPull,r)
         end
     end
     local age=a and tonumber(a.ageMs or "0")
+    local sustained=r.combatStandoff and a and a.targetKnown==true and a.targetGuid==victim and
+        npc.unitFlagsKnown==true and math.floor((npc.unitFlags or 0)/524288)%2==1 and
+        player and player.combatKnown==true and player.inCombat==true
     if a and a.victimKnown==true and member and player and player.present==true and
        player.mapKnown==true and player.mapId==obs.mapId and npc.mapKnown==true and npc.mapId==obs.mapId and
-       age and age>=0 and age<=r.attackWitnessMaxAgeMs and
+       age and age>=0 and (age<=r.attackWitnessMaxAgeMs or sustained) and
        (a.targetKnown~=true or a.targetGuid==victim) then
         return true,victim==r.tankGuid and "tank_attack_witness" or "party_attack_defense"
     end
     return false,"waiting_for_tank_attack_witness"
+end
+-- Only a living carrier currently fighting this party activates caster
+-- spacing. An idle sighting cannot acquire the body or change formation.
+local function fighting_carrier(obs,id,n,r)
+    if not n or n.entry~=r.creatureEntry or n.present~=true or n.aliveKnown~=true or n.alive~=true or
+       n.mapKnown~=true or n.mapId~=obs.mapId or not admission(obs,id,nil,r) then return false end
+    local victim=(obs.players or {})[(n.attackObservation or {}).victimGuid]
+    local self=(obs.players or {})[obs.selfGuid]
+    return victim and victim.combatKnown==true and victim.inCombat==true or
+           self and self.combatKnown==true and self.inCombat==true
+end
+local function caster_standoff(obs)
+    local self=(obs.players or {})[obs.selfGuid]
+    if tank or obs.mapId~=sonic.mapId or obs.hostTargetRangeBandSupported~=true or
+       (obs.navigation or {}).motionUnconfirmed==true or not self or
+       self.movementKnown~=true or self.swimming==true or type(self.groundRunSpeed)~="number" or self.groundRunSpeed<=0 or
+       self.classKnown~=true or self.classId~=5 and self.classId~=8 and self.classId~=9 or
+       self.aliveKnown~=true or self.alive~=true or self.mapKnown~=true or self.mapId~=obs.mapId or
+       self.positionInferred==true or not encounter_movement or not encounter_movement.current_pose(self) then return end
+    local fighting=false
+    for id,n in pairs(obs.targets or {}) do
+        if fighting_carrier(obs,id,n,sonic) then fighting=true;break end
+    end
+    if not fighting then return end
+    local capability=self.classId==5 and "heal" or "offense"
+    local reach=0
+    for _,spell in pairs(obs.spells or {}) do
+        if spell.known==true and spell.metadataKnown==true and spell.capability==capability and spell.weaponStrike~=true and
+           type(spell.maxRange)=="number" and spell.maxRange>reach then reach=spell.maxRange end
+    end
+    if self.classId~=5 then return sonic,nil,reach>0 and reach or nil end
+    -- Use a currently visible party tank. The followed owner is the ordinary
+    -- party's anchor when its roster carries no tank assignment.
+    local group=(obs.party or {}).group or {}
+    if group.known~=true or group.inGroup~=true then return end
+    local anchor,owner,assigned
+    for _,member in ipairs(group.members or {}) do
+        -- Both the dungeon role and the raid main-tank assignment use bit 2.
+        local isTank=math.floor((member.roles or 0)/2)%2==1 or math.floor((member.flags or 0)/2)%2==1
+        if isTank then assigned=true end
+        local p=(obs.players or {})[member.guid]
+        if member.online==true and member.guid~=obs.selfGuid and p and p.aliveKnown==true and p.alive==true and
+           p.mapKnown==true and p.mapId==obs.mapId and p.positionInferred~=true and encounter_movement.current_pose(p) then
+            if member.guid==(obs.navigation or {}).ownerGuid then owner=member.guid end
+            if isTank and (not anchor or member.guid==owner) then anchor=member.guid end
+        end
+    end
+    if not assigned then anchor=owner end
+    if anchor and reach>0 then return sonic,anchor,reach end
 end
 -- Pull admission is standing knowledge; positioning is needed only for an
 -- observed near hazard or an actual current party fight. Visibility alone is
@@ -181,4 +239,4 @@ local function filter(obs,out,status,explicitPull,requestedSpell)
     local directed=action and (action.targetGuid or (action.targets or {}).objectGuid)
     if not cleanup and not withdrawal and (cap=="move_body" and r.automaticRange==true or directed and npc and npc.entry==r.creatureEntry) then out.action=nil end
 end
-return {rules=rules,set_role=set_role,rule=rule,admission=admission,positioning=positioning,pulse_radius=pulse_radius,pulse_points=pulse_points,filter=filter}
+return {rules=rules,set_role=set_role,rule=rule,caster_standoff=caster_standoff,fighting_carrier=fighting_carrier,admission=admission,positioning=positioning,pulse_radius=pulse_radius,pulse_points=pulse_points,filter=filter}

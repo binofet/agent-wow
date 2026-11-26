@@ -579,8 +579,10 @@ local function ranged_stance(obs,frame)
         return row,{id=row.id,origin=row.origin or "legacy_finite_overlay",applied=true,active=true,phase="applied",creatureEntry=row.creatureEntry,mapId=row.mapId,visitId=row.visitId,
             minRangeYards=row.minRangeYards,maxRangeYards=row.maxRangeYards,clearanceYards=row.clearanceYards,remainingMs=math.max(0,row.expiresUnixMs-unix),rejected=state.rangedStatus}
     end
-    local prior=encounter_priors and encounter_priors.rule(obs)
-    if not prior or prior.automaticRange~=true then return nil,state.rangedStatus or {applied=false,active=false,phase="not_requested"} end
+    local prior,anchor,reach
+    if encounter_priors and encounter_priors.caster_standoff then prior,anchor,reach=encounter_priors.caster_standoff(obs) end
+    prior=prior or encounter_priors and encounter_priors.rule(obs)
+    if not prior or not prior.combatStandoff and prior.automaticRange~=true then return nil,state.rangedStatus or {applied=false,active=false,phase="not_requested"} end
     local seen=state.rangedPrior
     local same=seen and seen.id==prior.id and seen.sessionId==obs.sessionId and seen.selfGuid==obs.selfGuid and seen.mapId==obs.mapId and seen.visitId==obs.visitId
     -- Retain a visible legacy cancellation as well as the new explicit marker.
@@ -595,8 +597,13 @@ local function ranged_stance(obs,frame)
     -- The learned default stands on matching observation ingress. Its duration
     -- bounds each proposed native lease, not the lifetime of learned knowledge.
     -- Committed/UNKNOWN ownership keeps its own horizon in rangedHold.
+    local maximum=prior.maxRangeYards
+    if prior.combatStandoff and not anchor and reach and reach>prior.minRangeYards+2*prior.clearanceYards then
+        maximum=math.min(maximum,reach)
+    end
     row={id=prior.id,origin="learned_prior",sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId,
-        creatureEntry=prior.creatureEntry,minRangeYards=prior.minRangeYards,maxRangeYards=prior.maxRangeYards,
+        creatureEntry=prior.creatureEntry,combatStandoff=prior.combatStandoff,anchorGuid=anchor,anchorRange=reach,
+        minRangeYards=prior.minRangeYards,maxRangeYards=maximum,
         clearanceYards=prior.clearanceYards,durationMs=prior.durationMs,attackWitnessMaxAgeMs=prior.attackWitnessMaxAgeMs,
         expiresAt=capture.observedAt+prior.durationMs,expiresUnixMs=capture.observedUnixMs+prior.durationMs}
     if now>=row.expiresAt or unix>=row.expiresUnixMs then
@@ -612,9 +619,11 @@ local function ranged_targets(obs,row)
     local from=movement and movement.current_pose and movement.current_pose(self)
     local complete=true
     for id,target in pairs(obs.targets or {}) do
-        if target.entry==row.creatureEntry and target.present==true and target.alive~=false then
+        if target.entry==row.creatureEntry and target.present==true and target.alive~=false and
+           (not row.combatStandoff or encounter_priors.fighting_carrier(obs,id,target,row)) then
             local point=movement and movement.current_pose and movement.current_pose(target)
-            if target.aliveKnown~=true or target.mapKnown~=true or target.mapId~=obs.mapId or not from or not point then complete=false
+            if target.aliveKnown~=true or target.mapKnown~=true or target.mapId~=obs.mapId or not from or not point or
+               row.combatStandoff and (target.positionInferred==true or target.positionEstimated==true) then complete=false
             else
                 ids[#ids+1]=id
                 local dx,dy,dz=from.x-point.x,from.y-point.y,from.z-point.z
@@ -901,7 +910,7 @@ end
 -- Only the automatic default yields to explicit travel. Unknown geometry or an
 -- engaged matching hazard cannot establish the harmless, distant exception.
 local function ranged_travel_safe(obs,row,in_combat,attack_age_limit)
-    if not row or row.origin~="learned_prior" or in_combat then return false end
+    if not row or row.origin~="learned_prior" or row.combatStandoff or in_combat then return false end
     local self=(obs.players or {})[obs.selfGuid]
     if not self or self.combatKnown~=true or self.inCombat==true or self.mapKnown~=true or
        self.mapId~=obs.mapId or self.positionKnown~=true or self.positionInferred==true then return false end
@@ -1038,7 +1047,7 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
         status.phase="waiting_for_native_follow_custody"
         return
     end
-    if row.origin=="learned_prior" and encounter_priors and encounter_priors.positioning and
+    if row.origin=="learned_prior" and not row.combatStandoff and encounter_priors and encounter_priors.positioning and
        complete and (not distance or distance>=row.minRangeYards+row.clearanceYards) and
        not encounter_priors.positioning(obs,row) then
         status.phase="passive_distant_prior";status.active=false;status.positionReady=false
@@ -1115,6 +1124,24 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
         return
     end
     if ranged_hold(obs,frame,out,row,status,true,nearest) then return end
+    if row.combatStandoff and complete and row.anchorGuid then
+        local anchor=movement.current_pose((obs.players or {})[row.anchorGuid])
+        local own=movement.current_pose(self)
+        local range=row.anchorRange
+        -- The current selected friendly rank can have a shorter reach than
+        -- another learned heal. Keep the actual recipient and rank together.
+        if action and action.targetGuid==row.anchorGuid and action.capability=="heal" then
+            local spell=(obs.spells or {})[tostring(action.spellId)]
+            if spell and type(spell.maxRange)=="number" then range=math.min(range,spell.maxRange) end
+        end
+        if anchor and own and (distance<row.minRangeYards+row.clearanceYards or
+           (own.x-anchor.x)^2+(own.y-anchor.y)^2+(own.z-anchor.z)^2>range^2) then
+            local options=ranged_options(obs,row,row.anchorGuid,{rangeYards=range,requireLos=true})
+            local step=options and movement.decide(obs,sequence,row.anchorGuid,options)
+            out.action=step and step.action;status.phase="positioning_for_tank";status.positionReady=false
+            return
+        end
+    end
     if not complete then out.action=nil;status.phase="clearance_facts_unavailable";return end
     -- An acknowledged lease is not permission to keep casting inside a
     -- current moving hazard. Plan the existing outward input before the
@@ -1124,7 +1151,7 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
         if obs.hostTargetRangeBandSupported~=true then
             ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choose_spell)
         else
-            local options=ranged_options(obs,row,nearest,{rangeYards=row.maxRangeYards,requireLos=false})
+            local options=ranged_options(obs,row,nearest,{rangeYards=row.maxRangeYards,requireLos=row.combatStandoff==true})
             local result=options and movement and movement.decide(obs,sequence,nearest,options)
             out.action=result and result.action;status.phase=result and result.phase or "withdrawal_unavailable";status.positionReady=false
         end
@@ -1147,7 +1174,7 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
     if action and (action.capability=="heal" or action.capability=="buff") and action.targetGuid==obs.selfGuid then return end
     if not complete then out.action=nil;status.phase="clearance_facts_unavailable";return end
     if distance and distance<row.minRangeYards+row.clearanceYards then
-        local options=ranged_options(obs,row,nearest,{rangeYards=row.maxRangeYards,requireLos=false})
+        local options=ranged_options(obs,row,nearest,{rangeYards=row.maxRangeYards,requireLos=row.combatStandoff==true})
         local result=options and movement and movement.decide(obs,sequence,nearest,options)
         out.action=result and result.action;status.phase=result and result.phase or "withdrawal_unavailable";status.positionReady=false
         if task and task.pausedForEncounter then task_view.rangedWithdrawal=out.action end

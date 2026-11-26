@@ -353,6 +353,19 @@ function M.decide(obs,sequence,target,options)
         (view.behind == true) == (options.behind == true)
     local expected,actual=options.clearanceTargetGuids or {},view.clearanceTargetGuids or {}
     if #expected~=#actual then validated=false else for i,id in ipairs(expected) do if actual[i]~=id then validated=false end end end
+    -- A ready receipt binds the earlier geometry. A living carrier can move
+    -- without changing its GUID or the friendly cast target's position.
+    if validated and #expected>0 then
+        for _,id in ipairs(expected) do
+            local carrier=(obs.targets or {})[id] or (obs.players or {})[id]
+            local at=pose(carrier)
+            if not from or not at or carrier.mapKnown~=true or carrier.mapId~=obs.mapId or
+               carrier.positionInferred==true or carrier.positionEstimated==true or
+               (from.x-at.x)^2+(from.y-at.y)^2+(from.z-at.z)^2<(options.clearanceYards or 0)^2 then
+                validated=false;break
+            end
+        end
+    end
     if validated and (geometric or not unit) and (not self or self.moving ~= true) then
         recovery=nil
         if invalid_target == target then invalid_target, checked_target = nil, nil end
