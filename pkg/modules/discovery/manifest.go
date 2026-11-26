@@ -370,7 +370,9 @@ func compatibleWorldPacket(packet protoreflect.MessageDescriptor) bool {
 	// Older modules can still use it, but cannot supply a summon-offer sequence.
 	previous := proto.Clone(expected).(*descriptorpb.DescriptorProto)
 	previous.Field = previous.Field[:13]
-	if !proto.Equal(actual, previous) && !proto.Equal(actual, expected) {
+	offer := proto.Clone(expected).(*descriptorpb.DescriptorProto)
+	offer.Field = offer.Field[:14]
+	if !proto.Equal(actual, previous) && !proto.Equal(actual, offer) && !proto.Equal(actual, expected) {
 		return false
 	}
 	// Scope now references a message: validate its full leaf shape too, rather

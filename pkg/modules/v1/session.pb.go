@@ -173,8 +173,10 @@ type TransportScope struct {
 	WorldTransfer *ObservedWorldTransfer `protobuf:"bytes,13,opt,name=world_transfer,json=worldTransfer,proto3" json:"world_transfer,omitempty"`
 	// Set only on a received summon request and its matching response.
 	SummonOfferSequence uint64 `protobuf:"varint,14,opt,name=summon_offer_sequence,json=summonOfferSequence,proto3" json:"summon_offer_sequence,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Target-dependent game-object use must still agree with the socket's latest UI selection.
+	MeetingStoneTargetGuid uint64 `protobuf:"varint,15,opt,name=meeting_stone_target_guid,json=meetingStoneTargetGuid,proto3" json:"meeting_stone_target_guid,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *TransportScope) Reset() {
@@ -301,6 +303,13 @@ func (x *TransportScope) GetWorldTransfer() *ObservedWorldTransfer {
 func (x *TransportScope) GetSummonOfferSequence() uint64 {
 	if x != nil {
 		return x.SummonOfferSequence
+	}
+	return 0
+}
+
+func (x *TransportScope) GetMeetingStoneTargetGuid() uint64 {
+	if x != nil {
+		return x.MeetingStoneTargetGuid
 	}
 	return 0
 }
@@ -716,7 +725,7 @@ const file_api_module_v1_session_proto_rawDesc = "" +
 	"\x11SendPacketRequest\x12\x16\n" +
 	"\x06opcode\x18\x01 \x01(\rR\x06opcode\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\fR\apayload\x12K\n" +
-	"\x0ftransport_scope\x18\x03 \x01(\v2\".agentwow.module.v1.TransportScopeR\x0etransportScope\"\xdb\x04\n" +
+	"\x0ftransport_scope\x18\x03 \x01(\v2\".agentwow.module.v1.TransportScopeR\x0etransportScope\"\x96\x05\n" +
 	"\x0eTransportScope\x12#\n" +
 	"\rconnection_id\x18\x01 \x01(\tR\fconnectionId\x12\x1b\n" +
 	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1f\n" +
@@ -733,7 +742,8 @@ const file_api_module_v1_session_proto_rawDesc = "" +
 	"\rspline_active\x18\v \x01(\bR\fsplineActive\x120\n" +
 	"\x14spline_source_opcode\x18\f \x01(\rR\x12splineSourceOpcode\x12P\n" +
 	"\x0eworld_transfer\x18\r \x01(\v2).agentwow.module.v1.ObservedWorldTransferR\rworldTransfer\x122\n" +
-	"\x15summon_offer_sequence\x18\x0e \x01(\x04R\x13summonOfferSequence\"\xa0\t\n" +
+	"\x15summon_offer_sequence\x18\x0e \x01(\x04R\x13summonOfferSequence\x129\n" +
+	"\x19meeting_stone_target_guid\x18\x0f \x01(\x04R\x16meetingStoneTargetGuid\"\xa0\t\n" +
 	"\x15ObservedWorldTransfer\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x14\n" +

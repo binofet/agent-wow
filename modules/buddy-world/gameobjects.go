@@ -103,7 +103,7 @@ func (s *observations) appendGameObjects(r *worldv1.SnapshotResponse, now time.T
 		if !p.present || !p.known[objectEntry] || p.fields[objectEntry] == 0 || !importantGameObject(p) {
 			continue
 		}
-		v := gameObjectSnapshot(p, now)
+		v := s.gameObjectSnapshot(p, now)
 		if summoningObject(p) {
 			r.SummoningObjects = append(r.SummoningObjects, v)
 		} else if mailbox(p) {

@@ -42,6 +42,26 @@ end
 function M.on_event(task,event)
     if event.kind=="encounter_observation" then latest=event.value
     elseif event.kind=="inventory_observation" then inventory,inventory_sequence=event.value,event.sequence end
+    local pending,r=task and task.pending,event.receipt
+    if pending and r then
+        local payload=r.payload or {}
+        if pending.actionId and r.action_id==pending.actionId or payload.policy_request_id==pending.id then
+            pending.actionId=r.action_id
+            if r.outcome=="not_dispatched" or r.outcome=="failed" then
+                task.pending=nil
+                if pending.stage=="response" then
+                    task.issued.response,task.decision,task.beforeResponse=nil,nil,nil
+                else
+                    task.finishing=pending.stage.."_"..r.outcome
+                end
+            elseif r.outcome=="settled_unverified" or r.outcome=="confirmed" then
+                task.pending=nil
+                if pending.stage=="response" and not task.decision.accept then
+                    task.finishing=payload.transport_written and "decline_requested" or "decline_outcome_unverified"
+                end
+            end
+        end
+    end
     local v=event.value
     if not task or event.kind~="command" or type(v)~="table" or v.task~="summon_decision" then return end
     local s=latest and latest.summoning
@@ -107,6 +127,7 @@ function M.step(t,obs,frame,sequence,in_combat,can_act)
     if t.sessionId~=obs.sessionId or t.selfGuid~=obs.selfGuid then return finish("body_changed") end
     local recipient=t.selfGuid==t.recipientGuid
     if t.visitId~=obs.visitId and not (recipient and t.issued.response and t.decision.accept) then return finish("visit_changed") end
+    if t.pending then return view("waiting_for_"..t.pending.stage.."_receipt") end
     if not same_group(t,obs) then return view("waiting_for_online_group") end
     local s=obs.summoning
     if not s or s.selfGuid~=t.selfGuid or s.sessionId~=t.sessionId or s.visitId~=obs.visitId then return view("waiting_for_summoning_observation") end
@@ -146,7 +167,8 @@ function M.step(t,obs,frame,sequence,in_combat,can_act)
         if not point(obj,obs.mapId) or not nearby(self,obj,5) then return view("waiting_in_ritual_range") end
         return view("using_"..stage,stage,{capability="use_summoning_object",objectGuid=obj.guid,
             expectedCreatorGuid=t.warlockGuid,expectedGroupGuid=t.groupGuid,
-            expectedUseRevision=s.useRevision or "0",selectedMemberGuid=target})
+            expectedUseRevision=s.useRevision or "0",selectedMemberGuid=target,
+            expectedCreatorTargetGuid=stage=="channel" and t.recipientGuid or nil})
     end
     if not portal then
         local ritual,multiple=object(t,obs,194108,false)
@@ -173,8 +195,8 @@ function M.step(t,obs,frame,sequence,in_combat,can_act)
     if not stationary(p[t.helperOneGuid]) or not point(p[t.helperOneGuid],obs.mapId) or not nearby(warlock,p[t.helperOneGuid],5) then
         return view("waiting_for_summon_helper")
     end
-    if warlock.selectedTargetGuid~=t.recipientGuid then
-        if not helper and not t.issued.select and not t.issued.stone then
+    if not helper and warlock.selectedTargetGuid~=t.recipientGuid then
+        if not t.issued.select and not t.issued.stone then
             return view("selecting_recipient","select",{capability="select_target",expectedGroupGuid=t.groupGuid,targetGuid=t.recipientGuid})
         end
         return view("awaiting_selected_recipient")
@@ -187,7 +209,10 @@ function M.step(t,obs,frame,sequence,in_combat,can_act)
     if helper and not t.issued.channel then
         local channel,multiple=object(t,obs,179944,false)
         if multiple then return view("ambiguous_summon_channel") end
-        if channel then return use("channel",channel) end
+        if channel then
+            if channel.creatorSelectedTargetGuid~=t.recipientGuid then return view("awaiting_selected_recipient") end
+            return use("channel",channel)
+        end
     end
     return view("awaiting_observed_regroup")
 end
@@ -195,9 +220,11 @@ function M.commit(view,chosen)
     if not view.stage or not chosen or chosen~=view.action then return end
     local t=view.task
     t.issued[view.stage]=true
+    t.serial=(t.serial or 0)+1
+    t.pending={id=t.id.."/"..view.stage.."/"..t.serial,stage=view.stage}
     if view.stage=="response" then
         t.beforeResponse=((latest.players or {})[t.selfGuid] or {}).positionRevision
-        if t.decision.accept==false then t.finishing="decline_requested" end
     end
+    return t.pending.id
 end
 return M

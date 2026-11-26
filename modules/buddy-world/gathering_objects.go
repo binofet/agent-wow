@@ -36,6 +36,6 @@ func (s *observations) appendGatheringObjects(r *worldv1.SnapshotResponse, now t
 		rows = rows[:32]
 	}
 	for _, row := range rows {
-		r.NearbyGatheringObjects = append(r.NearbyGatheringObjects, gameObjectSnapshot(row.object, now))
+		r.NearbyGatheringObjects = append(r.NearbyGatheringObjects, s.gameObjectSnapshot(row.object, now))
 	}
 }

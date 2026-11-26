@@ -7339,8 +7339,8 @@ type EncounterObservationResponse struct {
 	GroundEffects            []*api.SpellGroundEffect        `protobuf:"bytes,29,rep,name=ground_effects,json=groundEffects,proto3" json:"ground_effects,omitempty"`
 	GroundEffectsSupported   bool                            `protobuf:"varint,30,opt,name=ground_effects_supported,json=groundEffectsSupported,proto3" json:"ground_effects_supported,omitempty"`
 	GroundEffectsOverflow    bool                            `protobuf:"varint,31,opt,name=ground_effects_overflow,json=groundEffectsOverflow,proto3" json:"ground_effects_overflow,omitempty"`
-	Summoning                *SummoningObservation           `protobuf:"bytes,32,opt,name=summoning,proto3" json:"summoning,omitempty"`
-	SummoningObjects         []*api.GameObjectState          `protobuf:"bytes,33,rep,name=summoning_objects,json=summoningObjects,proto3" json:"summoning_objects,omitempty"`
+	Summoning                *SummoningObservation           `protobuf:"bytes,33,opt,name=summoning,proto3" json:"summoning,omitempty"`
+	SummoningObjects         []*api.GameObjectState          `protobuf:"bytes,34,rep,name=summoning_objects,json=summoningObjects,proto3" json:"summoning_objects,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -8608,7 +8608,7 @@ type EncounterPlayer struct {
 	PositionAgeKnown   bool                   `protobuf:"varint,38,opt,name=position_age_known,json=positionAgeKnown,proto3" json:"position_age_known,omitempty"`
 	CombatReachKnown   bool                   `protobuf:"varint,39,opt,name=combat_reach_known,json=combatReachKnown,proto3" json:"combat_reach_known,omitempty"`
 	CombatReach        float32                `protobuf:"fixed32,40,opt,name=combat_reach,json=combatReach,proto3" json:"combat_reach,omitempty"`
-	SelectedTargetGuid *uint64                `protobuf:"varint,41,opt,name=selected_target_guid,json=selectedTargetGuid,proto3,oneof" json:"selected_target_guid,omitempty"`
+	SelectedTargetGuid *uint64                `protobuf:"varint,42,opt,name=selected_target_guid,json=selectedTargetGuid,proto3,oneof" json:"selected_target_guid,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -13734,8 +13734,10 @@ type UseSummoningObjectRequest struct {
 	ExpectedGroupGuid   uint64                 `protobuf:"varint,7,opt,name=expected_group_guid,json=expectedGroupGuid,proto3" json:"expected_group_guid,omitempty"`
 	// Required for a meeting stone. Zero for an assisting ritual channel.
 	SelectedMemberGuid uint64 `protobuf:"varint,8,opt,name=selected_member_guid,json=selectedMemberGuid,proto3" json:"selected_member_guid,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Optional helper precondition on the visible ritual creator's actual target.
+	ExpectedCreatorTargetGuid uint64 `protobuf:"varint,9,opt,name=expected_creator_target_guid,json=expectedCreatorTargetGuid,proto3" json:"expected_creator_target_guid,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *UseSummoningObjectRequest) Reset() {
@@ -13820,6 +13822,13 @@ func (x *UseSummoningObjectRequest) GetExpectedGroupGuid() uint64 {
 func (x *UseSummoningObjectRequest) GetSelectedMemberGuid() uint64 {
 	if x != nil {
 		return x.SelectedMemberGuid
+	}
+	return 0
+}
+
+func (x *UseSummoningObjectRequest) GetExpectedCreatorTargetGuid() uint64 {
+	if x != nil {
+		return x.ExpectedCreatorTargetGuid
 	}
 	return 0
 }
@@ -15024,8 +15033,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0eground_effects\x18\x1d \x03(\v2).warcraftbuddy.world.v1.SpellGroundEffectR\rgroundEffects\x128\n" +
 	"\x18ground_effects_supported\x18\x1e \x01(\bR\x16groundEffectsSupported\x126\n" +
 	"\x17ground_effects_overflow\x18\x1f \x01(\bR\x15groundEffectsOverflow\x12L\n" +
-	"\tsummoning\x18  \x01(\v2..warcraftbuddy.actions.v1.SummoningObservationR\tsummoning\x12T\n" +
-	"\x11summoning_objects\x18! \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x10summoningObjects\x1ae\n" +
+	"\tsummoning\x18! \x01(\v2..warcraftbuddy.actions.v1.SummoningObservationR\tsummoning\x12T\n" +
+	"\x11summoning_objects\x18\" \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x10summoningObjects\x1ae\n" +
 	"\fPlayersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12?\n" +
 	"\x05value\x18\x02 \x01(\v2).warcraftbuddy.actions.v1.EncounterPlayerR\x05value:\x028\x01\x1ag\n" +
@@ -15202,7 +15211,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x12position_age_known\x18& \x01(\bR\x10positionAgeKnown\x12,\n" +
 	"\x12combat_reach_known\x18' \x01(\bR\x10combatReachKnown\x12!\n" +
 	"\fcombat_reach\x18( \x01(\x02R\vcombatReach\x125\n" +
-	"\x14selected_target_guid\x18) \x01(\x04H\x02R\x12selectedTargetGuid\x88\x01\x01B\t\n" +
+	"\x14selected_target_guid\x18* \x01(\x04H\x02R\x12selectedTargetGuid\x88\x01\x01B\t\n" +
 	"\a_map_idB\b\n" +
 	"\x06_aliveB\x17\n" +
 	"\x15_selected_target_guid\"\xad\a\n" +
@@ -15742,7 +15751,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"sequenceId\x12%\n" +
 	"\x0emovement_owner\x18\x06 \x01(\tR\rmovementOwner\x12%\n" +
 	"\x0emovement_token\x18\a \x01(\tR\rmovementToken\x12^\n" +
-	"\x12target_constraints\x18\b \x01(\v2/.warcraftbuddy.actions.v1.ApproachTargetRequestR\x11targetConstraints\"\xdd\x02\n" +
+	"\x12target_constraints\x18\b \x01(\v2/.warcraftbuddy.actions.v1.ApproachTargetRequestR\x11targetConstraints\"\x9e\x03\n" +
 	"\x19UseSummoningObjectRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -15753,7 +15762,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"objectGuid\x122\n" +
 	"\x15expected_creator_guid\x18\x06 \x01(\x04R\x13expectedCreatorGuid\x12.\n" +
 	"\x13expected_group_guid\x18\a \x01(\x04R\x11expectedGroupGuid\x120\n" +
-	"\x14selected_member_guid\x18\b \x01(\x04R\x12selectedMemberGuid\"\xbd\x01\n" +
+	"\x14selected_member_guid\x18\b \x01(\x04R\x12selectedMemberGuid\x12?\n" +
+	"\x1cexpected_creator_target_guid\x18\t \x01(\x04R\x19expectedCreatorTargetGuid\"\xbd\x01\n" +
 	"\x12SummoningObjectUse\x12M\n" +
 	"\arequest\x18\x01 \x01(\v23.warcraftbuddy.actions.v1.UseSummoningObjectRequestR\arequest\x12+\n" +
 	"\x11transport_written\x18\x02 \x01(\bR\x10transportWritten\x12+\n" +

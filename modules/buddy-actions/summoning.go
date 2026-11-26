@@ -18,11 +18,13 @@ import (
 )
 
 type summoningState struct {
-	visitScope, offerScope *modv1.TransportScope
-	useRevision            uint64
-	lastUse                *actionsv1.SummoningObjectUse
-	offer                  *actionsv1.SummonOffer
-	expires                time.Time
+	visitScope, offerScope             *modv1.TransportScope
+	useRevision                        uint64
+	lastUse                            *actionsv1.SummoningObjectUse
+	offer                              *actionsv1.SummonOffer
+	expires                            time.Time
+	selectionAttempted, selectionKnown bool
+	selectedGUID                       uint64
 }
 
 func (s *Service) summonPartyLocked(ctx context.Context, groupGUID uint64) map[uint64]bool {
@@ -175,9 +177,13 @@ func (s *Service) UseSummoningObject(ctx context.Context, r *actionsv1.UseSummon
 		if object.CreatedByGuid == s.selfGUID || r.SelectedMemberGuid != 0 {
 			return nil, status.Error(codes.FailedPrecondition, "assist another player's ritual without a target selection")
 		}
+		if r.ExpectedCreatorTargetGuid != 0 && (!group[r.ExpectedCreatorTargetGuid] || object.GetCreatorSelectedTargetGuid() != r.ExpectedCreatorTargetGuid) {
+			return nil, status.Error(codes.FailedPrecondition, "visible ritual creator must still select the exact group member")
+		}
 	case 23:
-		if r.SelectedMemberGuid == 0 || r.SelectedMemberGuid == s.selfGUID || !group[r.SelectedMemberGuid] ||
-			!w.Self.TargetKnown || w.Self.TargetGuid != r.SelectedMemberGuid {
+		if r.ExpectedCreatorTargetGuid != 0 || r.SelectedMemberGuid == 0 || r.SelectedMemberGuid == s.selfGUID || !group[r.SelectedMemberGuid] ||
+			!w.Self.TargetKnown || w.Self.TargetGuid != r.SelectedMemberGuid ||
+			state.selectionAttempted && (!state.selectionKnown || state.selectedGUID != r.SelectedMemberGuid) {
 			return nil, status.Error(codes.FailedPrecondition, "select the exact online group member before using the stone")
 		}
 	default:
@@ -187,7 +193,9 @@ func (s *Service) UseSummoningObject(ctx context.Context, r *actionsv1.UseSummon
 		return nil, status.FromContextError(err).Err()
 	}
 	use := &actionsv1.SummoningObjectUse{Request: proto.Clone(r).(*actionsv1.UseSummoningObjectRequest)}
-	err = s.sendPacketLocked(modcb.ForwardPolicySpell(ctx), opcode.CMSGGameobjUse, binary.LittleEndian.AppendUint64(nil, guid), state.visitScope)
+	scope := clonePortalScope(state.visitScope)
+	scope.MeetingStoneTargetGuid = r.SelectedMemberGuid
+	err = s.sendPacketLocked(modcb.ForwardPolicySpell(ctx), opcode.CMSGGameobjUse, binary.LittleEndian.AppendUint64(nil, guid), scope)
 	if modcb.PacketWasNotDispatched(err) {
 		return nil, err
 	}

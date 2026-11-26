@@ -1,6 +1,7 @@
 package world
 
 import (
+	"context"
 	"encoding/binary"
 	"testing"
 	"time"
@@ -51,5 +52,37 @@ func TestSummonTransportReservesOnlyLatestLiveOffer(t *testing.T) {
 				t.Fatal("offer-only token leaked into unrelated motion scope")
 			}
 		})
+	}
+}
+
+func TestSummoningStoneUsesLatestPhysicalSelectionAtWrite(t *testing.T) {
+	for _, ambiguous := range []bool{false, true} {
+		c := &scopeWriteConn{}
+		e := scopeEngine(t, c)
+		scope := e.transport.snapshot()
+		scope.MeetingStoneTargetGuid = 42
+		use := binary.LittleEndian.AppendUint64(nil, uint64(0xf110)<<48|194097<<24|1)
+		if err := e.write(opcode.CMSGSetSelection, binary.LittleEndian.AppendUint64(nil, 42)); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := e.writeContext(context.Background(), opcode.CMSGGameobjUse, use, scope); err != nil {
+			t.Fatal(err)
+		}
+		displaced := false
+		e.beforeScopedWrite = func() error {
+			if !displaced {
+				displaced = true
+				c.fail = ambiguous
+				err := e.write(opcode.CMSGSetSelection, binary.LittleEndian.AppendUint64(nil, 43))
+				c.fail = false
+				if (err != nil) != ambiguous {
+					t.Fatal(err)
+				}
+			}
+			return nil
+		}
+		if _, _, err := e.writeContext(context.Background(), opcode.CMSGGameobjUse, use, scope); !modcb.PacketWasNotDispatched(err) || c.writes != 3 {
+			t.Fatal("a newer selection crossed the final socket fence", ambiguous, err, c.opcodes)
+		}
 	}
 }

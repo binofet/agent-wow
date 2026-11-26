@@ -7,6 +7,7 @@ import (
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -25,6 +26,26 @@ func summoningFixture(t *testing.T) (*Service, *fakeSession, func(time.Duration)
 		t.Fatal(err)
 	}
 	return s, f, advance
+}
+
+func TestSummoningStoneRefusesDisplacedSelectionBeforeServerEcho(t *testing.T) {
+	for _, ambiguous := range []bool{false, true} {
+		s, f, _ := summoningFixture(t)
+		r, stone := summoningRequest(s, 194097, 23)
+		r.SelectedMemberGuid = 3
+		f.world.RequestedGameObjects = []*worldv1.GameObjectState{stone}
+		f.world.Self.TargetKnown, f.world.Self.TargetGuid = true, 3
+		f.party.Group.Members = append(f.party.Group.Members, &partyv1.Member{Guid: 4, Online: true})
+		f.failSend = ambiguous
+		_, err := s.SelectTarget(context.Background(), &actionsv1.SelectTargetRequest{SessionId: s.sessionID, SelfGuid: 1, TargetGuid: 4, ExpectedGroupGuid: 77, VisitId: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.failSend = false
+		if _, err = s.UseSummoningObject(context.Background(), r); err == nil || len(f.packets) != 1 {
+			t.Fatal("used wrong stone recipient", ambiguous, err)
+		}
+	}
 }
 
 func summoningRequest(s *Service, entry uint32, kind uint32) (*actionsv1.UseSummoningObjectRequest, *worldv1.GameObjectState) {

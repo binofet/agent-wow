@@ -1538,6 +1538,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 	s.observeEncounterVisitLocked(packet.Opcode, p)
 	if (packet.Opcode == opcode.SMSGLoginVerifyWorld || packet.Opcode == opcode.SMSGNewWorld) && validEncounterWorldEntry(p) {
 		s.summoning.visitScope = clonePortalScope(packet.TransportScope)
+		s.summoning.selectionAttempted = false
 	}
 	if packet.Opcode == opcode.SMSGSummonRequest || packet.Opcode == opcode.SMSGSummonCancel {
 		s.observeSummonLocked(packet)

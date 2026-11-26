@@ -188,3 +188,23 @@ func TestSummoningObjectsInWorldSnapshot(t *testing.T) {
 		t.Fatal("ritual leaked into a new visit")
 	}
 }
+
+func TestSummoningObjectReadsVisibleCreatorSelectionFromSparsePublicFields(t *testing.T) {
+	s := NewIndependentService(1)
+	packet(t, s, opcode.SMSGLoginVerifyWorld, login())
+	const guid = uint64(0xf110)<<48 | 179944<<24 | 7
+	const caster = 42
+	r := packet(t, s, opcode.SMSGUpdateObject, gameObjectFixture(guid, map[int]uint32{objectEntry: 179944, gameObjectBytes: 18 << 8, gameObjectCreatedBy: caster}))
+	if r.SummoningObjects[0].CreatorSelectedTargetGuid != nil {
+		t.Fatal("invented absent caster selection")
+	}
+	packet(t, s, opcode.SMSGUpdateObject, objectFixture(caster, 4, vitalFields()))
+	r = packet(t, s, opcode.SMSGUpdateObject, deltaFixture(caster, map[int]uint32{0x12: 87}))
+	if r.SummoningObjects[0].GetCreatorSelectedTargetGuid() != 87 || nearbyByGUID(t, r, caster).TargetKnown {
+		t.Fatal("lost ritual selection or exposed unrelated player fields", r.SummoningObjects)
+	}
+	r = packet(t, s, opcode.SMSGUpdateObject, deltaFixture(caster, map[int]uint32{0x12: 0}))
+	if sel := r.SummoningObjects[0].CreatorSelectedTargetGuid; sel == nil || *sel != 0 {
+		t.Fatal("lost observed deselection")
+	}
+}

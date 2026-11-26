@@ -3342,8 +3342,10 @@ type GameObjectState struct {
 	CreatedByGuid     uint64                 `protobuf:"varint,21,opt,name=created_by_guid,json=createdByGuid,proto3" json:"created_by_guid,omitempty"`
 	StateKnown        bool                   `protobuf:"varint,22,opt,name=state_known,json=stateKnown,proto3" json:"state_known,omitempty"`
 	State             uint32                 `protobuf:"varint,23,opt,name=state,proto3" json:"state,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Public UNIT_FIELD_TARGET of the visible creator of this summoning object.
+	CreatorSelectedTargetGuid *uint64 `protobuf:"varint,24,opt,name=creator_selected_target_guid,json=creatorSelectedTargetGuid,proto3,oneof" json:"creator_selected_target_guid,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *GameObjectState) Reset() {
@@ -3533,6 +3535,13 @@ func (x *GameObjectState) GetStateKnown() bool {
 func (x *GameObjectState) GetState() uint32 {
 	if x != nil {
 		return x.State
+	}
+	return 0
+}
+
+func (x *GameObjectState) GetCreatorSelectedTargetGuid() uint64 {
+	if x != nil && x.CreatorSelectedTargetGuid != nil {
+		return *x.CreatorSelectedTargetGuid
 	}
 	return 0
 }
@@ -4664,7 +4673,7 @@ type SnapshotResponse struct {
 	// At least one area observation was omitted by the bounded cache this visit.
 	GroundEffectsOverflow bool `protobuf:"varint,63,opt,name=ground_effects_overflow,json=groundEffectsOverflow,proto3" json:"ground_effects_overflow,omitempty"`
 	// At most 32 actually observed summoning rituals (18) and meeting stones (23).
-	SummoningObjects []*GameObjectState `protobuf:"bytes,64,rep,name=summoning_objects,json=summoningObjects,proto3" json:"summoning_objects,omitempty"`
+	SummoningObjects []*GameObjectState `protobuf:"bytes,65,rep,name=summoning_objects,json=summoningObjects,proto3" json:"summoning_objects,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -5892,7 +5901,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x13server_cast_time_ms\x18\t \x01(\rH\x00R\x10serverCastTimeMs\x88\x01\x01\x12+\n" +
 	"\x11position_revision\x18\n" +
 	" \x01(\x04R\x10positionRevisionB\x16\n" +
-	"\x14_server_cast_time_ms\"\xdd\x05\n" +
+	"\x14_server_cast_time_ms\"\xc4\x06\n" +
 	"\x0fGameObjectState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x18\n" +
@@ -5920,7 +5929,9 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x0fcreated_by_guid\x18\x15 \x01(\x04R\rcreatedByGuid\x12\x1f\n" +
 	"\vstate_known\x18\x16 \x01(\bR\n" +
 	"stateKnown\x12\x14\n" +
-	"\x05state\x18\x17 \x01(\rR\x05state\"\xa4\f\n" +
+	"\x05state\x18\x17 \x01(\rR\x05state\x12D\n" +
+	"\x1ccreator_selected_target_guid\x18\x18 \x01(\x04H\x00R\x19creatorSelectedTargetGuid\x88\x01\x01B\x1f\n" +
+	"\x1d_creator_selected_target_guid\"\xa4\f\n" +
 	"\rCreatureState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x1b\n" +
@@ -6112,7 +6123,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x0eground_effects\x18= \x03(\v2).warcraftbuddy.world.v1.SpellGroundEffectR\rgroundEffects\x128\n" +
 	"\x18ground_effects_supported\x18> \x01(\bR\x16groundEffectsSupported\x126\n" +
 	"\x17ground_effects_overflow\x18? \x01(\bR\x15groundEffectsOverflow\x12T\n" +
-	"\x11summoning_objects\x18@ \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x10summoningObjects\"q\n" +
+	"\x11summoning_objects\x18A \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x10summoningObjects\"q\n" +
 	"\x13CombatEventsRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +
@@ -6303,6 +6314,7 @@ func file_modules_buddy_world_world_proto_init() {
 		return
 	}
 	file_modules_buddy_world_world_proto_msgTypes[22].OneofWrappers = []any{}
+	file_modules_buddy_world_world_proto_msgTypes[23].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

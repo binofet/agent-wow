@@ -18,22 +18,24 @@ import (
 // General barriers are deliberately conservative; only World can qualify its
 // complete parser's current spline against the separately retained source.
 type transportScopeState struct {
-	summon                      pendingSummon
-	scope                       *modv1.TransportScope
-	visit                       uint64
-	attemptedVisit, attemptedID uint64
-	exhausted                   bool
-	lastHeader                  [32]byte
-	lastHeaderKnown             bool
-	lastHeaderVisit             uint64
-	currentHeader               [32]byte
-	currentHeaderKnown          bool
-	consumed                    map[[32]byte]struct{}
-	consumedVisit               uint64
-	transfer                    worldTransferState
-	completionAttempt           *modv1.TransportScope
-	completionReport            *modv1.TransportScope
-	areaTriggerAttempts         map[areaTriggerAttempt]struct{}
+	summon                             pendingSummon
+	selectionAttempted, selectionKnown bool
+	selectedGUID                       uint64
+	scope                              *modv1.TransportScope
+	visit                              uint64
+	attemptedVisit, attemptedID        uint64
+	exhausted                          bool
+	lastHeader                         [32]byte
+	lastHeaderKnown                    bool
+	lastHeaderVisit                    uint64
+	currentHeader                      [32]byte
+	currentHeaderKnown                 bool
+	consumed                           map[[32]byte]struct{}
+	consumedVisit                      uint64
+	transfer                           worldTransferState
+	completionAttempt                  *modv1.TransportScope
+	completionReport                   *modv1.TransportScope
+	areaTriggerAttempts                map[areaTriggerAttempt]struct{}
 }
 
 func newTransportScope(self uint64) (*modv1.TransportScope, error) {
@@ -75,6 +77,7 @@ func (t *transportScopeState) clearSpline() {
 
 func (t *transportScopeState) boundary() {
 	t.summon.caster = 0
+	t.selectionAttempted = false
 	t.scope.VisitBound, t.scope.VisitRevision = false, 0
 	t.clearSpline()
 	t.advance(&t.scope.SplineRevision)
@@ -263,6 +266,16 @@ func (t *transportScopeState) reserve(op uint32, payload []byte, requested *modv
 		if t.exhausted || !sameTransferVisit(t.scope, requested) {
 			return modcb.PacketNotDispatchedError("the selected character visit changed")
 		}
+		if wanted := requested.MeetingStoneTargetGuid; wanted != 0 && (op != opcode.CMSGGameobjUse ||
+			t.selectionAttempted && (!t.selectionKnown || t.selectedGUID != wanted)) {
+			return modcb.PacketNotDispatchedError("a newer or uncertain UI selection prevents this meeting-stone use")
+		}
+		if op == opcode.CMSGGameobjUse {
+			return nil
+		}
+	}
+	if op == opcode.CMSGSetSelection {
+		t.selectionAttempted, t.selectionKnown = true, false
 		return nil
 	}
 	if op == opcode.MSGMoveStop && requested != nil {

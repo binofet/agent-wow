@@ -18,10 +18,10 @@ import (
 )
 
 type policySummoning struct {
-	code                uint32
-	payload             []byte
-	self, offerSequence uint64
-	unknown             bool
+	code                                uint32
+	payload                             []byte
+	self, offerSequence, selectedMember uint64
+	unknown                             bool
 }
 
 func (p *SessionPolicy) resolveSummoning(action map[string]any, capability string) (PolicyDispatch, error) {
@@ -75,6 +75,7 @@ func (p *SessionPolicy) resolveSummoning(action map[string]any, capability strin
 			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "an exact ritual object, group and current use revision required")
 		}
 		binding.code, binding.payload = opcode.CMSGGameobjUse, binary.LittleEndian.AppendUint64(nil, r.ObjectGuid)
+		binding.selectedMember = r.SelectedMemberGuid
 	case *actionsv1.RespondToSummonRequest:
 		if r.Accept == nil || r.SummonerGuid == 0 || r.SummonerGuid == guid || r.SummonerGuid>>48 != 0 || r.OfferSequence == 0 {
 			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "an exact summon offer, summoner and explicit choice required")
@@ -101,7 +102,7 @@ func (m *Manager) writePolicySummonScoped(ctx context.Context, token, sessionID,
 	if !op.admitted || op.attempted || module != actionsModule || op.origin.Writer != "lua" || op.origin.Module != module ||
 		op.origin.SessionID != sessionID || op.origin.ActionID == "" || !scope.GetVisitBound() || scope.GetConnectionId() == "" ||
 		scope.GetVisitRevision() == 0 || scope.GetSelfGuid() != binding.self || scope.GetSummonOfferSequence() != binding.offerSequence ||
-		code != binding.code || !bytes.Equal(payload, binding.payload) || ctx.Err() != nil || m.session.SendScopedPacket == nil {
+		scope.GetMeetingStoneTargetGuid() != binding.selectedMember || code != binding.code || !bytes.Equal(payload, binding.payload) || ctx.Err() != nil || m.session.SendScopedPacket == nil {
 		registry.mu.Unlock()
 		return true, modcb.PacketNotDispatchedError("summoning callback is outside the reserved body, offer or object action")
 	}

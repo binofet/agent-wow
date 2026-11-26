@@ -289,7 +289,7 @@ end
 
 function M.commit(view,chosen)
     if view and view.task and view.task.kind=="party_summon" and summoning then
-        summoning.commit(view,chosen);return
+        return summoning.commit(view,chosen)
     end
     if view and view.task and view.task.kind=="rally_to" and chosen==view.action and chosen then
         if chosen.capability=="approach_target" then view.task.approached=true

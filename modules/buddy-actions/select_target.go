@@ -56,6 +56,7 @@ func (s *Service) SelectTarget(ctx context.Context, r *actionsv1.SelectTargetReq
 	if modcb.PacketWasNotDispatched(err) {
 		return nil, err
 	}
+	s.summoning.selectionAttempted, s.summoning.selectionKnown, s.summoning.selectedGUID = true, err == nil, r.TargetGuid
 	if err != nil {
 		// Do not turn a failed UI-selection write into a gameplay intent change.
 		return out, nil

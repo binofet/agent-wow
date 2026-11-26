@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"maps"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,9 @@ import (
 // native Actions service and its scoped callback all participate in this test.
 func TestAttachedLuaSummoningUsesTheSelectedBodyAndActualOffer(t *testing.T) {
 	m, native, cb := friendlyEncounterManager(t)
-	p, err := m.StartPolicyWithOptions(context.Background(), idleInteractionPolicy, behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+	const requestID = "summon-fixture/selected-action"
+	policy := strings.Replace(idleInteractionPolicy, "action=frame.input.request", "action=frame.input.request, actionRequestId=frame.input.requestId", 1)
+	p, err := m.StartPolicyWithOptions(context.Background(), policy, behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,10 +49,17 @@ func TestAttachedLuaSummoningUsesTheSelectedBodyAndActualOffer(t *testing.T) {
 		t.Helper()
 		fields["capability"], fields["sessionId"], fields["selfGuid"], fields["visitId"] = capability, friendlyEncounterSession, "22", "2"
 		ctx := context.WithValue(context.Background(), policyEncounterVisitKey{}, policyEncounterObservation{visit: 2, sequence: "observed"})
-		_, receipt, err := p.Step(ctx, map[string]any{"request": fields}, nil)
-		if err != nil || receipt == nil || receipt.Outcome != behavior.ActionSettledUnverified || receipt.Payload["transport_written"] != written || receipt.Payload["effect_observed"] != false {
+		_, receipt, err := p.Step(ctx, map[string]any{"request": fields, "requestId": requestID}, nil)
+		if err != nil || receipt == nil || receipt.Outcome != behavior.ActionSettledUnverified || receipt.Payload["transport_written"] != written || receipt.Payload["effect_observed"] != false || receipt.Payload["policy_request_id"] != requestID {
 			t.Fatalf("%s: %#v %v", capability, receipt, err)
 		}
+	}
+	// A resolve-stage refusal must also return the selected opaque request ID.
+	_, refused, err := p.Step(context.Background(), map[string]any{"requestId": requestID,
+		"request": map[string]any{"capability": "respond_to_summon", "sessionId": friendlyEncounterSession, "selfGuid": "22", "visitId": "2"}}, nil)
+	if err == nil || refused == nil || !refused.NeverDispatched || refused.Outcome != behavior.ActionNotDispatched ||
+		refused.Payload["policy_request_id"] != requestID || len(writes) != 0 {
+		t.Fatal("unentered action lost receipt correlation", refused, err, writes)
 	}
 	step("select_target", map[string]any{"expectedGroupGuid": "77", "targetGuid": "42"}, true)
 	// Ordinary selection is echoed separately by World before opening the stone.
@@ -94,6 +104,9 @@ func TestGroupSummoningFullEncounterBundle(t *testing.T) {
 		vm        *behavior.Session
 		o         *actionsv1.EncounterObservationResponse
 		inventory string
+		deferred  bool
+		actionID  uint64
+		requestID string
 	}
 	actors := map[uint64]*actor{}
 	makePlayer := func(g uint64) *actionsv1.EncounterPlayer {
@@ -132,6 +145,14 @@ func TestGroupSummoningFullEncounterBundle(t *testing.T) {
 		}
 		return strconv.FormatUint(s, 10)
 	}
+	deliver := func(a *actor, outcome behavior.ActionOutcome, written bool) {
+		t.Helper()
+		r := &behavior.ActionReceipt{SessionID: a.o.SessionId, ActionID: a.actionID, Outcome: outcome,
+			Payload: map[string]any{"policy_request_id": a.requestID, "transport_written": written}}
+		if _, err := a.vm.Enqueue(behavior.Event{Kind: "action_result", Receipt: r}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	step := func(g uint64, cmd map[string]any, capability, phase string) map[string]any {
 		t.Helper()
 		a := actors[g]
@@ -149,6 +170,16 @@ func TestGroupSummoningFullEncounterBundle(t *testing.T) {
 		task, _ := out.Output["task"].(map[string]any)
 		if capability != "" && action["capability"] != capability || capability == "" && action != nil || phase != "" && task["phase"] != phase {
 			t.Fatalf("body %d, expected action %q phase %q: got action %v task %v", g, capability, phase, action, task)
+		}
+		if action != nil {
+			a.requestID, _ = out.Output["actionRequestId"].(string)
+			a.actionID, err = a.vm.ReserveAction(out)
+			if err != nil || a.requestID == "" {
+				t.Fatal("unbound proposed summon stage", err, out.Output)
+			}
+			if !a.deferred {
+				deliver(a, behavior.ActionSettledUnverified, true)
+			}
 		}
 		return action
 	}
@@ -194,9 +225,7 @@ func TestGroupSummoningFullEncounterBundle(t *testing.T) {
 		t.Fatal(a)
 	}
 	step(caster, nil, "", "awaiting_selected_recipient")
-	for _, g := range []uint64{caster, one, two} {
-		actors[g].o.Players["11"].SelectedTargetGuid = proto.Uint64(recipient)
-	}
+	actors[caster].o.Players["11"].SelectedTargetGuid = proto.Uint64(recipient)
 	a := step(caster, nil, "use_summoning_object", "using_stone")
 	if a["selectedMemberGuid"] != "14" || a["objectGuid"] != strconv.FormatUint(stone.Guid, 10) {
 		t.Fatal(a)
@@ -204,6 +233,8 @@ func TestGroupSummoningFullEncounterBundle(t *testing.T) {
 	for _, g := range []uint64{caster, one, two} {
 		actors[g].o.SummoningObjects = append(actors[g].o.SummoningObjects, channel)
 	}
+	step(one, nil, "", "awaiting_selected_recipient")
+	channel.CreatorSelectedTargetGuid = proto.Uint64(recipient)
 	step(one, nil, "use_summoning_object", "using_channel")
 	step(two, nil, "", "awaiting_observed_regroup")
 	offer := &actionsv1.SummonOffer{VisitId: 1, Sequence: 7, SummonerGuid: caster, Pending: true, TimeoutMs: 90000}
@@ -218,10 +249,23 @@ func TestGroupSummoningFullEncounterBundle(t *testing.T) {
 	actors[recipient].o.Players["14"].InCombat = false
 	step(recipient, nil, "", "awaiting_recipient_decision")
 	choice["offerSequence"] = "8"
+	choice["accept"] = false
+	actors[recipient].deferred = true
 	a = step(recipient, choice, "respond_to_summon", "responding_to_observed_offer")
-	if a["accept"] != true || a["offerSequence"] != "8" {
+	if a["accept"] != false || a["offerSequence"] != "8" {
 		t.Fatal(a)
 	}
+	// B replaced A after Decide but before the socket admitted the decline.
+	offer.Sequence = 9
+	step(recipient, nil, "", "waiting_for_response_receipt")
+	deliver(actors[recipient], behavior.ActionNotDispatched, false)
+	step(recipient, choice, "", "awaiting_recipient_decision")
+	choice["offerSequence"] = "9"
+	choice["accept"] = true
+	step(recipient, choice, "respond_to_summon", "responding_to_observed_offer")
+	deliver(actors[recipient], behavior.ActionUnknown, false)
+	step(recipient, choice, "", "waiting_for_response_receipt")
+	deliver(actors[recipient], behavior.ActionSettledUnverified, true)
 	offer.Pending = false
 	offer.TransportWritten = true
 	offer.RequestedAccept = proto.Bool(true)

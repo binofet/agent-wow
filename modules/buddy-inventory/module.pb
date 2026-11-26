@@ -10,7 +10,7 @@
 EmptyB}
 com.google.protobufB
 EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.Protobuf.WellKnownTypesbproto3
-Ä
+ÿ
 api/module/v1/session.protoagentwow.module.v1google/protobuf/any.protogoogle/protobuf/empty.proto"Œ
 WorldPacket
 opcode (Ropcode
@@ -19,7 +19,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacketRequest
 opcode (Ropcode
 payload (RpayloadK
-transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"Û
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"–
 TransportScope#
 connection_id (	RconnectionId
 	self_guid (RselfGuid
@@ -36,7 +36,8 @@ visitBound%
 spline_active (RsplineActive0
 spline_source_opcode (RsplineSourceOpcodeP
 world_transfer (2).agentwow.module.v1.ObservedWorldTransferRworldTransfer2
-summon_offer_sequence (RsummonOfferSequence" 	
+summon_offer_sequence (RsummonOfferSequence9
+meeting_stone_target_guid (RmeetingStoneTargetGuid" 	
 ObservedWorldTransfer
 revision (Rrevision
 phase (	Rphase
@@ -78,7 +79,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-»­
+¢®
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -445,7 +446,7 @@ casterGuid
 server_cast_time_ms	 (H RserverCastTimeMsˆ+
 position_revision
  (RpositionRevisionB
-_server_cast_time_ms"Ý
+_server_cast_time_ms"Ä
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -473,7 +474,9 @@ flagsKnown
 created_by_guid (RcreatedByGuid
 state_known (R
 stateKnown
-state (Rstate"¤
+state (RstateD
+creator_selected_target_guid (H RcreatorSelectedTargetGuidˆB
+_creator_selected_target_guid"¤
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -665,7 +668,7 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 ground_effects= (2).warcraftbuddy.world.v1.SpellGroundEffectRgroundEffects8
 ground_effects_supported> (RgroundEffectsSupported6
 ground_effects_overflow? (RgroundEffectsOverflowT
-summoning_objects@ (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjects"q
+summoning_objectsA (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjects"q
 CombatEventsRequest
 
 session_id (	R	sessionId%
@@ -809,7 +812,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-ˆ³
+É³
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1660,8 +1663,8 @@ navigation`
 ground_effects (2).warcraftbuddy.world.v1.SpellGroundEffectRgroundEffects8
 ground_effects_supported (RgroundEffectsSupported6
 ground_effects_overflow (RgroundEffectsOverflowL
-	summoning  (2..warcraftbuddy.actions.v1.SummoningObservationR	summoningT
-summoning_objects! (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjectse
+	summoning! (2..warcraftbuddy.actions.v1.SummoningObservationR	summoningT
+summoning_objects" (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjectse
 PlayersEntry
 key (	Rkey?
 value (2).warcraftbuddy.actions.v1.EncounterPlayerRvalue:8g
@@ -1838,7 +1841,7 @@ comboKnown*
 position_age_known& (RpositionAgeKnown,
 combat_reach_known' (RcombatReachKnown!
 combat_reach( (RcombatReach5
-selected_target_guid) (HRselectedTargetGuidˆB	
+selected_target_guid* (HRselectedTargetGuidˆB	
 _map_idB
 _aliveB
 _selected_target_guid"­
@@ -2378,7 +2381,7 @@ session_id (	R	sessionId
 sequenceId%
 movement_owner (	RmovementOwner%
 movement_token (	RmovementToken^
-target_constraints (2/.warcraftbuddy.actions.v1.ApproachTargetRequestRtargetConstraints"Ý
+target_constraints (2/.warcraftbuddy.actions.v1.ApproachTargetRequestRtargetConstraints"ž
 UseSummoningObjectRequest
 
 session_id (	R	sessionId
@@ -2389,7 +2392,8 @@ session_id (	R	sessionId
 objectGuid2
 expected_creator_guid (RexpectedCreatorGuid.
 expected_group_guid (RexpectedGroupGuid0
-selected_member_guid (RselectedMemberGuid"½
+selected_member_guid (RselectedMemberGuid?
+expected_creator_target_guid	 (RexpectedCreatorTargetGuid"½
 SummoningObjectUseM
 request (23.warcraftbuddy.actions.v1.UseSummoningObjectRequestRrequest+
 transport_written (RtransportWritten+

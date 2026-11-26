@@ -18,6 +18,7 @@ func TestWorldTransferDescriptorKeepsPriorScopeAndRejectsShadowedWitness(t *test
 	}{
 		{"current", func(_, _ *descriptorpb.DescriptorProto) {}, true},
 		{"prior_thirteen_field_scope", func(s, _ *descriptorpb.DescriptorProto) { s.Field = s.Field[:13] }, true},
+		{"prior_fourteen_field_scope", func(s, _ *descriptorpb.DescriptorProto) { s.Field = s.Field[:14] }, true},
 		{"prior_thirteen_shadow_transfer", func(s, w *descriptorpb.DescriptorProto) {
 			s.Field = s.Field[:13]
 			w.Field[1].Type = descriptorpb.FieldDescriptorProto_TYPE_UINT32.Enum()
@@ -75,7 +76,7 @@ func TestWorldTransferDescriptorKeepsPriorScopeAndRejectsShadowedWitness(t *test
 					}
 				}
 			}
-			if scope == nil || transfer == nil || len(scope.Field) != 14 {
+			if scope == nil || transfer == nil || len(scope.Field) != 15 {
 				t.Fatal("fixture lacks current transfer witness contract")
 			}
 			tc.edit(scope, transfer)

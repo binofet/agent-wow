@@ -777,8 +777,8 @@ message EncounterObservationResponse {
   repeated warcraftbuddy.world.v1.SpellGroundEffect ground_effects = 29;
   bool ground_effects_supported = 30;
   bool ground_effects_overflow = 31;
-  SummoningObservation summoning = 32;
-  repeated warcraftbuddy.world.v1.GameObjectState summoning_objects = 33;
+  SummoningObservation summoning = 33;
+  repeated warcraftbuddy.world.v1.GameObjectState summoning_objects = 34;
 }
 message BodyMovementRequest {
   string session_id = 1;
@@ -928,7 +928,7 @@ message EncounterPlayer {
   bool position_age_known = 38;
   bool combat_reach_known = 39;
   float combat_reach = 40;
-  optional uint64 selected_target_guid = 41;
+  optional uint64 selected_target_guid = 42;
 }
 message EncounterCreature {
   uint64 guid = 1;
@@ -1542,6 +1542,8 @@ message UseSummoningObjectRequest {
   uint64 expected_group_guid = 7;
   // Required for a meeting stone. Zero for an assisting ritual channel.
   uint64 selected_member_guid = 8;
+  // Optional helper precondition on the visible ritual creator's actual target.
+  uint64 expected_creator_target_guid = 9;
 }
 message SummoningObjectUse {
   UseSummoningObjectRequest request = 1;
