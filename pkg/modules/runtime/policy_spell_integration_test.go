@@ -65,10 +65,15 @@ func (policySpellWorld) OnPacket(context.Context, *modv1.WorldPacket) (*emptypb.
 type policySpellParty struct {
 	partyv1.UnimplementedBuddyPartyServer
 	sessionID string
+	group     *partyv1.Group
 }
 
 func (p policySpellParty) State(context.Context, *emptypb.Empty) (*partyv1.StateResponse, error) {
-	return &partyv1.StateResponse{SessionId: p.sessionID, Group: &partyv1.Group{Known: true}}, nil
+	group := p.group
+	if group == nil {
+		group = &partyv1.Group{Known: true}
+	}
+	return &partyv1.StateResponse{SessionId: p.sessionID, Group: group}, nil
 }
 
 // The module manager starts its ordinary callback servers. Only Actions runs
@@ -78,6 +83,7 @@ type policySpellRunner struct {
 	action            *exec.Cmd
 	peers             map[string]*grpc.Server
 	world             worldv1.BuddyWorldServer
+	group             *partyv1.Group
 	hostOwnsSelfMana  bool
 	hostOwnsEncounter bool
 }
@@ -122,7 +128,7 @@ func (r *policySpellRunner) Up(ctx context.Context, launch modrunner.Launch) err
 		}
 		worldv1.RegisterBuddyWorldServer(server, world)
 	case "buddy-party":
-		partyv1.RegisterBuddyPartyServer(server, policySpellParty{sessionID: launch.Environment["AGENT_WOW_SESSION_ID"]})
+		partyv1.RegisterBuddyPartyServer(server, policySpellParty{sessionID: launch.Environment["AGENT_WOW_SESSION_ID"], group: r.group})
 	default:
 		return fmt.Errorf("unexpected fixture module %q", name)
 	}

@@ -252,7 +252,7 @@ local function owns_current_observation(obs, frame, self)
     if spell_invocation and spell_invocation.pending() then return true end
     if control_recovery and #(((obs.support or {}).controlRecovery or {}).options or {})>0 then return true end
     for _, spell in pairs(obs.spells or {}) do
-        if spell.capability == "offense" and spell.known == true then return true end
+        if spell.known == true and (spell.capability == "offense" or healing and spell.capability == "heal") then return true end
     end
     return false
 end
@@ -293,6 +293,9 @@ end
 healing_input = function(obs)
     local view = {}
     for key,value in pairs(obs.healing or {}) do view[key]=value end
+    view.visitId = obs.visitId
+    local self = (obs.players or {})[obs.selfGuid]
+    view.casterMotionUnknown = self and (self.positionKnown ~= true or self.movementKnown ~= true)
     view.patients = {}
     local eligible = {}
     for _,patient in ipairs((obs.healing or {}).patients or {}) do eligible[patient.guid]=true end
@@ -592,7 +595,7 @@ local function decide_encounter(frame)
             if obs.hostTargetRangeBandSupported~=true and (obs.targets or {})[target] and obs.targets[target].entry==ranged_config.creatureEntry then return end
         end
         local result = movement.for_spell(obs, state.sequence, target, rank, options)
-        return result.action
+        return result.action, result.ready
     end
     -- A queued owner request gets one available turn before automatic help.
     -- Pending/native uncertainty above remains fenced; final outer arbitration
@@ -632,8 +635,10 @@ local function decide_encounter(frame)
             out.action = proposal(obs, "melee_stop", active_melee)
         else
             local needs_position = support.targetGuid ~= obs.selfGuid and
-                (support.needsApproach or movement and movement.needs_position(support.targetGuid))
-            out.action = needs_position and position_for(support.targetGuid, support.spellId) or proposal(obs, "heal", support.targetGuid, support.spellId)
+                (support.needsApproach or not support.rangeUnknown and movement and movement.needs_position(support.targetGuid))
+            local ready = true
+            if needs_position then out.action, ready = position_for(support.targetGuid, support.spellId) end
+            if ready and not support.needsApproach then out.action = proposal(obs, "heal", support.targetGuid, support.spellId) end
         end
         return out
     end

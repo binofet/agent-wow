@@ -283,12 +283,12 @@ func TestFollowStopCorrectionAndLease(t *testing.T) {
 	}
 }
 
-func TestHealKnownSpellHealthManaRangeAndStaleGates(t *testing.T) {
+func TestHealKnownSpellHealthManaAndRangeGates(t *testing.T) {
 	for _, change := range []func(*Service, *fakeSession){
 		func(s *Service, f *fakeSession) { s.setKnownSpell(2050, false) },
 		func(s *Service, f *fakeSession) { f.world.Owner.Health = 100 }, func(s *Service, f *fakeSession) { f.world.Owner.HealthKnown = false },
 		func(s *Service, f *fakeSession) { f.world.Self.Power = 20 }, func(s *Service, f *fakeSession) { f.world.Self.PowerType = 1 },
-		func(s *Service, f *fakeSession) { f.world.Owner.X = 41 }, func(s *Service, f *fakeSession) { f.world.Owner.MovementFlags = 1; f.world.Owner.PositionAgeMs = 3000 },
+		func(s *Service, f *fakeSession) { f.world.Owner.X = 41 },
 	} {
 		s, f, _ := rig(t)
 		learn(s)

@@ -67,7 +67,7 @@ func TestHostStandingHealingOwnsExactTargetAndRank(t *testing.T) {
 }
 
 func TestExactHealRejectsObservationChangesWithoutSubstitution(t *testing.T) {
-	for _, name := range []string{"membership lost", "out of range", "unknown rank", "new channel"} {
+	for _, name := range []string{"membership lost", "out of range", "unknown rank", "new channel", "rank unlearned", "visit changed", "party session changed", "patient recovered", "patient died"} {
 		t.Run(name, func(t *testing.T) {
 			s, f, _ := rig(t)
 			s.sessionID = f.party.SessionId
@@ -87,9 +87,94 @@ func TestExactHealRejectsObservationChangesWithoutSubstitution(t *testing.T) {
 				req.SpellId = 2052
 			case "new channel":
 				f.onClock = func() { f.world.Self.ChannelSpellId = 12051 }
+			case "rank unlearned":
+				f.onClock = func() { s.setKnownSpell(2050, false) }
+			case "visit changed":
+				f.onClock = func() { f.world.VisitRevision++ }
+			case "party session changed":
+				f.onClock = func() { f.party.SessionId = "different-body" }
+			case "patient recovered":
+				f.onClock = func() { f.world.Owner.Health = f.world.Owner.MaxHealth }
+			case "patient died":
+				f.onClock = func() { f.world.Owner.Alive, f.world.Owner.Health = false, 0 }
 			}
 			if _, err := s.CastHeal(ctx, req); status.Code(err) != codes.FailedPrecondition || countPackets(f, opcode.CMSGCastSpell) != 0 {
 				t.Fatal("changed or unknown facts allowed a cast", err, f.packets)
+			}
+		})
+	}
+}
+
+func TestHealingUsesIdentityAndVitalsWithoutInferringRange(t *testing.T) {
+	for _, mode := range []string{"unknown caster pose", "unknown patient pose", "old moving patient", "inferred caster", "self without pose", "stationary swimmers"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _ := rig(t)
+			s.sessionID = f.party.SessionId
+			learn(s)
+			self, ally := f.world.Self, f.world.Owner
+			s.refreshPositionLocked(f.world) // A previously retained position must not revive an invalidated one.
+			target, known := ally.Guid, false
+			switch mode {
+			case "unknown caster pose":
+				self.PositionKnown, self.MovementFlagsKnown = false, false
+			case "unknown patient pose":
+				ally.PositionKnown, ally.MovementFlagsKnown = false, false
+			case "old moving patient":
+				ally.MovementFlags, ally.PositionAgeMs, ally.X = 1, 3000, 100
+			case "inferred caster":
+				self.PositionInferred = true
+			case "self without pose":
+				self.PositionKnown, self.MovementFlagsKnown = false, false
+				self.Health, ally.Health, target, known = 20, ally.MaxHealth, self.Guid, true
+			case "stationary swimmers":
+				self.MovementFlags, ally.MovementFlags, known = swimMovementFlag, swimMovementFlag, true
+			}
+			view, err := s.HealingOptions(context.Background(), &emptypb.Empty{})
+			if err != nil || !view.GetCaster().GetReady() || view.Caster.GetMana() != self.Power || len(view.Spells) != 1 ||
+				len(view.Patients) != 1 || view.Patients[0].Guid != target || (view.Patients[0].Distance != nil) != known {
+				t.Fatal("pose changed factual healing eligibility", view, err)
+			}
+			action := runLuaHealing(t, s, false)
+			if action["needsApproach"] != nil || lastCast(f) != 2050 || healingCastTarget(f) != target || len(f.packets) != 1 {
+				t.Fatal("ordinary triage did not write one exact targeted heal", action, f.packets)
+			}
+		})
+	}
+}
+
+func TestMissingCasterPoseDoesNotOverrideHealCustody(t *testing.T) {
+	for _, mode := range []string{"stunned", "lost control", "motion owns body", "previous movement", "unknown movement write", "pending cast", "silence", "channel", "opposing faction"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _ := rig(t)
+			s.sessionID = f.party.SessionId
+			learn(s)
+			f.world.Self.PositionKnown, f.world.Self.MovementFlagsKnown = false, false
+			switch mode {
+			case "stunned":
+				f.world.Self.UnitFlags |= 0x40000
+			case "lost control":
+				s.clientControlLost = true
+			case "motion owns body":
+				s.bodyMoving = true
+			case "previous movement":
+				s.state.Moving = true
+			case "unknown movement write":
+				s.state.MotionUnconfirmed = true
+			case "pending cast":
+				s.state.CastPending = true
+			case "silence":
+				f.world.Self.UnitFlags |= 0x2000
+			case "channel":
+				f.world.Self.ChannelObjectGuid = 9
+			case "opposing faction":
+				f.party.Group.InGroup = false
+				f.world.Self.RaceKnown, f.world.Self.RaceId = true, 1
+				f.world.Owner.RaceKnown, f.world.Owner.RaceId = true, 2
+			}
+			action := luaHealingAction(t, s, healingVM(t, s, ""), false)
+			_, err := s.CastHeal(context.Background(), &actionsv1.CastHealRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: ownerGUID, SpellId: 2050})
+			if action != nil || status.Code(err) != codes.FailedPrecondition || len(f.packets) != 0 {
+				t.Fatal("invalid targeted cast or competing movement", action, err, f.packets)
 			}
 		})
 	}

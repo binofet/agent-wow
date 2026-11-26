@@ -44,14 +44,17 @@ func safeHealingPlayer(p *worldv1.PlayerState, mapID uint32) bool {
 }
 
 func healablePlayer(p *worldv1.PlayerState, mapID uint32) bool {
-	if p == nil || p.Guid == 0 || p.Guid>>48 != 0 || !p.Present || !p.MapKnown || p.MapId != mapID || !p.PositionKnown || !finite(playerPosition(p)) || !p.AliveKnown || !p.Alive || !p.UnitFlagsKnown || p.PlayerFlags&0x10 != 0 || p.DynamicFlags&0x20 != 0 {
-		return false
-	}
-	if !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) || p.MovementFlags&0xff != 0 && p.PositionAgeMs > 2000 {
-		return false
-	}
+	return livingHealingPlayer(p, mapID) && p.PositionKnown && finite(playerPosition(p)) &&
+		p.MovementFlagsKnown && movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) &&
+		(p.MovementFlags&0xff == 0 || p.PositionAgeMs <= 2000)
+}
+
+// The ordinary targeted heal packet carries a player GUID. Its eligibility
+// comes from the player's current life, map and unit fields even without XYZ.
+func livingHealingPlayer(p *worldv1.PlayerState, mapID uint32) bool {
 	const unsafe = uint32(0x1 | 0x4 | 0x00100000 | 0x01000000 | 0x02000000 | 0x08000000)
-	return p.UnitFlags&unsafe == 0
+	return p.GetGuid() != 0 && p.Guid>>48 == 0 && p.Present && p.MapKnown && p.MapId == mapID &&
+		p.AliveKnown && p.Alive && p.UnitFlagsKnown && p.UnitFlags&unsafe == 0 && p.PlayerFlags&0x10 == 0 && p.DynamicFlags&0x20 == 0
 }
 
 // A module invocation is routed through this body's session. Only a complete
@@ -59,6 +62,14 @@ func healablePlayer(p *worldv1.PlayerState, mapID uint32) bool {
 // Joel is subject to the same membership rule; self-healing needs no group.
 func (s *Service) healingPartyLocked(ctx context.Context) map[uint64]bool {
 	return s.onlineHealingGroup(s.readPartyStateLocked(ctx).GetGroup())
+}
+
+func (s *Service) currentHealPartyLocked(ctx context.Context) map[uint64]bool {
+	state := s.readPartyStateLocked(ctx)
+	if state.GetSessionId() != s.sessionID {
+		return nil
+	}
+	return s.onlineHealingGroup(state.GetGroup())
 }
 
 func (s *Service) readPartyStateLocked(ctx context.Context) *partyv1.StateResponse {
@@ -146,7 +157,7 @@ func (s *Service) healingAllyLocked(w *worldv1.SnapshotResponse, patient *worldv
 	return team != 0 && observedPlayerTeam(patient) == team
 }
 
-func (s *Service) castHealLocked(ctx context.Context, target *worldv1.PlayerState, heal spellcatalog.Spell) bool {
+func (s *Service) castHealLocked(ctx context.Context, selected *worldv1.SnapshotResponse, targetGUID uint64, spellID uint32) bool {
 	if !s.stopAutoAttackLocked(ctx) {
 		s.state.Reason = "auto_attack_stop_waiting_for_server"
 		return false
@@ -157,27 +168,24 @@ func (s *Service) castHealLocked(ctx context.Context, target *worldv1.PlayerStat
 	}
 	// STOP may read a server correction; bind the actual cast to a new own
 	// snapshot and current membership rather than replaying the selection.
+	members := s.currentHealPartyLocked(ctx)
 	fresh, err := s.snapshot(ctx)
-	if err != nil || safeSelfCombat(fresh, s.selfGUID) != "" || !s.refreshPositionLocked(fresh) || s.state.MotionUnconfirmed {
+	if err != nil || fresh.GetVisitRevision() != selected.GetVisitRevision() || fresh.GetSelf().GetMapId() != selected.Self.MapId ||
+		!s.healingVisitCurrentLocked(ctx, fresh) {
 		s.state.Reason = "healing_observations_changed_before_cast"
 		return false
 	}
-	if s.healCasterReadyLocked(fresh) != "" {
+	if s.healCasterReadyLocked(fresh) != "" || s.state.Moving {
 		s.state.Reason = "healing_caster_changed_before_cast"
 		return false
 	}
-	freshBudget := spellCost(heal, fresh.Self)
-	if fresh.Self.MaxHealth == 0 || fresh.Self.Health > fresh.Self.MaxHealth || fresh.Self.UnitFlags&0x2000 != 0 || !fresh.Self.PowerKnown || fresh.Self.PowerType != 0 || uint64(fresh.Self.Power) < freshBudget {
-		s.state.Reason = "healing_caster_changed_before_cast"
-		return false
-	}
-	target = observedHealingPlayer(fresh, target.Guid)
-	if !healablePlayer(target, fresh.Self.MapId) || !injuredForHealing(target) ||
-		!s.healingAllyLocked(fresh, target, s.healingPartyLocked(ctx)) {
+	target := observedHealingPlayer(fresh, targetGUID)
+	if !livingHealingPlayer(target, fresh.Self.MapId) || !injuredForHealing(target) || !s.healingAllyLocked(fresh, target, members) {
 		s.state.Reason = "healing_target_changed_before_cast"
 		return false
 	}
-	if heal.ID == 0 || !s.healRankEligibleLocked(fresh.Self, target, heal, s.pos) {
+	heal := s.learnedContractsLocked()[spellID]
+	if !s.healRankEligibleLocked(fresh.Self, target, heal) {
 		s.state.Reason = "healing_spell_or_resources_changed_before_cast"
 		return false
 	}

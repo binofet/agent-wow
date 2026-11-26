@@ -50,7 +50,7 @@ func observeSparseEncounter(t *testing.T, p *fallbackPolicyTest, obs *actionsv1.
 }
 
 func TestEncounterHealingApproachesOnlyWhenSelectedRankNeedsIt(t *testing.T) {
-	for _, mode := range []string{"in_range", "out_of_range", "self_range_zero"} {
+	for _, mode := range []string{"in_range", "out_of_range", "self_range_zero", "unknown_range", "unknown_range_self_only"} {
 		t.Run(mode, func(t *testing.T) {
 			p, obs := newFallbackPolicyTest(t, ""), positionedHealObservation()
 			want, patient := "heal", uint64(8)
@@ -66,6 +66,15 @@ func TestEncounterHealingApproachesOnlyWhenSelectedRankNeedsIt(t *testing.T) {
 				obs.Healing.Patients[0].Guid, obs.Healing.Patients[0].Distance = patient, proto.Float64(0)
 				obs.Healing.Spells[0].SelfOnly, obs.Healing.Spells[0].MaxRange = true, proto.Float64(0)
 				obs.Spells["6063"].MaxRange = 0
+			case "unknown_range", "unknown_range_self_only":
+				obs.Healing.Patients[0].Distance = nil
+				obs.Players[fallbackGUID(fallbackSelf)].PositionKnown = false
+				obs.Players[fallbackGUID(fallbackSelf)].MovementKnown = false
+				if mode == "unknown_range_self_only" {
+					obs.Healing.Spells[0].SelfOnly = true
+					p.expectNoAction(observeSparseEncounter(t, p, obs))
+					return
+				}
 			}
 			action, _ := p.decide(observeSparseEncounter(t, p, obs)).Output["action"].(map[string]any)
 			if action["capability"] != want || action["targetGuid"] != fallbackGUID(patient) ||
@@ -74,6 +83,42 @@ func TestEncounterHealingApproachesOnlyWhenSelectedRankNeedsIt(t *testing.T) {
 				t.Fatal("selected healing rank was replaced by unnecessary movement", action)
 			}
 		})
+	}
+}
+
+func TestEncounterUnknownRangeRejectionKeepsOtherPatientsEligible(t *testing.T) {
+	p, obs := newFallbackPolicyTest(t, ""), positionedHealObservation()
+	patient := obs.Healing.Patients[0]
+	self := obs.Players[fallbackGUID(fallbackSelf)]
+	self.PositionKnown, self.MovementKnown, patient.Distance = false, false, nil
+	first := p.decide(observeSparseEncounter(t, p, obs))
+	action, _ := first.Output["action"].(map[string]any)
+	if action["capability"] != "heal" || action["targetGuid"] != "8" {
+		t.Fatal("first unknown-range attempt was suppressed", action)
+	}
+	id, err := p.host.ReserveAction(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{
+		SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionFailed,
+		Payload: map[string]any{"capability": "heal", "target_guid": "8", "spell_id": 6063, "phase": "server_rejected_no_replay"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	p.expectNoAction(observeSparseEncounter(t, p, obs))
+	self.HealthKnown, self.Health, self.MaxHealth = true, 70, 100
+	obs.Healing.Patients = append(obs.Healing.Patients, &actionsv1.HealingPatient{Guid: fallbackSelf,
+		Health: 70, MaxHealth: 100, Distance: proto.Float64(0)})
+	out := p.decide(observeSparseEncounter(t, p, obs))
+	action, _ = out.Output["action"].(map[string]any)
+	if action["capability"] != "heal" || action["targetGuid"] != fallbackGUID(fallbackSelf) {
+		t.Fatal("rejected patient starved an eligible self heal", out.Output)
+	}
+	self.PositionKnown, self.MovementKnown, patient.Distance = true, true, proto.Float64(45)
+	action, _ = p.decide(observeSparseEncounter(t, p, obs)).Output["action"].(map[string]any)
+	if action["capability"] != "approach_target" || action["targetGuid"] != "8" {
+		t.Fatal("fresh out-of-range measurement did not restore ordinary catch-up", action)
 	}
 }
 
