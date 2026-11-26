@@ -322,7 +322,7 @@ func (s *Session) Drain(ctx context.Context) error {
 	s.mu.Unlock()
 	for {
 		window, cancel := context.WithTimeout(ctx, sessionCatchupLimit)
-		err := s.drainWindow(ctx, window, through)
+		err := s.drainWindow(ctx, window, through, true)
 		cancel()
 		if !errors.Is(err, ErrFenced) {
 			return err
@@ -335,7 +335,7 @@ func (s *Session) Drain(ctx context.Context) error {
 func (s *Session) drain(ctx context.Context) error {
 	window, cancel := context.WithTimeout(ctx, sessionCatchupLimit)
 	defer cancel()
-	return s.drainWindow(ctx, window, 0)
+	return s.drainWindow(ctx, window, 0, false)
 }
 
 // The cumulative catch-up window is a scheduling yield, not a shorter Lua
@@ -343,7 +343,7 @@ func (s *Session) drain(ctx context.Context) error {
 // original caller context and callback watchdog before yielding. Never expose
 // a decision while the selected event prefix remains; later ingress retains
 // the existing reservation fence.
-func (s *Session) drainWindow(ctx, window context.Context, through uint64) error {
+func (s *Session) drainWindow(ctx, window context.Context, through uint64, bounded bool) error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -356,7 +356,7 @@ func (s *Session) drainWindow(ctx, window context.Context, through uint64) error
 	}
 	s.admissible = 0
 	count := len(s.queue)
-	if through != 0 {
+	if bounded {
 		count = 0
 		for _, row := range s.queue {
 			if row.sequence > through {

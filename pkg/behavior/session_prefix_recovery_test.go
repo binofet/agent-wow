@@ -87,7 +87,7 @@ func TestFaultedReloadFullQueuePublishesOnlySafePrefixAndRetainsUnknown(t *testi
 		if err := s.enter(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		err := s.drainWindow(context.Background(), expired, 0)
+		err := s.drainWindow(context.Background(), expired, 0, false)
 		s.leave()
 		now := s.Status()
 		rounds++
@@ -179,7 +179,7 @@ func TestHealthyDrainSchedulingExpiryCommitsOnlyCompleteEvent(t *testing.T) {
 	if err := s.enter(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	err := s.drainWindow(context.Background(), expired, 0)
+	err := s.drainWindow(context.Background(), expired, 0, false)
 	s.leave()
 	status := s.Status()
 	if !errors.Is(err, ErrFenced) || status.Fault != "" || status.Cursor != 1 || status.Buffered != 1 {
@@ -191,5 +191,25 @@ func TestHealthyDrainSchedulingExpiryCommitsOnlyCompleteEvent(t *testing.T) {
 	decision := sessionDecide(t, s)
 	if decision.Output["transcript"] != "/1:first/2:second" {
 		t.Fatal(decision.Output)
+	}
+}
+
+func TestDrainEmptyEntryPrefixDoesNotConsumeNewIngress(t *testing.T) {
+	s := newTestSession(t)
+	through := s.Status().Cursor // empty entry tail is exactly zero
+	sessionEnqueue(t, s, 1, sessionObservation("later"))
+	if err := s.enter(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	err := s.drainWindow(context.Background(), context.Background(), through, true)
+	s.leave()
+	if status := s.Status(); err != nil || status.Cursor != 0 || status.Buffered != 1 || status.Fault != "" {
+		t.Fatal("empty entry prefix admitted later ingress", status, err)
+	}
+	if err := s.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionDecide(t, s).Output["transcript"]; got != "/1:later" {
+		t.Fatal(got)
 	}
 }
