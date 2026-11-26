@@ -262,9 +262,11 @@ func TestMovementPointsPersistentAdvisoryDuringActualBlockedSend(t *testing.T) {
 func TestMovementPointsReloadFencesOldObservationAndClearsInput(t *testing.T) {
 	r := newMovementPointsRig(t, movementPointsTestSource)
 	r.host.dispatchDone = make(chan struct{})
+	r.host.dispatchAwaiting.Store(true)
 	if err := r.host.stepMovementPointsObservation(context.Background(), "points"); err != nil {
 		t.Fatal(err)
 	}
+	r.host.dispatchAwaiting.Store(false)
 	r.host.dispatchDone = nil // no actual Send in this source-fence fixture
 	revision := r.host.vm.Status().Revision
 	source := strings.Replace(movementPointsTestSource, "movement_points=function()return {}end,", "", 1)
@@ -290,7 +292,8 @@ func TestMovementPointsAdvisoryCannotDispatchGameplay(t *testing.T) {
 	source := strings.Replace(movementPointsTestSource, `return {encounterOwnership=`, `return {action={kind="forbidden"},encounterOwnership=`, 1)
 	r := newMovementPointsRig(t, source)
 	r.host.dispatchDone = make(chan struct{})
-	defer func() { r.host.dispatchDone = nil }()
+	r.host.dispatchAwaiting.Store(true)
+	defer func() { r.host.dispatchAwaiting.Store(false); r.host.dispatchDone = nil }()
 	if err := r.host.stepMovementPointsObservation(context.Background(), "points"); err == nil {
 		t.Fatal("advisory accepted a gameplay action")
 	}
@@ -302,7 +305,8 @@ func TestMovementPointsAdvisoryCannotDispatchGameplay(t *testing.T) {
 func TestMovementPointsLateSourceReadCannotCrossReload(t *testing.T) {
 	r := newMovementPointsRig(t, movementPointsTestSource)
 	r.host.dispatchDone = make(chan struct{})
-	defer func() { r.host.dispatchDone = nil }()
+	r.host.dispatchAwaiting.Store(true)
+	defer func() { r.host.dispatchAwaiting.Store(false); r.host.dispatchDone = nil }()
 	r.onRead = func() {
 		r.onRead = nil
 		_, err := r.host.Reload(context.Background(), strings.Replace(movementPointsTestSource, "events=0", "events=10", 1), r.host.vm.Status().Revision)

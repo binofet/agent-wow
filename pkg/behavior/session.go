@@ -319,10 +319,33 @@ func (s *Session) Drain(ctx context.Context) error {
 		return err
 	}
 	defer s.leave()
-	return s.drain(ctx)
+	s.mu.Lock()
+	through := s.tail
+	s.mu.Unlock()
+	for {
+		window, cancel := context.WithTimeout(ctx, sessionCatchupLimit)
+		err := s.drainWindow(ctx, window, through, true)
+		cancel()
+		if !errors.Is(err, ErrFenced) {
+			return err
+		}
+		// Drain promises the entry prefix, not an unbounded stream of ingress.
+		// Decide instead returns at this scheduling boundary without a ticket.
+	}
 }
 
 func (s *Session) drain(ctx context.Context) error {
+	window, cancel := context.WithTimeout(ctx, sessionCatchupLimit)
+	defer cancel()
+	return s.drainWindow(ctx, window, 0, false)
+}
+
+// The cumulative catch-up window is a scheduling yield, not a shorter Lua
+// callback deadline. Complete and checkpoint one admitted event under the
+// original caller context and callback watchdog before yielding. Never expose
+// a decision while the selected event prefix remains; later ingress retains
+// the existing reservation fence.
+func (s *Session) drainWindow(ctx, window context.Context, through uint64, bounded bool) error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -335,12 +358,22 @@ func (s *Session) drain(ctx context.Context) error {
 	}
 	s.admissible = 0
 	count := len(s.queue)
+	if bounded {
+		count = 0
+		for _, row := range s.queue {
+			if row.sequence > through {
+				break
+			}
+			count++
+		}
+	}
 	s.mu.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, sessionCatchupLimit)
-	defer cancel()
-	for range count {
+	for index := 0; index < count; index++ {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if index > 0 && window.Err() != nil {
+			return ErrFenced
 		}
 		s.mu.Lock()
 		row := s.queue[0]

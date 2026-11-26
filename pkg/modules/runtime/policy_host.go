@@ -26,15 +26,17 @@ type SessionPolicy struct {
 	lifetime            context.Context
 	advance             sync.Mutex
 	dispatchDone        chan struct{}
+	dispatchAwaiting    atomic.Bool             // true only while the admitted Send is awaiting transport completion
 	rejectedReceipt     *behavior.ActionReceipt // guarded by advance; retained until exact receipt admission
 	movementPointsScope map[string]any          // guarded by advance; declarative clear on reload
 	encounterLeaseHeld  bool                    // guarded by advance
-	followFallback      atomic.Pointer[policyFollowFallback]
-	gearEvaluation      atomic.Pointer[policyFollowFallback]
-	disposalEvaluation  atomic.Pointer[policyFollowFallback]
-	starterSpell        atomic.Pointer[policyFollowFallback]
-	tradeConsent        atomic.Pointer[policyFollowFallback]
-	lastDispatch        atomic.Pointer[policyDispatchRecord]
+
+	followFallback     atomic.Pointer[policyFollowFallback]
+	gearEvaluation     atomic.Pointer[policyFollowFallback]
+	disposalEvaluation atomic.Pointer[policyFollowFallback]
+	starterSpell       atomic.Pointer[policyFollowFallback]
+	tradeConsent       atomic.Pointer[policyFollowFallback]
+	lastDispatch       atomic.Pointer[policyDispatchRecord]
 }
 
 // StartPolicy binds a runtime owned by the local host. The reflected attach
@@ -139,6 +141,13 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 		p.advance.Unlock()
 		return nil, nil, err
 	}
+	// Finish this bounded ingress prefix before selecting from the captured
+	// observation set. A scheduling yield must not make the driver collect a
+	// new feed set ahead of the one whose decision is still outstanding.
+	if err := p.vm.Drain(ctx); err != nil {
+		p.advance.Unlock()
+		return nil, nil, err
+	}
 	decision, err := p.vm.Decide(ctx, input)
 	if err != nil {
 		p.advance.Unlock()
@@ -178,6 +187,7 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	p.dispatchDone = make(chan struct{})
 	p.advance.Unlock()
 	defer func() {
+		p.dispatchAwaiting.Store(false)
 		p.advance.Lock()
 		close(p.dispatchDone)
 		p.dispatchDone = nil
@@ -188,7 +198,9 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	defer cancel()
 	stop := context.AfterFunc(p.lifetime, cancel)
 	defer stop()
+	p.dispatchAwaiting.Store(true)
 	outcome, payload := dispatch.Send(modsession.WithWriteOrigin(dispatchCtx, origin))
+	p.dispatchAwaiting.Store(false)
 	p.publishDispatch(s, id, dispatch.Module, outcome, payload)
 	receipt := &behavior.ActionReceipt{SessionID: s.SessionID, ActionID: id, Outcome: outcome, Payload: payload}
 	if dispatch.spell != nil {
