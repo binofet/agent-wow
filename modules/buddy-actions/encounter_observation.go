@@ -382,7 +382,7 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 			view.Ready = view.Available && s.buffCasterAvailableLocked(w, spell)
 		case spellcatalog.Heal:
 			view.Available = s.healRankAvailableLocked(self, spell)
-			view.Ready = heals[id]
+			view.Ready = out.Healing.Caster.Ready && heals[id]
 			view.Capability = "heal"
 		case spellcatalog.Polymorph:
 			view.Available = self.PowerKnown && int32(self.PowerType) == spell.Power &&

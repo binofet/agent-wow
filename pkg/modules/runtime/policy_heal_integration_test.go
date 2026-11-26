@@ -16,6 +16,7 @@ import (
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/modules/runner"
@@ -30,21 +31,34 @@ import (
 const (
 	policyPriestGUID = uint64(22)
 	policyLesserHeal = uint32(2050)
+	policyHealAlly   = uint64(7)
 )
 
 type packagedHealWorld struct {
 	policySpellWorld
-	health atomic.Uint32
+	health         atomic.Uint32
+	partyEncounter bool
+	allyHealth     atomic.Uint32
 }
 
 func (w *packagedHealWorld) Snapshot(context.Context, *worldv1.SnapshotRequest) (*worldv1.SnapshotResponse, error) {
-	return &worldv1.SnapshotResponse{Self: &worldv1.PlayerState{
+	view := &worldv1.SnapshotResponse{Self: &worldv1.PlayerState{
 		Guid: policyPriestGUID, Present: true, ClassKnown: true, ClassId: 5,
 		MapKnown: true, PositionKnown: true, PositionRevision: 1, MovementFlagsKnown: true,
 		AliveKnown: true, Alive: true, HealthKnown: true, Health: w.health.Load(), MaxHealth: 100,
 		PowerKnown: true, Power: 128, MaxPower: 128, UnitFlagsKnown: true,
 		ShapeshiftFormKnown: true, AuraStateKnown: true, SpeedsKnown: true, WalkSpeed: 2.5, RunSpeed: 7,
-	}}, nil
+	}}
+	if w.partyEncounter {
+		view.VisitRevision, view.ObservedPackets = 1, 17
+		view.Self.PositionKnown, view.Self.MovementFlagsKnown = false, false
+		view.Self.UnitFlags = 0x80008
+		view.Self.ChannelSpellKnown, view.Self.ChannelObjectKnown = true, true
+		view.NearbyPlayers = []*worldv1.PlayerState{{Guid: policyHealAlly, Present: true, MapKnown: true,
+			AliveKnown: true, Alive: true, HealthKnown: true, Health: w.allyHealth.Load(), MaxHealth: 100,
+			UnitFlagsKnown: true, PositionKnown: true, X: 57, MovementFlagsKnown: true, MovementFlags: 0x200000}}
+	}
+	return view, nil
 }
 
 type packagedHealRunner struct {
@@ -74,7 +88,7 @@ func (r *packagedHealRunner) Up(ctx context.Context, launch modrunner.Launch) er
 	return nil
 }
 
-func startPackagedPolicyHeal(t *testing.T) (*Manager, context.Context, <-chan policySpellWrite, *packagedHealWorld) {
+func startPackagedPolicyHeal(t *testing.T, partyEncounter bool) (*Manager, context.Context, <-chan policySpellWrite, *packagedHealWorld) {
 	t.Helper()
 	binDir := os.Getenv("BUDDY_ACTIONS_PACKAGED_BIN_DIR")
 	if binDir == "" {
@@ -84,11 +98,18 @@ func startPackagedPolicyHeal(t *testing.T) (*Manager, context.Context, <-chan po
 	if err != nil {
 		t.Fatal(err)
 	}
-	world := &packagedHealWorld{}
+	world := &packagedHealWorld{partyEncounter: partyEncounter}
 	world.health.Store(60)
 	runner := &packagedHealRunner{
 		policySpellRunner: policySpellRunner{binary: binaryPath, peers: make(map[string]*grpc.Server)},
 		world:             world,
+	}
+	if partyEncounter {
+		world.health.Store(100)
+		world.allyHealth.Store(100)
+		runner.hostOwnsEncounter = true
+		runner.group = &partyv1.Group{Known: true, InGroup: true, GroupGuid: 87, LeaderGuid: policyHealAlly,
+			Members: []*partyv1.Member{{Guid: policyPriestGUID, Self: true, Online: true}, {Guid: policyHealAlly, Online: true}}}
 	}
 	manager := New(packagedPolicySpellRegistry(t), runner, nil)
 	t.Cleanup(func() {
@@ -205,7 +226,7 @@ func waitForPackagedSpellTransport(t *testing.T, ctx context.Context, policy *Se
 	}
 }
 
-func packagedHealSpellGo(count byte) []byte {
+func packagedHealSpellGo(count byte, target uint64) []byte {
 	caster := spellFixturePackedGUID(policyPriestGUID)
 	body := append(caster, caster...)
 	body = append(body, count)
@@ -213,10 +234,10 @@ func packagedHealSpellGo(count byte) []byte {
 	body = binary.LittleEndian.AppendUint32(body, 0x900)
 	body = binary.LittleEndian.AppendUint32(body, 0)
 	body = append(body, 1)
-	body = binary.LittleEndian.AppendUint64(body, policyPriestGUID)
+	body = binary.LittleEndian.AppendUint64(body, target)
 	body = append(body, 0)
 	body = binary.LittleEndian.AppendUint32(body, 2)
-	body = append(body, spellFixturePackedGUID(policyPriestGUID)...)
+	body = append(body, spellFixturePackedGUID(target)...)
 	return binary.LittleEndian.AppendUint32(body, 75)
 }
 
@@ -229,6 +250,62 @@ func packagedHealLog(caster, target uint64, spell, healing, overheal uint32) []b
 	return append(body, 0, 0)                        // Noncritical, unused
 }
 
+func TestPackagedEncounterHealsInjuredPartyMemberWithoutCasterPose(t *testing.T) {
+	for _, outcome := range []string{"confirmed", "rejected"} {
+		t.Run(outcome, func(t *testing.T) {
+			manager, ctx, writes, world := startPackagedPolicyHeal(t, true)
+			deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGLoginVerifyWorld, make([]byte, 20))
+			stop := startPackagedEncounterBundle(t, ctx, manager, writes)
+			defer stop()
+			manager.mu.Lock()
+			policy := manager.policy
+			manager.mu.Unlock()
+			boot := policy.vm.Status()
+			world.allyHealth.Store(35)
+			want := binary.LittleEndian.AppendUint32([]byte{1}, policyLesserHeal)
+			want = append(want, 0, 2, 0, 0, 0)
+			want = append(want, spellFixturePackedGUID(policyHealAlly)...)
+			cast := checkPackagedWrite(t, ctx, writes, opcode.CMSGCastSpell, want, modsession.WriteOrigin{
+				SessionID: boot.SessionID, Module: actionsModule, Writer: "lua", PolicyRevision: boot.Revision, Generation: boot.Epoch, ActionID: "1",
+			})
+			waitForPackagedSpellTransport(t, ctx, policy)
+			if outcome == "confirmed" {
+				world.allyHealth.Store(100)
+				deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGSpellGo, packagedHealSpellGo(cast.body[0], policyHealAlly))
+				deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGSpellheallog, packagedHealLog(policyPriestGUID, policyHealAlly, policyLesserHeal, 65, 0))
+			} else {
+				failed := binary.LittleEndian.AppendUint32([]byte{cast.body[0]}, policyLesserHeal)
+				deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGCastFailed, append(failed, 97)) // SPELL_FAILED_OUT_OF_RANGE
+			}
+			raw, err := manager.InvokeJSON(ctx, "buddy-actions.status", nil)
+			state := &actionsv1.State{}
+			if err != nil || protojson.Unmarshal(raw, state) != nil {
+				t.Fatalf("read native heal receipt: %s %v", raw, err)
+			}
+			op := state.GetLastSpellOperation()
+			if !op.GetTransportWritten() || op.GetTargetGuid() != policyHealAlly ||
+				op.GetEffectObserved() != (outcome == "confirmed") || op.GetServerCastGo() != (outcome == "confirmed") ||
+				outcome == "confirmed" && op.GetPhase() != "confirmed_heal" || outcome == "rejected" && op.GetPhase() != "server_rejected_no_replay" {
+				t.Fatal("incorrect outcome for the Lua-selected party heal", op)
+			}
+			// Observe beyond the real GCD with the same patient still injured on
+			// rejection. The normal driver must not loop on a heal or approach.
+			timer := time.NewTimer(2 * time.Second)
+			defer timer.Stop()
+			select {
+			case extra := <-writes:
+				t.Fatal("ordinary scheduler repeated the action", extra)
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-timer.C:
+			}
+			if current := policy.vm.Status(); current.Pending != 0 || current.Fault != "" {
+				t.Fatal("host did not consume the exact heal outcome", current)
+			}
+		})
+	}
+}
+
 func TestPackagedActionsPolicyExactHeal(t *testing.T) {
 	for _, positive := range []bool{true, false} {
 		name := "zero effective stays unconfirmed"
@@ -236,7 +313,7 @@ func TestPackagedActionsPolicyExactHeal(t *testing.T) {
 			name = "correlated positive effect across reload"
 		}
 		t.Run(name, func(t *testing.T) {
-			manager, ctx, writes, world := startPackagedPolicyHeal(t)
+			manager, ctx, writes, world := startPackagedPolicyHeal(t, false)
 			var policy *SessionPolicy
 			if positive {
 				if err := manager.StartObservedPolicy(ctx, packagedObservedPolicy(t, "healing.lua", "before"),
@@ -340,7 +417,7 @@ func TestPackagedActionsPolicyExactHeal(t *testing.T) {
 
 			const transport = "/transport_accepted:1"
 			check(transport, 1)
-			deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGSpellGo, packagedHealSpellGo(cast.body[0]))
+			deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGSpellGo, packagedHealSpellGo(cast.body[0], policyPriestGUID))
 			if op := native(); !op.GetServerCastGo() || op.GetEffectObserved() || op.GetSpellId() != policyLesserHeal ||
 				op.GetTargetGuid() != policyPriestGUID {
 				t.Fatalf("matching GO must retain the exact heal and await effect: %v", op)
