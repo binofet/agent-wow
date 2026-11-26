@@ -110,7 +110,7 @@ func (p *planner) planVerticalSwim(ctx context.Context, start, dest Point) ([]Sw
 type swimBackend interface {
 	findSwimPath(Point, Point) (*pathfinding.PathResult, error)
 	groundOnRoute(Point, Point, Point) (float32, bool, bool, error)
-	terrain(Point) (float32, bool)
+	terrain(Point) (float32, bool, error)
 	floor(context.Context, Point, float32, float32) (float32, error)
 	swimSegmentClear(context.Context, Point, Point) (bool, error)
 }
@@ -316,7 +316,10 @@ func swimSample(ctx context.Context, b swimBackend, q, from, to Point) (SwimPoin
 	if !bound || !finite(h) {
 		return SwimPoint{}, errors.New("swim sample lacks a verified corridor polygon")
 	}
-	terrain, known := b.terrain(q)
+	terrain, known, err := b.terrain(q)
+	if err != nil {
+		return SwimPoint{}, err
+	}
 	if !known || !finite(terrain) || terrain <= -10000 {
 		terrain = float32(math.NaN()) // VMAP-only dungeon floors remain usable.
 	}

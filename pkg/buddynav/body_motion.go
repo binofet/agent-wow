@@ -113,7 +113,11 @@ func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, st
 		if err != nil {
 			return 0, false, err
 		}
-		if terrain, ok := p.terrain(q); ok && finite(terrain) && terrain >= q.Z-below && terrain <= q.Z+above && (!known || terrain > h) {
+		terrain, ok, err := p.terrain(q)
+		if err != nil {
+			return 0, false, err
+		}
+		if ok && finite(terrain) && terrain >= q.Z-below && terrain <= q.Z+above && (!known || terrain > h) {
 			h, known = terrain, true
 		}
 		return h, known, nil
@@ -123,8 +127,14 @@ func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, st
 			// MAP terrain is single-valued and is separate from VMAP rays.
 			// Crossing it from above blocks the chord even under an unrelated
 			// WMO roof. A body already underneath may traverse a real cavern.
-			from, startKnown := p.terrain(a)
-			to, endKnown := p.terrain(b)
+			from, startKnown, err := p.terrain(a)
+			if err != nil {
+				return false, err
+			}
+			to, endKnown, err := p.terrain(b)
+			if err != nil {
+				return false, err
+			}
 			if startKnown && endKnown && a.Z >= from && b.Z < to {
 				return false, nil
 			}
@@ -335,18 +345,30 @@ func planBodySettling(ctx context.Context, start Point, floor float32, bearing f
 	}
 }
 
+var errBodyCollision = errors.New("body probe corridor intersects static collision")
+
 func clearBodyMotionSegment(from, to Point, bearing float64, clear func(Point, Point) (bool, error)) error {
+	return clearBodyAtHeights(from, to, bearing, true, clear)
+}
+
+func clearBodyAtHeights(from, to Point, bearing float64, includeFeet bool, clear bodyClear) error {
 	// Parallel foot/torso/head rays bound the same short body corridor for
 	// ordinary movement and gravity-only settling.
 	for _, height := range []float32{.1, .9, 1.7} {
+		if height == .1 && !includeFeet {
+			continue
+		}
 		for _, side := range []float64{-.25, 0, .25} {
 			a, b := from, to
 			dx, dy := float32(-math.Sin(bearing)*side), float32(math.Cos(bearing)*side)
 			a.X, a.Y, a.Z = a.X+dx, a.Y+dy, a.Z+height
 			b.X, b.Y, b.Z = b.X+dx, b.Y+dy, b.Z+height
 			visible, err := clear(a, b)
-			if err != nil || !visible {
-				return errors.New("body probe corridor intersects static collision")
+			if err != nil {
+				return err
+			}
+			if !visible {
+				return errBodyCollision
 			}
 		}
 	}

@@ -96,9 +96,7 @@ func planLegRangeContext(ctx context.Context, dataDir string, mapID uint32, star
 	physical := func(goal Point) ([]Point, error) {
 		p.query = normal
 		defer func() { p.query = guide }()
-		return rerouteBounded(ctx, p, func() ([]Point, error) {
-			return planWithin(ctx, p, w.contains, fmt.Sprintf("map %d recovery tile window", mapID), start, goal)
-		})
+		return p.groundRoute(ctx, w.contains, fmt.Sprintf("map %d recovery tile window", mapID), start, goal)
 	}
 	points, err = recoveryLeg(ctx, p, w, start, destination, physical)
 	var ledge *physicalDiscontinuity

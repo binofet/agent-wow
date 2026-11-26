@@ -17,7 +17,9 @@ func surfaceFixtureFloor(t *testing.T, dir string, q Point) Point {
 	<-currentMapPlanners.gate
 	p, e := cachedMapPlanner(context.Background(), dir, w)
 	if e == nil {
-		terrain, known := p.terrain(q)
+		var terrain float32
+		var known bool
+		terrain, known, e = p.terrain(q)
 		if !known {
 			terrain = float32(math.NaN())
 		}
@@ -25,7 +27,9 @@ func surfaceFixtureFloor(t *testing.T, dir string, q Point) Point {
 			q.Z = terrain
 		}
 		var h float32
-		h, e = p.ground(q)
+		if e == nil {
+			h, e = p.ground(q)
+		}
 		if e == nil {
 			q.Z, e = p.floor(context.Background(), q, h, terrain)
 		}

@@ -25,7 +25,7 @@ func (b *testSwimCorridor) groundOnRoute(p, _, _ Point) (float32, bool, bool, er
 	return 0, b.water(p), !b.fail, nil
 }
 
-func (b *testSwimCorridor) terrain(Point) (float32, bool) { return 0, false }
+func (b *testSwimCorridor) terrain(Point) (float32, bool, error) { return 0, false, nil }
 func (b *testSwimCorridor) floor(_ context.Context, p Point, _, _ float32) (float32, error) {
 	return b.bottom(p)
 }

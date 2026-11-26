@@ -41,7 +41,12 @@ func TestPhysicalCurrentMapRoutesBeyondStarterFences(t *testing.T) {
 			p, err := cachedMapPlanner(context.Background(), dir, w)
 			if err == nil {
 				for _, q := range []*Point{&a, &b} {
-					terrain, known := p.terrain(*q)
+					var terrain float32
+					var known bool
+					terrain, known, err = p.terrain(*q)
+					if err != nil {
+						break
+					}
 					if !known {
 						terrain = float32(math.NaN())
 					}

@@ -58,7 +58,7 @@ type hillBackend struct {
 	walkErr error
 }
 
-func (h *hillBackend) terrain(p Point) (float32, bool) { return p.Z, true }
+func (h *hillBackend) terrain(p Point) (float32, bool, error) { return p.Z, true, nil }
 func (h *hillBackend) floor(_ context.Context, p Point, height, _ float32) (float32, error) {
 	if h.floorFn != nil {
 		return h.floorFn(p, height)

@@ -32,7 +32,66 @@ type floorSpawn struct {
 type floorGeometry struct {
 	vertices  []Point
 	triangles [][3]uint32
+	blocks    []floorBounds
 }
+
+type floorBounds struct{ low, high Point }
+
+const floorBlockSize = 32
+
+// These bounds come from the same decoded triangle vertices as the exact
+// intersection. They prune distant geometry for the many short body rays.
+func (g *floorGeometry) indexBounds(available int) int {
+	count := (len(g.triangles) + floorBlockSize - 1) / floorBlockSize
+	if count < 2 || count*24 > available {
+		return 0
+	}
+	g.blocks = make([]floorBounds, count)
+	for i, triangle := range g.triangles {
+		b := &g.blocks[i/floorBlockSize]
+		if i%floorBlockSize == 0 {
+			b.low = g.vertices[triangle[0]]
+			b.high = b.low
+		}
+		for _, v := range triangle {
+			p := g.vertices[v]
+			b.low = Point{min(b.low.X, p.X), min(b.low.Y, p.Y), min(b.low.Z, p.Z)}
+			b.high = Point{max(b.high.X, p.X), max(b.high.Y, p.Y), max(b.high.Z, p.Z)}
+		}
+	}
+	return count * 24
+}
+
+func (g *floorGeometry) ray(ctx context.Context, origin, direction Point, reach float32, anyHit bool) (float32, bool, error) {
+	end := Point{origin.X + direction.X*reach, origin.Y + direction.Y*reach, origin.Z + direction.Z*reach}
+	lo := Point{min(origin.X, end.X) - .01, min(origin.Y, end.Y) - .01, min(origin.Z, end.Z) - .01}
+	hi := Point{max(origin.X, end.X) + .01, max(origin.Y, end.Y) + .01, max(origin.Z, end.Z) + .01}
+	best, hit := reach, false
+	for i := 0; i < len(g.triangles); i += floorBlockSize {
+		if i%1024 == 0 {
+			if err := ctx.Err(); err != nil {
+				return 0, false, err
+			}
+		}
+		if g.blocks != nil {
+			b := g.blocks[i/floorBlockSize]
+			if hi.X < b.low.X || lo.X > b.high.X || hi.Y < b.low.Y || lo.Y > b.high.Y || hi.Z < b.low.Z || lo.Z > b.high.Z {
+				continue
+			}
+		}
+		for _, tri := range g.triangles[i:min(i+floorBlockSize, len(g.triangles))] {
+			t, ok := floorTriangle(origin, direction, g.vertices[tri[0]], g.vertices[tri[1]], g.vertices[tri[2]], best)
+			if ok {
+				if anyHit {
+					return t, true, nil
+				}
+				best, hit = t, true
+			}
+		}
+	}
+	return best, hit, nil
+}
+
 type floorModel struct {
 	groups []floorGeometry
 	bytes  int
@@ -136,18 +195,15 @@ func (f *floorReader) heightContext(ctx context.Context, q Point, mesh, above, d
 		}
 		p := floorMul(s.inv, Point{(origin.X - s.pos.X) / s.scale, (origin.Y - s.pos.Y) / s.scale, (origin.Z - s.pos.Z) / s.scale})
 		d := floorMul(s.inv, Point{0, 0, -1})
-		for _, g := range m.groups {
-			for ti, tri := range g.triangles {
-				if ti%1024 == 0 {
-					if err := ctx.Err(); err != nil {
-						return 0, false, err
-					}
-				}
-				if t, ok := floorTriangle(p, d, g.vertices[tri[0]], g.vertices[tri[1]], g.vertices[tri[2]], best/s.scale); ok {
-					best = t * s.scale
-					hit = true
-					f.lastModel = s.name
-				}
+		for i := range m.groups {
+			t, ok, err := m.groups[i].ray(ctx, p, d, best/s.scale, false)
+			if err != nil {
+				return 0, false, err
+			}
+			if ok {
+				best = t * s.scale
+				hit = true
+				f.lastModel = s.name
 			}
 		}
 	}
@@ -352,7 +408,7 @@ func parseFloorModelBounded(b []byte, maxDecoded int) (*floorModel, error) {
 	if n > 512 || uint64(n)*44 > uint64(len(b)-c.i) {
 		return nil, errors.New("collision group count exceeds budget")
 	}
-	m := &floorModel{groups: make([]floorGeometry, 0, n), bytes: int(n) * 64}
+	m := &floorModel{groups: make([]floorGeometry, 0, n), bytes: int(n) * 80}
 	for range n {
 		c.point()
 		c.point()
@@ -414,6 +470,9 @@ func parseFloorModelBounded(b []byte, maxDecoded int) (*floorModel, error) {
 	c.bih()
 	if err := c.done(); err != nil {
 		return nil, err
+	}
+	for i := range m.groups {
+		m.bytes += m.groups[i].indexBounds(maxDecoded - m.bytes)
 	}
 	return m, nil
 }
