@@ -12,6 +12,7 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -215,6 +216,10 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	transferBefore := s.captureWorldTransferBeforeLocked(packet, observedAt)
 	handled, err := parsePacket(packet.Opcode, packet.Payload, &next, observedAt)
 	if err != nil {
+		if packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject {
+			// The rejected batch could contain a new or moved unit.
+			s.state.creatureCoverageLost = true
+		}
 		s.invalidateWorldTransferPacketLocked(packet)
 		s.invalidateMalformedMotionLocked(packet)
 		s.malformed++

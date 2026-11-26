@@ -36,7 +36,8 @@ type observations struct {
 	visitRevision         uint64
 	nearbyPlayers         map[uint64]*observed
 	creatures             map[uint64]*observed
-	creatureCacheOverflow bool
+	creatureCoverageLost  bool
+	unreflectedUnits      map[uint64]bool
 	items                 map[uint64]*observed
 	gameObjects           map[uint64]*observed
 	groundEffects         map[uint64]*observed
@@ -72,6 +73,7 @@ func (s observations) clone() observations {
 		s.players[i].receivedPosition = false
 	}
 	s.creatures = maps.Clone(s.creatures)
+	s.unreflectedUnits = maps.Clone(s.unreflectedUnits)
 	s.nearbyPlayers = maps.Clone(s.nearbyPlayers)
 	s.items = maps.Clone(s.items)
 	s.gameObjects = maps.Clone(s.gameObjects)
@@ -118,6 +120,7 @@ func (s *observations) remove(guid uint64, now time.Time) {
 	}
 	delete(s.nearbyPlayers, guid)
 	delete(s.creatures, guid)
+	delete(s.unreflectedUnits, guid)
 	delete(s.gameObjects, guid)
 	delete(s.groundEffects, guid)
 	delete(s.corpses, guid)
@@ -133,6 +136,32 @@ func (s *observations) remove(guid uint64, now time.Time) {
 }
 func creatureGUID(guid uint64) bool { return guid>>48 == 0xf130 && guid&0xffffff != 0 }
 func itemGUID(guid uint64) bool     { return guid>>48 == 0x4000 && uint32(guid) != 0 }
+
+// A public UNIT can also be a pet or vehicle. Missing rows deny a complete
+// creature enumeration until a full CREATE, removal, or the next visit.
+func (s *observations) noteUnreflectedUnit(guid uint64) {
+	if s.unreflectedUnits[guid] || s.creatureCoverageLost {
+		return
+	}
+	if guid == 0 || len(s.unreflectedUnits) >= maxCreatures {
+		s.creatureCoverageLost = true
+		return
+	}
+	if s.unreflectedUnits == nil {
+		s.unreflectedUnits = make(map[uint64]bool)
+	}
+	s.unreflectedUnits[guid] = true
+}
+
+func (s *observations) noteUnitWithoutCreate(guid uint64) {
+	switch guid >> 48 {
+	case 0xf130, 0xf140, 0xf150:
+		if s.creatures[guid] == nil {
+			s.noteUnreflectedUnit(guid)
+		}
+	}
+}
+
 func (s *observations) reference() observed {
 	if p, known := s.clientDiscoveryReference(); known {
 		return p
@@ -154,8 +183,9 @@ func interesting(p *observed) bool {
 	return p.fields[unitNPCFlags]&2 != 0 || p.fields[unitDynamicFlags]&1 != 0 || p.attackVictimKnown
 }
 func (s *observations) putCreature(p *observed) {
+	delete(s.unreflectedUnits, p.guid)
 	if s.creatures[p.guid] == nil && len(s.creatures) >= maxCreatures {
-		s.creatureCacheOverflow = true
+		s.creatureCoverageLost = true
 		var worst *observed
 		ref := s.reference()
 		for _, candidate := range s.creatures {
@@ -301,7 +331,7 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 			r.OwnerTarget = creatureSnapshot(p, s, now)
 		}
 	}
-	r.NearbyCreaturesComplete = r.VisitRevision != 0 && !s.creatureCacheOverflow
+	r.NearbyCreaturesComplete = r.VisitRevision != 0 && !s.creatureCoverageLost && len(s.unreflectedUnits) == 0
 	for _, p := range s.creatures {
 		if !p.present {
 			continue
