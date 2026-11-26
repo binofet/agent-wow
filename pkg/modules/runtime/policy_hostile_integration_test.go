@@ -302,16 +302,7 @@ func primePackagedSap(t *testing.T, ctx context.Context, manager *Manager, write
 		})
 	}
 	probe("sap_weapon_not_confirmed", opcode.CMSGItemQuerySingle, binary.LittleEndian.AppendUint32(nil, fixtureDagger))
-	weapon := binary.LittleEndian.AppendUint32(nil, fixtureDagger)
-	weapon = binary.LittleEndian.AppendUint32(weapon, 2)  // Weapon class
-	weapon = binary.LittleEndian.AppendUint32(weapon, 15) // Dagger subclass
-	weapon = append(weapon, 0, 0, 0, 0)
-	weapon = append(weapon, "Dagger\x00\x00\x00\x00"...)
-	fields := make([]byte, 88)
-	binary.LittleEndian.PutUint32(fields[24:], 13) // One-hand inventory type
-	weapon = append(weapon, fields...)
-	weapon = append(weapon, make([]byte, 8+24+28+12+120+4+1+116)...)
-	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGItemQuerySingleResponse, weapon)
+	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGItemQuerySingleResponse, packagedDaggerResponse())
 
 	const entry = uint32(555)
 	query := binary.LittleEndian.AppendUint32(nil, entry)
@@ -322,6 +313,18 @@ func primePackagedSap(t *testing.T, ctx context.Context, manager *Manager, write
 	tail := make([]byte, 77)
 	binary.LittleEndian.PutUint32(tail[4:], 7) // Humanoid
 	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGCreatureQueryResponse, append(template, tail...))
+}
+
+func packagedDaggerResponse() []byte {
+	weapon := binary.LittleEndian.AppendUint32(nil, fixtureDagger)
+	weapon = binary.LittleEndian.AppendUint32(weapon, 2)  // Weapon class
+	weapon = binary.LittleEndian.AppendUint32(weapon, 15) // Dagger subclass
+	weapon = append(weapon, 0, 0, 0, 0)
+	weapon = append(weapon, "Dagger\x00\x00\x00\x00"...)
+	fields := make([]byte, 88)
+	binary.LittleEndian.PutUint32(fields[24:], 13) // One-hand inventory type
+	weapon = append(weapon, fields...)
+	return append(weapon, make([]byte, 8+24+28+12+120+4+1+116)...)
 }
 
 func TestPackagedActionsPolicySapRequiresObservedStealth(t *testing.T) {

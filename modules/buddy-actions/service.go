@@ -3,6 +3,7 @@
 package buddyactions
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -1660,11 +1661,14 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		attacker, _, damage, err := decodeMeleeDamage(p)
 		if err != nil {
 			malformed = true
-		} else if attacker == s.selfGUID && damage > 0 {
-			s.state.MeleeDamageEvents++
-			s.state.MeleeDamageTotal += uint64(damage)
-			s.state.AssistDamageEvents++
-			s.state.AssistDamageTotal += uint64(damage)
+		} else if attacker == s.selfGUID {
+			s.encounterSwing.controlStopUntil = time.Time{}
+			if damage > 0 {
+				s.state.MeleeDamageEvents++
+				s.state.MeleeDamageTotal += uint64(damage)
+				s.state.AssistDamageEvents++
+				s.state.AssistDamageTotal += uint64(damage)
+			}
 		}
 	case opcode.SMSGAttackstart:
 		if len(p) != 16 {
@@ -1699,17 +1703,22 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 			break
 		}
 		leasedSwing := s.encounterSwing.target != 0
+		if attacker == s.selfGUID && leasedSwing && target == 0 && dead == 0 {
+			if m != 1 || !bytes.Equal(p[:n], packedGUID(attacker)) {
+				malformed = true
+				break
+			}
+			if !s.clientControlLost {
+				s.encounterSwing.controlStopUntil = s.now().Add(meleeReceiptLimit)
+			}
+			break
+		}
 		if attacker == s.selfGUID && s.acceptOwnMeleeAttackLocked(target, false) {
 			if !leasedSwing && !s.autoStopping && dead == 0 && s.autoTarget != 0 && !s.clientControlLost && !s.clientControlRestoring {
 				s.failedAssistTarget = s.autoTarget
 				s.failedAssistCastTarget = 0
 			}
-			s.autoTarget = 0
-			s.autoStopping = false
-			s.state.AutoAttacking = false
-			s.state.AutoAttackTargetGuid = 0
-			s.state.AutoAttackRequested = false
-			s.state.AutoAttackUnconfirmed = false
+			s.clearAutoAttackLocked()
 		}
 	case opcode.SMSGSpellnonmeleedamagelog:
 		caster, target, spell, damage, err := decodeSpellDamage(p)

@@ -1,7 +1,9 @@
 package buddyactions
 
 import (
+	"bytes"
 	"context"
+	"time"
 )
 
 const (
@@ -14,20 +16,26 @@ const (
 // effect ends. Drop the old local route without sending a conflicting STOP.
 func (s *Service) clientControlPacketLocked(payload []byte) bool {
 	guid, n, err := readGUID(payload)
-	if err != nil || len(payload) != n+1 || payload[n] > 1 {
+	if err != nil || guid == 0 || len(payload) != n+1 || payload[n] > 1 || !bytes.Equal(payload[:n], packedGUID(guid)) {
 		return false
 	}
 	if guid != s.selfGUID {
 		return true
 	}
 	if payload[n] == 0 {
+		if !s.clientControlLost {
+			s.settleControlMeleeStopLocked()
+		}
 		s.clientControlLost, s.clientControlRestoring = true, false
 		s.state.Moving = false
 		s.followNav.Reset()
 		s.swimFollow = swimFollowRoute{}
 		s.meleeNav.Reset()
-	} else if s.clientControlLost {
-		s.clientControlLost, s.clientControlRestoring = false, true
+	} else {
+		s.encounterSwing.controlStopUntil = time.Time{}
+		if s.clientControlLost {
+			s.clientControlLost, s.clientControlRestoring = false, true
+		}
 	}
 	return true
 }

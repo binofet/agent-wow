@@ -189,7 +189,7 @@ func TestPackagedActionsEncounterBundleDefendsWithoutMarks(t *testing.T) {
 }
 
 func TestPackagedActionsEncounterBundleUsesMeleeWithoutDamageSpell(t *testing.T) {
-	for _, name := range []string{"attacker_disengages", "reload_releases_ownership"} {
+	for _, name := range []string{"attacker_disengages", "reload_releases_ownership", "control_loss_and_return"} {
 		t.Run(name, func(t *testing.T) {
 			manager, ctx, writes, world := policyMeleeFixture(t, true)
 			stop := startPackagedEncounterBundle(t, ctx, manager, writes)
@@ -211,6 +211,18 @@ func TestPackagedActionsEncounterBundleUsesMeleeWithoutDamageSpell(t *testing.T)
 				deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGAttackstop, binary.LittleEndian.AppendUint32(ack, 0))
 			}
 			switch name {
+			case "control_loss_and_return":
+				acknowledgeStop(0)
+				mover := spellFixturePackedGUID(policyMageGUID)
+				deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGClientControlUpdate, append(mover, 0))
+				noPackagedWrites(t, writes)
+				deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGClientControlUpdate, append(mover, 1))
+				origin.ActionID = "2"
+				checkPackagedWrite(t, ctx, writes, opcode.CMSGAttackswing, binary.LittleEndian.AppendUint64(nil, policyWolfGUID), origin)
+				deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGAttackstart, binary.LittleEndian.AppendUint64(start, policyWolfGUID))
+				world.combat.Store(false)
+				origin.ActionID = "3"
+				checkPackagedWrite(t, ctx, writes, opcode.CMSGAttackstop, nil, origin)
 			case "attacker_disengages":
 				world.combat.Store(false)
 				origin.ActionID = "2"
