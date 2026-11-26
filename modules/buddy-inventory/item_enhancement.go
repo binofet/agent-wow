@@ -5,6 +5,7 @@ import (
 
 	inventoryv1 "github.com/agent-wow/agent-wow/modules/buddy-inventory/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -87,7 +88,7 @@ func (s *Service) enhancementGateLocked(op *operation, source *worldv1.BackpackS
 	if s.actions.GetSessionId() != s.state.SessionId || s.actions.GetSelfGuid() != s.selfGUID {
 		return "enhancement_controller_body_changed"
 	}
-	if w.VisitRevision != e.VisitRevision || w.SelfEquipmentRevision != r.BaselineEquipmentRevision {
+	if op.enhancementVisitRetired || w.VisitRevision != e.VisitRevision || w.SelfEquipmentRevision != r.BaselineEquipmentRevision {
 		return "enhancement_visit_or_equipment_changed"
 	}
 	if reason := s.unsettledSpellLocked(); reason != "" {
@@ -136,7 +137,10 @@ func (s *Service) enhancementGateLocked(op *operation, source *worldv1.BackpackS
 
 func (s *Service) enhancementEvidenceLocked(op *operation, current view) {
 	r, e := op.receipt, op.receipt.Enhancement
-	if current.w.VisitRevision != e.VisitRevision || current.w.SelfEquipmentRevision <= r.BaselineEquipmentRevision ||
+	if current.w.VisitRevision != 0 && current.w.VisitRevision != e.VisitRevision {
+		op.enhancementVisitRetired = true
+	}
+	if op.enhancementVisitRetired || current.w.VisitRevision != e.VisitRevision || current.w.SelfEquipmentRevision <= r.BaselineEquipmentRevision ||
 		current.w.InventoryRevision < r.BaselineInventoryRevision || !exactEquipmentVector(op.baseline, current) {
 		return
 	}
@@ -165,4 +169,18 @@ func (s *Service) enhancementEvidenceLocked(op *operation, current view) {
 	}
 	e.EffectConfirmed, r.EquipmentConfirmed = true, true
 	r.Status, r.Reason = "CONFIRMED", "newer_exact_equipped_enchantment_observed"
+}
+
+// The Inventory packet FIFO can see a world boundary before or after World's
+// independent snapshot catches up. A cast count or item GUID in the next visit
+// cannot reject the old request, even on the same map with the same equipment.
+func (s *Service) observeEnhancementBoundaryLocked(code uint32) {
+	switch code {
+	case opcode.SMSGTransferPending, opcode.SMSGNewWorld, opcode.SMSGLoginVerifyWorld:
+		op := s.last
+		if op != nil && op.receipt.Enhancement != nil && (op.receipt.Status == "REQUESTED" || op.receipt.Status == "OUTCOME_UNCONFIRMED") {
+			op.enhancementVisitRetired = true
+			op.cancel()
+		}
+	}
 }

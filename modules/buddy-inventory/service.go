@@ -36,16 +36,17 @@ type sessionAPI interface {
 	InvokeModule(context.Context, *modv1.InvokeModuleRequest, ...grpc.CallOption) (*modv1.InvokeModuleResponse, error)
 }
 type operation struct {
-	request     proto.Message
-	receipt     *inventoryv1.Operation
-	baseline    view
-	expected    view
-	token       string
-	ctx         context.Context
-	cancel      context.CancelFunc
-	attempted   bool
-	useCount    byte
-	multiCharge bool
+	request                 proto.Message
+	receipt                 *inventoryv1.Operation
+	baseline                view
+	expected                view
+	token                   string
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	attempted               bool
+	useCount                byte
+	multiCharge             bool
+	enhancementVisitRetired bool
 }
 type Service struct {
 	inventoryv1.UnimplementedBuddyInventoryServer
@@ -693,6 +694,7 @@ func (s *Service) run(op *operation) {
 	s.mu.Lock()
 	if e != nil || w.InventoryRevision < s.state.InventoryRevision || w.SelfCopperRevision < s.state.CopperRevision || w.SelfEquipmentKnown && w.SelfEquipmentRevision < s.state.EquipmentRevision || w.SelfAmmoKnown && w.SelfAmmoRevision < s.state.AmmoRevision {
 		s.known = false
+		s.state.WorldVisitRevision = 0
 		s.state.InventoryKnown = false
 		s.state.CopperKnown = false
 		s.state.AmmoKnown = false
@@ -703,6 +705,7 @@ func (s *Service) run(op *operation) {
 		return
 	}
 	s.view, s.known = v, true
+	s.state.WorldVisitRevision = w.VisitRevision
 	s.state.InventoryKnown = true
 	s.state.InventoryRevision = w.InventoryRevision
 	s.state.InventoryBags = w.InventoryBags
@@ -866,6 +869,7 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.observeEnhancementBoundaryLocked(p.Opcode)
 	s.observeConsumableErrorLocked(p)
 	if p.Opcode == opcode.SMSGItemQuerySingleResponse {
 		m, e := parseItemMetadata(p.Payload)
@@ -879,15 +883,15 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 		return &emptypb.Empty{}, nil
 	}
 	op := s.active
-	if op == nil && s.last != nil && s.last.receipt.Kind == "apply_item_enhancement" &&
-		s.last.receipt.Status == "OUTCOME_UNCONFIRMED" && s.view.w.GetVisitRevision() == s.last.receipt.Enhancement.VisitRevision {
+	if op == nil && s.last != nil && s.last.receipt.Enhancement != nil && s.last.receipt.Status == "OUTCOME_UNCONFIRMED" {
 		op = s.last
 	}
 	if op == nil || !op.attempted {
 		return &emptypb.Empty{}, nil
 	}
 	r := op.receipt
-	if r.Kind == "apply_item_enhancement" && (r.Status == "CONFIRMED" || r.Status == "SERVER_REJECTED") {
+	if r.Enhancement != nil && (op.enhancementVisitRetired || !s.known || s.state.WorldVisitRevision != r.Enhancement.VisitRevision ||
+		r.Status == "CONFIRMED" || r.Status == "SERVER_REJECTED") {
 		return &emptypb.Empty{}, nil
 	}
 	if r.Kind == "apply_item_enhancement" && p.Opcode == opcode.SMSGCastFailed &&

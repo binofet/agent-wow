@@ -325,3 +325,50 @@ func TestEnhancementScopeAndUnknownEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestEnhancementWorldBoundaryRetainsOriginalAttempt(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		boundary uint32
+	}{{"transfer pending", opcode.SMSGTransferPending}, {"same-map entry", opcode.SMSGNewWorld}, {"login verification", opcode.SMSGLoginVerifyWorld}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f, q := enhancementFixture(t, partyEnchants[0])
+			f.afterSend = func(p *modv1.SendPacketRequest) {
+				if p.Opcode != opcode.CMSGUseItem {
+					return
+				}
+				body := make([]byte, 20)
+				if tc.boundary == opcode.SMSGTransferPending {
+					body = body[:4]
+				}
+				s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: tc.boundary, Payload: body})
+				// The ordered boundary has arrived, but the other module still
+				// returns its old visit. Neither a matching error nor a newer
+				// item field from this ambiguous interval proves the outcome.
+				failure := make([]byte, 18)
+				failure[0] = 4
+				binary.LittleEndian.PutUint64(failure[1:], q.Source.ItemGuid)
+				s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGInventoryChangeFailure, Payload: failure})
+				cast := append(binary.LittleEndian.AppendUint32([]byte{p.Payload[2]}, q.SpellId), 51)
+				s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGCastFailed, Payload: cast})
+				f.mu.Lock()
+				f.w.SelfEquipment[q.EquipmentSlot].EnhancementDetails.Enchantments[1].Id = 2627
+				f.w.SelfEquipmentRevision++
+				f.mu.Unlock()
+			}
+			if _, err := s.ApplyItemEnhancement(context.Background(), q); err != nil {
+				t.Fatal(err)
+			}
+			observation := waitInventory(t, s)
+			op := observation.Operation
+			if !op.TransportAttempted || op.Status != "OUTCOME_UNCONFIRMED" || op.ServerErrorObserved || op.Enhancement.EffectConfirmed {
+				t.Fatal(op)
+			}
+			q.RequestId = "replacement_after_boundary"
+			q.ExpectedRevision = observation.Revision
+			if _, err := s.ApplyItemEnhancement(context.Background(), q); err == nil {
+				t.Fatal("new request bypassed retained attempt")
+			}
+		})
+	}
+}
