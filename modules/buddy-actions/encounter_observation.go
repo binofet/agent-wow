@@ -120,6 +120,17 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		identity.Reason = "world_observation_unavailable"
 		return identity, nil
 	}
+	if !s.matchesCurrentEncounterVisitLocked(w) {
+		identity.Reason = "world_visit_unbound"
+		return identity, nil
+	}
+	// If this exact operation receives GO during the read, already-observed
+	// life must remain unattributed even on later reads of that retained fact.
+	// Reuse normal death-custody settlement without claiming this cast's effect.
+	if supportOp != nil && s.supportOp == supportOp &&
+		!supportView.(*actionsv1.SpellOperation).ServerCastGo && supportOp.view.ServerCastGo && !supportOp.view.EffectObserved {
+		s.settleResurrectionLifeLocked(w, false)
+	}
 	// Neither a new operation nor a receipt transition (for example GO)
 	// may consume World evidence read before that transition. Packet handling
 	// and its receipts still progress; only this composite is superseded.
@@ -130,10 +141,6 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		return identity, nil
 	}
 	s.observeRecoveryLifeLocked(w)
-	if !s.matchesCurrentEncounterVisitLocked(w) {
-		identity.Reason = "world_visit_unbound"
-		return identity, nil
-	}
 
 	out := &actionsv1.EncounterObservationResponse{
 		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(s.hostEncounterActiveLocked()), HostRequested: identity.HostRequested,

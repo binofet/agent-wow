@@ -235,15 +235,37 @@ func TestEncounterObservationCannotCombineOlderAliveWithNewResurrectionGo(t *tes
 		<-h.finished
 	}
 	if err != nil || !h.completed || out.Reason != "world_observation_superseded" || out.MapId != nil ||
-		!s.supportOp.view.ServerCastGo || s.supportOp.view.EffectObserved || !s.resurrectionBindings[3] ||
+		!s.supportOp.view.ServerCastGo || s.supportOp.view.EffectObserved || s.resurrectionBindings[3] || s.supportOp.view.Phase != "observed_alive_without_cast_confirmation" ||
 		s.supportOp.view.OperationRevision != revision || countPackets(f, opcode.CMSGCastSpell) != 1 {
 		t.Fatalf("older alive snapshot was attributed to newly arrived GO: out=%v operation=%v err=%v", out, s.supportOp, err)
 	}
-	// A subsequent fresh read, begun after GO, retains the existing settlement
-	// contract; superseding one composite must not create a lasting hold/replay.
+	// Re-reading the same retained alive fact must not later attribute it to
+	// this GO, nor rearm/replay a cast for an already observed living patient.
 	s.session = f
 	fresh, err := s.EncounterObservation(context.Background(), &emptypb.Empty{})
-	if err != nil || fresh.Reason != "" || !s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "confirmed_alive" || s.resurrectionBindings[3] || countPackets(f, opcode.CMSGCastSpell) != 1 {
-		t.Fatalf("fresh post-GO life could not settle existing operation: out=%v operation=%v err=%v", fresh, s.supportOp, err)
+	if err != nil || fresh.Reason != "" || s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "observed_alive_without_cast_confirmation" || s.resurrectionBindings[3] || countPackets(f, opcode.CMSGCastSpell) != 1 {
+		t.Fatalf("retained pre-GO life was reattributed or replayed: out=%v operation=%v err=%v", fresh, s.supportOp, err)
+	}
+}
+
+func TestEncounterObservationExistingResurrectionGoThenLifeRetainsSettlement(t *testing.T) {
+	s, f, _ := resRig(t)
+	s.encounterVisit = encounterVisit{bound: true, revision: 1, mapID: f.world.Self.MapId}
+	f.world.VisitRevision = 1
+	if _, err := requestResurrection(s); err != nil {
+		t.Fatal(err)
+	}
+	packet := smiteEvent(true, s.castCount, 3)
+	_, _, _, offset, _ := castEvent(packet)
+	binary.LittleEndian.PutUint32(packet[offset-4:], 2006)
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: packet})
+	if !s.supportOp.view.ServerCastGo || s.supportOp.view.EffectObserved {
+		t.Fatal("GO invented life", s.supportOp)
+	}
+	f.world.Owner.Alive = true
+	f.world.Owner.Health = 100
+	out, err := s.EncounterObservation(context.Background(), &emptypb.Empty{})
+	if err != nil || out.Reason != "" || !s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "confirmed_alive" || s.resurrectionBindings[3] || countPackets(f, opcode.CMSGCastSpell) != 1 {
+		t.Fatalf("existing GO then observed life lost normal settlement: out=%v operation=%v err=%v", out, s.supportOp, err)
 	}
 }

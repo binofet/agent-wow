@@ -100,7 +100,9 @@ func (s *Service) resurrectionBodyLocked(w *worldv1.SnapshotResponse, owner uint
 	return 0, position{}, false
 }
 
-func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
+// settleResurrectionLifeLocked retires a witnessed death without attributing
+// life which was already observed before this operation's GO to that cast.
+func (s *Service) settleResurrectionLifeLocked(w *worldv1.SnapshotResponse, allowAttribution bool) {
 	for owner := range s.resurrectionBindings {
 		if p := observedHealingPlayer(w, owner); p != nil && p.Present && p.AliveKnown && p.Alive && p.HealthKnown && p.Health > 0 && p.PlayerFlags&0x10 == 0 {
 			delete(s.resurrectionBindings, owner)
@@ -112,7 +114,7 @@ func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
 					s.state.CastPending = false
 					s.pendingSpell, s.pendingTarget = 0, 0
 				}
-				if s.supportOp.view.ServerCastGo {
+				if s.supportOp.view.ServerCastGo && allowAttribution {
 					s.supportOp.view.EffectObserved = true
 					s.supportOp.view.Phase = "confirmed_alive"
 				} else {
@@ -124,6 +126,10 @@ func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
 			}
 		}
 	}
+}
+
+func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
+	s.settleResurrectionLifeLocked(w, true)
 	if op := s.supportOp; op != nil && (op.view.Phase == "waiting_server" || op.view.Phase == "waiting_cleanse_effect" || op.view.Capability == fearBreakCapability && op.view.Phase == "transport_unconfirmed_no_retry") && !s.now().Before(op.until) {
 		op.view.Phase = "outcome_unconfirmed_no_retry"
 		if s.pendingSpell == op.view.SpellId && s.castCount == op.count {
