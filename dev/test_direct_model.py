@@ -611,21 +611,118 @@ class LocalPromptBudgetTests(unittest.TestCase):
     def test_tool_aware_sdk_meter_uses_only_fake_websocket_and_bounded_subprocess(self):
         if shutil.which('node') is None:self.skipTest('Node is not installed; SDK mode requires Node22')
         result=subprocess.run(['node','--test-reporter=tap',str(Path(__file__).with_name('test_local_prompt_meter.mjs'))],
-            capture_output=True,timeout=10)
+            capture_output=True,timeout=45)
         self.assertEqual(result.returncode,0,result.stdout.decode()+result.stderr.decode())
-        self.assertIn('# tests 3',result.stdout.decode())
+        self.assertIn('# tests 5',result.stdout.decode())
         calls=[]
         def runner(argv,**kwargs):
             calls.append((argv,kwargs))
             return type('Reply',(),dict(returncode=0,stdout=json.dumps(dict(model='loaded',tokens=237,
-                scope='sdk_tool_aware_template',instanceReference='exact')).encode()))()
+                scope='sdk_tool_aware_template',instanceReference='exact',sdkTimeoutMs=10000)).encode()))()
         counter=LMStudioPromptCounter('ws://127.0.0.1:1234','loaded',runner=runner)
         self.assertEqual(counter(dict(model='loaded',messages=[],tools=[])),237)
-        self.assertEqual(calls[0][1]['timeout'],6)
+        self.assertEqual(calls[0][1]['timeout'],30)
+        self.assertEqual(calls[0][0][-1],'10000')
         self.assertEqual(json.loads(calls[0][1]['input'])['model'],'loaded')
         self.assertEqual(counter.last_measurement['instanceReference'],'exact')
         for url in ('ws://remote.invalid:1234','ws://u:p@127.0.0.1:1234','ws://127.0.0.1:1234/path'):
             with self.assertRaises(ModelError):LMStudioPromptCounter(url,'loaded',runner=runner)
+
+    def test_real_python_parent_utility_rejects_input_without_sdk_connection(self):
+        if shutil.which('node') is None:self.skipTest('Node is not installed; SDK mode requires Node22')
+        counter=LMStudioPromptCounter('ws://127.0.0.1:1','unused')
+        with self.assertRaises(ModelError) as caught:
+            counter(dict(model='unused',messages=[dict(role='invalid',content='SYNTHETIC_PRIVATE_MUST_NOT_ESCAPE')],tools=[]))
+        self.assertEqual(caught.exception.reason,'local_prompt_meter_input_invalid')
+        self.assertEqual(counter.last_measurement['phase'],'input')
+        self.assertNotIn('SYNTHETIC_PRIVATE',json.dumps(caught.exception.receipt))
+        self.assertNotIn('tokens',counter.last_measurement)
+
+    def test_meter_cold_start_headroom_and_explicit_bounded_launcher_values(self):
+        calls=[]
+        def slow_utility(argv,**kwargs):
+            calls.append((argv,kwargs))
+            # Synthetic11s utility: the old6s deadline rejects before the
+            # successful exact count. No sleep, SDK connection or inference.
+            if kwargs['timeout'] < 11: raise subprocess.TimeoutExpired(argv,kwargs['timeout'])
+            return type('Reply',(),dict(returncode=0,stdout=json.dumps(dict(model='loaded',tokens=41,
+                scope='sdk_tool_aware_template',instanceReference='same-instance',sdkElapsedMs=1751,sdkTimeoutMs=int(argv[-1]))).encode()))()
+        counter=LMStudioPromptCounter('ws://127.0.0.1:1234','loaded',runner=slow_utility)
+        self.assertEqual(counter(dict(model='loaded',messages=[],tools=[])),41)
+        self.assertEqual((calls[-1][1]['timeout'],calls[-1][0][-1]),(30,'10000'))
+        counter=LMStudioPromptCounter('ws://127.0.0.1:1234','loaded',runner=slow_utility,process_timeout=40,sdk_timeout=15)
+        self.assertEqual(counter(dict(model='loaded',messages=[],tools=[])),41)
+        self.assertEqual((calls[-1][1]['timeout'],calls[-1][0][-1]),(40,'15000'))
+        for total,sdk in [(True,10),(61,10),(1,1),(10,10),(30,31),(30,0),(30,1.5)]:
+            with self.subTest(total=total,sdk=sdk),self.assertRaises(ModelError):
+                LMStudioPromptCounter('ws://127.0.0.1:1234','loaded',process_timeout=total,sdk_timeout=sdk)
+        client=DirectModel('local','loaded','http://127.0.0.1:1/v1',local_prompt_token_limit=24000,
+            local_sdk_url='ws://127.0.0.1:1234',local_prompt_meter_timeout=40,local_prompt_meter_sdk_timeout=15)
+        self.assertEqual((client.local_token_counter.process_timeout,client.local_token_counter.sdk_timeout),(40,15))
+        with self.assertRaises(ModelError):DirectModel('local','loaded','http://127.0.0.1:1/v1',local_prompt_meter_timeout=40)
+
+    def test_meter_failures_report_safe_phase_and_never_retry(self):
+        for kind,reason,phase in [('startup','startup_timeout',None),('count','process_timeout','count'),
+                ('missing','runtime_unavailable',None),('input','input_invalid','input'),
+                ('model','loaded_model_unavailable','model_lookup'),('sdk','sdk_timeout','render')]:
+            with self.subTest(kind=kind):
+                calls=[]
+                def runner(argv,**kwargs):
+                    calls.append(argv)
+                    if kind in ('startup','count'):
+                        stderr=b'"SYNTHETIC_PRIVATE"' if kind=='startup' else b'{"meterPhase":"count"}\nSYNTHETIC_PRIVATE'
+                        raise subprocess.TimeoutExpired(argv,kwargs['timeout'],stderr=stderr)
+                    if kind=='missing':raise FileNotFoundError('SYNTHETIC_PRIVATE')
+                    code={'input':'input_invalid','model':'loaded_model_unavailable','sdk':'sdk_timeout'}[kind]
+                    return type('Reply',(),dict(returncode=1,stdout=json.dumps(dict(error=dict(code=code,phase=phase))).encode()))()
+                counter=LMStudioPromptCounter('ws://127.0.0.1:1234','loaded',runner=runner)
+                with self.assertRaises(ModelError) as caught:counter(dict(model='loaded',messages=[],tools=[]))
+                self.assertEqual(caught.exception.reason,'local_prompt_meter_'+reason)
+                self.assertEqual(counter.last_measurement['phase'],phase)
+                self.assertNotIn('SYNTHETIC_PRIVATE',json.dumps(caught.exception.receipt))
+                self.assertEqual(len(calls),1)
+
+    def test_meter_requires_actual_helper_deadline_ack_and_filters_diagnostics(self):
+        valid=dict(model='loaded',tokens=41,scope='sdk_tool_aware_template',instanceReference='same-instance',sdkTimeoutMs=10000)
+        for value,reason in [(dict(valid,sdkTimeoutMs=4000),'helper_configuration_mismatch'),
+                ({k:v for k,v in valid.items() if k!='sdkTimeoutMs'},'helper_configuration_mismatch'),
+                (dict(error=dict(code=['bad'],phase='count')),'process_failed')]:
+            with self.subTest(value=value):
+                def runner(*_,**__):return type('Reply',(),dict(returncode=1 if 'error' in value else 0,stdout=json.dumps(value).encode()))()
+                counter=LMStudioPromptCounter('ws://127.0.0.1:1234','loaded',runner=runner)
+                with self.assertRaises(ModelError) as caught:counter(dict(model='loaded',messages=[],tools=[]))
+                self.assertEqual(caught.exception.reason,'local_prompt_meter_'+reason)
+        def runner(*_,**__):return type('Reply',(),dict(returncode=0,stdout=json.dumps(dict(valid,unexpected='SYNTHETIC_PRIVATE')).encode()))()
+        counter=LMStudioPromptCounter('ws://127.0.0.1:1234','loaded',runner=runner)
+        self.assertEqual(counter(dict(model='loaded',messages=[],tools=[])),41)
+        self.assertNotIn('SYNTHETIC_PRIVATE',json.dumps(counter.last_measurement))
+
+    def test_meter_timeout_after_completed_mutation_preserves_receipt_without_redispatch(self):
+        counts=[]
+        def runner(argv,**kwargs):
+            counts.append(argv)
+            if len(counts)>1:raise subprocess.TimeoutExpired(argv,kwargs['timeout'],stderr=b'{"meterPhase":"count"}')
+            return type('Reply',(),dict(returncode=0,stdout=json.dumps(dict(model='fixture',tokens=41,
+                scope='sdk_tool_aware_template',instanceReference='same-instance',sdkTimeoutMs=10000)).encode()))()
+        counter=LMStudioPromptCounter('ws://127.0.0.1:1234','fixture',runner=runner)
+        client=self.Transport([chat(('write','mutate',dict(key='authorized')))],local_prompt_token_limit=10000,
+            local_token_counter=counter,local_max_output_tokens=4096)
+        writes=[]
+        def dispatch(name,args):
+            self.assertEqual(name,'mutate');writes.append(args)
+            return dict(operationId='retained-write',commandWritten=True,outcomeUnknown=False,replayAllowed=False)
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'canonical.json'
+            for attempt in range(2):
+                with self.assertRaises(ModelError) as caught:self.exchange(client,dispatch,path)
+                self.assertEqual(caught.exception.reason,'local_prompt_count_unavailable' if attempt==0 else 'conversation_request_already_entered')
+                if attempt==0:self.assertEqual(client.last_receipt['promptMeterFailure']['meter']['phase'],'count')
+                saved=json.loads(path.read_text())
+                results=[r['content'] for r in saved['messages'] if r['role']=='tool']
+                self.assertEqual(len(results),1)
+                self.assertIn('retained-write',results[0])
+            self.assertEqual(writes,[dict(key='authorized')])
+            self.assertEqual(len(client.sent),1)
 
     class Transport(DirectModel):
         """Scripted provider transport only: no socket or real model."""
@@ -877,8 +974,10 @@ class LocalPromptBudgetTests(unittest.TestCase):
             raw=rows[reference['transcriptMessage']][reference['field']].encode()
             self.assertEqual((reference['bytes'],reference['sha256']),(len(raw),hashlib.sha256(raw).hexdigest()))
         script="import {sdkInput} from './dev/local_prompt_meter.mjs';import fs from 'node:fs';sdkInput(JSON.parse(fs.readFileSync(0,'utf8')));console.log('compatible');"
+        # This checks pure SDK input compatibility with the supported default
+        # utility startup budget; it is not a Lua or inference watchdog.
         checked=subprocess.run(['node','--input-type=module','-e',script],input=json.dumps(payload).encode(),
-            cwd=Path(__file__).resolve().parent.parent,capture_output=True,timeout=5)
+            cwd=Path(__file__).resolve().parent.parent,capture_output=True,timeout=30)
         self.assertEqual(checked.returncode,0,checked.stderr.decode())
         self.assertEqual(checked.stdout.strip(),b'compatible')
 
