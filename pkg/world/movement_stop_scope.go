@@ -2,6 +2,7 @@ package world
 
 import (
 	"context"
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
@@ -24,7 +25,7 @@ func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []by
 	}
 	route := modsession.IsRouteBodyInput(ctx)
 	if route {
-		if !qualified || !movementinfo.RouteBodyFrame(op, body, requested.SelfGuid) {
+		if !qualified || !buddynav.RouteBodyFrame(op, body, requested.SelfGuid) {
 			return modcb.PacketNotDispatchedError("invalid normal route body frame")
 		}
 		if err := e.transport.reserveBodySource(requested); err != nil {
@@ -40,7 +41,7 @@ func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []by
 	return e.transport.reserve(op, body, requested)
 }
 
-func (t *transportScopeState) reserveMovementStop(payload []byte, requested *modv1.TransportScope, prior *modv1.WorldPacket, qualifiedEntry bool, route ...bool) error {
+func (t *transportScopeState) reserveMovementStop(payload []byte, requested *modv1.TransportScope, prior *modv1.WorldPacket, qualifiedEntry, route bool) error {
 	current := t.scope
 	if current == nil || t.exhausted || current.ConnectionId == "" || current.SelfGuid == 0 || !current.VisitBound ||
 		current.VisitRevision == 0 || current.MotionRevision == 0 || !proto.Equal(requested, current) {
@@ -55,21 +56,17 @@ func (t *transportScopeState) reserveMovementStop(payload []byte, requested *mod
 		return modcb.PacketNotDispatchedError("ground STOP requires a complete finite stationary ground MovementInfo")
 	}
 	if !movementflags.GroundCompatible(info.Flags, uint32(info.ExtraFlags)) {
-		// Only the immediately preceding known water entry can authorize its
-		// stationary wet STOP, at the same contact point in the same scope.
-		routeFrame := len(route) == 1 && route[0] && prior != nil && movementinfo.RouteBodyFrame(prior.Opcode, prior.Payload, current.SelfGuid) &&
-			(prior.Opcode == opcode.MSGMoveStartSwim || prior.Opcode == opcode.MSGMoveHeartbeat || prior.Opcode == opcode.MSGMoveStartForward)
-		if !info.BodyWaterEntry(false) || !routeFrame && prior.GetOpcode() != opcode.MSGMoveStartSwim || !qualifiedEntry && !proto.Equal(prior.GetTransportScope(), current) {
-			return modcb.PacketNotDispatchedError("water STOP requires the current written water entry")
+		// A measured landing stops at its actual entry. A native surface route
+		// can also stop at its latest complete swimming checkpoint.
+		if !info.BodyWaterEntry(false) || prior == nil || !qualifiedEntry && !proto.Equal(prior.TransportScope, current) {
+			return modcb.PacketNotDispatchedError("water STOP requires a current written water position")
 		}
-		before := teleportCursor{body: prior.Payload}
-		if before.guid() != current.SelfGuid || before.bad {
-			return modcb.PacketNotDispatchedError("water entry belongs to another body")
-		}
-		entry, size, err := movementinfo.DecodePrefix(prior.Payload[before.offset:])
-		if err != nil || size != len(prior.Payload)-before.offset || (!(routeFrame && entry.Flags == movementinfo.SwimmingFlag|1) && !entry.BodyWaterEntry(true) && !entry.BodyWaterEntry(false)) ||
-			entry.X != info.X || entry.Y != info.Y || entry.Z != info.Z || entry.Orientation != info.Orientation {
-			return modcb.PacketNotDispatchedError("water STOP differs from the written water entry")
+		entry, ok := movementinfo.OwnFrame(prior.Payload, current.SelfGuid)
+		entered := prior.Opcode == opcode.MSGMoveStartSwim && (entry.BodyWaterEntry(true) || entry.BodyWaterEntry(false))
+		routeCheckpoint := route && (prior.Opcode == opcode.MSGMoveHeartbeat || prior.Opcode == opcode.MSGMoveStartForward || prior.Opcode == opcode.MSGMoveStartSwim) &&
+			entry.Flags == movementinfo.SwimmingFlag|1 && buddynav.RouteBodyFrame(prior.Opcode, prior.Payload, current.SelfGuid)
+		if !ok || !entered && !routeCheckpoint || entry.X != info.X || entry.Y != info.Y || entry.Z != info.Z || entry.Orientation != info.Orientation {
+			return modcb.PacketNotDispatchedError("water STOP differs from the written water position")
 		}
 	}
 	// A successful STOP advances MotionRevision before its report is published.

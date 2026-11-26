@@ -1,6 +1,7 @@
 package world
 
 import (
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
@@ -24,18 +25,14 @@ func (e *engine) retainOwnMovementReport(op uint32, body []byte, route bool) {
 		scope.SelfGuid == 0 || e.s.state.Character.GUID != scope.SelfGuid {
 		return
 	}
-	c := teleportCursor{body: body}
-	if c.guid() != scope.SelfGuid || c.bad {
-		return
-	}
-	info, n, err := movementinfo.DecodePrefix(body[c.offset:])
-	if err != nil || n != len(body)-c.offset || !info.AllFinite() {
+	info, ok := movementinfo.OwnFrame(body, scope.SelfGuid)
+	if !ok {
 		return
 	}
 	legacyGround := (op == opcode.MSGMoveStartForward || op == opcode.MSGMoveHeartbeat || op == opcode.MSGMoveStop) &&
 		movementflags.GroundCompatible(info.Flags, uint32(info.ExtraFlags))
 	waterStop := op == opcode.MSGMoveStop && info.BodyWaterEntry(false)
-	if !(route && movementinfo.RouteBodyFrame(op, body, scope.SelfGuid)) && !legacyGround && !waterStop && !normalBodyMovementImage(op, body, scope.SelfGuid) {
+	if !(route && buddynav.RouteBodyFrame(op, body, scope.SelfGuid)) && !legacyGround && !waterStop && !normalBodyMovementImage(op, body, scope.SelfGuid) {
 		return
 	}
 	e.ownMovementReport = &modv1.WorldPacket{Opcode: op, Payload: append([]byte(nil), body...), TransportScope: cloneTransportScope(scope)}

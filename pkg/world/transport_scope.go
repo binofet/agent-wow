@@ -288,7 +288,7 @@ func (t *transportScopeState) reserve(op uint32, payload []byte, requested *modv
 		return nil
 	}
 	if op == opcode.MSGMoveStop && requested != nil {
-		return t.reserveMovementStop(payload, requested, nil, false)
+		return t.reserveMovementStop(payload, requested, nil, false, false)
 	}
 	if requested != nil && bodyMovementScopeOpcode(op) {
 		return t.reserveBodyMovement(op, payload, requested)
