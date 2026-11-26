@@ -42,7 +42,7 @@ func TestResurrectionUsesLearnedEffectCurrentDeadPartyAndNoReceiptAsLife(t *test
 	_, _, _, off, _ := castEvent(p)
 	binary.LittleEndian.PutUint32(p[off-4:], 2006)
 	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: p})
-	if s.state.CastPending || !s.supportOp.view.ServerCastGo || s.supportOp.view.EffectObserved || f.world.Owner.Alive {
+	if !s.state.CastPending || !s.supportOp.view.ServerCastGo || s.supportOp.view.EffectObserved || f.world.Owner.Alive {
 		t.Fatal("GO claimed revival", s.supportOp)
 	}
 	advance(20 * time.Second)
@@ -53,7 +53,7 @@ func TestResurrectionUsesLearnedEffectCurrentDeadPartyAndNoReceiptAsLife(t *test
 	f.world.Owner.Alive = true
 	f.world.Owner.Health = 100
 	state(t, s) // Refresh observed life; no autonomous target selection.
-	if !s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "confirmed_alive" {
+	if s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "observed_alive_without_cast_confirmation" || s.state.CastPending {
 		t.Fatal(s.supportOp)
 	}
 }

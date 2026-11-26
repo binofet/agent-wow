@@ -599,12 +599,17 @@ func (op *policySpell) decodeEffect(body []byte) (behavior.ActionOutcome, map[st
 	if native.SpellId != op.spell || native.TargetGuid != target || native.Capability != op.capability {
 		return "", nil, nil
 	}
+	if native.Capability == "resurrect" && native.Phase == "confirmed_alive" {
+		// Older native clients used GO plus subsequent life as their only
+		// evidence. Neither identifies which healer produced the offer.
+		native.Phase, native.EffectObserved = "observed_alive_without_cast_confirmation", false
+	}
 	return spellEffectOutcome(&native), op.payload(native.Phase, native.TransportWritten, native.ServerCastGo, native.EffectObserved), nil
 }
 
 func spellEffectOutcome(effect *actionsv1.SpellOperation) behavior.ActionOutcome {
 	switch effect.Phase {
-	case "confirmed_aura", "confirmed_effect", "confirmed_heal", "confirmed_alive":
+	case "confirmed_aura", "confirmed_effect", "confirmed_heal", "confirmed_resurrection_offer_effect":
 		if effect.ServerCastGo && effect.EffectObserved {
 			return behavior.ActionConfirmed
 		}
@@ -614,7 +619,7 @@ func spellEffectOutcome(effect *actionsv1.SpellOperation) behavior.ActionOutcome
 		if effect.ChannelStarted && effect.ChannelEnded {
 			return behavior.ActionSettledUnverified
 		}
-	case "outcome_unconfirmed_no_retry", "server_cast_go_effect_unverified",
+	case "outcome_unconfirmed_no_retry", "server_cast_go_effect_unverified", "server_cast_go_without_patient_hit",
 		"target_lost_outcome_unconfirmed", "map_changed_outcome_unconfirmed", "world_transfer_outcome_unconfirmed", "observed_alive_without_cast_confirmation", "observed_control_clear_effect_unverified":
 		// Actions only publishes these phases after retiring native cast custody.
 		return behavior.ActionSettledUnverified

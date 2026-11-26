@@ -113,9 +113,21 @@ func validCastBody(data []byte, offset int, goEvent bool) bool {
 	return validCastTargetBody(data, offset, goEvent, ownerGUID)
 }
 
+// castGoListsHit reads only the hit-count prefix and its raw unit GUIDs.
+func castGoListsHit(hits []byte, target uint64) bool {
+	if len(hits) == 0 || int(hits[0]) > (len(hits)-1)/8 {
+		return false
+	}
+	for i := range int(hits[0]) {
+		if binary.LittleEndian.Uint64(hits[1+8*i:]) == target {
+			return true
+		}
+	}
+	return false
+}
+
 func validCastTargetBody(data []byte, offset int, goEvent bool, expectedTarget uint64, implicitSelf ...bool) bool {
 	allowSelf := len(implicitSelf) > 0 && implicitSelf[0]
-	hitSelf := false
 	exactSelfHit := false
 	pos := offset + 8 // uint32 castFlags + uint32 castTime/timestamp
 	if pos > len(data) {
@@ -136,17 +148,13 @@ func validCastTargetBody(data []byte, offset int, goEvent bool, expectedTarget u
 		if hits > (len(data)-pos)/8 {
 			return false
 		}
-		for i := 0; i < hits; i++ {
-			if binary.LittleEndian.Uint64(data[pos+i*8:]) == expectedTarget {
-				hitSelf = true
-			}
-		}
+		hitSelf := hits == 1 && castGoListsHit(data[pos-1:], expectedTarget)
 		pos += hits * 8
 		if pos >= len(data) {
 			return false
 		}
 		misses := int(data[pos])
-		exactSelfHit = hits == 1 && hitSelf && misses == 0
+		exactSelfHit = hitSelf && misses == 0
 		if allowSelf && !exactSelfHit {
 			return false
 		}
