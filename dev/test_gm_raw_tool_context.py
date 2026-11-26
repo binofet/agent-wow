@@ -24,6 +24,14 @@ class RawGMContextTests(unittest.TestCase):
     gm_guide_fixture = brain_fixtures.DirectBrainIntegrationTests.gm_guide_fixture
     gm_primer_fixture = brain_fixtures.DirectBrainIntegrationTests.gm_primer_fixture
 
+    def test_index_never_enlarges_a_small_or_already_compact_spellbook(self):
+        from direct_context import gm_spellbook_index
+        small = dict(spells=[dict(spellId=1, name='One', mechanicsHint=dict(targetMask=2))])
+        large = dict(spells=[dict(spellId=i+1, name='水'*100) for i in range(100)])
+        large['spells'][0]['passive'] = False
+        for book in (small, large):
+            self.assertEqual(gm_spellbook_index(book), book)
+
     def test_budgeted_owner_gm_can_page_an_indexed_spellbook_with_prior_receipts_intact(self):
         from direct_context import encode
         with self.gm_primer_fixture() as (brain, state, clients):

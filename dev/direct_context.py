@@ -270,7 +270,8 @@ def gm_spellbook_index(toolkit):
         if isinstance(row, dict) and "spellId" in row and not protected_read_evidence(row) else row
         for row in rows
     ]
-    return dict(toolkit, spells=index, spellDetailsContextPath=["spell_toolkit", "spells"])
+    brief = dict(toolkit, spells=index, spellDetailsContextPath=["spell_toolkit", "spells"])
+    return brief if len(encode(brief)) < len(encode(toolkit)) else toolkit
 
 
 def ordinary_context(state):
