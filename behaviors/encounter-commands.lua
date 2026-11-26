@@ -529,6 +529,11 @@ local function import_state(saved)
     local ground=saved.data.rangedGround
     if ground~=nil and (type(ground)~="table" or type(ground.sessionId)~="string" or not guid(ground.selfGuid) or not guid(ground.visitId) or type(ground.key)~="string" or type(ground.blocked)~="table" or ground.operation~=nil and type(ground.operation)~="table" or ground.awaiting~=nil and type(ground.awaiting)~="table") then return false end
     if ground then
+        local failed=ground.failedCastPose
+        if failed~=nil then
+            if type(failed)~="table" or not guid(failed.target) or not guid(failed.action) then return false end
+            for _,k in ipairs({"x","y","z"}) do local n=failed[k];if type(n)~="number" or n~=n or math.abs(n)==math.huge then return false end end
+        end
         if type(ground.id)~="string" or ground.uncertain~=nil and type(ground.uncertain)~="boolean" or ground.observedSequence~=nil and not guid(ground.observedSequence) then return false end
         local refused=ground.castRefused
         if refused~=nil and type(refused)~="string" and (type(refused)~="table" or type(refused.key)~="string" or not guid(refused.target) or not spell_id(refused.spell)) then return false end
@@ -602,7 +607,7 @@ local function ranged_stance(obs,frame)
         maximum=math.min(maximum,reach)
     end
     row={id=prior.id,origin="learned_prior",sessionId=obs.sessionId,selfGuid=obs.selfGuid,mapId=obs.mapId,visitId=obs.visitId,
-        creatureEntry=prior.creatureEntry,combatStandoff=prior.combatStandoff,anchorGuid=anchor,anchorRange=reach,
+        creatureEntry=prior.creatureEntry,combatStandoff=prior.combatStandoff,bodyStandoff=prior.bodyStandoff,anchorGuid=anchor,anchorRange=reach,
         minRangeYards=prior.minRangeYards,maxRangeYards=maximum,
         clearanceYards=prior.clearanceYards,durationMs=prior.durationMs,attackWitnessMaxAgeMs=prior.attackWitnessMaxAgeMs,
         expiresAt=capture.observedAt+prior.durationMs,expiresUnixMs=capture.observedUnixMs+prior.durationMs}
@@ -640,6 +645,7 @@ local function ranged_targets(obs,row)
     return ids,nearest,nearest_distance,complete
 end
 ranged_options=function(obs,row,target,options)
+    if row.bodyStandoff and obs.hostTargetRangeBandSupported~=true then return options or {} end
     local ids,_,_,complete=ranged_targets(obs,row)
     if not complete then return end
     local copy={}
@@ -760,11 +766,59 @@ local function observe_ground_input(ground,obs,self,from)
     if (from.x-op.x)^2+(from.y-op.y)^2+(from.z-op.z)^2<0.00000001 then ground.blocked[op.heading]=true end
     return true
 end
+-- Preserve the role's selected rank and recipient. The body-only client can
+-- measure their range here. Its ordinary native spell/LOS checks still apply.
+local function body_role_target(obs,row,action)
+    if not action then return end
+    local cap=action.capability
+    local id=guid(action.targetGuid or (action.targets or {}).objectGuid)
+    local unit=id and ((obs.players or {})[id] or (obs.targets or {})[id])
+    if not unit or unit.mapKnown~=true or unit.mapId~=obs.mapId or unit.aliveKnown~=true or unit.alive~=true or
+       unit.positionInferred==true or unit.positionEstimated==true and id~=obs.selfGuid then return end
+    local point=movement.current_pose(unit)
+    if not point then return end
+    local minimum,maximum=0,nil
+    if cap=="approach_target" then maximum=action.rangeYards
+    elseif cap=="heal" or cap=="cleanse" or cap=="buff" or cap=="offense" or cap=="polymorph" or cap=="cast_spell" then
+        local rank=(obs.spells or {})[tostring(action.spellId)]
+        if not rank or rank.known~=true or rank.metadataKnown~=true or rank.weaponStrike==true then return end
+        minimum,maximum=rank.minRange or 0,rank.maxRange
+    else return end
+    if id==obs.selfGuid and cap~="approach_target" then return id,point,0,0 end
+    if type(maximum)~="number" or maximum<=0 then return end
+    if unit.entry==row.creatureEntry then maximum=math.min(maximum,row.maxRangeYards-row.clearanceYards) end
+    return id,point,minimum,maximum
+end
+local function in_role_range(from,point,minimum,maximum)
+    local d=(from.x-point.x)^2+(from.y-point.y)^2+(from.z-point.z)^2
+    return d>=minimum^2 and d<=maximum^2
+end
+local function facing_away(obs,from,id,point)
+    return (obs.targets or {})[id] and (point.x-from.x)*math.cos(from.o)+(point.y-from.y)*math.sin(from.o)<0
+end
+local function unknown_range_heal(obs,action)
+    if not action or action.capability~="heal" then return false end
+    local patient=(obs.players or {})[action.targetGuid]
+    return patient and patient.present==true and patient.aliveKnown==true and patient.alive==true and
+        patient.mapKnown==true and patient.mapId==obs.mapId and
+        (patient.positionInferred==true or patient.positionEstimated==true or not movement.current_pose(patient))
+end
+local function unchanged_failed_pose(ground,target,from)
+    local failure=movement.position_failure(target)
+    if not failure then return false end
+    local rejected=ground.failedCastPose
+    if not rejected or rejected.target~=target or rejected.action~=failure then
+        rejected={action=failure,target=target,x=from.x,y=from.y,z=from.z}
+        ground.failedCastPose=rejected
+    end
+    return (from.x-rejected.x)^2+(from.y-rejected.y)^2+(from.z-rejected.z)^2<0.1^2
+end
 -- Older native clients already provide physics-checked straight body inputs.
 -- Their observed speed is validated natively in [0.1,14] yards/s. Check the
 -- ENTIRE worst-case ray here; the native floor/collision check may refuse it.
 -- This is observed geometry, not a claim about future hazards or server arrival.
 local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choose_spell)
+    local roleAction=out.action
     out.action=nil
     status.positionReady=false
     status.positioningMode="legacy_ground_input"
@@ -824,7 +878,6 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
     if not ground.positionKey then ground.positionKey=positionKey end
     if ground.positionKey~=positionKey then ground.positionKey,ground.blocked=positionKey,{} end
     ground.key=key
-    if ground.refused==positionKey then status.phase="ground_input_refused_at_observed_pose";return end
     local focus=out.focusGuid and obs.targets[out.focusGuid]
     local target=focus and focus.entry==row.creatureEntry and focus.present==true and focus.protected~=true and obs.targetProtectionOverflow~=true and focus.aliveKnown==true and focus.alive==true and focus or nil
     local targetId=target and out.focusGuid
@@ -835,12 +888,54 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
     local lower=row.minRangeYards+row.clearanceYards
     local upper=spell and math.min(row.maxRangeYards-row.clearanceYards,spell.maxRange-row.clearanceYards)
     local unsafe=false
-    for _,p in ipairs(hazards) do if (p.x-from.x)^2+(p.y-from.y)^2<lower*lower then unsafe=true end end
+    for _,p in ipairs(hazards) do
+        if (p.x-from.x)^2+(p.y-from.y)^2+(row.bodyStandoff and (p.z-from.z)^2 or 0)<lower*lower then unsafe=true end
+    end
+    local goalLow=lower
+    local refacing,sideStep,turnRoom=false,false,false
+    local anchor=row.bodyStandoff and row.anchorGuid and movement.current_pose((obs.players or {})[row.anchorGuid])
+    if row.bodyStandoff and not unsafe then
+        if unknown_range_heal(obs,roleAction) then
+            -- Triage already selected this ally and rank. No route or patient
+            -- pose is required to submit the existing stationary native heal.
+            if unchanged_failed_pose(ground,roleAction.targetGuid,from) then status.phase="waiting_for_patient_position";return end
+            out.action=roleAction;status.phase="stationary_role_action";return
+        end
+        local id,goal,minimum,maximum=body_role_target(obs,row,roleAction)
+        if not goal and out.rangedSpellPosition then
+            local selected=out.rangedSpellPosition
+            id,goal,minimum,maximum=body_role_target(obs,row,{capability="approach_target",
+                targetGuid=selected.targetGuid,rangeYards=selected.rangeYards})
+            roleAction=nil
+        end
+        if not goal and anchor then id,goal,minimum,maximum,roleAction=row.anchorGuid,anchor,0,row.anchorRange,nil end
+        if not goal then status.phase="waiting_for_role_action";return end
+        if in_role_range(from,goal,minimum,maximum) then
+            refacing=facing_away(obs,from,id,goal)==true
+            -- The native spell owns LOS. After a definite rejection, retry
+            -- from a changed settled pose after a bounded lateral step.
+            sideStep=unchanged_failed_pose(ground,id,from)
+            if not refacing and not sideStep then
+                if roleAction and (roleAction.capability=="approach_target" or roleAction.capability=="move_body") then roleAction=nil end
+                out.action=roleAction;status.phase="stationary_role_action"
+                return
+            end
+            if refacing then
+                for _,p in ipairs(hazards) do
+                    if (p.x-from.x)^2+(p.y-from.y)^2+(p.z-from.z)^2<(lower+0.04)^2 then turnRoom=true end
+                end
+            end
+        end
+        -- Approach the selected patient or damage target by finite checked
+        -- steps. Each candidate ray must also preserve every carrier's margin.
+        point,upper,goalLow=goal,maximum,math.max(minimum,maximum-2)
+    end
     local dx,dy,distance
+    if ground.refused==positionKey then status.phase="ground_input_refused_at_observed_pose";return end
     if point then dx,dy=point.x-from.x,point.y-from.y;distance=math.sqrt(dx*dx+dy*dy+(point.z-from.z)^2) end
-    if not unsafe and not spell then status.phase="supported_ranged_option_unavailable";return end
+    if not row.bodyStandoff and not unsafe and not spell then status.phase="supported_ranged_option_unavailable";return end
     local facing=point and dx*math.cos(from.o)+dy*math.sin(from.o)
-    if not unsafe and distance and distance>=lower and distance<=upper and facing and facing>=math.sqrt(dx*dx+dy*dy)*0.98 then
+    if not row.bodyStandoff and not unsafe and distance and distance>=lower and distance<=upper and facing and facing>=math.sqrt(dx*dx+dy*dy)*0.98 then
         local ready=choose_spell(obs,target,{require_metadata=true})
         if ready then
             out.action={capability="cast_spell",sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,observationSequence=sequence,
@@ -854,8 +949,8 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
     end
     -- A non-fighting stance can withdraw, but cannot choose a new pull target.
     if not unsafe and not point then status.phase="holding_ranged_only";return end
-    local length=unsafe and 3 or math.min(3,math.abs(distance-(lower+upper)*0.5))
-    local facingOnly=not unsafe and distance>=lower and distance<=upper
+    local length=(unsafe or turnRoom or sideStep) and 3 or math.min(3,math.abs(distance-(goalLow+upper)*0.5))
+    local facingOnly=refacing and not turnRoom and not sideStep or not row.bodyStandoff and not unsafe and distance>=lower and distance<=upper
     if facingOnly then length=0.014 end
     local duration=math.max(1,math.min(500,math.floor(length/14*1000)))
     local hold=state.rangedHold
@@ -864,7 +959,7 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         math.min(hold.untilUnixMs,row.expiresUnixMs)-now
     if type(remaining)~="number" or duration>=remaining then status.phase="ground_input_deadline";return end
     length=14*duration/1000
-    local best,bestScore
+    local best,bestScore,bestExcess
     for i=0,31 do
         local angle=i*0.196349540849362
         local vx,vy=math.cos(angle),math.sin(angle)
@@ -873,13 +968,15 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         local score=0
         for _,p in ipairs(hazards) do
             local hx,hy=p.x-from.x,p.y-from.y
-            local initial=hx*hx+hy*hy
+            local vertical=row.bodyStandoff and (p.z-from.z)^2 or 0
+            local horizontal=hx*hx+hy*hy
+            local initial=horizontal+vertical
             local projection=math.max(0,math.min(length,hx*vx+hy*vy))
-            local closest=(hx-vx*projection)^2+(hy-vy*projection)^2
-            if initial<lower*lower then
+            local closest=(hx-vx*projection)^2+(hy-vy*projection)^2+vertical
+            if initial<lower*lower or turnRoom and initial<(lower+0.04)^2 then
                 -- Inside: never take a first step towards ANY hazard.
-                if initial>0 and hx*vx+hy*vy>=-math.min(0.001,math.sqrt(initial)*0.01) then allowed=false end
-                score=score+((ex-p.x)^2+(ey-p.y)^2-initial)
+                if horizontal>0 and hx*vx+hy*vy>=-math.min(0.001,math.sqrt(horizontal)*0.01) then allowed=false end
+                score=score+((ex-p.x)^2+(ey-p.y)^2+vertical-initial)
             elseif initial<(lower+0.01)^2 then
                 -- Relative bearings are encoded as float32 by native. Keep a
                 -- strict outward component at the boundary, and a small
@@ -887,14 +984,23 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
                 if hx*vx+hy*vy>=-0.001 then allowed=false end
             elseif closest<(lower+0.01)^2 then allowed=false end
         end
-        if not unsafe then
+        if not unsafe and not turnRoom then
             if facingOnly then score=dx*vx+dy*vy
+            elseif sideStep then score=dx==0 and dy==0 and 1 or math.abs(dx*vy-dy*vx)
             else
                 local after=math.sqrt((ex-point.x)^2+(ey-point.y)^2+(from.z-point.z)^2)
-                score=math.abs(distance-(lower+upper)*0.5)-math.abs(after-(lower+upper)*0.5)
+                score=math.abs(distance-(goalLow+upper)*0.5)-math.abs(after-(goalLow+upper)*0.5)
             end
         end
-        if allowed and score>0 and (not bestScore or score>bestScore) then best,bestScore=i,score end
+        if allowed and score>0 then
+            local excess=0
+            if unsafe and anchor then
+                excess=math.max(0,math.sqrt((ex-anchor.x)^2+(ey-anchor.y)^2+(from.z-anchor.z)^2)-row.anchorRange)
+            end
+            if not best or excess<bestExcess or excess==bestExcess and score>bestScore then
+                best,bestScore,bestExcess=i,score,excess
+            end
+        end
     end
     if not best then status.phase="no_clear_ground_input";return end
     local bearing=best*0.196349540849362-from.o
@@ -904,7 +1010,7 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         sequenceId=sequence,bearingRadians=bearing,durationMs=duration,jump=false}
     out.action=a
     ranged_ground_proposal={action=a,ground=ground,operation={kind="move_body",sequence=sequence,heading=tostring(best),x=from.x,y=from.y,z=from.z}}
-    status.phase=unsafe and "withdrawing_ground_input" or facingOnly and "facing_ground_input" or "approaching_ground_input"
+    status.phase=(unsafe or turnRoom) and "withdrawing_ground_input" or facingOnly and "facing_ground_input" or sideStep and "seeking_spell_los" or "approaching_ground_input"
 end
 
 -- Only the automatic default yields to explicit travel. Unknown geometry or an
@@ -1007,6 +1113,7 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
     if not follow_safe and not follow_continuing then out.followFormation,out.portalCatchup=nil,nil end
     if not self or self.aliveKnown~=true or self.alive~=true then return end
     local action=out.action
+    local positionFailed=row.bodyStandoff and obs.hostTargetRangeBandSupported~=true and action and movement.position_failure(action.targetGuid)
     local cleanup=action and (action.capability=="fear_break" or action.capability=="cancel_spell" or action.capability=="loot_close" or action.capability=="release_interaction" or action.capability=="melee_stop")
     if cleanup then return end
     if #frame.pending~=0 then status.phase="waiting_for_native_custody";return end
@@ -1036,7 +1143,7 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
        hold.sessionId==obs.sessionId and hold.selfGuid==obs.selfGuid and
        type(nav.movementOwner)=="table" and nav.movementOwner.active==true and
        nav.movementOwner.owner==hold.owner and nav.motionUnconfirmed~=true and
-       self.movementKnown==true and self.moving~=true and ranged_friendly_support(obs,action) then
+       self.movementKnown==true and self.moving~=true and not positionFailed and ranged_friendly_support(obs,action) then
         out.followFormation,out.portalCatchup=nil,nil
         status.phase="stationary_friendly_support";status.positionReady=false
         return
@@ -1119,12 +1226,24 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
        nav.motionUnconfirmed~=true and type(nav.movementOwner)=="table" and
        nav.movementOwner.active~=true and not hold and
        not (ground and (ground.operation or ground.uncertain or ground.awaiting)) and
-       ranged_friendly_support(obs,action) then
+       not positionFailed and ranged_friendly_support(obs,action) then
         status.phase="stationary_friendly_support";status.positionReady=false
         return
     end
+    if row.bodyStandoff and obs.hostTargetRangeBandSupported~=true and complete and distance and
+       distance>=row.minRangeYards+row.clearanceYards and action and action.capability~="approach_target" and
+       not hold and not (ground and (ground.operation or ground.uncertain or ground.awaiting)) and
+       type(nav.movementOwner)=="table" and nav.movementOwner.active~=true and
+       self.movementKnown==true and self.moving==false and self.positionEstimated~=true then
+        local id,point,minimum,maximum=body_role_target(obs,row,action)
+        local from=movement.current_pose(self)
+        if not positionFailed and (unknown_range_heal(obs,action) or point and not facing_away(obs,from,id,point) and
+           not movement.position_failure(id) and in_role_range(from,point,minimum,maximum)) then
+            status.phase="stationary_role_action";status.positionReady=false;return
+        end
+    end
     if ranged_hold(obs,frame,out,row,status,true,nearest) then return end
-    if row.combatStandoff and complete and row.anchorGuid then
+    if row.combatStandoff and obs.hostTargetRangeBandSupported==true and complete and row.anchorGuid then
         local anchor=movement.current_pose((obs.players or {})[row.anchorGuid])
         local own=movement.current_pose(self)
         local range=row.anchorRange
@@ -1159,6 +1278,10 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
         return
     end
     if obs.hostTargetRangeBandSupported~=true then
+        if row.bodyStandoff and complete then
+            ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choose_spell)
+            return
+        end
         if action and (action.capability=="heal" or action.capability=="buff") and action.targetGuid==obs.selfGuid then return end
         if status.stationaryObserved==true and ranged_friendly_support(obs,action) then
             status.phase="stationary_friendly_support";status.positionReady=false;return
