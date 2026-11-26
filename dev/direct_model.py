@@ -593,6 +593,22 @@ class DirectModel:
                        if isinstance(part, dict) and isinstance(part.get("text"), str)
                        and (part.get("type")=="text" if self.provider=="claude" else part.get("thought") is not True))
 
+    @staticmethod
+    def _read_only_call(name, args, read_only_tools):
+        if name not in read_only_tools or not isinstance(args, dict):
+            return False
+        # policy_show also snapshots source into the owned workspace. Never
+        # treat that write (or an unknown future argument) as an archivable read.
+        if name == 'policy_show':
+            return set(args) <= {'path', 'offset', 'limit', 'find', 'first_line'}
+        return True
+
+    def _read_only_function(self, function, read_only_tools):
+        try:
+            return self._read_only_call(function['name'], _decode(function['arguments']), read_only_tools)
+        except (KeyError, TypeError, ValueError, UnicodeError, RecursionError):
+            return False
+
     def _local_protected_rows(self, conversation, read_only_tools, unknown):
         batches = [index for index, row in enumerate(conversation)
             if row.get('role') == 'assistant' and row.get('tool_calls')]
@@ -603,14 +619,14 @@ class DirectModel:
             if row.get('role') == 'assistant':
                 assistant_index = index
                 calls = {call.get('id'):call for call in row.get('tool_calls',[]) if isinstance(call,dict)}
-                if any(call.get('function',{}).get('name') not in read_only_tools for call in calls.values()):
+                if any(not self._read_only_function(call.get('function', {}), read_only_tools) for call in calls.values()):
                     protected.add(index)
             elif row.get('role') == 'tool':
                 try:
                     function=calls[row['tool_call_id']]['function']
                     fingerprint=hashlib.sha256(_packed([function['name'],_decode(function['arguments'])],self.max_request_bytes)).hexdigest()
                     value=_decode(row['content'])
-                    if function['name'] not in read_only_tools or fingerprint in unknown or _read_custody(value) or _receipt_evidence(value):
+                    if not self._read_only_call(function['name'], _decode(function['arguments']), read_only_tools) or fingerprint in unknown or _read_custody(value) or _receipt_evidence(value):
                         protected.add(index)
                         if assistant_index is not None: protected.add(assistant_index)
                 except (KeyError,TypeError,ValueError,UnicodeError,RecursionError):
@@ -675,7 +691,7 @@ class DirectModel:
         latest, eligible = {}, []
         for index, path, (name, args), call_id in pairs:
             if index in protected: continue
-            if not isinstance(name, str) or name not in read_only_tools or not isinstance(args, dict): continue
+            if not isinstance(name, str) or not self._read_only_call(name, args, read_only_tools): continue
             fingerprint = hashlib.sha256(_packed([name, args], self.max_request_bytes)).hexdigest()
             if fingerprint in unknown: continue
             original = conversation[index]
@@ -782,9 +798,10 @@ class DirectModel:
                     call = group["calls"][call_id]
                     function = call.get("function", {})
                     name, original = function.get("name"), message.get("content")
-                    if name not in read_only_tools or not isinstance(original, str): continue
+                    if not isinstance(original, str): continue
                     try:
                         args = _decode(function["arguments"])
+                        if not self._read_only_call(name, args, read_only_tools): continue
                         fingerprint = hashlib.sha256(_packed([name, args], self.max_request_bytes)).hexdigest()
                         full = canonical[index]["content"]
                         result = _decode(full)
@@ -982,7 +999,7 @@ class DirectModel:
                         self.last_receipt["outcome"] = "completed"
                         return copy.deepcopy(calls[0]["arguments"])
                     conversation.append(native)
-                    state["pending"] = dict(calls=[dict(call=call, phase="not_entered", readOnly=call["name"] in read_only_tools) for call in calls])
+                    state["pending"] = dict(calls=[dict(call=call, phase="not_entered", readOnly=self._read_only_call(call["name"], call["arguments"], read_only_tools)) for call in calls])
                     journal.save()
                     text = self._text(native)
                     if text and assistant_text is not None:
