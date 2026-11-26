@@ -153,23 +153,31 @@ function M.practice_lifecycle(input)
 end
 
 M.coldridge_practice={priority={179,170,183,182},max_range=120,lease_ms=600000,
-    objectives={[179]={{entry=705,count=0}},[170]={{entry=707,count=6},{entry=724,count=6}},[183]={{entry=708,count=12}},[182]={{entry=706,count=10}}},
-    profiles={[179]={{entry=705,level=1}},[170]={{entry=707,level=2,maxHealth=55,faction=36},{entry=724,level=2,maxHealth=55,faction=36}},
-        [183]={{entry=708,level=3,maxHealth=71,faction=189}},[182]={{entry=706,level=3,maxHealth=71,faction=190},{entry=706,level=4,maxHealth=86,faction=190}}}}
+    objectives={["179"]={{entry=705,count=0}},["170"]={{entry=707,count=6},{entry=724,count=6}},["183"]={{entry=708,count=12}},["182"]={{entry=706,count=10}}},
+    profiles={["179"]={{entry=705,level=1}},["170"]={{entry=707,level=2,maxHealth=55,faction=36},{entry=724,level=2,maxHealth=55,faction=36}},
+        ["183"]={{entry=708,level=3,maxHealth=71,faction=189}},["182"]={{entry=706,level=3,maxHealth=71,faction=190},{entry=706,level=4,maxHealth=86,faction=190}}}}
 -- Defaults retain the recorded public creature tuples. They describe this
 -- scenario's filter, never alter the actual native creature/quest observations.
 -- Quest182 proof SHA256:84e76d3570162b8fabc05a98bd3cf8d7991293d3d433fb6d18a740cd628821bb.
 -- Quest170 tuples SHA256:f63a45043ec5a13631fefb6a57a6f7ad8d1e3cdf2d44d7730c1533da3e64dcad;
 -- quest183 tuple SHA256:e6cc24cbbe8df941fecc0e65d76a1dc86fab2e3907980d2803d1197437432409.
+-- Sparse quest IDs are hash keys, not eager arrays through the highest ID.
+-- Existing numeric actor overrides (including explicit false) still win.
+local function cold_quest_tuning(rows,id)
+    if type(rows)~="table" or not uint(id) or id==0 then return end
+    local value=rows[id]
+    if value~=nil then return value end
+    return rows[tostring(id)]
+end
 function M.coldridge_supports_entry(id,entry)
-    local profiles=type(M.coldridge_practice)=="table" and type(M.coldridge_practice.profiles)=="table" and M.coldridge_practice.profiles[id]
+    local profiles=type(M.coldridge_practice)=="table" and cold_quest_tuning(M.coldridge_practice.profiles,id)
     if not array(profiles,4) then return false end
     for _,profile in ipairs(profiles) do if type(profile)=="table" and profile.entry==entry and uint(entry) and entry>0 then return true end end
     return false
 end
 function M.coldridge_profile(c,id)
     if type(c)~="table" or c.mapKnown~=true or (c.mapId or 0)~=0 or c.levelKnown~=true or not uint(c.level) then return false end
-    local profiles=type(M.coldridge_practice)=="table" and type(M.coldridge_practice.profiles)=="table" and M.coldridge_practice.profiles[id]
+    local profiles=type(M.coldridge_practice)=="table" and cold_quest_tuning(M.coldridge_practice.profiles,id)
     if not array(profiles,4) then return false end
     for _,profile in ipairs(profiles) do
         if type(profile)~="table" or not uint(profile.entry) or profile.entry==0 or not uint(profile.level) or profile.level==0 or
@@ -214,7 +222,7 @@ function M.coldridge_lifecycle(input)
         end
         local needed=incomplete(q)
         local entries={}
-        local objectives=tuning.objectives[id]
+        local objectives=cold_quest_tuning(tuning.objectives,id)
         if not array(objectives,2) or #objectives==0 then return end
         for i,o in ipairs(objectives) do
             if type(o)~="table" or not uint(o.entry) or not uint(o.count) or not M.coldridge_supports_entry(id,o.entry) then return end

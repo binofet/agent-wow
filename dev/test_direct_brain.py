@@ -118,6 +118,30 @@ class PublicRPC:
 
 
 class DirectBrainIntegrationTests(unittest.TestCase):
+    def test_actor_policy_show_reads_fit_budget_without_archiving_snapshot_write(self):
+        responses=[chat(('snapshot','policy_show',dict(save_as='owned.lua',expected_sha256='')))]+[chat((f'read{i}','policy_show',dict(first_line=1+i*20))) for i in range(18)]+[spoken()]
+        with self.rig(responses,client_options=dict(local_prompt_budget_bytes=120000)) as (loop,brain,state,http):
+            def source_read(tools,args):
+                if 'save_as' in args:return dict(saved=dict(path='owned.lua',sha256='snapshot-exact'),body='snapshot '*600,gameplayDispatched=False)
+                return dict(revision='synthetic-source',sourceLines='exact source '+str(args['first_line'])+'x'*6000,
+                    gameplayDispatched=False)
+            with patch.object(direct_tools.DirectTools,'_policy_show',source_read):
+                loop.generate_reply([dict(speaker='Joel',text='Inspect and improve my own Lua.')],state)
+            self.assertEqual(len(http.requests),20)
+            audit=brain.client.last_receipt['promptBudget']
+            self.assertTrue(audit['archivedReadResults'])
+            self.assertLessEqual(audit['afterBytes'],120000)
+            last=http.requests[-1]['body']['messages']
+            markers=[json.loads(r['content']) for r in last if r.get('role')=='tool']
+            self.assertTrue(any('hostArchivedRead' in row for row in markers))
+            self.assertTrue(any('contextPath' in row for row in markers))
+            snapshot=next(r for r in last if r.get('tool_call_id')=='snapshot')
+            self.assertEqual(json.loads(snapshot['content'])['result']['saved']['sha256'],'snapshot-exact')
+            self.assertNotIn('hostArchivedRead',json.loads(snapshot['content']))
+            self.assertFalse(self.rpc.commands)
+            self.assertTrue(brain.client._read_only_call('policy_show',{'first_line':1},{'policy_show'}))
+            self.assertFalse(brain.client._read_only_call('policy_show',{'save_as':'own.lua'},{'policy_show'}))
+
     def test_preparation_timeout_recovers_only_after_same_bound_fresh_read(self):
         with self.rig([spoken()]) as (loop,brain,state,http):
             original=self.rpc.call; polls=[]
