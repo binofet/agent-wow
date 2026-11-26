@@ -17,6 +17,22 @@ import (
 // the owner loop writes it. World/Actions queues can lag a same-map entry.
 // Legacy unscoped STOP remains available through its existing path.
 func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []byte, requested *modv1.TransportScope, prior *modv1.WorldPacket) error {
+	if requested != nil && modcb.FlightpathQueryPacket(op, body) {
+		// The socket owner has drained ready packets. Its latest known STOP
+		// and the complete World observation must both still be current here.
+		stop := e.ownMovementReport
+		if stop.GetOpcode() != opcode.MSGMoveStop || !proto.Equal(stop.GetTransportScope(), requested) ||
+			e.transport.exhausted || e.impulse != nil && !e.impulse.finished ||
+			e.s.bodyProof(modsession.WithSettledBodySource(ctx), requested, e.transport.scope) != "" ||
+			!modsession.FlightpathWorldCurrent(ctx) {
+			return modcb.PacketNotDispatchedError("flightmaster observation or stationary body changed before write")
+		}
+		i, ok := movementinfo.OwnFrame(stop.Payload, requested.SelfGuid)
+		if !ok || !movementflags.GroundCompatible(i.Flags, uint32(i.ExtraFlags)) || i.Flags&0xff != 0 || i.FallTime != 0 {
+			return modcb.PacketNotDispatchedError("flightmaster query requires a written stationary ground STOP")
+		}
+		return nil
+	}
 	if k, ok := ctx.Value(knockbackFrameKey{}).(*knockbackMotion); ok {
 		if e.impulse != k || k.finished || requested == nil || !proto.Equal(requested, k.lastScope) || e.s.bodyProof(ctx, requested, e.transport.scope) != "" {
 			return modcb.PacketNotDispatchedError("knockback movement source changed")
