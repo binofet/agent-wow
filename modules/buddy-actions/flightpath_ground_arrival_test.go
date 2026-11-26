@@ -25,7 +25,7 @@ func walkedToFlightmaster(t *testing.T) *flightpathRig {
 	npc := w.NearbyCreatures[0]
 	npc.X, npc.Y, npc.Z = x.s.pos.x+1.9, x.s.pos.y, x.s.pos.z
 	npc.PositionAgeMs, npc.ObservationAgeMs = 105000, 105000
-	npc.StationaryPositionKnown = true
+	w.RequestedCreatureStationaryPositionKnown = true
 	x.f.lookupCreatures = map[uint64]*worldv1.CreatureState{x.npc: npc}
 	w.ObservedPackets = 12
 	x.f.retainSyntheticOwnMovementReport(&modv1.SendPacketRequest{Opcode: opcode.MSGMoveStop,
@@ -73,7 +73,7 @@ func TestFlightpathGroundArrivalRequiresCurrentStopAndRequestedStationarySpawn(t
 			case "other physical visit":
 				w.SelfMotionAuthority.TransportScope.VisitRevision++
 			case "unknown stationarity":
-				npc.StationaryPositionKnown = false
+				w.RequestedCreatureStationaryPositionKnown = false
 			case "moving spline":
 				npc.Trajectory = &worldv1.CreatureTrajectory{Known: true}
 			case "missing exact lookup":

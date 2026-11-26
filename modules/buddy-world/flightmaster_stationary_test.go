@@ -17,13 +17,14 @@ func TestFlightmasterStationarityRequiresAnActualCurrentWorldSpaceImage(t *testi
 	spawn := objectFixture(npcGUID, 3, npcFields(0x2000))
 	packet(t, s, opcode.SMSGCompressedUpdateObject, compressed(t, spawn))
 	now = now.Add(105 * time.Second)
-	static := creatureLookup(t, s, npcGUID).RequestedCreature
-	if !static.GetStationaryPositionKnown() || static.PositionAgeMs != 105000 || static.ObservationAgeMs != 105000 {
+	atRest := creatureLookup(t, s, npcGUID)
+	static := atRest.RequestedCreature
+	if !atRest.RequestedCreatureStationaryPositionKnown || static.PositionAgeMs != 105000 || static.ObservationAgeMs != 105000 {
 		t.Fatal("living CREATE did not retain its actual standing coordinates and ages", static)
 	}
 	check := func(want bool) {
 		t.Helper()
-		if c := creatureLookup(t, s, npcGUID).RequestedCreature; c.GetStationaryPositionKnown() != want {
+		if c := creatureLookup(t, s, npcGUID); c.RequestedCreatureStationaryPositionKnown != want {
 			t.Fatal(c)
 		}
 	}

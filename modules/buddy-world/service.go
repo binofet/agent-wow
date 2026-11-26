@@ -201,6 +201,7 @@ func (s *Service) Snapshot(ctx context.Context, request *worldv1.SnapshotRequest
 	}
 	if p := s.state.creatures[guid]; guid != 0 && p != nil && p.present && p.known[objectEntry] && p.fields[objectEntry] != 0 {
 		r.RequestedCreature = creatureSnapshot(p, &s.state, now)
+		r.RequestedCreatureStationaryPositionKnown = p.positionKnown && !p.positionInferred && p.stationaryPosition
 	}
 	return r, nil
 }

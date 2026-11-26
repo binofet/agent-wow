@@ -3594,10 +3594,8 @@ type CreatureState struct {
 	UnitFlagsKnown    bool                `protobuf:"varint,39,opt,name=unit_flags_known,json=unitFlagsKnown,proto3" json:"unit_flags_known,omitempty"`
 	DynamicFlagsKnown bool                `protobuf:"varint,40,opt,name=dynamic_flags_known,json=dynamicFlagsKnown,proto3" json:"dynamic_flags_known,omitempty"`
 	ActiveCast        *CreatureCast       `protobuf:"bytes,41,opt,name=active_cast,json=activeCast,proto3" json:"active_cast,omitempty"`
-	// Latest received pose explicitly reported a stationary world-space creature.
-	StationaryPositionKnown bool `protobuf:"varint,42,opt,name=stationary_position_known,json=stationaryPositionKnown,proto3" json:"stationary_position_known,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *CreatureState) Reset() {
@@ -3915,13 +3913,6 @@ func (x *CreatureState) GetActiveCast() *CreatureCast {
 		return x.ActiveCast
 	}
 	return nil
-}
-
-func (x *CreatureState) GetStationaryPositionKnown() bool {
-	if x != nil {
-		return x.StationaryPositionKnown
-	}
-	return false
 }
 
 // A cast observed in a normal server spell-start event. An expired cast or
@@ -4686,8 +4677,10 @@ type SnapshotResponse struct {
 	NearbyCreaturesComplete bool `protobuf:"varint,64,opt,name=nearby_creatures_complete,json=nearbyCreaturesComplete,proto3" json:"nearby_creatures_complete,omitempty"`
 	// At most 32 actually observed summoning rituals (18) and meeting stones (23).
 	SummoningObjects []*GameObjectState `protobuf:"bytes,65,rep,name=summoning_objects,json=summoningObjects,proto3" json:"summoning_objects,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The exact requested creature has a still-valid, explicitly stationary world-space pose.
+	RequestedCreatureStationaryPositionKnown bool `protobuf:"varint,66,opt,name=requested_creature_stationary_position_known,json=requestedCreatureStationaryPositionKnown,proto3" json:"requested_creature_stationary_position_known,omitempty"`
+	unknownFields                            protoimpl.UnknownFields
+	sizeCache                                protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -5173,6 +5166,13 @@ func (x *SnapshotResponse) GetSummoningObjects() []*GameObjectState {
 		return x.SummoningObjects
 	}
 	return nil
+}
+
+func (x *SnapshotResponse) GetRequestedCreatureStationaryPositionKnown() bool {
+	if x != nil {
+		return x.RequestedCreatureStationaryPositionKnown
+	}
+	return false
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.
@@ -5950,7 +5950,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"stateKnown\x12\x14\n" +
 	"\x05state\x18\x17 \x01(\rR\x05state\x12D\n" +
 	"\x1ccreator_selected_target_guid\x18\x18 \x01(\x04H\x00R\x19creatorSelectedTargetGuid\x88\x01\x01B\x1f\n" +
-	"\x1d_creator_selected_target_guid\"\xe0\f\n" +
+	"\x1d_creator_selected_target_guid\"\xa4\f\n" +
 	"\rCreatureState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x1b\n" +
@@ -6002,8 +6002,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x10unit_flags_known\x18' \x01(\bR\x0eunitFlagsKnown\x12.\n" +
 	"\x13dynamic_flags_known\x18( \x01(\bR\x11dynamicFlagsKnown\x12E\n" +
 	"\vactive_cast\x18) \x01(\v2$.warcraftbuddy.world.v1.CreatureCastR\n" +
-	"activeCast\x12:\n" +
-	"\x19stationary_position_known\x18* \x01(\bR\x17stationaryPositionKnown\"\xa8\x01\n" +
+	"activeCast\"\xa8\x01\n" +
 	"\fCreatureCast\x12\x19\n" +
 	"\bspell_id\x18\x01 \x01(\rR\aspellId\x12\x1d\n" +
 	"\n" +
@@ -6073,7 +6072,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xae \n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\x8e!\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -6144,7 +6143,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x18ground_effects_supported\x18> \x01(\bR\x16groundEffectsSupported\x126\n" +
 	"\x17ground_effects_overflow\x18? \x01(\bR\x15groundEffectsOverflow\x12:\n" +
 	"\x19nearby_creatures_complete\x18@ \x01(\bR\x17nearbyCreaturesComplete\x12T\n" +
-	"\x11summoning_objects\x18A \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x10summoningObjects\"q\n" +
+	"\x11summoning_objects\x18A \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x10summoningObjects\x12^\n" +
+	",requested_creature_stationary_position_known\x18B \x01(\bR(requestedCreatureStationaryPositionKnown\"q\n" +
 	"\x13CombatEventsRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +

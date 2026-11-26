@@ -98,7 +98,7 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 		npc := w.GetRequestedCreature()
 		if w.Self.PositionInferred || (r.Mode != "status" && r.Mode != "discover") ||
 			stop.Opcode != opcode.MSGMoveStop || !samePortalCoreVisit(stop.TransportScope, portalObservedWorldScope(w, r.SelfGuid)) ||
-			npc.GetGuid() != r.NpcGuid || !npc.GetStationaryPositionKnown() {
+			npc.GetGuid() != r.NpcGuid || !w.GetRequestedCreatureStationaryPositionKnown() {
 			return "flightpath_ground_arrival_or_flightmaster_changed"
 		}
 		i, ok := movementinfo.OwnFrame(stop.Payload, r.SelfGuid)
@@ -221,7 +221,7 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	var stop *modv1.WorldPacket
 	var sendScope *modv1.TransportScope
 	npc := w.GetRequestedCreature()
-	if (r.Mode == "status" || r.Mode == "discover") && npc.GetGuid() == r.NpcGuid && npc.GetStationaryPositionKnown() &&
+	if (r.Mode == "status" || r.Mode == "discover") && npc.GetGuid() == r.NpcGuid && w.GetRequestedCreatureStationaryPositionKnown() &&
 		(w.GetSelf().GetPositionAgeMs() > 2000 || npc.PositionAgeMs > 2000 || npc.ObservationAgeMs > 2000) {
 		stop, err = modcb.ReadSettledBodySource(ctx, s.session, r.SessionId, r.SelfGuid)
 		if err != nil {

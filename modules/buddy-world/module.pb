@@ -79,7 +79,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-š¯
+¾¯
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -476,7 +476,7 @@ flagsKnown
 stateKnown
 state (RstateD
 creator_selected_target_guid (H RcreatorSelectedTargetGuidˆB
-_creator_selected_target_guid"à
+_creator_selected_target_guid"¤
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -528,8 +528,7 @@ levelKnown
 unit_flags_known' (RunitFlagsKnown.
 dynamic_flags_known( (RdynamicFlagsKnownE
 active_cast) (2$.warcraftbuddy.world.v1.CreatureCastR
-activeCast:
-stationary_position_known* (RstationaryPositionKnown"¨
+activeCast"¨
 CreatureCast
 spell_id (RspellId
 
@@ -599,7 +598,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"® 
+permanent_bonus (RpermanentBonus"Ž!
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -670,7 +669,8 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 ground_effects_supported> (RgroundEffectsSupported6
 ground_effects_overflow? (RgroundEffectsOverflow:
 nearby_creatures_complete@ (RnearbyCreaturesCompleteT
-summoning_objectsA (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjects"q
+summoning_objectsA (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjects^
+,requested_creature_stationary_position_knownB (R(requestedCreatureStationaryPositionKnown"q
 CombatEventsRequest
 
 session_id (	R	sessionId%
