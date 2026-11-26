@@ -35,6 +35,9 @@ func TestExactHealLOSRejectionAllowsFreshSelfHealAfterActualGCD(t *testing.T) {
 		t.Fatal("self heal bypassed the actual GCD", err, f.packets)
 	}
 	advance(time.Millisecond)
+	if _, err := s.CastHeal(ctx, &actionsv1.CastHealRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: ownerGUID, SpellId: healReceiptSpell}); status.Code(err) != codes.FailedPrecondition || countPackets(f, opcode.CMSGCastSpell) != 1 {
+		t.Fatal("reused attribution replayed the rejected exact cast", err, f.packets)
+	}
 	options, err := s.HealingOptions(ctx, &emptypb.Empty{})
 	if err != nil || !options.Caster.Ready || len(options.Spells) == 0 {
 		t.Fatal("Joel's rejected heal hid all ready self-healing options beyond the GCD", options, err)
