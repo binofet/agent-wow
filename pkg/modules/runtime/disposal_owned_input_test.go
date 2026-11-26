@@ -224,22 +224,39 @@ func TestOwnedDisposalCollectsOnlyRawFactsAndOverwritesLuaWitness(t *testing.T) 
 // Native accepted exports use the real persistent Session's default budget,
 // independently of a fresh standalone CLI's smaller resource-turn contract.
 func TestOwnedDisposalActualArmorHasRequiredDefaultBudgetDecision(t *testing.T) {
+	ctx := context.Background()
 	m, peer := disposalOwnedManager(t)
-	host := disposalOwnedStart(t, m, followFallbackBundle(t))
+	source := followFallbackBundle(t)
+	host := disposalOwnedStart(t, m, source)
 	if host.vm.Options().ExecutionLimit != behavior.DefaultSessionExecutionLimit {
 		t.Fatal("native accepted-source execution budget changed", host.vm.Options())
 	}
-	before, err := host.vm.State(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	check := func(want, reason string) {
+		t.Helper()
+		before, err := host.vm.State(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		peer.calls = nil
+		result := disposalOwnedRead(t, m, disposalOwnedRequest(t, peer, disposalOwnedInput(t, peer)))
+		decision, _ := result["decision"].(map[string]any)
+		if result["available"] != true || result["revision"] != host.vm.Status().Revision || decision["status"] != want ||
+			decision["reason"] != reason || !reflect.DeepEqual(peer.calls, disposalOwnedTrace()) || peer.writes != 0 {
+			t.Fatal("actual native default export did not return its complete required armor decision", result, peer.calls, peer.writes)
+		}
+		assertFollowFallbackState(t, host, before)
 	}
-	result := disposalOwnedRead(t, m, disposalOwnedRequest(t, peer, disposalOwnedInput(t, peer)))
-	decision, _ := result["decision"].(map[string]any)
-	if result["available"] != true || result["revision"] != host.vm.Status().Revision || decision["status"] != "eligible" ||
-		decision["reason"] != "known_worn_armor_dominates" || !reflect.DeepEqual(peer.calls, disposalOwnedTrace()) || peer.writes != 0 {
-		t.Fatal("actual native default export did not return its complete required armor decision", result, peer.calls, peer.writes)
+	check("eligible", "known_worn_armor_dominates")
+	const score = "local gain=(candidate.armor or 0)-(current.armor or 0)"
+	if strings.Count(source, score) != 1 {
+		t.Fatal("expected the actual bundled armor scorer")
 	}
-	assertFollowFallbackState(t, host, before)
+	previous := host.vm.Status().Revision
+	edited := strings.Replace(source, score, score+"-100", 1)
+	if revision, err := host.Reload(ctx, edited, previous); err != nil || revision == previous {
+		t.Fatal("edited scorer was not accepted", revision, err)
+	}
+	check("keep", "worn_armor_does_not_dominate")
 }
 
 func TestOwnedDisposalActualMiscellaneousDoesNotRequireArmorDestinations(t *testing.T) {
