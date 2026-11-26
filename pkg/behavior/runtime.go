@@ -50,6 +50,14 @@ type policy struct {
 	proto    *lua.FunctionProto
 }
 
+// Keep only the last successfully validated immutable bytecode prototype.
+// Closures, globals, input and checkpoints always belong to each fresh VM.
+// Reload still executes the chunk under its original initialization budget.
+var lastCompiledPolicy struct {
+	sync.RWMutex
+	policy
+}
+
 // Runtime serializes reloads/evaluations. Its zero value is ready for use.
 // Each call creates a fresh VM: Lua globals, closures and input mutations cannot
 // survive an evaluation or affect the caller's input.
@@ -163,7 +171,16 @@ func (r *Runtime) Reload(source, expectedRevision string) (string, error) {
 	}
 	L := newVM()
 	defer L.Close()
-	fn, err := L.Load(strings.NewReader(source), "policy")
+	lastCompiledPolicy.RLock()
+	cached := lastCompiledPolicy.policy
+	lastCompiledPolicy.RUnlock()
+	var fn *lua.LFunction
+	var err error
+	if cached.revision == revision {
+		fn = L.NewFunctionFromProto(cached.proto)
+	} else {
+		fn, err = L.Load(strings.NewReader(source), "policy")
+	}
 	if err == nil {
 		budget := newExecutionBudget(context.Background(), r.initializationBudget())
 		err = budget.call(L, func() error { _, err := decisionFunction(L, fn); return err })
@@ -180,6 +197,9 @@ func (r *Runtime) Reload(source, expectedRevision string) (string, error) {
 		r.failed(revision, err)
 		return r.status.Revision, fmt.Errorf("invalid behavior policy: %w", err)
 	}
+	lastCompiledPolicy.Lock()
+	lastCompiledPolicy.policy = policy{revision: revision, proto: fn.Proto}
+	lastCompiledPolicy.Unlock()
 	r.active = &policy{revision: revision, proto: fn.Proto}
 	r.status.Revision = revision
 	return revision, nil

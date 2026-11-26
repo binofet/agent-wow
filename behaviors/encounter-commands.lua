@@ -764,7 +764,7 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         key=key..":"..id..":"..tostring(point.x)..":"..tostring(point.y)..":"..tostring(point.z)
     end
     local ground=state.rangedGround
-    if ground and (ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or ground.id~=row.id) and (ground.operation or ground.uncertain) then
+    if ground and (ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or ground.id~=row.id) and (ground.operation or ground.uncertain or ground.awaiting) then
         status.phase="ground_input_prior_scope_unsettled";return
     end
     if not ground or ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or ground.id~=row.id then
@@ -790,8 +790,21 @@ local function ranged_ground(obs,frame,sequence,out,row,status,ids,nearest,choos
         if (from.x-op.x)^2+(from.y-op.y)^2+(from.z-op.z)^2<0.00000001 then ground.blocked[op.heading]=true end
         status.poseSource=self.positionEstimated==true and "client_written_pose" or "observed_pose"
     elseif self.positionEstimated==true then
-        -- Do not borrow an unrelated estimated pose as a starting point.
-        if not ground.observedSequence or not matching_body_pose(nav.bodyMovement,ground.observedSequence) then status.phase="uncorrelated_estimated_pose";return end
+        -- A first input may hand off the current stationary native self pose
+        -- after our exact lease is acknowledged. This is not external inference
+        -- or proof of arrival. Once any ground input exists, retain its exact
+        -- sequence/visit/pose correlation instead of borrowing a new estimate.
+        local hold=state.rangedHold
+        local first=not ground.observedSequence and not ground.lastPhase and not ground.refused and
+            not ground.castRefused and next(ground.blocked)==nil and self.guid==obs.selfGuid and
+            self.movementKnown==true and self.moving==false and status.movementHoldKnown==true and
+            hold and hold.sessionId==obs.sessionId and hold.selfGuid==obs.selfGuid and
+            hold.mapId==obs.mapId and hold.visitId==obs.visitId and not hold.operation and not hold.uncertain and
+            not hold.released and type(hold.token)=="string" and #hold.token>0
+        if not first and (not ground.observedSequence or not matching_body_pose(nav.bodyMovement,ground.observedSequence)) then
+            status.phase="uncorrelated_estimated_pose";return
+        end
+        if first then status.poseSource="native_self_estimate" end
     end
     -- Collision/floor refusal is tied to OWN origin and direction. A moving
     -- enemy does not make an unchanged refused physical ray worth retrying.
