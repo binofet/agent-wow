@@ -51,6 +51,7 @@ func idleMotionPacketPose(payload []byte, self uint64) (position, bool) {
 // A transient failed read is known not to have dispatched this packet. It
 // cannot authorize progress; a later STOP must still pass every fresh guard.
 var errIdleMotionReadUnavailable = modcb.PacketNotDispatchedError("idle motion observation read unavailable before write")
+var errIdleMotionStopOnly = modcb.PacketNotDispatchedError("idle motion scope permits owed STOP only")
 
 func (s *Service) idleMotionLocalFailureLocked(b *idleMotionScope, now time.Time) string {
 	if b == nil {
@@ -136,8 +137,11 @@ func (s *Service) newIdleMotionScopeLocked(ctx context.Context, token string, w 
 }
 
 func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotionScope, op uint32, payload []byte) (*modv1.TransportScope, error) {
-	if !idleMotionOpcode(op) || b.cleanupOnly && op != opcode.MSGMoveStop {
+	if !idleMotionOpcode(op) {
 		return nil, modcb.PacketNotDispatchedError("packet outside idle motion scope")
+	}
+	if b.cleanupOnly && op != opcode.MSGMoveStop {
+		return nil, errIdleMotionStopOnly
 	}
 	if _, valid := idleMotionPacketPose(payload, b.binding.selfGUID); !valid {
 		return nil, modcb.PacketNotDispatchedError("idle motion packet is not a full own movement image")

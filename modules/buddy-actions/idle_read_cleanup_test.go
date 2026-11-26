@@ -56,6 +56,9 @@ func TestIdleKnownUnsentTransientReadKeepsFreshScopedOwedStop(t *testing.T) {
 			if scope.broken || s.state.MotionUnconfirmed {
 				t.Error("known-unsent observation read destroyed prior physical proof", reason, s.stateLocked())
 			}
+			if !scope.cleanupOnly || s.movementLocked(ctx, opcode.MSGMoveHeartbeat, position{x: before.x + 1, y: before.y, z: before.z}, true) || countPackets(f, opcode.MSGMoveHeartbeat) != 0 || scope.broken || s.state.MotionUnconfirmed {
+				t.Fatal("read-failed scope admitted progress or fabricated UNKNOWN", s.stateLocked(), f.packets)
+			}
 			if !s.stopLocked(ctx) || countPackets(f, opcode.MSGMoveStop) != 1 || s.state.Moving || s.state.MotionUnconfirmed {
 				t.Error("fresh exact scoped owed STOP could not settle", s.stateLocked(), f.packets)
 			}
