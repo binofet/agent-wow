@@ -88,6 +88,7 @@ type movementPointsTestRig struct {
 	castCalls    int
 	stepRequests []map[string]any
 	setterError  error
+	leaseError   error
 	stepResponse map[string]any
 	callOrder    []string
 }
@@ -114,8 +115,9 @@ func newMovementPointsActorRig(t *testing.T, source, body string, options ...beh
 		if method == "/agentwow.policy.encounter.v1.Lease/Renew" {
 			r.mu.Lock()
 			r.callOrder = append(r.callOrder, "lease")
+			err := r.leaseError
 			r.mu.Unlock()
-			return nil
+			return err
 		}
 		if method == actionsv1.BuddyActions_CastHeal_FullMethodName {
 			r.mu.Lock()
