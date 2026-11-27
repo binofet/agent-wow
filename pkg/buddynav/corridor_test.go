@@ -50,7 +50,10 @@ func TestPhysicalVineyardAndGoldshireLocalRoutes(t *testing.T) {
 	}
 	positions := []Point{{-9027.586, -235.64706, 0}, {-9090, -310, 0}, {-9464, -67, 58.8}, {-9430, -67, 0}}
 	for i, q := range positions {
-		terrain, ok := p.terrain(q)
+		terrain, ok, err := p.terrain(q)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if !ok {
 			t.Fatalf("fixtureterrainunavailable%+v", q)
 		}

@@ -28,57 +28,115 @@ type mapWindow struct {
 	x, y  int
 }
 
-// The pinned upstream terrain reader treats an absent height section as known
-// flat zero. Require an actual bounded height header before considering terrain
-// a physical floor; VMAP-only interiors remain independently verifiable.
-func (p *planner) mapTerrainPresent(q Point) bool {
-	if !p.floors.window.contains(q) {
+type terrainTile struct {
+	height bool
+	flat   bool
+	holes  *[16 * 16]uint16
+	err    error
+}
+
+// GridTerrainData::isHole indexes two-by-two cells in each eight-by-eight
+// block. Use the same float32 grid coordinates as the pinned height reader.
+func (tile terrainTile) holeAt(q Point) bool {
+	// GridTerrainData returns the encoded base for flat height tiles. Only
+	// its interpolated height functions omit the flagged terrain quads.
+	if tile.flat || tile.holes == nil {
 		return false
 	}
-	x, y := mapGrid(q)
-	name := fmt.Sprintf("%03d%02d%02d.map", p.mapID, x, y)
-	if known, ok := p.terrainHeaders[name]; ok {
-		return known
+	row := int(128*(32-q.X/float32(533.3333))) & 127
+	col := int(128*(32-q.Y/float32(533.3333))) & 127
+	mask := tile.holes[(row/8)*16+col/8]
+	return mask&(1<<uint((row%8/2)*4+col%8/2)) != 0
+}
+
+// The pinned interpolator ignores MAP holes and treats a missing height
+// section as flat zero. Bind its heights to actual encoded ground.
+func (p *planner) terrainTile(q Point) terrainTile {
+	x, y := int(32-q.X/float32(533.3333)), int(32-q.Y/float32(533.3333))
+	key := [2]int{x, y}
+	if tile, ok := p.terrainHeaders[key]; ok {
+		return tile
+	}
+	if p.floors.window == nil && !p.region.allowsFloorTile(fmt.Sprintf("%03d_%02d_%02d.vmtile", p.mapID, y, x)) {
+		return terrainTile{err: errors.New("terrain query outside navigation tiles")}
 	}
 	if p.terrainHeaders == nil {
-		p.terrainHeaders = make(map[string]bool)
+		p.terrainHeaders = make(map[[2]int]terrainTile)
 	}
-	valid := func() bool {
-		f, err := os.Open(filepath.Join(filepath.Dir(p.floors.dir), "maps", name))
-		if err != nil {
-			return false
+	name := fmt.Sprintf("%03d%02d%02d.map", p.mapID, x, y)
+	tile := readTerrainTile(filepath.Join(filepath.Dir(p.floors.dir), "maps", name))
+	p.terrainHeaders[key] = tile
+	return tile
+}
+
+func readTerrainTile(path string) terrainTile {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return terrainTile{}
+	}
+	if err != nil {
+		return terrainTile{err: err}
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil || !stat.Mode().IsRegular() || stat.Size() < 44 || stat.Size() > 4<<20 {
+		return terrainTile{err: errors.New("invalid MAP terrain file")}
+	}
+	var hdr [44]byte
+	if _, err = io.ReadFull(f, hdr[:]); err != nil || binary.LittleEndian.Uint32(hdr[:]) != 0x5350414d || binary.LittleEndian.Uint32(hdr[4:]) != 9 {
+		return terrainTile{err: errors.New("invalid MAP terrain header")}
+	}
+	u32 := func(at int) int64 { return int64(binary.LittleEndian.Uint32(hdr[at:])) }
+	var tile terrainTile
+	if offset, size := u32(36), u32(40); offset != 0 || size != 0 {
+		malformed := terrainTile{err: errors.New("invalid MAP terrain hole section")}
+		if offset < int64(len(hdr)) || size != 512 || offset+size > stat.Size() {
+			return malformed
 		}
-		defer f.Close()
-		info, err := f.Stat()
-		if err != nil || !info.Mode().IsRegular() || info.Size() < 56 || info.Size() > 4<<20 {
-			return false
+		for _, at := range []int{12, 20, 28} {
+			start, length := u32(at), u32(at+4)
+			if length != 0 && offset < start+length && start < offset+size {
+				return malformed
+			}
 		}
-		var b [40]byte
-		if _, err = io.ReadFull(f, b[:]); err != nil {
-			return false
+		var b [512]byte
+		if _, err := f.ReadAt(b[:], offset); err != nil {
+			return malformed
 		}
-		if binary.LittleEndian.Uint32(b[:]) != 0x5350414d || binary.LittleEndian.Uint32(b[4:]) != 9 {
-			return false
+		tile.holes = new([256]uint16)
+		for i := range tile.holes {
+			tile.holes[i] = binary.LittleEndian.Uint16(b[i*2:])
 		}
-		offset, size := binary.LittleEndian.Uint32(b[20:]), binary.LittleEndian.Uint32(b[24:])
-		if offset < 40 || size < 16 || uint64(offset)+uint64(size) > uint64(info.Size()) {
-			return false
+	}
+	offset, size := u32(20), u32(24)
+	var h [16]byte
+	if offset == 0 && size == 0 {
+		return tile
+	}
+	if offset < int64(len(hdr)) || size < int64(len(h)) || offset+size > stat.Size() {
+		return terrainTile{err: errors.New("invalid MAP terrain height section")}
+	}
+	_, err = f.ReadAt(h[:], offset)
+	base := math.Float32frombits(binary.LittleEndian.Uint32(h[8:]))
+	if err != nil || binary.LittleEndian.Uint32(h[:]) != 0x5447484d || !finite(base) {
+		return terrainTile{err: errors.New("invalid MAP terrain height header")}
+	}
+	flags := binary.LittleEndian.Uint32(h[4:])
+	tile.height = base > -10000
+	tile.flat = flags&1 != 0
+	if !tile.flat {
+		bytesPerHeight := int64(4)
+		switch {
+		case flags&4 != 0:
+			bytesPerHeight = 1
+		case flags&2 != 0:
+			bytesPerHeight = 2
 		}
-		if _, err = f.Seek(int64(offset), io.SeekStart); err != nil {
-			return false
+		if size < 16+(129*129+128*128)*bytesPerHeight {
+			return terrainTile{err: errors.New("truncated MAP terrain height grid")}
 		}
-		var h [16]byte
-		if _, err = io.ReadFull(f, h[:]); err != nil {
-			return false
-		}
-		if binary.LittleEndian.Uint32(h[:]) != 0x5447484d {
-			return false
-		}
-		base := math.Float32frombits(binary.LittleEndian.Uint32(h[8:]))
-		return finite(base) && base > -10000
-	}()
-	p.terrainHeaders[name] = valid
-	return valid
+	}
+	return tile
 }
 
 const worldVerticalLimit = 100000
@@ -175,9 +233,7 @@ func PlanMapContext(ctx context.Context, dataDir string, mapID uint32, start, de
 	if err != nil {
 		return nil, err
 	}
-	return rerouteBounded(ctx, p, func() ([]Point, error) {
-		return planWithin(ctx, p, w.contains, fmt.Sprintf("map %d tile window", mapID), start, dest)
-	})
+	return p.groundRoute(ctx, w.contains, fmt.Sprintf("map %d tile window", mapID), start, dest)
 }
 
 func mapDataDirectory(root string) (string, error) {

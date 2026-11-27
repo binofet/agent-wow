@@ -57,9 +57,9 @@ type meshWadingBackend struct {
 func (f meshWadingBackend) findPath(a, b Point) (*pathfinding.PathResult, error) {
 	return f.p.findPath(a, b)
 }
-func (f meshWadingBackend) ground(a Point) (float32, error) { return f.p.ground(a) }
-func (f meshWadingBackend) water(a Point) (bool, error)     { return f.p.water(a) }
-func (f meshWadingBackend) terrain(Point) (float32, bool)   { return 90 - f.depth, true }
+func (f meshWadingBackend) ground(a Point) (float32, error)      { return f.p.ground(a) }
+func (f meshWadingBackend) water(a Point) (bool, error)          { return f.p.water(a) }
+func (f meshWadingBackend) terrain(Point) (float32, bool, error) { return 90 - f.depth, true, nil }
 func (f meshWadingBackend) floor(_ context.Context, _ Point, _ float32, terrain float32) (float32, error) {
 	return terrain, nil
 }

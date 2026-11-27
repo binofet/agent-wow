@@ -41,7 +41,10 @@ func TestPhysicalFloorMeasurements(t *testing.T) {
 		{-8873.139, -150.79642, 80.0192},
 	} {
 		h, e := p.ground(q)
-		th, tok := p.terrain(q)
+		th, tok, err := p.terrain(q)
+		if err != nil {
+			t.Fatal(err)
+		}
 		vh, vok := v.GetHeight(0, q.X, q.Y, q.Z+2, 5)
 		fh, fok, fe := f.height(q, h)
 		if e != nil || fe != nil {

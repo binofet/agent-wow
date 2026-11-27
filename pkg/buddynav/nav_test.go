@@ -52,7 +52,7 @@ func (f *fakeBackend) ground(p Point) (float32, error) {
 	}
 	return p.Z, nil
 }
-func (f *fakeBackend) terrain(p Point) (float32, bool) { return p.Z, f.terrainOK }
+func (f *fakeBackend) terrain(p Point) (float32, bool, error) { return p.Z, f.terrainOK, nil }
 func (f *fakeBackend) water(p Point) (bool, error) {
 	if f.waterFn != nil {
 		return f.waterFn(p)

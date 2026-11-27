@@ -166,8 +166,8 @@ func gatherStopNavigation(t *testing.T) string {
 	for i, value := range []uint32{0x4d4d4150, 7, 20, uint32(size)} {
 		binary.LittleEndian.PutUint32(tile[4*i:], value)
 	}
-	terrain := make([]byte, 56)
-	for offset, value := range map[int]uint32{0: 0x5350414d, 4: 9, 20: 40, 24: 16, 40: 0x5447484d, 44: 1, 48: math.Float32bits(30), 52: math.Float32bits(30)} {
+	terrain := make([]byte, 60)
+	for offset, value := range map[int]uint32{0: 0x5350414d, 4: 9, 20: 44, 24: 16, 44: 0x5447484d, 48: 1, 52: math.Float32bits(30), 56: math.Float32bits(30)} {
 		binary.LittleEndian.PutUint32(terrain[offset:], value)
 	}
 	assets := map[string][]byte{"mmaps/000.mmap": mmap, "mmaps/0003131.mmtile": append(tile, data...),

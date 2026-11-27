@@ -230,7 +230,10 @@ func (p *planner) deepWaterBetween(ctx context.Context, q Point, top, bottom flo
 		if err != nil || h < bottom || h > top || found && h <= surface {
 			continue
 		}
-		terrain, known := p.terrain(q)
+		terrain, known, err := p.terrain(q)
+		if err != nil {
+			return 0, false, err
+		}
 		if !known {
 			terrain = float32(math.NaN())
 		}

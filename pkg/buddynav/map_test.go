@@ -70,15 +70,15 @@ func mapFixture(t *testing.T, dir string, mid uint32, a Point) {
 	x, y := mapGrid(a)
 	assets := map[string][]byte{fmt.Sprintf("mmaps/%03d.mmap", mid): mmap, fmt.Sprintf("mmaps/%03d%02d%02d.mmtile", mid, x, y): tile, fmt.Sprintf("vmaps/%03d_%02d_%02d.vmtile", mid, y, x): append([]byte("VMAP_4.8"), 0, 0, 0, 0)}
 	assets[fmt.Sprintf("vmaps/%03d.vmtree", mid)] = append([]byte("VMAP_4.8"), 1)
-	terrain := make([]byte, 56)
+	terrain := make([]byte, 60)
 	binary.LittleEndian.PutUint32(terrain, 0x5350414d)
 	binary.LittleEndian.PutUint32(terrain[4:], 9)
-	binary.LittleEndian.PutUint32(terrain[20:], 40)
+	binary.LittleEndian.PutUint32(terrain[20:], 44)
 	binary.LittleEndian.PutUint32(terrain[24:], 16)
-	binary.LittleEndian.PutUint32(terrain[40:], 0x5447484d)
-	binary.LittleEndian.PutUint32(terrain[44:], 1)
-	binary.LittleEndian.PutUint32(terrain[48:], math.Float32bits(a.Z))
+	binary.LittleEndian.PutUint32(terrain[44:], 0x5447484d)
+	binary.LittleEndian.PutUint32(terrain[48:], 1)
 	binary.LittleEndian.PutUint32(terrain[52:], math.Float32bits(a.Z))
+	binary.LittleEndian.PutUint32(terrain[56:], math.Float32bits(a.Z))
 	assets[fmt.Sprintf("maps/%03d%02d%02d.map", mid, x, y)] = terrain
 	for name, b := range assets {
 		if err := os.WriteFile(filepath.Join(dir, name), b, 0600); err != nil {
@@ -143,7 +143,7 @@ func TestCurrentMapVMAPAloneMustActuallyProveMissingTerrainFloor(t *testing.T) {
 	}
 	key := currentMapPlanners.order[0]
 	p := currentMapPlanners.items[key]
-	if _, known := p.terrain(a); known {
+	if _, known, err := p.terrain(a); known || err != nil {
 		t.Fatal("absent terrain became known")
 	}
 }

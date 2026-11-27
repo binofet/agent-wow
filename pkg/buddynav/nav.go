@@ -96,7 +96,8 @@ func (e *physicalFloorGap) Unwrap() error { return errNoPhysicalFloor }
 // At most two complete replans may avoid the exact polygon that failed physical
 // proof. All temporary flags are restored under the planner gate on every exit.
 func planWithReroutes(ctx context.Context, p *planner, start, dest Point) ([]Point, error) {
-	return rerouteBounded(ctx, p, func() ([]Point, error) { return planRegion(ctx, p, p.region, start, dest) })
+	name, _ := p.region.name()
+	return p.groundRoute(ctx, p.region.contains, name, start, dest)
 }
 func rerouteBounded(ctx context.Context, p *planner, attemptPath func() ([]Point, error)) ([]Point, error) {
 	restore := make(map[detour.DtPolyRef]uint16, 2)
@@ -150,7 +151,7 @@ type backend interface {
 	findPath(start, dest Point) (*pathfinding.PathResult, error)
 	ground(Point) (float32, error)
 	water(Point) (bool, error)
-	terrain(Point) (float32, bool)
+	terrain(Point) (float32, bool, error)
 	floor(context.Context, Point, float32, float32) (float32, error)
 	walkable(Point, Point) error
 }
@@ -265,13 +266,16 @@ func planWithin(ctx context.Context, b backend, contains func(Point) bool, name 
 				return err
 			}
 		}
-		terrain, ok := b.terrain(q)
+		terrain, ok, err := b.terrain(q)
+		if err != nil {
+			return err
+		}
 		if !ok || !finite(terrain) || terrain <= -10000 {
 			// Some instance maps have only a physical VMAP floor. The current-
 			// map backend can prove that floor independently; NaN cannot become
 			// a candidate terrain height in selectPhysicalFloor.
-			collision, supported := b.(interface{ allowsCollisionOnlyFloor() bool })
-			if !supported || !collision.allowsCollisionOnlyFloor() {
+			collision, supported := b.(interface{ allowsCollisionOnlyFloor(Point) bool })
+			if !supported || !collision.allowsCollisionOnlyFloor(q) {
 				return errors.New("navigation terrain height is unavailable")
 			}
 			terrain = float32(math.NaN())
@@ -374,7 +378,8 @@ type planner struct {
 	mesh           *detour.DtNavMesh
 	filter         *detour.DtQueryFilter
 	floors         *floorReader
-	terrainHeaders map[string]bool
+	terrainHeaders map[[2]int]terrainTile
+	groundSweeps   map[groundSweep]bool
 	routeSurfaces  []routeSurface
 }
 
@@ -484,15 +489,20 @@ func (p *planner) findPathBetween(a, b Point, start, end detour.DtPolyRef) (*pat
 	}
 	return r, nil
 }
-func (p *planner) terrain(q Point) (float32, bool) {
-	if p.floors != nil && p.floors.window != nil && !p.mapTerrainPresent(q) {
-		return 0, false
+func (p *planner) terrain(q Point) (float32, bool, error) {
+	if !worldPoint(q) || p.floors.window != nil && !p.floors.window.contains(q) {
+		return 0, false, errors.New("terrain query outside navigation bounds")
 	}
-	return p.terrainManager.GetGridHeight(p.mapID, q.X, q.Y)
+	tile := p.terrainTile(q)
+	if tile.err != nil || !tile.height || tile.holeAt(q) {
+		return 0, false, tile.err
+	}
+	h, known := p.terrainManager.GetGridHeight(p.mapID, q.X, q.Y)
+	return h, known, nil
 }
 
-func (p *planner) allowsCollisionOnlyFloor() bool {
-	return p.floors != nil && p.floors.window != nil
+func (p *planner) allowsCollisionOnlyFloor(q Point) bool {
+	return p.floors != nil && (p.floors.window != nil || p.terrainTile(q).holeAt(q))
 }
 func recast(p Point) [3]float32                    { return [3]float32{p.Y, p.Z, p.X} }
 func (p *planner) ground(q Point) (float32, error) { _, h, err := p.groundRef(q); return h, err }

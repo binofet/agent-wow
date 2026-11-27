@@ -81,16 +81,10 @@ func (f *floorReader) sightBlocked(ctx context.Context, origin, end, dir Point, 
 		local = floorMul(spawn.inv, Point{local.X / spawn.scale, local.Y / spawn.scale, local.Z / spawn.scale})
 		direction := floorMul(spawn.inv, dir)
 		reach := length / spawn.scale
-		for _, group := range model.groups {
-			for j, triangle := range group.triangles {
-				if j%1024 == 0 {
-					if err := ctx.Err(); err != nil {
-						return false, err
-					}
-				}
-				if _, hit := floorTriangle(local, direction, group.vertices[triangle[0]], group.vertices[triangle[1]], group.vertices[triangle[2]], reach); hit {
-					return true, nil
-				}
+		for i := range model.groups {
+			_, hit, err := model.groups[i].ray(ctx, local, direction, reach, true)
+			if err != nil || hit {
+				return hit, err
 			}
 		}
 	}
