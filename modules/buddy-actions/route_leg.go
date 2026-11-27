@@ -24,7 +24,7 @@ func planLegNavigation(ctx context.Context, root string, mapID uint32, from, to 
 
 // PlanRouteLeg is observational only: no lease, controller, cast, packet or
 // movement is changed. A returned endpoint is guidance, never a player pose or
-// permission to move. TravelTo must independently plan it under normal custody.
+// permission to move. TravelTo revalidates its own custody and starting pose.
 func (s *Service) PlanRouteLeg(ctx context.Context, req *actionsv1.PlanRouteLegRequest) (*actionsv1.RouteLeg, error) {
 	if req == nil || req.SessionId == "" || len(req.SessionId) > 128 || req.SelfGuid == 0 {
 		return nil, status.Error(codes.InvalidArgument, "route leg requires exact body identity")
@@ -46,17 +46,16 @@ func (s *Service) PlanRouteLeg(ctx context.Context, req *actionsv1.PlanRouteLegR
 		return nil, status.Error(codes.FailedPrecondition, "route position revision changed")
 	}
 	from := position{x: start.X, y: start.Y, z: start.Z}
-	planner, root := s.planLegPath, s.navDataDir
+	scope := s.travelMapLocked(mapID)
+	open := s.openTravel
+	cached, _ := s.travelCandidateLocked(scope, from, goal, false)
 	s.mu.Unlock()
-	if planner == nil {
-		return nil, status.Error(codes.FailedPrecondition, "route planner unavailable")
-	}
-	path, err := planner(ctx, root, mapID, from, goal)
+	strip, path, err := prepareTravelStrip(ctx, open, scope, from, goal, cached)
 	if ctx.Err() != nil {
 		return nil, status.FromContextError(ctx.Err()).Err()
 	}
 	if err != nil {
-		return nil, status.Error(codes.FailedPrecondition, navigationDiagnostic(err, root))
+		return nil, status.Error(codes.FailedPrecondition, navigationDiagnostic(err, scope.root))
 	}
 	length, valid := validRouteLeg(path, from, goal)
 	if !valid {
@@ -68,10 +67,11 @@ func (s *Service) PlanRouteLeg(ctx context.Context, req *actionsv1.PlanRouteLegR
 	if err != nil {
 		return nil, err
 	}
-	if currentRaw != rawRevision || current.Revision != revision || current.X != start.X || current.Y != start.Y || current.Z != start.Z || current.Orientation != start.Orientation || current.Estimated != start.Estimated {
+	if s.travelMapLocked(mapID) != scope || currentRaw != rawRevision || current.Revision != revision || current.X != start.X || current.Y != start.Y || current.Z != start.Z || current.Orientation != start.Orientation || current.Estimated != start.Estimated {
 		return nil, status.Error(codes.FailedPrecondition, "route position changed during planning")
 	}
 	end := path[len(path)-1]
+	s.travelPreview = travelPreview{strip: strip, from: from, end: end, revision: current.Revision, rawRevision: currentRaw, path: path}
 	return &actionsv1.RouteLeg{
 		SessionId: sid, SelfGuid: guid, MapId: mapID, Start: current,
 		// No revision/age is assigned to a planned geometry point.

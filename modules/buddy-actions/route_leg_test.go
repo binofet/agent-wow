@@ -16,6 +16,7 @@ import (
 func routeLegRig(t *testing.T) (*Service, *fakeSession, *actionsv1.PlanRouteLegRequest) {
 	t.Helper()
 	s, f, _ := formationRig(t, 4, 8)
+	s.openTravel = fixtureTravelPath(s, true)
 	s.sessionID = "route-test-body"
 	f.world.Owner = nil // The observer needs no owner or party authority.
 	if _, err := s.snapshot(context.Background()); err != nil {

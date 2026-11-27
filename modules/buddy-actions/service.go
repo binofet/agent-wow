@@ -151,6 +151,8 @@ type Service struct {
 	planPath                             func(context.Context, string, position, position) ([]position, error)
 	planMapPath                          func(context.Context, string, uint32, position, position) ([]position, error)
 	planRecoveryPath                     func(context.Context, string, uint32, position, position, float64) ([]position, error)
+	openTravel                           openTravelSurface
+	travelPreview                        travelPreview
 	planLegPath                          func(context.Context, string, uint32, position, position) ([]position, error)
 	planColdridgePath                    func(context.Context, string, position, position) ([]position, error)
 	planColdridge182Path                 func(context.Context, string, position, position) ([]position, error)
@@ -202,7 +204,7 @@ type Service struct {
 }
 
 func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
-	s := &Service{planFollowCorridor: openFollowCorridor, session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planRecoveryPath: planRecoveryNavigation, planLegPath: planLegNavigation, planColdridgePath: planColdridgeNavigation, planColdridge182Path: planColdridge182Navigation}
+	s := &Service{planFollowCorridor: openFollowCorridor, session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planRecoveryPath: planRecoveryNavigation, planLegPath: planLegNavigation, openTravel: openGroundTravel, planColdridgePath: planColdridgeNavigation, planColdridge182Path: planColdridge182Navigation}
 	if len(sessionID) == 1 && len(sessionID[0]) <= 128 {
 		s.sessionID = sessionID[0]
 	}
@@ -1058,6 +1060,11 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	}
 	// Refuse a stale faster checkpoint after clock/World callbacks. STOP remains
 	// available; no packet was dispatched by this failed mechanical check.
+	if scope, ok := ctx.Value(travelGroundStrideKey{}).(travelMap); moving && ok &&
+		(w.GetSelf().GetGuid() != scope.self || w.GetSelf().GetMapId() != scope.mapID || w.GetVisitRevision() != scope.visit) {
+		s.state.Reason = "exploration_ground_source_changed"
+		return false
+	}
 	if moving && !navigationSpeedAllowed(ctx, w, p) {
 		s.state.Reason = "exploration_observed_run_speed_changed"
 		return false

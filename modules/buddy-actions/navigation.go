@@ -260,30 +260,39 @@ func (s *Service) navigationStepResultLocked(ctx context.Context, path []positio
 		}
 		elapsed = 0.6
 	}
-	if elapsed < 0.15 {
+	_, strip := ctx.Value(travelGroundStrideKey{}).(travelMap)
+	if elapsed < .15 && (!strip || elapsed+.000001 < travelCheckpointDelay(s.pos, path, *index, speed).Seconds()) {
 		return true, ""
 	}
-	remaining := speed * elapsed
-	for *index < len(path) && remaining > 0.001 {
-		target := path[*index]
-		d := distance(p, target)
-		if d <= 0.05 {
-			*index++
-			continue
+	if strip {
+		next, nextIndex, _, ok := followStride(p, path, *index, speed*elapsed, 2)
+		if !ok {
+			return stop("step_geometry_invalid")
 		}
-		step := math.Min(remaining, d)
-		p.o = float32(math.Atan2(float64(target.y-p.y), float64(target.x-p.x)))
-		fraction := float32(step / d)
-		p.x += (target.x - p.x) * fraction
-		p.y += (target.y - p.y) * fraction
-		p.z += (target.z - p.z) * fraction
-		remaining -= step
-		if step == d {
-			*index++
-			// A single movement packet must not cut across a navmesh corner.
-			// Stop at this verified sample; the next checkpoint turns along
-			// the next verified segment instead of sending an untested chord.
-			break
+		p, *index = next, nextIndex
+	} else {
+		remaining := speed * elapsed
+		for *index < len(path) && remaining > 0.001 {
+			target := path[*index]
+			d := distance(p, target)
+			if d <= 0.05 {
+				*index++
+				continue
+			}
+			step := math.Min(remaining, d)
+			p.o = float32(math.Atan2(float64(target.y-p.y), float64(target.x-p.x)))
+			fraction := float32(step / d)
+			p.x += (target.x - p.x) * fraction
+			p.y += (target.y - p.y) * fraction
+			p.z += (target.z - p.z) * fraction
+			remaining -= step
+			if step == d {
+				*index++
+				// A single movement packet must not cut across a navmesh corner.
+				// Stop at this verified sample; the next checkpoint turns along
+				// the next verified segment instead of sending an untested chord.
+				break
+			}
 		}
 	}
 	if p.o < 0 {

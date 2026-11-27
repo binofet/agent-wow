@@ -416,13 +416,13 @@ class ExpeditionTests(unittest.TestCase):
         self.rpc.giver_x=1380;self.rpc.discover();self.goal['params']['handIns'][0]['x']=1380
         self.goal['params']['travelAnchors']=[dict(mapId=0,x=500,y=0,z=5),dict(mapId=0,x=1000,y=0,z=5)]
 
-    def test_distant_goal_uses_best_verified_anchor_then_replans_unchanged_final_goal(self):
+    def test_distant_goal_searches_actual_destination_before_optional_anchors(self):
         self.distant_anchor_goal()
         self.rpc.plan_endpoints=[dict(x=x,y=0,z=5) for x in (190,370,550,730,910,1090,1270,1380)]
         with host.Store(self.folder) as store:
             runner=self.runner(store);self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1,limit=64)
             plans=[p for name,p in self.rpc.calls if name=='buddy-actions.plan_route_leg']
-            self.assertEqual([p['x'] for p in plans],[1000]+[1380]*7)
+            self.assertEqual([p['x'] for p in plans],[1380]*8)
             self.assertEqual([p['expectedPositionRevision'] for p in plans],[str(n) for n in range(5,13)])
             self.assertEqual(self.goal['params']['handIns'][0]['x'],1380)
             self.assertEqual(self.count('buddy-actions.travel_to'),8)
@@ -438,7 +438,7 @@ class ExpeditionTests(unittest.TestCase):
                 elif mode=='too_many':self.goal['params']['travelAnchors']*=9
                 original=self.rpc.call
                 def call(method,params,timeout=5):
-                    if method=='buddy-actions.plan_route_leg' and (mode=='all_failed' or mode=='best_failed_next_verified' and params['x']==1000):
+                    if method=='buddy-actions.plan_route_leg' and (params['x']==1380 or mode=='all_failed' or mode=='best_failed_next_verified' and params['x']==1000):
                         self.rpc.calls.append((method,copy.deepcopy(params)));raise host.Error('native_anchor_no_physical_route')
                     return original(method,params,timeout)
                 self.rpc.call=call
@@ -447,13 +447,39 @@ class ExpeditionTests(unittest.TestCase):
                 if mode=='best_failed_next_verified':
                     self.until(runner,lambda:self.count('buddy-actions.acquire_interaction')==1)
                     plans=[p for name,p in self.rpc.calls if name=='buddy-actions.plan_route_leg']
-                    self.assertEqual([p['x'] for p in plans],[1000,500])
+                    self.assertEqual([p['x'] for p in plans],[1380,1000,500])
                 else:
                     self.until(runner,lambda:runner.data['phase']=='waiting_for_deferred_quests')
-                    self.assertEqual(self.count('buddy-actions.plan_route_leg'),2 if mode=='all_failed' else 0)
+                    self.assertEqual(self.count('buddy-actions.plan_route_leg'),3 if mode=='all_failed' else 1)
                     self.assertEqual(self.count('buddy-actions.acquire_interaction'),0)
                 self.assertEqual(self.count('buddy-actions.travel_to'),0)
                 self.assertFalse(runner.data['pending'])
+
+    def test_independent_go_to_uses_checked_legs_and_observed_arrival(self):
+        self.goal.update(kind='go_to',params=dict(mapId=0,x=1380,y=0,z=5))
+        self.goal['observations'].pop('quests')
+        self.goal['allow']=[v for v in self.goal['allow'] if not v.startswith('buddy-quests.')]
+        self.rpc.plan_endpoints=[dict(x=x,y=0,z=5) for x in (190,370,550,730,910,1090,1270,1380)]
+        with host.Store(self.folder) as store:
+            runner=self.runner(store)
+            self.until(runner,lambda:runner.data['done'],limit=65)
+            plans=[p for name,p in self.rpc.calls if name=='buddy-actions.plan_route_leg']
+            self.assertEqual([p['x'] for p in plans],[1380]*8)
+            self.assertEqual(self.count('buddy-actions.travel_to'),8)
+            self.assertEqual(self.count('buddy-actions.release_interaction'),8)
+            self.assertEqual(runner.data['memory']['arrival']['position'],self.rpc.pose)
+            self.assertFalse(self.rpc.lease)
+            self.assertFalse(runner.data['pending'])
+
+    def test_independent_go_to_cross_map_waits_without_movement(self):
+        self.goal.update(kind='go_to',params=dict(mapId=1,x=10,y=0,z=5))
+        with host.Store(self.folder) as store:
+            runner=self.runner(store)
+            self.until(runner,lambda:runner.data['phase']=='travel_map_change_required')
+            self.assertEqual(self.count('buddy-actions.plan_route_leg'),0)
+            self.assertEqual(self.count('buddy-actions.acquire_interaction'),0)
+            self.assertEqual(self.count('buddy-actions.travel_to'),0)
+            self.assertFalse(runner.data['done'])
 
     def partial_travel_endpoint(self, mode='progress'):
         self.rpc.pose['x']=-20;self.rpc.discover();original=self.rpc.call;first=True
