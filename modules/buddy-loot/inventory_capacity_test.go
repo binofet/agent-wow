@@ -372,3 +372,36 @@ func TestLootOpeningRenewsExactTokenBeforeFinalWorldRead(t *testing.T) {
 		}
 	}
 }
+
+func TestKnownGeneralBagCountsObservedSlotsAtCatalogSize(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		entry, size uint32
+		want        int
+	}{
+		{"Foror with one free slot", 23162, 36, 1},
+		{"small general pouch", 4496, 6, 1},
+		{"Foror contradicts catalog", 23162, 35, 0},
+		{"quiver", 2101, 6, 0},
+		{"unknown bag", 999999, 36, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, f, _ := rig(t)
+			fillBackpack(f.world)
+			extraCapacity(f.world, tc.entry)
+			bag := f.world.InventoryBags[1]
+			bag.SlotCount = tc.size
+			bag.Slots = nil
+			for slot := uint32(0); slot < tc.size; slot++ {
+				item := &worldv1.BackpackSlot{Bag: 1, Slot: slot}
+				if slot != tc.size-1 {
+					item.ItemGuid = 0x4000000000100000 + uint64(slot)
+				}
+				bag.Slots = append(bag.Slots, item)
+			}
+			if got := ownKnownFreeSlots(f.world, 1); got != tc.want {
+				t.Fatalf("got %d free slots, want %d", got, tc.want)
+			}
+		})
+	}
+}
