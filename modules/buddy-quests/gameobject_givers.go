@@ -21,8 +21,12 @@ func lostGuardObjectGUID(guid uint64) bool {
 func questGiverGUID(guid uint64) bool {
 	return creatureGUID(guid) || lostGuardObjectGUID(guid) || itemGiverGUID(guid)
 }
-func giverStarts(guid uint64, quest uint32) bool {
-	return creatureGUID(guid) || itemGiverGUID(guid) && quest == deedQuestID || lostGuardObjectGUID(guid) && (guid>>24&0xffffff == 55 && quest == 45 || guid>>24&0xffffff == 56 && quest == 71)
+func (s *Service) giverStartsLocked(guid uint64, quest uint32, revision uint64) bool {
+	if itemGiverGUID(guid) {
+		offer := s.itemGiverOffer
+		return offer != nil && offer.binding.guid == guid && offer.binding.questID == quest && offer.revision == revision && !s.itemQuestReservedLocked(offer.binding)
+	}
+	return creatureGUID(guid) || lostGuardObjectGUID(guid) && (guid>>24&0xffffff == 55 && quest == 45 || guid>>24&0xffffff == 56 && quest == 71)
 }
 func giverEnds(guid uint64, quest uint32) bool {
 	return creatureGUID(guid) || lostGuardObjectGUID(guid) && (guid>>24&0xffffff == 55 && quest == 37 || guid>>24&0xffffff == 56 && quest == 45)
