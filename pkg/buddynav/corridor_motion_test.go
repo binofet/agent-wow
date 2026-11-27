@@ -19,6 +19,71 @@ func TestGroundCorridorSpliceKeepsOrderedSharedPortal(t *testing.T) {
 	}
 }
 
+func TestRetainedCorridorCrossesOnlySupportedSteps(t *testing.T) {
+	from, to := Point{-8898, -98, 90}, Point{-8898, -87, 90}
+	for _, tc := range []struct {
+		name string
+		step float32
+		want bool
+	}{{"flat", 0, true}, {"below_baked_climb", .25, true}, {"above_baked_climb", .75, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := testMesh(t)
+			tile := p.mesh.GetTile(0)
+			middle := &tile.Polys[1]
+			middle.Flags = 1
+			for i, original := range middle.Verts[:middle.VertCount] {
+				n := int(original) * 3
+				middle.Verts[i] = uint16(len(tile.Verts) / 3)
+				tile.Verts = append(tile.Verts, tile.Verts[n], tile.Verts[n+1]+tc.step, tile.Verts[n+2])
+			}
+			x, y := mapGrid(from)
+			key := groundTile{x, y}
+			s := &groundSearch{
+				planner: p, checked: map[groundTile]bool{},
+				grid:   map[*detour.DtMeshTile]groundTile{tile: key},
+				fringe: map[groundTile]bool{key: true},
+			}
+			c, err := s.corridor(t.Context(), from, to, false)
+			if err != nil || len(c.strip) != 3 {
+				t.Fatalf("unbranched three-polygon route: %v, count %d", err, len(c.strip))
+			}
+			points, err := c.PathAhead(t.Context(), from, to)
+			if got := err == nil && len(points) >= 2; got != tc.want {
+				t.Fatalf("baked climb %v, step %v, path %d: %v", tile.Header.WalkableClimb, tc.step, len(points), err)
+			}
+			if c.ContainsGroundSegment(t.Context(), from, to) != tc.want || c.ContainsGroundSegment(t.Context(), to, from) != tc.want {
+				t.Fatalf("steering in either direction must respect the %.2f step", tc.step)
+			}
+		})
+	}
+}
+
+func TestCorridorMembershipUsesActualFloor(t *testing.T) {
+	p := detailHillMesh(t, true)
+	tile := p.mesh.GetTile(0)
+	tile.BvTree = nil
+	tile.Header.BvNodeCount = 0
+	for _, v := range tile.Polys[1].Verts[:tile.Polys[1].VertCount] {
+		tile.Verts[3*int(v)+1] = 92
+	}
+	below, above := Point{-8881, -90, 90.4}, Point{-8881, -90, 92}
+	floor, _, err := p.groundRef(below)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deck, _, err := p.groundRef(above)
+	if err != nil || deck == floor {
+		t.Fatal("invalid overlapping decks", floor, deck, err)
+	}
+	c := GroundCorridor{surface: p, strip: []detour.DtPolyRef{floor}}
+	if _, ok := c.CellAt(below, 0, 0); !ok {
+		t.Fatal("lower floor lost")
+	}
+	if _, ok := c.CellAt(above, 0, 0); ok {
+		t.Fatal("adopted an unconnected upper deck")
+	}
+}
+
 func TestRetainedGroundTripAndDisplacement(t *testing.T) {
 	root := os.Getenv("BUDDY_NAV_POOL_TEST_DATA_DIR")
 	if root == "" {

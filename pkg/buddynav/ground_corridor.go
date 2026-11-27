@@ -168,15 +168,17 @@ func (s *groundSearch) searchStrip(ctx context.Context, start, goal Point, start
 		}
 		st = s.query.UpdateSlicedFindPath(1, nil)
 	}
+	// Detour may exhaust its open-node pool. Never return its partial path as
+	// an arrival. A complete endpoint is checked independently below.
+	if !detour.DtStatusFailed(st) && st&detour.DT_OUT_OF_NODES != 0 {
+		return s.largeCorridor(ctx, startRef, endRef)
+	}
 	if detour.DtStatusFailed(st) || st&detour.DT_PARTIAL_RESULT != 0 {
 		return nil, fmt.Errorf("no complete ground corridor (Detour %x)", st)
 	}
-	// Detour may exhaust its open-node pool. Never return its partial path as
-	// an arrival. A complete endpoint is checked independently below.
-	if st&detour.DT_OUT_OF_NODES != 0 {
-		return s.largeCorridor(ctx, startRef, endRef)
-	}
-	polys := make([]detour.DtPolyRef, max(1, int(pool.GetNodeCount())))
+	// This Detour port sets BUFFER_TOO_SMALL when the last ref exactly fills
+	// the output. An unbranched route can include every allocated node.
+	polys := make([]detour.DtPolyRef, int(pool.GetNodeCount())+1)
 	var count int
 	st = s.query.FinalizeSlicedFindPath(polys, &count, len(polys))
 	if st != detour.DT_SUCCESS || count == 0 || polys[count-1] != endRef {
@@ -226,23 +228,23 @@ func (s *groundSearch) funnel(ctx context.Context, a, b [3]float32, polys []deto
 	return GroundCorridor{MapID: s.mapID, Cells: cells, Corners: path, PolygonCount: len(polys), search: s, start: Point{a[2], a[0], a[1]}, goal: Point{b[2], b[0], b[1]}, surface: s.planner, strip: polys}, nil
 }
 
-// CellAt checks the actual detailed surface around the rider's current strip
-// index. Adjacent controller updates need neither nearest-poly lookup nor A*.
-// A caller that has lost its index can search the remaining interval explicitly.
+// CellAt looks up the observed 3-D polygon, then checks its identity in the
+// requested slice. Similar XY and elevation cannot substitute a disconnected
+// deck. This is a local mesh lookup and performs no graph search.
 func (c *GroundCorridor) CellAt(point Point, first, last int) (int, bool) {
 	if c.surface == nil || !worldPoint(point) || first < 0 || last < first || last >= len(c.strip) {
 		return 0, false
 	}
-	best := -1
-	delta := math.Inf(1)
+	ref, h, err := c.surface.groundRef(point)
+	if err != nil || math.Abs(float64(h-point.Z)) > EndpointTolerance {
+		return 0, false
+	}
 	for i := first; i <= last; i++ {
-		h, err := c.surface.groundHeightAt(c.strip[i], point)
-		d := math.Abs(float64(h - point.Z))
-		if err == nil && d <= EndpointTolerance && d < delta {
-			best, delta = i, d
+		if c.strip[i] == ref {
+			return i, true
 		}
 	}
-	return best, best >= 0
+	return 0, false
 }
 
 // Return one controller-sized section of a complete corridor. The crossed
@@ -251,62 +253,35 @@ func (s *groundSearch) groundLeg(ctx context.Context, path []Point, refs []detou
 	if len(path) < 2 {
 		return nil, errors.New("ground corridor has no progressing leg")
 	}
-	points := make([]Point, 0, MaxPoints)
-	h, err := s.groundHeightAt(refs[0], path[0])
-	if err != nil {
-		return nil, err
-	}
-	prev := path[0]
-	prev.Z = h
-	points = append(points, prev)
+	var profile []Point
 	var length float64
+	var previousClimb float32
 	for i := 1; i < len(path); i++ {
-		from, to := path[i-1], path[i]
-		pieces := max(1, int(math.Ceil(distance(from, to))))
-		for j := 1; j <= pieces; j++ {
-			if err := ctx.Err(); err != nil {
-				return nil, err
+		part, err := s.groundSegmentProfile(ctx, path[i-1], path[i], refs[i-1])
+		if err != nil {
+			return nil, err
+		}
+		var tile *detour.DtMeshTile
+		var poly *detour.DtPoly
+		if st := s.mesh.GetTileAndPolyByRef(refs[i-1], &tile, &poly); detour.DtStatusFailed(st) {
+			return nil, errors.New("invalid funnel crossing")
+		}
+		climb := tile.Header.WalkableClimb
+		if !finite(climb) || climb < 0 || len(profile) > 0 && math.Abs(float64(profile[len(profile)-1].Z-part[0].Z)) > float64(min(previousClimb, climb))+.001 {
+			return nil, errors.New("ground corridor crosses an unsupported step")
+		}
+		previousClimb = climb
+		for _, q := range part {
+			if len(profile) > 0 {
+				length += distance(profile[len(profile)-1], q)
 			}
-			f := float32(j) / float32(pieces)
-			next := Point{from.X + (to.X-from.X)*f, from.Y + (to.Y-from.Y)*f, from.Z + (to.Z-from.Z)*f}
-			next.Z, err = s.groundHeightAt(refs[i-1], next)
-			if err != nil {
-				return nil, err
-			}
-			// Subdivide changes of grade on the same detail polygon to fit
-			// the movement record format. A vertical edge at the same XY
-			// cannot be turned into a route by interpolation.
-			pending := []Point{next}
-			for len(pending) > 0 {
-				n := len(pending) - 1
-				endpoint := pending[n]
-				d := distance(prev, endpoint)
-				if d > 2 || math.Abs(float64(prev.Z-endpoint.Z)) > 1 {
-					mid := Point{(prev.X + endpoint.X) / 2, (prev.Y + endpoint.Y) / 2, (prev.Z + endpoint.Z) / 2}
-					if mid.X == prev.X && mid.Y == prev.Y || mid.X == endpoint.X && mid.Y == endpoint.Y {
-						return nil, fmt.Errorf("disconnected ground heights between %+v and %+v", prev, endpoint)
-					}
-					mid.Z, err = s.groundHeightAt(refs[i-1], mid)
-					if err != nil {
-						return nil, err
-					}
-					pending = append(pending, mid)
-					continue
-				}
-				pending = pending[:n]
-				if d < 0.001 {
-					continue
-				}
-				if length+d > LegMaxLength || len(points) >= MaxPoints {
-					return points, nil
-				}
-				points = append(points, endpoint)
-				prev = endpoint
-				length += d
+			profile = appendGroundPoint(profile, q)
+			if length >= LegMaxLength {
+				return denseGroundPrefix(profile), nil
 			}
 		}
 	}
-	return points, nil
+	return denseGroundPrefix(profile), nil
 }
 
 // PlanGroundCorridorContext uses polygon A* and string-pulling across tiled
