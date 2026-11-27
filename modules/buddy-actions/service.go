@@ -1058,6 +1058,11 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	}
 	// Refuse a stale faster checkpoint after clock/World callbacks. STOP remains
 	// available; no packet was dispatched by this failed mechanical check.
+	if scope, ok := ctx.Value(travelGroundStrideKey{}).(travelMap); moving && ok &&
+		(w.GetSelf().GetGuid() != scope.self || w.GetSelf().GetMapId() != scope.mapID || w.GetVisitRevision() != scope.visit) {
+		s.state.Reason = "exploration_ground_source_changed"
+		return false
+	}
 	if moving && !navigationSpeedAllowed(ctx, w, p) {
 		s.state.Reason = "exploration_observed_run_speed_changed"
 		return false

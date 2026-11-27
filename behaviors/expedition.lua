@@ -147,7 +147,7 @@ local function opportunity(context,frame)
 end
 
 -- Geometry is obtained before custody; it is never an observed pose or
--- permission to move. TravelTo independently plans the returned endpoint.
+-- permission to move. TravelTo checks its own lease and observed source.
 local function same_point(a,b)
     return type(a)=="table" and type(b)=="table" and a.known and a.mapKnown and b.known and b.mapKnown
         and equal(a.mapId or 0,b.mapId or 0) and number(a.x)==number(b.x)
@@ -185,6 +185,28 @@ end
 local function travel_blocked(context,reason)
     tasks.pop(context,{status="blocked",reason=reason})
 end
+-- An independent destination goal uses the same journalled travel child as a
+-- quest. Its terminal receipt comes from a current body observation.
+handlers.go_to=function(context,frame)
+    local goal=context.state.goal.params or {}
+    local p=position(context)
+    if type(goal.mapId)~="number" or goal.mapId<0 or goal.mapId%1~=0 then
+        return tasks.await(context,"travel_invalid_destination")
+    end
+    for _,axis in ipairs({"x","y","z"}) do
+        if type(goal[axis])~="number" or goal[axis]~=goal[axis] or math.abs(goal[axis])>40000 then
+            return tasks.await(context,"travel_invalid_destination")
+        end
+    end
+    if frame.child then
+        if frame.child.status~="arrived" then return tasks.await(context,frame.child.reason or "travel_blocked") end
+        if not geometry(p,goal.mapId) or distance(p,goal)>3 then return tasks.await(context,"travel_arrival_not_observed") end
+        context.memory.arrival={mapId=goal.mapId,position=p,at=context.state.now}
+        tasks.pop(context);return
+    end
+    tasks.push(context,"travel",{mapId=goal.mapId,x=goal.x,y=goal.y,z=goal.z})
+end
+
 handlers.travel=function(context,frame)
     local a=context.observations.actions or {}
     -- A descriptor-proven failed read cannot have issued gameplay. Legacy
@@ -219,11 +241,11 @@ handlers.travel=function(context,frame)
             local p=position(context)
             if not equal(p.mapId or 0,frame.data.mapId or 0) then travel_blocked(context,"travel_map_change_required");return end
             if distance(p,frame.data)<=3 then tasks.pop(context,{status="arrived"});return end
-            if number(frame.legs)>=32 then travel_blocked(context,"travel_leg_budget");return end
+            if number(frame.stalledLegs)>=32 then travel_blocked(context,"travel_leg_budget");return end
             frame.planGoal=frame.data;frame.planAnchor=nil
-            if distance(p,frame.data)>=1200 then
+            if frame.tryAnchors then
                 frame.planGoal,frame.planAnchor=travel_anchor(context,frame,p)
-                if not frame.planGoal then travel_blocked(context,"travel_goal_outside_native_plan_bound");return end
+                if not frame.planGoal then travel_blocked(context,"travel_route_plan_unavailable");return end
             end
             frame.planStart={known=true,mapKnown=true,mapId=p.mapId or 0,x=number(p.x),y=number(p.y),z=number(p.z),revision=p.revision}
         end
@@ -237,6 +259,10 @@ handlers.travel=function(context,frame)
             if frame.planAnchor then
                 frame.anchorTried=frame.anchorTried or {};frame.anchorTried[tostring(frame.planAnchor)]=true
                 frame.planGoal=nil;frame.planAnchor=nil
+                return tasks.await(context,"travel_anchor_candidate_unavailable")
+            end
+            if travel_anchor(context,frame,frame.planStart) then
+                frame.tryAnchors=true
                 return tasks.await(context,"travel_anchor_candidate_unavailable")
             end
             travel_blocked(context,"travel_route_plan_unavailable");return
@@ -308,8 +334,9 @@ handlers.travel=function(context,frame)
             end
         elseif a.motionUnconfirmed or a.moving or a.traveling then return tasks.await(context,"travel_cleanup_unconfirmed") end
         frame.token=nil;frame.legs=number(frame.legs)+1
+        frame.stalledLegs=number(frame.stalledLegs)+1
         local p=position(context)
-        if frame.blocked=="travel_arrival_not_confirmed" and frame.safetyInterrupted and frame.legs<32
+        if frame.blocked=="travel_arrival_not_confirmed" and frame.safetyInterrupted and frame.stalledLegs<32
            and equal(a.sessionId,context.state.body.sessionId) and equal(a.selfGuid,context.state.body.selfGuid)
            and number(a.interactionLeaseRemainingMs)==0 and geometry(p,frame.destination.mapId)
            and number(p.revision)>0 then
@@ -319,11 +346,12 @@ handlers.travel=function(context,frame)
             return tasks.await(context,"travel_waiting_for_safe_idle")
         end
         if frame.blocked=="travel_arrival_not_confirmed" and frame.partialReplyKnown
-           and frame.legs<32 and quiet(context,false) and number(a.interactionLeaseRemainingMs)==0
+           and frame.stalledLegs<32 and quiet(context,false) and number(a.interactionLeaseRemainingMs)==0
            and geometry(p,frame.destination.mapId) and number(p.revision)>0
            and geometry(frame.planStart,frame.destination.mapId)
            and distance(p,frame.planStart)>=3
            and distance(frame.planStart,frame.destination)-distance(p,frame.destination)>=3 then
+            frame.stalledLegs=0;frame.tryAnchors=nil
             context.memory.verifiedPartialLegs=number(context.memory.verifiedPartialLegs)+1
             frame.blocked=nil;frame.partialReplyKnown=nil;frame.destination=nil;frame.planStart=nil
             frame.planGoal=nil;frame.planAnchor=nil;frame.anchorTried=nil;frame.stage="start"
@@ -334,6 +362,7 @@ handlers.travel=function(context,frame)
         if not geometry(p,frame.destination.mapId) or distance(p,frame.destination)>0.75 then
             travel_blocked(context,"travel_arrival_not_observed");return
         end
+        frame.stalledLegs=0;frame.tryAnchors=nil
         frame.partialReplyKnown=nil;frame.destination=nil;frame.planStart=nil
         frame.planGoal=nil;frame.planAnchor=nil;frame.anchorTried=nil;frame.stage="start"
         return tasks.await(context,"travel_leg_arrived")

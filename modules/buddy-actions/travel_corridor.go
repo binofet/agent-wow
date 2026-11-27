@@ -3,7 +3,9 @@ package buddyactions
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
+	"time"
 
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 )
@@ -45,9 +47,10 @@ type travelStrip struct {
 // An advisory prefix can be consumed only from its original observed pose; a
 // changed pose uses the retained graph or a fresh search under the same guards.
 type travelPreview struct {
-	strip     *travelStrip
-	from, end position
-	path      []position
+	strip                 *travelStrip
+	from, end             position
+	revision, rawRevision uint64
+	path                  []position
 }
 
 func (s *Service) travelCandidateLocked(scope travelMap, from, goal position, preview bool) (*travelStrip, []position) {
@@ -55,7 +58,8 @@ func (s *Service) travelCandidateLocked(scope travelMap, from, goal position, pr
 	if c.strip == nil || c.strip.scope != scope {
 		return nil, nil
 	}
-	if preview && c.path != nil && sameTravelPoint(c.from, from) && sameTravelPoint(c.end, goal) {
+	if preview && c.path != nil && sameTravelPoint(c.from, from) && sameTravelPoint(c.end, goal) &&
+		s.clientPositionLocked().Revision == c.revision && s.lastWorld.GetSelf().GetPositionRevision() == c.rawRevision {
 		return c.strip, c.path
 	}
 	if sameTravelPoint(c.strip.goal, goal) {
@@ -80,7 +84,7 @@ func (c *travelStrip) next(ctx context.Context, from position) ([]position, erro
 	for i, p := range points {
 		path[i] = navPosition(p)
 	}
-	if _, ok := validTravelPrefix(path, from, c.goal); !ok {
+	if _, ok := validRouteLeg(path, from, c.goal); !ok {
 		return nil, errors.New("ground corridor returned an invalid prefix")
 	}
 	return path, nil
@@ -88,12 +92,11 @@ func (c *travelStrip) next(ctx context.Context, from position) ([]position, erro
 
 func prepareTravelStrip(ctx context.Context, open openTravelSurface, scope travelMap, from, goal position, cached *travelStrip) (*travelStrip, []position, error) {
 	if cached != nil {
-		if path, err := cached.next(ctx, from); err == nil {
-			return cached, path, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
+		path, err := cached.next(ctx, from)
+		return cached, path, err
+	}
+	if open == nil {
+		return nil, nil, errors.New("ground corridor planner unavailable")
 	}
 	surface, err := open(ctx, scope.root, scope.mapID, swimPoint(from), swimPoint(goal))
 	if err != nil {
@@ -110,18 +113,14 @@ func prepareTravelStrip(ctx context.Context, open openTravelSurface, scope trave
 	return c, path, nil
 }
 
-func validTravelPrefix(path []position, from, goal position) (float64, bool) {
-	if len(path) < 2 || len(path) > buddynav.MaxPoints || distance(path[0], from) > buddynav.EndpointTolerance {
-		return 0, false
+// Checked by the existing ground movement writer at its normal prewrite gate.
+type travelGroundStrideKey struct{}
+
+func travelCheckpointDelay(pos position, path []position, index int, speed float64) time.Duration {
+	delay := explorationCheckpointDelay(speed)
+	_, _, used, ok := followStride(pos, path, index, speed*delay.Seconds(), 2)
+	if ok && used > 0 {
+		return min(delay, max(time.Millisecond, time.Duration(math.Ceil(used/speed*float64(time.Second)))))
 	}
-	var length float64
-	for i, p := range path {
-		if !finite(p) {
-			return 0, false
-		}
-		if i > 0 {
-			length += distance(path[i-1], p)
-		}
-	}
-	return length, length > 0 && length <= buddynav.LegMaxLength+.001 && !(distance(from, path[len(path)-1]) <= .05 && distance(from, goal) > 3)
+	return delay
 }

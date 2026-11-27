@@ -139,7 +139,6 @@ func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 		{Guid: 1, Self: true, Online: true, Name: "Arlen"}, {Guid: 3, Online: true, Name: "Joel"},
 	}}}
 	s := NewService(f, 1)
-	s.openTravel = nil // Existing fixtures inject local and read-only planners below.
 	s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
 		return []position{from, to}, nil
 	}

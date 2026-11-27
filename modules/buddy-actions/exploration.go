@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"math"
 	"time"
@@ -188,11 +189,10 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 	// its unlocked planning interval; every following checkpoint refreshes it.
 	intervalSpeed := observedRunSpeed(s.lastWorld.GetSelf())
 	gravity := destinationGravitySource(s.lastWorld, s.pos)
-	if distance(from, to) > 200 {
-		s.state.Reason = "exploration_destination_exceeds_200_yards"
-		s.mu.Unlock()
-		return nil, status.Error(codes.InvalidArgument, "exploration destination must be within200yards")
-	}
+	scope := s.travelMapLocked(mapID)
+	open := s.openTravel
+	ground := r.Flightmaster == nil && !swimming && !gravity.falling && movementflags.GroundCompatible(s.lastWorld.GetSelf().GetMovementFlags(), s.lastWorld.GetSelf().GetExtraMovementFlags())
+	cached, preview := s.travelCandidateLocked(scope, from, to, true)
 	if distance(from, to) <= arrival {
 		s.state.Reason = "exploration_within_distance"
 		s.mu.Unlock()
@@ -200,12 +200,25 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 	}
 	s.mu.Unlock()
 	var mixed *swimFollowRoute
-	path, planErr := s.mapNavigationPath(call, root, mapID, from, to)
+	var strip *travelStrip
+	var path []position
+	var planErr error
+	if ground {
+		if preview != nil {
+			strip, path = cached, preview
+		} else {
+			strip, path, planErr = prepareTravelStrip(call, open, scope, from, to, cached)
+		}
+	} else if r.Flightmaster != nil {
+		path, planErr = s.mapNavigationPath(call, root, mapID, from, to)
+	} else {
+		planErr = errors.New("current body requires a measured surface or landing route")
+	}
 	if allowWater && (planErr != nil || swimming) && call.Err() == nil {
 		r, e := s.planMixedDestination(call, root, mapID, from, to, intervalSpeed, swimming, gravity, nil)
 		if e == nil {
 			r.owner, r.revision = destinationOwner{token: token, target: to, gravity: r.owner.gravity}, revision
-			mixed, path, planErr = &r, r.path, nil
+			mixed, path, planErr, strip = &r, r.path, nil, nil
 		} else if swimming {
 			planErr = e
 		}
@@ -244,6 +257,11 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 	// precise request must fit that actual endpoint; never append caller Z or
 	// bypass the physical route to manufacture a closer arrival.
 	endpoint := path[len(path)-1]
+	if strip != nil && preview == nil {
+		strip.mu.Lock()
+		endpoint = navPosition(strip.surface.Destination())
+		strip.mu.Unlock()
+	}
 	if mixed != nil && mixed.drop != nil {
 		terminal := mixed.drop
 		for terminal.Next != nil {
@@ -272,10 +290,18 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		call = context.WithValue(scoped, idleMotionScopeKey{}, motion)
 		ctx = context.WithValue(ctx, idleMotionScopeKey{}, motion)
 	}
+	if strip != nil {
+		// A read-issued local endpoint ends this request; a direct goal may
+		// need successive prefixes. Both use their originally searched strip.
+		call = context.WithValue(call, travelGroundStrideKey{}, scope)
+		if preview == nil {
+			s.travelPreview = travelPreview{strip: strip}
+		}
+	}
 	s.state.NavAvailable, s.state.NavReason = true, "client_navmesh_route_verified"
 	s.mu.Unlock()
 	expected, index := from, 0
-	for step := 0; step < 150; step++ {
+	for step := 0; strip != nil || step < 150; step++ {
 		s.mu.Lock()
 		if !s.ownsExploration(token) {
 			s.mu.Unlock()
@@ -285,7 +311,7 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		if why == "" && (s.state.Reason != phase || s.state.Moving != moving) {
 			why = "exploration_interrupted_by_controller_change"
 		}
-		if why == "" && (s.posMap != mapID || s.positionRevision != revision || distance(s.pos, expected) > .05) {
+		if why == "" && (s.travelMapLocked(mapID) != scope || s.posMap != mapID || s.positionRevision != revision || distance(s.pos, expected) > .05) {
 			why = "exploration_position_changed_after_planning"
 		}
 		// Hand control back to the everyday policy after a short ordinary
@@ -294,7 +320,31 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		if why == "" && r.Flightmaster != nil && step > 0 && (distance(from, s.pos) >= 1.5 || step >= 3) {
 			why = "exploration_flightmaster_checkpoint_reached"
 		}
-		if why == "" && (mixed == nil || mixed.drop == nil) && distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
+		if why == "" && strip != nil && preview == nil && s.interactionUntil.Sub(s.now()) <= 1500*time.Millisecond &&
+			distance(s.pos, from) > 1 && distance(s.pos, to) > arrival {
+			why = "exploration_ground_progress_checkpoint"
+		}
+		terminal := strip == nil || preview != nil || distance(path[len(path)-1], endpoint) <= .05
+		if why == "" && !terminal && index >= len(path) {
+			// Release the movement lock during geometry. The next iteration
+			// rechecks lease, control, visit, source revision and actual pose.
+			progressAt := s.pos
+			s.mu.Unlock()
+			next, err := strip.next(call, progressAt)
+			if err != nil {
+				s.mu.Lock()
+				if s.ownsExploration(token) && s.state.Reason == phase {
+					s.state.NavAvailable = false
+					s.state.NavReason = navigationDiagnostic(err, root)
+					s.state.Reason = "exploration_navigation_unavailable"
+				}
+				s.mu.Unlock()
+				return nil, nil
+			}
+			path, index = next, 0
+			continue
+		}
+		if why == "" && terminal && (mixed == nil || mixed.drop == nil) && distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
 			why = "exploration_within_distance"
 		}
 		if why == "" && (mixed == nil || mixed.drop == nil) && index >= len(path) {
@@ -330,7 +380,7 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 			intervalSpeed = speed
 		}
 		expected = s.pos
-		if (mixed == nil || mixed.drop == nil) && distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
+		if terminal && (mixed == nil || mixed.drop == nil) && distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
 			s.state.Reason = "exploration_within_distance"
 			s.mu.Unlock()
 			return nil, nil
@@ -340,8 +390,12 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 			s.state.Reason = "exploration_checkpoint_delay_bounded"
 		}
 		moving, phase = s.state.Moving, s.state.Reason
+		delay := explorationCheckpointDelay(speed)
+		if strip != nil {
+			delay = travelCheckpointDelay(s.pos, path, index, speed)
+		}
 		s.mu.Unlock()
-		if err := s.approachDelay(call, explorationCheckpointDelay(speed)); err != nil {
+		if err := s.approachDelay(call, delay); err != nil {
 			s.mu.Lock()
 			if s.ownsExploration(token) {
 				s.state.Reason = "exploration_canceled_or_time_limit"

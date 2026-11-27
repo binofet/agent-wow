@@ -22,6 +22,7 @@ import (
 func explorationRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *actionsv1.TravelToRequest) {
 	t.Helper()
 	s, f, advance := rig(t)
+	s.openTravel = fixtureTravelPath(s, false)
 	f.world.Owner = nil
 	f.world.Self.MapId = 1
 	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = 1500, 1500, 80
@@ -173,7 +174,7 @@ func TestExplorationPreciseArrivalRetainsCancelAndOwnedStopCleanup(t *testing.T)
 }
 
 func TestExplorationRejectsInvalidDestinationLeaseAndMapBeforePlanning(t *testing.T) {
-	for _, mode := range []string{"nil", "empty_token", "foreign_token", "wrong_owner", "different_map", "unknown_map", "nonfinite", "infinite", "world_bounds", "too_far", "unknown_position", "dead", "combat", "falling", "speed", "casting", "unconfirmed_motion"} {
+	for _, mode := range []string{"nil", "empty_token", "foreign_token", "wrong_owner", "different_map", "unknown_map", "nonfinite", "infinite", "world_bounds", "unknown_position", "dead", "combat", "falling", "speed", "casting", "unconfirmed_motion"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _, r := explorationRig(t)
 			switch mode {
@@ -195,8 +196,6 @@ func TestExplorationRejectsInvalidDestinationLeaseAndMapBeforePlanning(t *testin
 				r.Y = float32(math.Inf(1))
 			case "world_bounds":
 				r.Z = 40001
-			case "too_far":
-				r.X = 1700.1
 			case "unknown_position":
 				f.world.Self.PositionKnown = false
 			case "dead":
