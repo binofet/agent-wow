@@ -60,7 +60,7 @@ func TestAreaTriggerScopeRequiresExactCurrentBodyVisitAndWireBoundary(t *testing
 }
 
 func TestAreaTriggerScopeFinalOwnerLoopCallbackRefusesWithoutTransport(t *testing.T) {
-	for _, change := range []string{"body", "actual body", "pending", "same map visit", "movement", "cancel", "logout"} {
+	for _, change := range []string{"body", "actual body", "pending", "same map visit", "movement", "party owner changed zone", "party disbanded", "cancel", "logout"} {
 		t.Run(change, func(t *testing.T) {
 			conn := &scopeWriteConn{}
 			e := scopeEngine(t, conn)
@@ -79,6 +79,11 @@ func TestAreaTriggerScopeFinalOwnerLoopCallbackRefusesWithoutTransport(t *testin
 					e.transport.observe(opcode.SMSGNewWorld, positionBody(0, 1, 2, 3, .5))
 				case "movement":
 					e.transport.sent(opcode.MSGMoveStop)
+				case "party owner changed zone":
+					zone := binary.LittleEndian.AppendUint32([]byte{1, 3}, 0x80)
+					e.observeTransportScope(opcode.SMSGPartyMemberStats, binary.LittleEndian.AppendUint16(zone, 1517))
+				case "party disbanded":
+					e.observeTransportScope(opcode.SMSGGroupUninvite, nil)
 				case "cancel":
 					cancel()
 				case "logout":

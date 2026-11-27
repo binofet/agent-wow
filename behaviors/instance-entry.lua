@@ -18,14 +18,29 @@ local function taskid(s)
     return true
 end
 local function point(p) return type(p)=="table" and finite(p.x) and finite(p.y) and finite(p.z) end
-local function contains(v,p)
+local function contains(v,p,margin)
     if not point(p) then return false end
     local dx,dy,dz=(p.x or 0)-v.x,(p.y or 0)-v.y,(p.z or 0)-v.z
-    local m=M.tuning.inward_margin
+    local m=margin or M.tuning.inward_margin
     if v.radius>0 then return v.radius>m and dx*dx+dy*dy+dz*dz<=(v.radius-m)^2 end
     local c,s=math.cos(v.orientation),math.sin(v.orientation)
     return v.length/2>m and v.width/2>m and v.height/2>m and
         math.abs(dx*c+dy*s)<=v.length/2-m and math.abs(-dx*s+dy*c)<=v.width/2-m and math.abs(dz)<=v.height/2-m
+end
+-- A portal's center can be above the ground or beyond the walkable mesh.
+-- Ask the ordinary planner for the near side on the current approach plane.
+local function approach(v,p)
+    local center={x=v.x,y=v.y,z=p.z or 0}
+    local inset=v.radius>0 and v.radius/4 or math.min(v.length,v.width,v.height)/8
+    local margin=math.max(M.tuning.inward_margin,math.min(2,inset))
+    if not contains(v,center,margin) then return v end
+    local outside,inside=0,1
+    for _=1,16 do
+        local fraction=(outside+inside)/2
+        local q={x=(p.x or 0)+(v.x-(p.x or 0))*fraction,y=(p.y or 0)+(v.y-(p.y or 0))*fraction,z=center.z}
+        if contains(v,q,margin) then inside=fraction else outside=fraction end
+    end
+    return {x=(p.x or 0)+(v.x-(p.x or 0))*inside,y=(p.y or 0)+(v.y-(p.y or 0))*inside,z=center.z}
 end
 local function allowed(task,id)
     for _,value in ipairs(task.allowedTriggerIds or {}) do if value==id then return true end end
@@ -262,7 +277,7 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
         return propose("walking_verified_entry_leg",a)
     end
     local a=request(task,obs,"plan_route_leg");a.expectedPositionRevision=p.revision;a.mapId=task.mapId
-    local goal=task.routeGoal or task.volume;a.x,a.y,a.z=goal.x,goal.y,goal.z
+    local goal=task.routeGoal or approach(task.volume,p);a.x,a.y,a.z=goal.x,goal.y,goal.z
     return propose("planning_complete_ground_entry_route",a)
 end
 return M

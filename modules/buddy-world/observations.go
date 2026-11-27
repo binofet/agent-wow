@@ -33,6 +33,7 @@ const (
 // Maps are shallow-cloned per packet. target copies each touched object once,
 // so malformed packet rollback never mutates previously committed observations.
 type observations struct {
+	partyLocation         ownerPartyLocation
 	bodyInputBarrier      string
 	bodyInputFields       []string
 	bodyOwnerPositions    []movementinfo.FollowPosition

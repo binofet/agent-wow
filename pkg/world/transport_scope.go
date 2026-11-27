@@ -12,6 +12,7 @@ import (
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"github.com/agent-wow/agent-wow/pkg/partystats"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -378,6 +379,12 @@ func (e *engine) observeTransportScope(op uint16, body []byte) {
 	// Use the same companion identity that the production World module selects.
 	self := e.transport.scope.GetSelfGuid()
 	ownerChange := self != 0 && transportClearlyForeign(op, body, self) && !transportClearlyForeign(op, body, buddyidentity.CompanionOwnerGUID)
+	partyChange := op == opcode.SMSGGroupDestroyed || op == opcode.SMSGGroupList || op == opcode.SMSGGroupUninvite
+	if op == opcode.SMSGPartyMemberStats || op == opcode.SMSGPartyMemberStatsFull {
+		member, complete := partystats.Decode(uint32(op), body)
+		partyChange = (member.GUID == buddyidentity.CompanionOwnerGUID || member.GUID == 0 && !complete) && (!complete || member.LocationUpdate())
+	}
+	ownerChange = ownerChange || self != 0 && self != buddyidentity.CompanionOwnerGUID && partyChange
 	e.transport.observe(op, body)
 	if ownerChange {
 		e.transport.advance(&e.transport.scope.MotionRevision)
@@ -394,7 +401,7 @@ func (e *engine) observeTransportScope(op uint16, body []byte) {
 		var positions []movementinfo.FollowPosition
 		if ownerChange {
 			reason = modcb.BodyUpdateOwnerMovement
-			if op == opcode.SMSGDestroyObject {
+			if op == opcode.SMSGDestroyObject || partyChange {
 				reason = modcb.BodyUpdateOwnerLifecycle
 			} else if movementinfo.OrdinaryFollowMovement(uint32(op)) {
 				if i, complete := movementinfo.OwnFrame(body, buddyidentity.CompanionOwnerGUID); complete {
