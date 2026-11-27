@@ -17,6 +17,29 @@ var ErrGroundDestination = errors.New("destination has no reachable ground")
 // Destination is the point on the mesh reached by the current strip.
 func (c *GroundCorridor) Destination() Point { return c.goal }
 
+// ContainsGroundSegment checks a local steering adjustment against the
+// retained polygon strip and its detailed ground surface, in either direction.
+// The corridor and its goal are left intact.
+func (c *GroundCorridor) ContainsGroundSegment(ctx context.Context, from, to Point) bool {
+	if ctx.Err() != nil || len(c.strip) == 0 {
+		return false
+	}
+	first, ok := c.CellAt(from, 0, len(c.strip)-1)
+	if !ok {
+		return false
+	}
+	last, ok := c.CellAt(to, 0, len(c.strip)-1)
+	if !ok {
+		return false
+	}
+	if first > last {
+		first, last = last, first
+		from, to = to, from
+	}
+	_, err := c.surface.directGroundPath(ctx, from, to, c.strip[first:last+1])
+	return err == nil
+}
+
 // FormationDestination projects a relative formation offset from the owner's
 // actual polygon. A nearby bridge or lower floor cannot receive the offset by
 // winning a nearest-polygon query for an invented slot altitude.
