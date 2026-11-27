@@ -1365,7 +1365,7 @@ func (s *Service) tickLocked(ctx context.Context) {
 		return
 	}
 	s.expirePendingCastLocked(ctx)
-	if s.encounterSwing.target != 0 {
+	if s.encounterSwing.target != 0 && !s.reconcileEncounterSwingLocked(ctx) {
 		s.lastStep = s.now()
 		return
 	}
@@ -1687,11 +1687,11 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 			s.weapons[proof.entry] = proof
 		}
 	case opcode.SMSGAttackerstateupdate:
-		attacker, _, damage, err := decodeMeleeDamage(p)
+		attacker, target, damage, err := decodeMeleeDamage(p)
 		if err != nil {
 			malformed = true
 		} else if attacker == s.selfGUID {
-			s.encounterSwing.controlStopUntil = time.Time{}
+			s.observeOwnMeleeActivityLocked(target)
 			if damage > 0 {
 				s.state.MeleeDamageEvents++
 				s.state.MeleeDamageTotal += uint64(damage)
