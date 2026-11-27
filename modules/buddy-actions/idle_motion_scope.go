@@ -172,16 +172,20 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 	prior, err := s.readBodyMotionReport(ctx, b)
 	needPose := s.posEstimated || w.GetSelf().GetPositionInferred()
 	settled := false
-	if err != nil && status.Code(err) == codes.FailedPrecondition && landing && needPose {
+	newGroundTrip := !b.cleanupOnly && !s.state.Moving && !s.state.MotionUnconfirmed && token != "" && s.state.InteractionOwner == "exploration"
+	if err != nil && status.Code(err) == codes.FailedPrecondition && (landing || newGroundTrip) && needPose {
 		// For a genuinely new selection, a stationary STOP still supplies its
 		// exact pose across a destination or ordinary posture change. Start any
 		// new control decision at the newly parsed World source instead.
 		prior, err = modcb.ReadSettledBodySource(ctx, s.session, s.sessionID, s.selfGUID)
 		settled = err == nil
+		if settled && !landing && !settledPortalPose(prior, b.initial, b.pose) {
+			return nil, modcb.PacketNotDispatchedError("new ground trip requires the exact settled body")
+		}
 	}
 	if err == nil {
 		p, valid := idleMotionPacketPose(prior.Payload, s.selfGUID)
-		if !valid || !idleMotionOpcode(prior.Opcode) || !samePortalCoreVisit(b.initial, prior.TransportScope) || !landing && prior.TransportScope.MotionRevision < b.initial.MotionRevision || needPose && p != b.pose {
+		if !valid || !idleMotionOpcode(prior.Opcode) || !samePortalCoreVisit(b.initial, prior.TransportScope) || !landing && !settled && prior.TransportScope.MotionRevision < b.initial.MotionRevision || needPose && p != b.pose {
 			return nil, modcb.PacketNotDispatchedError("idle motion prior report no longer matches the captured body")
 		}
 		freshFollow := b.destination != nil && b.destination.token == "" && !b.destination.lastSeen

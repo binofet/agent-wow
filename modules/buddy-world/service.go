@@ -157,6 +157,11 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 	// Ghosts can have positive health. Public player flags must also be known.
 	r.AliveKnown = r.HealthKnown && p.known[playerFlags]
 	r.Alive = r.AliveKnown && r.Health > 0 && r.PlayerFlags&0x10 == 0 && r.DynamicFlags&0x20 == 0
+	if !p.present && p.mapKnown && !p.positionKnown {
+		// The last local XYZ belongs to the previous map. A remote party
+		// zone supplies no coordinates on this player's new map.
+		r.X, r.Y, r.Z, r.Orientation = 0, 0, 0, 0
+	}
 	if p.isSelf && p.present {
 		r.ChannelObjectKnown = p.known[unitChannelObject] && p.known[unitChannelObject+1]
 		r.ChannelObjectGuid = uint64(p.fields[unitChannelObject]) | uint64(p.fields[unitChannelObject+1])<<32
@@ -219,12 +224,33 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 	}
 	objectUpdate := packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject
 	s.lastOpcode = packet.Opcode
+	if isPartyLocationOpcode(packet.Opcode) {
+		scope, current := packet.TransportScope, s.motion.scope
+		// Only a location-relevant group packet advances the physical source.
+		// Ignore stale or unchanged envelopes before cloning World.
+		if !sameMotionVisit(scope, current) || scope.MotionRevision <= current.MotionRevision {
+			s.ignored++
+			return &emptypb.Empty{}, nil
+		}
+	}
 	s.observeCombatPacketLocked(packet.Opcode, packet.Payload, s.now())
 	next := s.state.clone()
 	observedAt := s.now()
 	transferBefore := s.captureWorldTransferBeforeLocked(packet, observedAt)
-	handled, err := parsePacket(packet.Opcode, packet.Payload, &next, observedAt)
+	var handled bool
+	var err error
+	if isPartyLocationOpcode(packet.Opcode) {
+		handled, err = true, next.observePartyLocation(packet)
+	} else {
+		handled, err = parsePacket(packet.Opcode, packet.Payload, &next, observedAt)
+	}
 	if err != nil {
+		if isPartyLocationOpcode(packet.Opcode) {
+			// A malformed newer owner record can withdraw the remote map proof.
+			// None of its other fields are committed.
+			s.state.partyLocation = next.partyLocation
+			s.state.players[1].mapKnown = next.players[1].mapKnown
+		}
 		s.state.invalidateCreatureStationarity(packet.Opcode, packet.Payload)
 		s.state.invalidateCreatureAuras(packet.Opcode, packet.Payload)
 		if objectUpdate {
@@ -248,6 +274,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		s.lastError = fmt.Sprintf("%s (opcode 0x%03x)", err.Error(), packet.Opcode)
 	} else if handled {
 		old, current := s.state.players[0], next.players[0]
+		next.observeOwnerDeparture(&s.state, packet)
 		s.observeKnockbackLocked(ctx, packet, current, &next)
 		next.commitOwnMovementFacts(old, packet.Opcode, observedAt, packet.TransportScope)
 		s.observeMotionLocked(packet, old, current, &next, observedAt)
