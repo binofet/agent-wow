@@ -2,6 +2,7 @@ package buddyloot
 
 import (
 	"context"
+	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	"sort"
 	"time"
 
@@ -127,6 +128,10 @@ func (s *Service) exactGatherCurrent(r *lootv1.OpenGatherRequest, w *worldv1.Sna
 	}
 	rangeLimit := 4.5
 	if r.ApproachWorldRevision != 0 {
+		container, ok := s.catalog.Container(recipe.objectEntry)
+		if !ok || !harvestguard.ActiveContainerObjective(w, r.SelfGuid, container, r.QuestId, r.ItemId) {
+			return nil, harvestRecipe{}
+		}
 		rangeLimit = 3
 	} else if r.Approach {
 		rangeLimit = 12 // Existing finite mechanical reach; Lua may choose less.

@@ -236,7 +236,7 @@ func TestGatherWrittenOpeningWithoutWindowSurvivesEnableToggle(t *testing.T) {
 }
 
 func TestGatherTravelArrivalRemainsBoundThroughFinalWorldRead(t *testing.T) {
-	for _, mode := range []string{"current", "beyond verified range", "stale arrival", "corrected after acquisition", "corrected before cast"} {
+	for _, mode := range []string{"current", "beyond verified range", "stale arrival", "corrected after acquisition", "corrected before cast", "quest fulfilled before cast", "enough items acquired before cast", "partial stack still needed", "bag unreadable before cast", "quest revision changed"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _ := harvestRig(t)
 			enable(t, s)
@@ -252,9 +252,22 @@ func TestGatherTravelArrivalRemainsBoundThroughFinalWorldRead(t *testing.T) {
 				f.afterAcquire = func() { f.world.Self.PositionRevision++; f.actions.Position.Revision++ }
 			case "corrected before cast":
 				f.afterRenew = func() { f.world.Self.PositionRevision++ }
+			case "quest fulfilled before cast":
+				f.afterRenew = func() { f.world.SelfQuestLog[0].Complete = true }
+			case "enough items acquired before cast", "partial stack still needed":
+				f.afterRenew = func() {
+					f.world.InventoryBags[0].Slots[0] = &worldv1.BackpackSlot{Slot: 0, ItemGuid: 0x4000000000001212, Entry: r.ItemId, StackCount: 8, MetadataKnown: true}
+					if mode == "partial stack still needed" {
+						f.world.InventoryBags[0].Slots[0].StackCount = 1
+					}
+				}
+			case "bag unreadable before cast":
+				f.afterRenew = func() { f.world.InventoryBags[4].ContentsKnown = false }
+			case "quest revision changed":
+				f.afterRenew = func() { f.world.SelfQuestLogRevision++ }
 			}
 			op, err := s.OpenGather(context.Background(), r)
-			if mode == "current" {
+			if mode == "current" || mode == "partial stack still needed" {
 				if err != nil || !op.GetOpeningTransportWritten() || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGCastSpell {
 					t.Fatal(op, err, f.packets)
 				}

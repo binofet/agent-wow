@@ -1,6 +1,9 @@
 package harvestguard
 
-import worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+import (
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
+)
 
 // CompleteOwnItemCounts accepts only a complete, non-overlapping carried inventory.
 func CompleteOwnItemCounts(w *worldv1.SnapshotResponse, self uint64) (map[uint32]uint64, bool) {
@@ -53,4 +56,40 @@ func CompleteOwnItemCounts(w *worldv1.SnapshotResponse, self uint64) (map[uint32
 		}
 	}
 	return counts, true
+}
+
+// ActiveContainerObjective checks this body's complete quest log and, for an
+// exact item detour, the remaining carried count required by this container.
+func ActiveContainerObjective(w *worldv1.SnapshotResponse, self uint64, container gamecatalog.Container, questID, itemID uint32) bool {
+	if w == nil || w.Self == nil || w.Self.Guid != self || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
+		return false
+	}
+	if !container.OrdinaryQuestOpening() {
+		return false
+	}
+	var owned uint64
+	if questID != 0 {
+		counts, known := CompleteOwnItemCounts(w, self)
+		if !known {
+			return false
+		}
+		owned = counts[itemID]
+	}
+	var seen [25]bool
+	found := false
+	for _, q := range w.SelfQuestLog {
+		if q == nil || q.Slot >= 25 || seen[q.Slot] {
+			return false
+		}
+		seen[q.Slot] = true
+		if q.QuestId != 0 && !q.Complete && !q.Failed && q.State&3 == 0 {
+			for _, item := range container.QuestItems {
+				if item.QuestID == q.QuestId && item.ItemID != 0 && item.Count != 0 &&
+					(questID == 0 || item.QuestID == questID && item.ItemID == itemID && owned < uint64(item.Count)) {
+					found = true
+				}
+			}
+		}
+	}
+	return found
 }
