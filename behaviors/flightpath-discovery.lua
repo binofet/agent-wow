@@ -69,19 +69,30 @@ local function choose(context,selected)
     local world=context.observations.world or {}
     local self=point(world.self)
     if not self or self.aliveKnown~=true or self.alive~=true then return end
+    -- The normal mover need not receive an echo of its own walk. Use its
+    -- bound Actions pose to select a candidate. Native still requires the
+    -- exact current physical STOP before it can use an older World sample.
+    local client=(context.observations.actions or {}).position
+    local origin=self
+    if client and client.known and client.mapKnown and (client.mapId or 0)==(self.mapId or 0) and uint(client.revision) then
+        origin=client
+    end
     local found,best,seen=nil,nil,{}
     local candidates={world.requestedCreature}
     for _,npc in ipairs(world.nearbyCreatures or {}) do candidates[#candidates+1]=npc end
     for _,npc in pairs(candidates) do
         local p=point(npc)
         if p and uint(p.guid) and (not selected or p.guid==selected) and p.aliveKnown==true and p.alive==true and
-           (p.mapId or 0)==(self.mapId or 0) and uint(p.positionRevision) and fresh(p.positionAgeMs) and fresh(p.observationAgeMs) and
+           (p.mapId or 0)==(self.mapId or 0) and uint(p.positionRevision) and
+           (p.stationaryPositionKnown==true or fresh(p.positionAgeMs) and fresh(p.observationAgeMs)) and
+           (not p.trajectory or p.trajectory.known~=true or p.trajectory.stopped==true and not p.trajectory.transportRelative) and
+           (p.movementFlags or 0)%256==0 and (p.movementFlags or 0)%0x10000000<=0x100 and (p.movementFlags or 0)<0x80000000 and
            integer(p.npcFlags) and math.floor(p.npcFlags/8192)%2==1 then
             local prior=seen[p.guid]
             if prior and ((prior.x or 0)~=(p.x or 0) or (prior.y or 0)~=(p.y or 0) or (prior.z or 0)~=(p.z or 0) or
                prior.positionRevision~=p.positionRevision) then return nil,"flightmaster_views_disagree" end
             seen[p.guid]=p
-            local d=distance(self,p)
+            local d=distance(origin,p)
             if not best or d<best or d==best and p.guid<found.guid then found,best=p,d end
         end
     end

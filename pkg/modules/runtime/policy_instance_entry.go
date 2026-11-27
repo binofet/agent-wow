@@ -124,8 +124,13 @@ func (p *SessionPolicy) resolveInstanceEntry(action map[string]any, capability s
 	case "travel_to":
 		method, path = capability, actionsv1.BuddyActions_TravelTo_FullMethodName
 		request, response = &actionsv1.TravelToRequest{}, &actionsv1.State{}
-		add("token", "mapId", "x", "y", "z", "arrivalDistance")
+		add("token", "mapId", "x", "y", "z", "arrivalDistance", "flightmaster")
 		op.instanceEntry, op.movement = nil, &policyMovement{self: guid, idleBound: true}
+	case "query_flightpath":
+		method, path = capability, actionsv1.BuddyActions_QueryFlightpath_FullMethodName
+		request, response = &actionsv1.FlightpathQueryRequest{}, &actionsv1.FlightpathObservationResponse{}
+		add("sessionId", "selfGuid", "visitId", "token", "npcGuid", "mode", "expectedRevision", "opportunity")
+		op.instanceEntry = nil
 	default:
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "unsupported instance-entry capability")
 	}
@@ -172,12 +177,38 @@ func (p *SessionPolicy) resolveInstanceEntry(action map[string]any, capability s
 			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "arrival distance must preserve the native0/default or0.5..3yard range")
 		}
 	}
+	for _, key := range []string{"opportunity", "flightmaster"} {
+		if value, supplied := action[key]; supplied {
+			target, ok := value.(map[string]any)
+			npc, validNPC := instanceEntryUint64(target["guid"], false)
+			_, validPosition := instanceEntryUint64(target["positionRevision"], false)
+			_, validFollow := instanceEntryUint64(target["followRevision"], true)
+			if !ok || !validNPC || npc>>48 != 0xf130 || npc&0xffffff == 0 || !validPosition || !validFollow ||
+				key == "opportunity" && action["npcGuid"] != target["guid"] {
+				return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact flightmaster identity and source revisions required")
+			}
+			if len(target) != 3 {
+				_, ownerOK := instanceEntryUint64(target["followOwnerGuid"], false)
+				radius, rangeOK := instanceEntryNumber(target["ownerRangeYards"], 40)
+				if len(target) != 5 || !ownerOK || !rangeOK || radius <= 0 {
+					return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact followed owner and bounded relevance radius required")
+				}
+			}
+		}
+	}
 	raw, err := json.Marshal(params)
 	if err != nil || protojson.Unmarshal(raw, request) != nil {
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "instance-entry request cannot be encoded")
 	}
 	if notify, ok := request.(*actionsv1.NotifyAreaTriggerRequest); ok {
 		op.instanceEntry.trigger = notify.TriggerId
+	}
+	if q, ok := request.(*actionsv1.FlightpathQueryRequest); ok {
+		if q.Mode != "status" && q.Mode != "discover" || q.NpcGuid>>48 != 0xf130 || q.NpcGuid&0xffffff == 0 ||
+			q.Opportunity.GetGuid() != q.NpcGuid || q.Opportunity.GetPositionRevision() == 0 {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "free query requires an exact observed flightmaster")
+		}
+		op.flightpath = q
 	}
 	return p.prepareObservedAction(capability, sid, self, guid, visit, method, path, request, response, op)
 }
@@ -188,7 +219,7 @@ func (p *SessionPolicy) prepareObservedAction(capability, sid, self string, guid
 	if err != nil {
 		return PolicyDispatch{}, err
 	}
-	if md.Path() != path || !instanceEntryDescriptorMatches(md.Descriptor().Input(), request.ProtoReflect().Descriptor(), map[protoreflect.FullName]bool{}) ||
+	if md.Path() != path || !observedRequestMatches(md.Descriptor().Input(), request) ||
 		!instanceEntryDescriptorMatches(md.Descriptor().Output(), response.ProtoReflect().Descriptor(), map[protoreflect.FullName]bool{}) {
 		return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "installed action contract is incompatible")
 	}
@@ -234,7 +265,7 @@ func (p *SessionPolicy) prepareObservedAction(capability, sid, self string, guid
 		unknown := op.instanceEntry != nil && op.instanceEntry.unknown || op.movement != nil && op.movement.unknown || op.summoning != nil && op.summoning.unknown
 		registry.mu.Unlock()
 		payload["transport_written"] = written
-		mutation := capability == "notify_area_trigger" || capability == "travel_to" || op.summoning != nil
+		mutation := capability == "notify_area_trigger" || capability == "travel_to" || op.summoning != nil || op.flightpath != nil
 		if callErr != nil {
 			payload["error"], payload["phase"] = callErr.Error(), "rpc_failed"
 			if !mutation || !attempted && instanceEntryKnownRefusal(callErr) {
@@ -245,6 +276,12 @@ func (p *SessionPolicy) prepareObservedAction(capability, sid, self string, guid
 		}
 		bound := p.instanceEntryIdentity(sid, self, guid)
 		switch value := result.(type) {
+		case *actionsv1.FlightpathObservationResponse:
+			q, r := op.flightpath, value.GetOperation()
+			bound = bound && value.SessionId == sid && value.SelfGuid == guid && value.VisitBound && value.VisitId == visit &&
+				r.GetSessionId() == sid && r.SelfGuid == guid && r.VisitId == visit && r.Mode == q.Mode && r.NpcGuid == q.NpcGuid &&
+				value.Revision == q.ExpectedRevision+1 && r.Revision == value.Revision
+			unknown = unknown || r.GetTransportUnknown()
 		case *actionsv1.SelectTargetResponse:
 			bound = bound && value.SessionId == sid && value.SelfGuid == guid && value.TargetGuid == request.(*actionsv1.SelectTargetRequest).TargetGuid
 			unknown = unknown || !value.TransportWritten

@@ -142,11 +142,13 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 }
 
 func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.FlightpathQueryRequest) (*actionsv1.FlightpathObservationResponse, error) {
+	ctx = modcb.ForwardPolicySpell(ctx)
 	if request == nil || request.SessionId == "" || len(request.SessionId) > 128 || request.SelfGuid == 0 || request.VisitId == 0 ||
 		request.Token == "" || len(request.Token) > 128 || request.NpcGuid>>48 != 0xf130 || request.NpcGuid&0xffffff == 0 ||
 		(request.Mode != "status" && request.Mode != "discover" && request.Mode != "arrival") ||
 		(request.Mode == "arrival" && (request.ActivationRevision == 0 || request.CompletionRevision == 0)) ||
-		(request.Mode != "arrival" && (request.ActivationRevision != 0 || request.CompletionRevision != 0)) {
+		(request.Mode != "arrival" && (request.ActivationRevision != 0 || request.CompletionRevision != 0)) ||
+		request.Opportunity != nil && (request.Mode == "arrival" || request.Opportunity.Guid != request.NpcGuid || request.Opportunity.PositionRevision == 0) {
 		return nil, status.Error(codes.InvalidArgument, "exact session body visit exploration token flightmaster and query mode required")
 	}
 	if err := ctx.Err(); err != nil {
@@ -241,6 +243,9 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	}
 	if reason := safeQuestCharacter(w, r.SelfGuid); reason != "" {
 		return refuse("flightpath_" + reason)
+	}
+	if r.Opportunity != nil && !s.currentFlightmasterLocked(w, r.Opportunity) {
+		return refuse("observed_flightmaster_or_owner_intent_changed")
 	}
 	if !s.refreshPositionLocked(w) {
 		return refuse("flightpath_client_position_changed")

@@ -44,7 +44,7 @@ def parent_goal(goal_id, destination, accept_unknown_fare=False, npc_guid=None):
                              'requestedCreature nearbyCreatures selfMovementFacts selfMotionAuthority splineCompletion worldTransfer'),
         'actions': observation('buddy-actions.status', 'sessionId selfGuid interactionOwner interactionLeaseRemainingMs '
                                'moving castPending motionUnconfirmed autoAttacking autoAttackRequested autoAttackUnconfirmed '
-                               'practicing traveling recovery'),
+                               'practicing traveling recovery position'),
         'flightpath': observation('buddy-actions.flightpath_observation', 'sessionId selfGuid visitId visitBound revision '
                                   'operation activationRevision activation transferAttempt'),
     }, allow=['buddy-actions.status', 'buddy-world.snapshot', 'buddy-actions.flightpath_observation',

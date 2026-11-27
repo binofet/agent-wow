@@ -149,6 +149,9 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 			return modcb.PacketNotDispatchedError("invalid scoped route body frame")
 		}
 		if token, supplied := modcb.IncomingPolicySpell(ctx); supplied {
+			if handled, err := m.writePolicyFlightpath(ctx, token, sessionID, module, opcode, payload, scope); handled {
+				return err
+			}
 			if handled, err := m.writePolicyScopedMovement(ctx, token, sessionID, module, opcode, payload, scope); handled {
 				return err
 			}
@@ -185,6 +188,9 @@ func (m *Manager) modulePacketWriter(sessionID, module string) func(context.Cont
 			return modcb.PacketNotDispatchedError("route body input requires its physical source scope")
 		}
 		if token, supplied := modcb.IncomingPolicySpell(ctx); supplied {
+			if handled, err := m.writePolicyFlightpath(ctx, token, sessionID, module, opcode, payload, nil); handled {
+				return err
+			}
 			return m.writePolicySpell(ctx, token, sessionID, module, opcode, payload)
 		}
 		// The callback server supplies module identity. A callback without a

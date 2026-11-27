@@ -55,6 +55,7 @@ type policySpell struct {
 	gather         *policyGather
 	instanceEntry  *policyInstanceEntry
 	summoning      *policySummoning
+	flightpath     *actionsv1.FlightpathQueryRequest
 	genericRequest *actionsv1.CastSpellRequest
 	cancelRequest  *actionsv1.CancelSpellRequest
 	token          string
@@ -71,7 +72,7 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	switch capability {
 	case "select_target", "use_summoning_object", "respond_to_summon":
 		return p.resolveSummoning(action, capability)
-	case "area_trigger_reference", "area_trigger_observation", "notify_area_trigger", "instance_entry_status", "plan_route_leg", "travel_to":
+	case "area_trigger_reference", "area_trigger_observation", "notify_area_trigger", "instance_entry_status", "plan_route_leg", "travel_to", "query_flightpath":
 		return p.resolveInstanceEntry(action, capability)
 	}
 	if capability == "cast_spell" || capability == "cancel_spell" {
