@@ -117,6 +117,19 @@ func TestDirectGroundRejectsWallGapAndUnsupportedEndpoint(t *testing.T) {
 	}
 }
 
+func TestGroundChordRetainsRoundedBakedBoundaryVertex(t *testing.T) {
+	a, b := Point{-1736.7999, 5361.5996, -12.300926}, Point{-1728, 5362.133, -8.034264}
+	vertex := []float32{5361.9556, -9.634254, -1730.9332}
+	fraction, ok := groundChordVertex(a, b, vertex)
+	if !ok || math.Abs(float64(fraction)-2./3.) > .001 {
+		t.Fatal("lost baked edge vertex", fraction, ok)
+	}
+	vertex[0] += .01
+	if _, ok := groundChordVertex(a, b, vertex); ok {
+		t.Fatal("snapped to an unrelated edge")
+	}
+}
+
 func TestDirectGroundCopiedIronforgeRamp(t *testing.T) {
 	dir := os.Getenv("BUDDY_NAV_POOL_TEST_DATA_DIR")
 	if dir == "" {

@@ -127,6 +127,7 @@ func (p *planner) groundSegmentProfile(ctx context.Context, from, to Point, ref 
 	}
 	a, b := recast(from), recast(to)
 	cuts := []float32{0, 1}
+	var boundary map[float32]Point
 	for j := 0; j < int(detail.TriCount); j++ {
 		n := (int(detail.TriBase) + j) * 4
 		tri := tile.DetailTris[n : n+3]
@@ -136,8 +137,19 @@ func (p *planner) groundSegmentProfile(ctx context.Context, from, to Point, ref 
 			}
 		}
 		for i := range 3 {
+			v := vertex(tri[i])
+			// A baked boundary vertex can round one coordinate unit away
+			// from a funnel edge running along it. Retain the actual vertex
+			// and its grade even when a strict edge intersection misses it.
+			if t, ok := groundChordVertex(from, to, v); ok {
+				if boundary == nil {
+					boundary = make(map[float32]Point)
+				}
+				boundary[t] = Point{v[2], v[0], v[1]}
+				cuts = append(cuts, t)
+			}
 			var along, edge float32
-			if detour.DtIntersectSegSeg2D(a[:], b[:], vertex(tri[i]), vertex(tri[(i+1)%3]), &along, &edge) &&
+			if detour.DtIntersectSegSeg2D(a[:], b[:], v, vertex(tri[(i+1)%3]), &along, &edge) &&
 				along > 0 && along < 1 && edge >= 0 && edge <= 1 {
 				cuts = append(cuts, along)
 			}
@@ -151,6 +163,9 @@ func (p *planner) groundSegmentProfile(ctx context.Context, from, to Point, ref 
 			return nil, err
 		}
 		q := groundChordPoint(from, to, cut)
+		if v, ok := boundary[cut]; ok {
+			q = v
+		}
 		height, err := p.groundHeightAt(ref, q)
 		if err != nil {
 			return nil, err
@@ -159,7 +174,7 @@ func (p *planner) groundSegmentProfile(ctx context.Context, from, to Point, ref 
 		if i > 0 {
 			// Disconnected triangles in the same polygon do not supply support
 			// across a hole, even when both boundary points have a height.
-			mid := groundChordPoint(from, to, (cuts[i-1]+cut)/2)
+			mid := groundChordPoint(profile[len(profile)-1], q, .5)
 			mh, err := p.groundHeightAt(ref, mid)
 			if err != nil || math.Abs(float64(mh-(profile[len(profile)-1].Z+height)/2)) > .02 {
 				return nil, errors.New("incomplete or discontinuous ground detail surface")
@@ -168,6 +183,24 @@ func (p *planner) groundSegmentProfile(ctx context.Context, from, to Point, ref 
 		profile = appendGroundPoint(profile, q)
 	}
 	return profile, nil
+}
+
+func groundChordVertex(a, b Point, v []float32) (float32, bool) {
+	dx, dy := float64(b.X)-float64(a.X), float64(b.Y)-float64(a.Y)
+	length2 := dx*dx + dy*dy
+	if length2 == 0 {
+		return 0, false
+	}
+	t := ((float64(v[2])-float64(a.X))*dx + (float64(v[0])-float64(a.Y))*dy) / length2
+	if t <= 0 || t >= 1 {
+		return 0, false
+	}
+	ulp := func(x float32) float64 {
+		return float64(math.Nextafter32(x, float32(math.Inf(1)))) - float64(x)
+	}
+	near := math.Abs(float64(a.X)+t*dx-float64(v[2])) <= ulp(v[2]) &&
+		math.Abs(float64(a.Y)+t*dy-float64(v[0])) <= ulp(v[0])
+	return float32(t), near && float32(t) > 0 && float32(t) < 1
 }
 
 // Keep turns and changes of grade. Coplanar detail triangles can be crossed
