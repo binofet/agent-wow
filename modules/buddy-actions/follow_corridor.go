@@ -142,6 +142,7 @@ func (s *Service) stepOnFollowCorridorLocked(ctx context.Context, now time.Time,
 	if len(f.path) < 2 {
 		return fail("follow_corridor_no_progress", errors.New("ground corridor prefix ended before its destination"))
 	}
+	speed := observedRunSpeed(w.GetSelf())
 	previous, _ := ctx.Value(movementPrewriteGuardKey{}).(movementPrewriteGuard)
 	ctx = withMovementPrewriteGuard(ctx, func(call context.Context, fresh *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool) {
 		if previous != nil {
@@ -152,6 +153,8 @@ func (s *Service) stepOnFollowCorridorLocked(ctx context.Context, now time.Time,
 			}
 		}
 		allowed := s.followGroundBinding(fresh, guid) == binding && !s.closed && !s.independent && !s.state.MotionUnconfirmed &&
+			!s.state.CastPending && s.state.InteractionOwner == "" && !s.recovery.state.Active &&
+			speed > 0 && observedRunSpeed(fresh.GetSelf()) == speed &&
 			(s.state.Following || s.followGoalExecuting != nil && s.currentFollowFormationGoalLocked(*s.followGoalExecuting, fresh))
 		if allowed && last != nil {
 			allowed = s.lastSeenCurrentLocked(call, *last, fresh)

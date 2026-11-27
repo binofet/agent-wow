@@ -207,3 +207,45 @@ func TestRetainedFollowHazardCanUseASeparateVerifiedStrip(t *testing.T) {
 		}
 	}
 }
+
+func TestRetainedFollowRechecksReadinessBeforeGroundStart(t *testing.T) {
+	for _, change := range []string{"unchanged", "cast", "speed unknown", "slowdown", "interaction", "recovery"} {
+		t.Run(change, func(t *testing.T) {
+			s, f, advance := formationRig(t, 4, 8)
+			f.world.VisitRevision = 1
+			f.world.Owner.X += 40
+			s.planFollowCorridor = func(context.Context, string, uint32, buddynav.Point, buddynav.Point) (followCorridor, error) {
+				return &recordedFollowCorridor{}, nil
+			}
+			toggle(t, s, true)
+			boundary := false
+			f.onClock = func() {
+				f.onClock = nil
+				boundary = true
+				switch change {
+				case "cast":
+					s.state.CastPending = true
+				case "speed unknown":
+					f.world.Self.SpeedsKnown = false
+				case "slowdown":
+					f.world.Self.RunSpeed = 3.5
+				case "interaction":
+					s.state.InteractionOwner = "exploration"
+					s.interactionUntil = s.now().Add(time.Minute)
+				case "recovery":
+					s.recovery.state.Active = true
+				}
+			}
+			for i := 0; i < 5 && !boundary; i++ {
+				s.Tick(t.Context())
+				advance(200 * time.Millisecond)
+			}
+			wantStart := change == "unchanged"
+			if !boundary || (countPackets(f, opcode.MSGMoveStartForward) == 1) != wantStart ||
+				s.state.Moving != wantStart || countPackets(f, opcode.MSGMoveHeartbeat) != 0 ||
+				countPackets(f, opcode.MSGMoveStop) != 0 || change == "cast" && !s.state.CastPending {
+				t.Fatal(change, boundary, s.stateLocked(), f.packets)
+			}
+		})
+	}
+}
