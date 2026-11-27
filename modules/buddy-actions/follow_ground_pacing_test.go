@@ -185,3 +185,73 @@ func TestNormalizedSlotOnSlopeUsesOnlyVerifiedObservedOwnerFloor(t *testing.T) {
 		})
 	}
 }
+
+func TestMovingObservedOwnerCanUseOnlyAnAdvancingVerifiedPrefix(t *testing.T) {
+	for _, mode := range []string{"moving", "stopped", "turned back", "stopped during clock", "lost during clock", "new visit", "new follow", "unknown stop"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance, target := followNavRig(t)
+			ctx := context.Background()
+			f.world.VisitRevision = 1
+			f.world.Owner.MovementFlags = 1
+			target.x = s.pos.x + 18
+			owner := target
+			owner.x += 4
+			f.world.Owner.X, f.world.Owner.Y, f.world.Owner.Z, f.world.Owner.Orientation = owner.x, owner.y, owner.z, owner.o
+			s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) {
+				if b == target {
+					b.z += 1.75
+				}
+				return []position{a, b}, nil
+			}
+			toggle(t, s, true)
+			if !s.followFormationStepLocked(ctx, target, .8, owner) || !s.followNav.ownerArrival || !s.state.Moving {
+				t.Fatal("verified route to observed owner did not start", s.stateLocked())
+			}
+			advance(200 * time.Millisecond)
+			owner.x += 3
+			target.x += 3
+			f.world.Owner.X = owner.x
+			switch mode {
+			case "stopped", "unknown stop":
+				f.world.Owner.MovementFlags = 0
+			case "turned back":
+				owner.x, f.world.Owner.X = s.pos.x-3, s.pos.x-3
+			case "stopped during clock", "lost during clock":
+				f.onClock = func() {
+					f.onClock = nil
+					if mode == "stopped during clock" {
+						f.world.Owner.MovementFlags = 0
+					} else {
+						f.world.Owner.Present = false
+					}
+				}
+			case "new visit":
+				f.world.VisitRevision++
+			case "new follow":
+				s.followRevision++
+			}
+			f.failSend = mode == "unknown stop"
+			// The ordinary controller reads World before selecting each step.
+			if _, err := s.snapshot(ctx); err != nil {
+				t.Fatal(err)
+			}
+			s.followFormationStepLocked(ctx, target, .8, owner)
+			if mode == "moving" {
+				if countPackets(f, opcode.MSGMoveHeartbeat) != 1 || countPackets(f, opcode.MSGMoveStop) != 0 || !s.state.Moving || s.state.Reason == "within_follow_formation" {
+					t.Fatal("safe verified prefix was discarded or called arrival", s.stateLocked())
+				}
+				return
+			}
+			if countPackets(f, opcode.MSGMoveHeartbeat) != 0 || countPackets(f, opcode.MSGMoveStop) != 1 || s.state.Moving || s.state.MotionUnconfirmed != (mode == "unknown stop") {
+				t.Fatal("retired prefix continued or lost stop custody", mode, s.stateLocked())
+			}
+			if mode == "unknown stop" {
+				advance(200 * time.Millisecond)
+				s.followFormationStepLocked(ctx, target, .8, owner)
+				if !s.state.MotionUnconfirmed || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveStartForward) != 1 {
+					t.Fatal("ambiguous stop replayed", s.stateLocked())
+				}
+			}
+		})
+	}
+}

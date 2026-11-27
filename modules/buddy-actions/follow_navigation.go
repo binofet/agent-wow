@@ -26,6 +26,7 @@ type followNavigation struct {
 	arrivalStop                         float64
 	arrivalKnown                        bool
 	ownerArrival                        bool
+	ownerVisit, ownerFollowRevision     uint64
 	intermediateLeg                     bool
 	legVisit                            uint64
 	legOwner                            position
@@ -251,6 +252,20 @@ func (f *followNavigation) groundCheckpoint(from position, at time.Time, speed f
 	return at.Add(time.Duration(math.Ceil(used / speed * float64(time.Second))))
 }
 
+// An already-verified route to a previous sighting can carry a moving body
+// until the normal replan. Each such packet must still make physical progress
+// toward the currently observed owner. Reaching the old endpoint is not arrival.
+func (s *Service) advancingOwnerFloorPrefix(w *worldv1.SnapshotResponse, next position) bool {
+	f, owner := &s.followNav, w.GetOwner()
+	if !f.ownerArrival || f.ownerVisit == 0 || w.GetVisitRevision() != f.ownerVisit ||
+		s.followRevision != f.ownerFollowRevision || (!s.state.Following && s.followGoalExecuting == nil) ||
+		owner.GetPositionInferred() || owner.GetMovementFlags()&0x3f == 0 || s.safeFollowPlayers(w, s.selfGUID, true) != "" {
+		return false
+	}
+	current := playerPosition(owner)
+	return distance(next, current) < distance(s.pos, current)
+}
+
 func (s *Service) followFormationStepLocked(ctx context.Context, target position, stopDistance float64, ownerFallback ...position) bool {
 	now := s.now()
 	f := &s.followNav
@@ -298,7 +313,8 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		// happens to be visible on a later tick inside the replan throttle.
 		f.path, f.arrivalKnown = nil, false
 	}
-	ownerArrivalValid := (!f.ownerArrival || len(ownerFallback) == 1 && distance(f.arrival, ownerFallback[0]) <= .25) &&
+	ownerArrivalValid := (!f.ownerArrival || len(ownerFallback) == 1 && distance(f.arrival, ownerFallback[0]) <= .25 &&
+		(f.ownerVisit == 0 || f.ownerVisit == s.lastWorld.GetVisitRevision() && f.ownerFollowRevision == s.followRevision)) &&
 		(f.legVisit == 0 || f.legVisit == s.lastWorld.GetVisitRevision())
 	arrival := f.arrival
 	if f.ownerArrival && ownerArrivalValid {
@@ -316,8 +332,19 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		}
 		return ok
 	}
-	validCached := len(f.path) != 0 && ownerArrivalValid && f.selfRevision == s.positionRevision && f.mapID == s.posMap && distance(f.expected, s.pos) <= 0.05
-	needsPlan := !validCached || f.index >= len(f.path) || distance(f.target, target) > 1.5
+	continuePrefix := false
+	if f.ownerArrival && !ownerArrivalValid && len(ownerFallback) == 1 && s.state.Moving && f.expected == s.pos &&
+		s.lastWorld.GetOwner() != nil && playerPosition(s.lastWorld.Owner) == ownerFallback[0] {
+		// Re-use only the unconsumed physical prefix. On exhausting it, a
+		// moving owner needs a new observed destination immediately.
+		if f.index < len(f.path) {
+			continuePrefix = s.advancingOwnerFloorPrefix(s.lastWorld, f.path[f.index])
+		} else if s.advancingOwnerFloorPrefix(s.lastWorld, ownerFallback[0]) {
+			f.nextPlanAt = time.Time{}
+		}
+	}
+	validCached := len(f.path) != 0 && (ownerArrivalValid || continuePrefix) && f.selfRevision == s.positionRevision && f.mapID == s.posMap && distance(f.expected, s.pos) <= 0.05
+	needsPlan := !validCached || !ownerArrivalValid || f.index >= len(f.path) || distance(f.target, target) > 1.5
 	if needsPlan && !now.Before(f.nextPlanAt) {
 		f.path = nil
 		f.nextPlanAt = now.Add(750 * time.Millisecond)
@@ -367,6 +394,11 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		f.index, f.target, f.expected, f.selfRevision, f.mapID = 0, target, s.pos, s.positionRevision, s.posMap
 		f.arrival, f.arrivalStop, f.arrivalKnown = arrival, arrivalStop, true
 		f.ownerArrival = ownerArrival
+		f.ownerVisit, f.ownerFollowRevision = 0, 0
+		if ownerArrival && s.lastWorld.GetOwner() != nil && playerPosition(s.lastWorld.Owner) == arrival {
+			f.ownerVisit, f.ownerFollowRevision = s.lastWorld.GetVisitRevision(), s.followRevision
+		}
+		continuePrefix = false
 		f.intermediateLeg = intermediate
 		f.legVisit = legVisit
 		if legVisit != 0 {
@@ -498,6 +530,23 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		// next verified segment as soon as its corner is reached.
 		p.o = followFacing(p, f.path[index])
 	}
+	if continuePrefix {
+		previous, _ := ctx.Value(movementPrewriteGuardKey{}).(movementPrewriteGuard)
+		ctx = withMovementPrewriteGuard(ctx, func(call context.Context, w *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool) {
+			if previous != nil {
+				var allowed bool
+				w, allowed = previous(call, w)
+				if !allowed {
+					return w, false
+				}
+			}
+			if !s.advancingOwnerFloorPrefix(w, p) {
+				s.state.Reason = "follow_owner_floor_route_changed"
+				return w, false
+			}
+			return w, true
+		})
+	}
 	proof := &navigationSpeedProof{from: s.pos, speed: speed, elapsed: elapsed}
 	ctx = context.WithValue(ctx, navigationSpeedProofKey{}, proof)
 	if !s.movementLocked(ctx, opcode.MSGMoveHeartbeat, p, true) {
@@ -514,7 +563,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	if f.ownerArrival && len(ownerFallback) == 1 {
 		arrival = ownerFallback[0]
 	}
-	if followAtTarget(s.pos, arrival, f.arrivalStop) {
+	if !continuePrefix && followAtTarget(s.pos, arrival, f.arrivalStop) {
 		return arrived()
 	}
 	schedule()
