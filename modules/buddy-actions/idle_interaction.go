@@ -156,6 +156,16 @@ func (s *Service) idleInteractionGuardLocked(r *actionsv1.IdleInteractionRequest
 				op.lifecycleSession == r.SessionId && op.lifecycleSelf == r.SelfGuid {
 				break
 			}
+			// A count-matched GO launched this non-channel offense. Its
+			// remaining receipt window was for damage, which may never be
+			// observed. Exploration still checks the current idle body.
+			if r.Owner == "exploration" && op.view.Capability == offenseCapability && op.view.TransportWritten &&
+				op.view.ServerCastGo && op.effectLogEligible && op.count == s.castCount && !op.selfChannel && !op.view.ChannelStarted &&
+				!now.Before(op.until) && !now.Before(s.castUntil) {
+				if spell, known := s.spellData.Lookup(op.view.SpellId); known && !spell.Channeled() {
+					break
+				}
+			}
 			return "previous cast or channel is unsettled"
 		case "waiting_server", "waiting_channel_observation", "channeling", "waiting_cleanse_effect", "waiting_created_item", "transport_unconfirmed_no_retry":
 			return "previous cast or channel is unsettled"
