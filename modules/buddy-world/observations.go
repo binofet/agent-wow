@@ -272,6 +272,7 @@ func creatureSnapshot(p *observed, s *observations, now time.Time) *worldv1.Crea
 	healthKnown := p.known[unitHealth] && p.known[unitMaxHealth] && p.fields[unitMaxHealth] > 0 && p.fields[unitHealth] <= p.fields[unitMaxHealth]
 	r := &worldv1.CreatureState{Guid: p.guid, Entry: p.fields[objectEntry], NpcFlags: p.fields[unitNPCFlags], Present: p.present, MapKnown: p.mapKnown, MapId: p.mapID, PositionKnown: p.positionKnown, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation, PositionAgeMs: age(now, p.positionAt), PositionRevision: p.positionRevision, ObservationAgeMs: age(now, p.observedAt), HealthKnown: healthKnown, Health: p.fields[unitHealth], MaxHealth: p.fields[unitMaxHealth], AliveKnown: healthKnown, Alive: healthKnown && p.fields[unitHealth] > 0 && p.fields[unitDynamicFlags]&0x20 == 0, UnitFlags: p.fields[unitFlags], DynamicFlags: p.fields[unitDynamicFlags], MovementFlags: p.movementFlags}
 	r.FactionTemplate = p.fields[0x37]
+	r.StationaryPositionKnown = r.NpcFlags&0x2000 != 0 && p.positionKnown && !p.positionInferred && p.stationaryPosition
 	r.UnitFlagsKnown = p.known[unitFlags]
 	r.DynamicFlagsKnown = p.known[unitDynamicFlags]
 	r.UnitFlags_2 = p.fields[0x3c]

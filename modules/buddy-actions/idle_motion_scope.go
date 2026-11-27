@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
@@ -207,7 +208,8 @@ func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotion
 	if _, valid := idleMotionPacketPose(payload, b.binding.selfGUID); !valid {
 		return nil, modcb.PacketNotDispatchedError("idle motion packet is not a full own movement image")
 	}
-	w, err := s.readWorldSnapshot(ctx)
+	target, _ := ctx.Value(flightmasterApproachKey{}).(*actionsv1.FlightmasterTarget)
+	w, err := s.readWorldSnapshot(ctx, target.GetGuid())
 	now := s.now()
 	if reason := s.idleMotionLocalFailureLocked(b, now); reason != "" {
 		return nil, modcb.PacketNotDispatchedError("idle motion before write: " + reason)
@@ -226,6 +228,12 @@ func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotion
 	}
 	if reason := s.idleMotionCurrentFailureLocked(b, w, now); reason != "" {
 		return nil, modcb.PacketNotDispatchedError("idle motion before write: " + reason)
+	}
+	if target != nil && op != opcode.MSGMoveStop && !s.currentFlightmasterLocked(w, target) {
+		// Only the destination changed. The preceding successful START
+		// still owes this exact stationary cleanup on the validated body.
+		b.cleanupOnly = true
+		return nil, errIdleMotionStopOnly
 	}
 	// This is the final read before a scoped packet. Only this speed-only
 	// refusal, after full custody validation, leaves the current STOP scope intact.

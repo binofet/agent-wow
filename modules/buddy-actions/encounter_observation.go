@@ -167,7 +167,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	s.supportSnapshotLocked(w)
 	s.encounterPlayers(w, online, out)
 	out.TargetMovement = s.targetMovementSnapshotLocked()
-	out.Navigation = &actionsv1.NavigationObservation{MovementPointsSupported: true, MovementPoints: s.movementPointsStateLocked(), FollowRevision: s.followRevision, GroundNavigationConfigured: s.navDataDir != "", FollowFormationSupported: true, OwnerArrival: s.followNav.ownerArrival, FollowOwner: encounterFollowOwner(w.GetOwner()), BodyMovementSupported: true, BodyLandingSupported: true, Following: s.state.Following,
+	out.Navigation = &actionsv1.NavigationObservation{Independent: s.independent, MovementPointsSupported: true, MovementPoints: s.movementPointsStateLocked(), FollowRevision: s.followRevision, GroundNavigationConfigured: s.navDataDir != "", FollowFormationSupported: true, OwnerArrival: s.followNav.ownerArrival, FollowOwner: encounterFollowOwner(w.GetOwner()), BodyMovementSupported: true, BodyLandingSupported: true, Following: s.state.Following,
 		MovementOwner: s.movementOwnerStateLocked(), OwnerGuid: w.GetOwner().GetGuid(), Phase: s.state.Reason, Detail: s.state.NavReason, RouteAvailable: s.state.NavAvailable,
 		MotionUnconfirmed: s.state.MotionUnconfirmed, GoalKnown: s.navigationGoalKnown,
 		GoalX: s.navigationGoal.x, GoalY: s.navigationGoal.y, GoalZ: s.navigationGoal.z}
@@ -180,6 +180,9 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		out.ActiveMeleeTargetGuid = s.state.AutoAttackTargetGuid
 	}
 	s.encounterCreatures(w, out)
+	if out.Flightpath == nil && (s.flightpath.operation != nil || s.flightpathActivation.operation.GetPending()) {
+		out.Flightpath = s.flightpathObservationLocked()
+	}
 	s.encounterSpells(w, online, out)
 	out.TargetMovement = s.targetMovementSnapshotLocked()
 	out.Support = s.encounterSupportLocked(ctx, w, online)
@@ -326,6 +329,14 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, out *actionsv1
 			}
 			if view.PositionKnown {
 				view.X, view.Y, view.Z, view.Orientation, view.PositionRevision = c.X, c.Y, c.Z, c.Orientation, c.PositionRevision
+			}
+			if c.NpcFlags&0x2000 != 0 {
+				view.Flightmaster = &actionsv1.EncounterFlightmaster{StationaryPositionKnown: c.StationaryPositionKnown,
+					PositionAgeMs: c.PositionAgeMs, ObservationAgeMs: c.ObservationAgeMs, MovementFlags: c.MovementFlags,
+					FactionTemplateFriendly: s.flightmasterFriendlyLocked(w.Self.FactionTemplate, c.FactionTemplate)}
+				if out.Flightpath == nil {
+					out.Flightpath = s.flightpathObservationLocked()
+				}
 			}
 			if c.CombatReachKnown {
 				view.CombatReach = proto.Float32(c.CombatReach)
@@ -481,7 +492,8 @@ func encounterFollowOwner(p *worldv1.PlayerState) *actionsv1.EncounterPlayer {
 		MapId: proto.Uint32(p.MapId), AliveKnown: p.AliveKnown, PositionKnown: p.PositionKnown && finite(playerPosition(p)),
 		PositionRevision: p.PositionRevision, X: p.X, Y: p.Y, Z: p.Z, Orientation: p.Orientation,
 		PositionAgeMs: p.PositionAgeMs, PositionAgeKnown: p.PositionKnown, PositionInferred: p.PositionInferred,
-		MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0x3f != 0, Swimming: p.MovementFlagsKnown && p.MovementFlags&swimMovementFlag != 0, PlayerFlags: p.PlayerFlags}
+		MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0x3f != 0, Swimming: p.MovementFlagsKnown && p.MovementFlags&swimMovementFlag != 0, PlayerFlags: p.PlayerFlags,
+		CombatKnown: p.UnitFlagsKnown, InCombat: p.UnitFlags&0x80000 != 0}
 	if p.AliveKnown {
 		out.Alive = proto.Bool(p.Alive)
 	}

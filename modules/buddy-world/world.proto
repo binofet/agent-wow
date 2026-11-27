@@ -508,6 +508,8 @@ message CreatureState {
   bool unit_flags_known = 39;
   bool dynamic_flags_known = 40;
   CreatureCast active_cast = 41;
+  // For flightmasters, the last position came from a stationary spawn or stop.
+  bool stationary_position_known = 42;
 }
 
 // A cast observed in a normal server spell-start event. An expired cast or

@@ -43,6 +43,7 @@ def main():
         ("encounter_spell_invocation", behaviors / "spell-invocation.lua"),
         ("encounter_instance_entry", behaviors / "instance-entry.lua"),
         ("encounter_party_summon", behaviors / "party-summon.lua"),
+        ("encounter_flightpoint", behaviors / "nearby-flightpoint.lua"),
         ("encounter_tasks", behaviors / "encounter-tasks.lua"),
     ]
     if args.intent:
