@@ -24,6 +24,93 @@ class RawGMContextTests(unittest.TestCase):
     gm_guide_fixture = brain_fixtures.DirectBrainIntegrationTests.gm_guide_fixture
     gm_primer_fixture = brain_fixtures.DirectBrainIntegrationTests.gm_primer_fixture
 
+    def test_index_never_enlarges_a_small_or_already_compact_spellbook(self):
+        from direct_context import gm_spellbook_index
+        small = dict(spells=[dict(spellId=1, name='One', mechanicsHint=dict(targetMask=2))])
+        large = dict(spells=[dict(spellId=i+1, name='水'*100) for i in range(100)])
+        large['spells'][0]['passive'] = False
+        for book in (small, large):
+            self.assertEqual(gm_spellbook_index(book), book)
+
+    def test_budgeted_owner_gm_can_page_an_indexed_spellbook_with_prior_receipts_intact(self):
+        from direct_context import encode
+        with self.gm_primer_fixture() as (brain, state, clients):
+            brain.gm_reference = (ROOT / 'dev/lotharen-gm-commands.txt').read_text()
+            state['development']['gmTasks'] = brain_fixtures.converse.gm_tasks.tools(
+                self.workspace, '87', clients['87'].url)
+            state['current_request']['messages'] = [dict(text='Inspect the current party.')]
+            body = dict(sessionId=clients['87'].core, selfGuid='87')
+            row = dict(metadataKnown=True, name='Synthetic learned rank', rank=3,
+                genericCastSupported=True, classificationReason='automatic_selection_unclassified',
+                castTimeMs=1500, flatCost=85, rangeYards=40, mechanics=dict(targetMask=2, castMinMs=1500,
+                    gcdMs=1500, durationIndex=0, cooldownMs=0, effects=[dict(targetSelectorA=21)]))
+            raw = dict(body, spellbookKnown=True, spellbookRevision='17',
+                spells=[dict(row, spellId=20000+i) for i in range(80)],
+                lastBuff=dict(phase='outcome_unconfirmed', spellId=20001, targetGuid='3'))
+            book = state['spell_toolkit'] = brain_fixtures.converse.spell_toolkit_context(raw, body, 87)
+            confirmed = dict(operationId='synthetic-confirmed', commandWritten=True, outcome='confirmed')
+            unknown = dict(operationId='synthetic-unknown', outcomeUnknown=True, replayAllowed=False)
+            book['spells'][10]['operationReceipt'] = confirmed
+
+            payloads = []
+            def capture(payload, *_):
+                payloads.append(copy.deepcopy(payload))
+                if len(payloads) == 2:
+                    return brain_fixtures.chat(('rank', 'context_read',
+                        dict(path=['spell_toolkit','spells','79','mechanicsHint','targetSelectors','0','a'])))
+                return brain_fixtures.spoken()
+            with mock.patch.object(brain.client, '_http', side_effect=capture):
+                brain.generate([], state)
+            path = next((self.state/'api-conversations').glob('*.json'))
+            retained = json.loads(path.read_text())
+            result_rows = []
+            for identifier, receipt in [('known', confirmed), ('unsettled', unknown)]:
+                call = brain_fixtures.chat((identifier, 'gm_execute', {'command':'.fixture'}))
+                result = dict(role='tool', tool_call_id=identifier, content=encode(receipt).decode())
+                retained['messages'].extend([call['choices'][0]['message'], result])
+                result_rows.append(result)
+            path.write_text(json.dumps(retained))
+            # The original local payload alone exceeds this exact byte budget.
+            budget = len(encode(payloads[0])) - 20000
+            brain.client = direct_model.DirectModel('local', brain.model, brain.client.base_url,
+                local_prompt_budget_bytes=budget)
+            with mock.patch.object(brain.client, '_http', side_effect=capture):
+                brain.generate([], state)
+            self.assertEqual(len(payloads), 3)
+            original, wire, read = payloads
+            prefix = 'Current observations and control state JSON:\n'
+            first = wire['messages'][0]['content']
+            brief = json.loads(first.split(prefix, 1)[1])
+            self.assertEqual(json.loads(original['messages'][0]['content'].split(prefix, 1)[1])['spell_toolkit'], book)
+            index = brief['spell_toolkit']
+            self.assertEqual(index['spellDetailsContextPath'], ['spell_toolkit','spells'])
+            self.assertEqual([r['spellId'] for r in index['spells']], [r['spellId'] for r in book['spells']])
+            self.assertEqual(index['lastBuff'], book['lastBuff'])
+            self.assertEqual(index['spells'][10], book['spells'][10])
+            self.assertEqual(index['spells'][79], {k:book['spells'][79][k] for k in ('spellId','name','rank','metadataKnown')})
+            self.assertLess(len(encode(wire)), budget)
+            self.assertGreater(len(encode(original))-len(encode(wire)), 30000)
+            self.assertIn('COMPLETE COMMAND NAME INDEX (739)', first)
+            self.assertEqual(original['tools'], wire['tools'])
+            self.assertEqual(len(brief['gm_observation_primer']['observation']['result']['clients']), 5)
+            for result in result_rows:
+                self.assertIn(result, wire['messages'])
+                self.assertIn(result, json.loads(path.read_text())['messages'])
+            fetched = next(r for r in read['messages'] if r.get('tool_call_id') == 'rank')
+            self.assertEqual(json.loads(fetched['content'])['result']['value'], 21)
+            # Exercise the token-only configuration. This fixture meter records
+            # the exact input passed to it without estimating model tokens.
+            metered = []
+            def meter(payload):
+                metered.append(payload['messages'][0]['content'])
+                return 1
+            brain.client = direct_model.DirectModel('local', brain.model, brain.client.base_url,
+                local_prompt_token_limit=2, local_token_counter=meter)
+            with mock.patch.object(brain.client, '_http', side_effect=capture):
+                brain.generate([], state)
+            self.assertEqual(json.loads(metered[-1].split(prefix, 1)[1])['spell_toolkit'], index)
+            self.assertFalse(any(peer.commands or peer.replies for peer in clients.values()))
+
     def test_first_real_api_payload_distinguishes_gm_destination_from_observed_owner(self):
         # Synthetic native observations exercise the real inspector and API
         # payload. They do not establish any actual instance or model choice.

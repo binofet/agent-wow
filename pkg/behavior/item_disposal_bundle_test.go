@@ -34,15 +34,9 @@ func TestItemDisposalActualEncounterBundleUsesItsSharedGear(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := "local policy=(function()\n" + tc.source + "\nend)()\nreturn {decide=policy.disposal_evaluation}"
-			if tc.name != "bundled_shared_score" {
-				disposalArmorProductionResult(t, source, frame, tc.want)
-				return
-			}
-			// The exact bundled case measured a decide resource refusal in CI.
-			// Prove its full semantics separately, then invoke the ordinary
-			// artifact-validated 5ms CLI once. A resource turn is NO decision;
-			// it cannot substitute the semantic eligible result. Native accepted
-			// exports separately require their actual default-budget decision.
+			// Both full bundles can exhaust the 5ms standalone decide budget.
+			// Check the expected classification and call the ordinary CLI once.
+			// The native default-budget test requires a decision for each scorer.
 			before := disposalArmorClone(t, frame)
 			semantic := disposalArmorResult(t, disposalArmorSemanticRuntime(t, source), frame, tc.want)
 			production, err := evaluateDisposalProduction(t, source, frame)

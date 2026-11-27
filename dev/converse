@@ -3037,6 +3037,10 @@ class DirectBrain(AgentBrain):
             from direct_context import ordinary_context
             prompt_state, brief_metrics = ordinary_context(prompt_state)
             record["ordinaryContextProjection"] = brief_metrics
+        elif (self.client.provider == "local" and "spell_toolkit" in prompt_state and
+                (self.client.local_prompt_budget_bytes is not None or self.client.local_prompt_token_limit is not None)):
+            from direct_context import gm_spellbook_index
+            prompt_state["spell_toolkit"] = gm_spellbook_index(prompt_state["spell_toolkit"])
         record["promptMetrics"] = dict(contextBytes=len(encode(prompt_state)),
             historyBytes=len(encode(history)), fullCapturedContextBytes=len(encode(full_context)))
         archive = {}
