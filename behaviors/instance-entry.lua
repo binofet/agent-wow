@@ -9,6 +9,9 @@ local function ident(s,zero)
     for i=1,#s do local b=byte_at(s,i);if b<48 or b>57 then return false end end
     return (zero or s~="0") and (#s<20 or s<="18446744073709551615")
 end
+local function later_visit(current,prior)
+    return ident(current) and ident(prior) and (#current>#prior or #current==#prior and current>prior)
+end
 local function taskid(s)
     if type(s)~="string" or #s==0 or #s>80 then return false end
     for i=1,#s do
@@ -51,14 +54,22 @@ function M.request(v,observed)
     return task
 end
 function M.validate(task)
+    local saved=task.canceledApproach
     return task.kind=="enter_instance" and taskid(task.id) and ident(task.selfGuid) and ident(task.visitId) and ident(task.ownerGuid) and
         type(task.sessionId)=="string" and uint(task.destinationMapId) and type(task.allowedTriggerIds)=="table" and
-        type(task.history)=="table" and type(task.serial)=="number" and (not task.operation or type(task.operation.capability)=="string")
+        type(task.history)=="table" and type(task.serial)=="number" and (not task.operation or type(task.operation.capability)=="string") and
+        (not saved or type(saved)=="table" and later_visit(saved.observedVisit,task.visitId) and
+         (not saved.cleanupVisit and saved.cleanupMapId==nil or
+         later_visit(saved.cleanupVisit,saved.observedVisit) and uint(saved.cleanupMapId)))
 end
 local function base(task,obs,cap)
     return {capability=cap,sessionId=task.sessionId,selfGuid=task.selfGuid,visitId=obs.visitId}
 end
 local function result_bound(task,r) return r and r.sessionId==task.sessionId and r.selfGuid==task.selfGuid end
+local function retire_absent_lease(task,refusal)
+    task.lastLease={token=task.token,visitId=task.leaseVisit,absentOrReplacedObserved=true,releaseRefusal=refusal}
+    task.token,task.leaseVisit=nil,nil
+end
 local function observe_operation(task,r)
     if not result_bound(task,r) or not ident(r.revision,true) then task.error="trigger_observation_unbound";return end
     task.nativeRevision=r.revision
@@ -90,7 +101,17 @@ function M.on_event(task,event)
     end
     if outcome=="not_dispatched" or outcome=="failed" then
         task.operation=nil;task.error=p.error or p.grpc_message or outcome
-        if op.capability=="release_interaction" then task.releaseRefused=true;task.cleanupStatus=nil
+        if op.capability=="release_interaction" then
+            -- Actions checks the exact token before attempting its physical STOP.
+            -- A new exploration lease can have the same public owner label.
+            if task.finishing=="canceled" and task.canceledApproach and task.token and op.token==task.token and
+               op.owner=="exploration" and op.sessionId==task.sessionId and op.selfGuid==task.selfGuid and
+               p.self_guid==op.selfGuid and p.visit_id==op.visitId and
+               outcome=="not_dispatched" and p.phase=="admission_rejected" and p.transport_written==false and
+               p.grpc_status=="FailedPrecondition" and p.grpc_message=="interaction lease does not match" then
+                retire_absent_lease(task,receipt)
+            else task.releaseRefused=true end
+            task.cleanupStatus=nil
         else task.blocked=true end
         return
     end
@@ -173,8 +194,7 @@ local function cleanup(task,obs)
     if owner=="" or owner~="exploration" then
         -- An observed absent/replaced lease retires only this local token.
         -- No ambiguous acquisition/release or trigger attempt is cleared.
-        task.lastLease={token=task.token,visitId=task.leaseVisit,absentOrReplacedObserved=true}
-        task.token=nil;task.leaseVisit=nil;return nil,true
+        retire_absent_lease(task);return nil,true
     end
     if task.releaseRefused then
         task.cleanupStatus=nil;task.cleanupRead=true
@@ -191,6 +211,17 @@ local function regroup(task,obs)
        a.positionEstimated==true or b.positionEstimated==true or not ident(a.positionAgeMs,true) or not ident(b.positionAgeMs,true) or tonumber(a.positionAgeMs)>2000 or tonumber(b.positionAgeMs)>2000 then return false end
     return ((a.x or 0)-(b.x or 0))^2+((a.y or 0)-(b.y or 0))^2+((a.z or 0)-(b.z or 0))^2<=M.tuning.regroup_yards^2
 end
+local function canceled_cleanup_visit(task,obs,self)
+    local saved=task.canceledApproach
+    if not self or self.present~=true or self.mapKnown~=true or not uint(obs.mapId) or self.mapId~=obs.mapId then return false end
+    local prior=saved.cleanupVisit or saved.observedVisit
+    if obs.visitId==prior then return obs.mapId==(saved.cleanupMapId or task.destinationMapId) end
+    if not later_visit(obs.visitId,prior) then return false end
+    -- The original observed arrival stays in history. A later visit must use
+    -- its own current status before the task releases its original lease.
+    saved.cleanupVisit,saved.cleanupMapId=obs.visitId,obs.mapId
+    return true
+end
 function M.step(task,obs,frame,sequence,in_combat,can_act)
     local function propose(phase,a) return view(task,phase,can_act and a or nil) end
     if obs.sessionId~=task.sessionId or obs.selfGuid~=task.selfGuid then
@@ -202,7 +233,7 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
     -- after another transfer. Keep its unsettled operation in the checkpoint.
     local walk=task.operation or task.uncertain
     if task.finishing=="canceled" and not task.notifyId and not task.destinationVisit and not task.canceledApproach and
-       ident(obs.visitId) and (#obs.visitId>#task.visitId or #obs.visitId==#task.visitId and obs.visitId>task.visitId) and
+       later_visit(obs.visitId,task.visitId) and
        obs.mapId==task.destinationMapId and self and self.present==true and self.mapKnown==true and self.mapId==obs.mapId and
        type(frame.pending)=="table" and next(frame.pending)==nil and not (task.operation and task.uncertain) and
        (not walk or walk.capability=="travel_to" and walk.sessionId==task.sessionId and walk.selfGuid==task.selfGuid and
@@ -215,9 +246,9 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
     if task.notifyId and not task.destinationVisit and not (task.native and task.native.notDispatched==true) then
         return propose("observing_trigger_delivery",request(task,obs,"area_trigger_observation"))
     end
-    local arrivedVisit=task.destinationVisit or task.canceledApproach and task.canceledApproach.observedVisit
-    if arrivedVisit then
-        if obs.visitId~=arrivedVisit or obs.mapId~=task.destinationMapId then return view(task,"waiting_for_destination_observation") end
+    if task.destinationVisit or task.canceledApproach then
+        if task.destinationVisit and (obs.visitId~=task.destinationVisit or obs.mapId~=task.destinationMapId) or
+           task.canceledApproach and not canceled_cleanup_visit(task,obs,self) then return view(task,"waiting_for_destination_observation") end
         local a,done=cleanup(task,obs)
         if not done then return propose("reconciling_old_visit_custody",a) end
         if task.finishing or regroup(task,obs) then task.finishing=task.finishing or "regroup_observed";return {task=task,done=true,status={id=task.id,kind=task.kind,phase="complete",reason=task.finishing}} end
