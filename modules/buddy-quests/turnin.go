@@ -281,6 +281,11 @@ func (s *Service) confirmRewardLocked() {
 	if a := s.state.LastReward; a != nil && a.ServerRewardObserved && a.LogRemovalConfirmed && a.Status != questsv1.RewardStatus_REWARD_CONFIRMED {
 		a.Status = questsv1.RewardStatus_REWARD_CONFIRMED
 		a.Failure = ""
+		if prior, ok := s.reservedItemQuests[a.QuestId]; ok && a.BaselineLogRevision > prior.baselineLogRevision {
+			// A distinct copy of a repeatable starter can now begin a new cycle.
+			prior.rewarded = true
+			s.reservedItemQuests[a.QuestId] = prior
+		}
 		s.state.Revision++
 	}
 }
