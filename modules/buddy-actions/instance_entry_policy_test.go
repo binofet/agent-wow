@@ -179,6 +179,10 @@ func (p *instanceEntryPolicyFixture) native(action map[string]any) proto.Message
 		response, err = p.s.Status(ctx, &emptypb.Empty{})
 	case "area_trigger_observation":
 		response, err = p.s.AreaTriggerObservation(ctx, &emptypb.Empty{})
+	case "travel_to":
+		r := &actionsv1.TravelToRequest{}
+		instanceEntryPolicyDecode(p.t, action, r, "token", "mapId", "x", "y", "z", "arrivalDistance")
+		response, err = p.s.TravelTo(ctx, r)
 	case "area_trigger_reference":
 		r := &actionsv1.AreaTriggerReferenceRequest{}
 		instanceEntryPolicyDecode(p.t, action, r, "sessionId", "selfGuid", "visitId", "destinationMapId")
@@ -240,7 +244,7 @@ func (p *instanceEntryPolicyFixture) receipt(id uint64, action map[string]any, r
 		payload["reconciliationRequired"], payload["error"] = true, "native RPC reply lost"
 	} else {
 		payload["result"] = instanceEntryPolicyJSON(p.t, response)
-		if capability == "notify_area_trigger" || capability == "move_body" {
+		if capability == "notify_area_trigger" || capability == "move_body" || capability == "travel_to" {
 			outcome = behavior.ActionSettledUnverified
 		}
 		if capability == "move_body" {

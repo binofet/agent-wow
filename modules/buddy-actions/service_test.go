@@ -139,6 +139,9 @@ func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 		{Guid: 1, Self: true, Online: true, Name: "Arlen"}, {Guid: 3, Online: true, Name: "Joel"},
 	}}}
 	s := NewService(f, 1)
+	// This fixture supplies its own legacy path oracle. Retained-corridor
+	// tests install a polygon-backed planner or the real copied assets.
+	s.planFollowCorridor = nil
 	s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
 		return []position{from, to}, nil
 	}

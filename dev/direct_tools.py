@@ -1877,6 +1877,8 @@ end}
                  'Examples: {task:"engage",targetGuid:"123"}; {task:"control",technique:"polymorph",mark:"moon",maintain:true}; '
                  '{task:"focus",targetGuid:"123"}; {task:"kill_order",order:["skull","123"]}; '
                  '{task:"wait_for_pull",id:"wait-1",ownerGuid:"3",responseYards:10}; {task:"cancel_task",id:"wait-1"}; '
+                 'go_to takes id, current mapId and finite x,y,z, with optional arrivalDistance (0.5 to 3 yards). '
+                 'Inspect latestDecision.output.task for the same id and its settled position or refusal. '
                  '{task:"cast_spell",id:"cast-1",spellId:1449}; {task:"cancel_spell",id:"cancel-1",spellId:10,expectedOperationRevision:"observed",channel:true}. '
                  'Optional requirements.position={minRangeYards:15,maxRangeYards:25} requests finite unit LoS/facing preparation on an observed exact unit with a positive stand-off; omitted keeps explicit try-now. Requires the installed attested range-band actuator and existing movement custody; unknown/refused geometry never proves arrival or permits a cast. Use your observed spell range and hazard-safe minimum, not these example distances as a universal safe radius. Use learned IDs from spell_inspect; ground casts pass targets:{mask:64,destination:{x,y,z}} with observed coordinates. '
                  'ranged_only accepts id, creatureEntry, mapId, visitId, minRangeYards, maxRangeYards, clearanceYards, durationMs, enabled:true; '
@@ -1895,6 +1897,8 @@ end}
                      enabled=dict(type='boolean'), cancel=dict(type='boolean'), maintain=dict(type='boolean'), auto=dict(type='boolean'),
                      creatureEntry=dict(type='integer',minimum=1,maximum=4294967295),
                      mapId=dict(type='integer',minimum=0,maximum=4294967295),
+                     x=dict(type='number'), y=dict(type='number'), z=dict(type='number'),
+                     arrivalDistance=dict(type='number',minimum=.5,maximum=3),
                      visitId=dict(type='string',pattern=r'^[0-9]+$'),
                      minRangeYards=dict(type='number',exclusiveMinimum=0),
                      maxRangeYards=dict(type='number',exclusiveMinimum=0,description='Greater than minRangeYards.'),

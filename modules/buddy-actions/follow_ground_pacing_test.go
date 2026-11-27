@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
@@ -30,6 +31,10 @@ func TestMountedFollowPacesVerifiedGroundWithMovingOwner(t *testing.T) {
 		}
 		return path, nil
 	}
+	f.world.VisitRevision = 1
+	s.planFollowCorridor = testFollowPlanner(&followLegTestSurface{prefix: func(ctx context.Context, from, to position) ([]position, error) {
+		return s.planPath(ctx, s.navDataDir, from, to)
+	}})
 	mountForTravel(t, s, f.world.Self, 23238)
 	mountForTravel(t, s, f.world.Owner, 23240)
 	f.world.Owner.MovementFlags = 1
@@ -152,100 +157,82 @@ func TestGroundFollowKeepsUnsupportedJumpAndTurnsBounded(t *testing.T) {
 	})
 }
 
-func TestNormalizedSlotOnSlopeUsesOnlyVerifiedObservedOwnerFloor(t *testing.T) {
-	for _, mode := range []string{"owner", "planner rejected destination floor", "planner rejected start floor", "no observed owner", "unreachable owner floor", "horizontal slot miss"} {
+func TestLocalTargetCannotSubstituteOwnerForUnreachableGround(t *testing.T) {
+	for _, mode := range []string{"destination floor mismatch", "start error", "destination error", "horizontal miss"} {
 		t.Run(mode, func(t *testing.T) {
 			s, _, _, target := followNavRig(t)
-			owner := target
-			owner.x += 4
 			s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
-				end := to
-				if to == target {
-					switch mode {
-					case "planner rejected destination floor":
-						return nil, errors.New("navigation normalized endpoint is outside destination tolerance")
-					case "planner rejected start floor":
-						return nil, errors.New("navigation normalized start is outside start tolerance")
-					}
-					end.z += 1.75
-					if mode == "horizontal slot miss" {
-						end.x++
-						end.z = to.z
-					}
-				} else if mode == "unreachable owner floor" {
-					end.z -= 1.75
+				if to != target {
+					t.Fatal("non-owner movement changed destination", to)
 				}
-				return []position{from, end}, nil
-			}
-			var observed []position
-			if mode != "no observed owner" {
-				observed = []position{owner}
-			}
-			path, arrival, _, ownerArrival, err := s.formationNavigationPath(context.Background(), target, .8, observed...)
-			if mode == "owner" || mode == "planner rejected destination floor" {
-				if err != nil || !ownerArrival || arrival != owner || path[len(path)-1] != owner {
-					t.Fatal("independent verified owner route missing", path, arrival, ownerArrival, err)
+				switch mode {
+				case "start error":
+					return nil, errors.New("navigation normalized start is outside start tolerance")
+				case "destination error":
+					return nil, errors.New("navigation normalized endpoint is outside destination tolerance")
+				case "horizontal miss":
+					to.x++
+				default:
+					to.z += 1.75
 				}
-			} else if err == nil || len(path) != 0 || ownerArrival {
-				t.Fatal("unverified owner or personal slot admitted", path, arrival, ownerArrival)
+				return []position{from, to}, nil
+			}
+			path, _, _, err := s.formationNavigationPath(t.Context(), target, .8)
+			if err == nil || len(path) != 0 {
+				t.Fatal("unverified target admitted", path, err)
 			}
 		})
 	}
 }
 
-func TestMovingObservedOwnerCanUseOnlyAnAdvancingVerifiedPrefix(t *testing.T) {
-	for _, mode := range []string{"moving", "stopped", "turned back", "stopped during clock", "lost during clock", "new visit", "new follow", "unknown stop"} {
+func TestMovingObservedOwnerUsesCurrentStripAndPreservesItsStop(t *testing.T) {
+	for _, mode := range []string{"moving", "stopped", "turned back", "lost during clock", "new visit during clock", "intent revoked during clock", "unknown stop"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, advance, target := followNavRig(t)
-			ctx := context.Background()
-			f.world.VisitRevision = 1
 			f.world.Owner.MovementFlags = 1
 			target.x = s.pos.x + 18
 			owner := target
 			owner.x += 4
-			f.world.Owner.X, f.world.Owner.Y, f.world.Owner.Z, f.world.Owner.Orientation = owner.x, owner.y, owner.z, owner.o
-			s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) {
-				if b == target {
-					b.z += 1.75
-				}
-				return []position{a, b}, nil
-			}
-			toggle(t, s, true)
-			if !s.followFormationStepLocked(ctx, target, .8, owner) || !s.followNav.ownerArrival || !s.state.Moving {
-				t.Fatal("verified route to observed owner did not start", s.stateLocked())
+			bindFollowTestOwner(t, s, f, owner)
+			surface := &recordedFollowCorridor{bindError: buddynav.ErrGroundDestination}
+			s.planFollowCorridor = testFollowPlanner(surface)
+			if !s.followFormationStepLocked(t.Context(), target, .8, owner) || !s.followNav.ownerArrival || !s.state.Moving {
+				t.Fatal("current observed owner route did not start", s.stateLocked())
 			}
 			advance(200 * time.Millisecond)
 			owner.x += 3
 			target.x += 3
-			f.world.Owner.X = owner.x
-			switch mode {
-			case "stopped", "unknown stop":
-				f.world.Owner.MovementFlags = 0
-			case "turned back":
-				owner.x, f.world.Owner.X = s.pos.x-3, s.pos.x-3
-			case "stopped during clock", "lost during clock":
-				f.onClock = func() {
-					f.onClock = nil
-					if mode == "stopped during clock" {
-						f.world.Owner.MovementFlags = 0
-					} else {
-						f.world.Owner.Present = false
-					}
-				}
-			case "new visit":
-				f.world.VisitRevision++
-			case "new follow":
-				s.followRevision++
+			if mode == "turned back" {
+				owner.x, target.x = s.pos.x-7, s.pos.x-3
 			}
-			f.failSend = mode == "unknown stop"
-			// The ordinary controller reads World before selecting each step.
-			if _, err := s.snapshot(ctx); err != nil {
+			if mode == "stopped" {
+				f.world.Owner.MovementFlags = 0
+			}
+			f.world.Owner.X = owner.x
+			f.onClock = func() {
+				f.onClock = nil
+				switch mode {
+				case "lost during clock", "unknown stop":
+					f.world.Owner.Present = false
+				case "new visit during clock":
+					f.world.VisitRevision++
+				case "intent revoked during clock":
+					s.followRevision++
+					s.state.Following = false
+				}
+			}
+			if mode == "unknown stop" {
+				f.failSend, f.failSendOpcode = true, opcode.MSGMoveStop
+			}
+			if _, err := s.snapshot(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			s.followFormationStepLocked(ctx, target, .8, owner)
-			if mode == "moving" {
-				if countPackets(f, opcode.MSGMoveHeartbeat) != 1 || countPackets(f, opcode.MSGMoveStop) != 0 || !s.state.Moving || s.state.Reason == "within_follow_formation" {
-					t.Fatal("safe verified prefix was discarded or called arrival", s.stateLocked())
+			before := s.pos
+			s.followFormationStepLocked(t.Context(), target, .8, owner)
+			if mode == "moving" || mode == "stopped" || mode == "turned back" {
+				if countPackets(f, opcode.MSGMoveHeartbeat) != 1 || countPackets(f, opcode.MSGMoveStop) != 0 || !s.state.Moving ||
+					surface.Destination() != swimPoint(owner) || distance(s.pos, owner) >= distance(before, owner) {
+					t.Fatal("follow did not repair the current direction", mode, s.stateLocked())
 				}
 				return
 			}
@@ -254,7 +241,7 @@ func TestMovingObservedOwnerCanUseOnlyAnAdvancingVerifiedPrefix(t *testing.T) {
 			}
 			if mode == "unknown stop" {
 				advance(200 * time.Millisecond)
-				s.followFormationStepLocked(ctx, target, .8, owner)
+				s.followFormationStepLocked(t.Context(), target, .8, owner)
 				if !s.state.MotionUnconfirmed || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveStartForward) != 1 {
 					t.Fatal("ambiguous stop replayed", s.stateLocked())
 				}

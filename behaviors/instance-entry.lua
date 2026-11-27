@@ -31,14 +31,33 @@ local function allowed(task,id)
     for _,value in ipairs(task.allowedTriggerIds or {}) do if value==id then return true end end
     return false
 end
+local function destination(p)
+    return point(p) and math.abs(p.x)<=40000 and math.abs(p.y)<=40000 and math.abs(p.z)<=40000
+end
+local function arrival_radius(n) return finite(n) and n>=.5 and n<=3 end
+local function at_goal(task,p)
+    local g=task.routeGoal
+    return point(p) and (g.x-p.x)^2+(g.y-p.y)^2+(g.z-p.z)^2<=task.arrivalDistance^2
+end
+local function arrival_position(self)
+    return {mapId=self.mapId,x=self.x,y=self.y,z=self.z,worldPositionRevision=self.positionRevision,
+        estimated=self.positionEstimated==true,inferred=self.positionInferred==true}
+end
 function M.request(v,observed)
+    if not observed or not ident(observed.selfGuid) or not ident(observed.visitId) or type(observed.sessionId)~="string" or
+       v.sessionId~=nil and v.sessionId~=observed.sessionId or v.selfGuid~=nil and v.selfGuid~=observed.selfGuid or
+       v.visitId~=nil and v.visitId~=observed.visitId then return end
+    if v.task=="go_to" then
+        if not taskid(v.id) or not uint(v.mapId) or v.mapId~=observed.mapId or not destination(v) or
+           v.arrivalDistance~=nil and not arrival_radius(v.arrivalDistance) then return end
+        return {id=v.id,kind=v.task,sessionId=observed.sessionId,selfGuid=observed.selfGuid,visitId=observed.visitId,
+            mapId=v.mapId,routeGoal={x=v.x,y=v.y,z=v.z},arrivalDistance=v.arrivalDistance or 3,stage="status",serial=0,history={}}
+    end
     if not taskid(v.id) or not ident(v.ownerGuid) or not uint(v.destinationMapId) or
        type(v.allowedTriggerIds)~="table" or #v.allowedTriggerIds<1 or #v.allowedTriggerIds>16 or
        v.triggerId~=nil and (not uint(v.triggerId) or v.triggerId==0) then return end
     for _,id in ipairs(v.allowedTriggerIds) do if not uint(id) or id==0 then return end end
-    if not observed or not ident(observed.selfGuid) or not ident(observed.visitId) or type(observed.sessionId)~="string" or
-       observed.mapId==v.destinationMapId or v.sessionId~=nil and v.sessionId~=observed.sessionId or
-       v.selfGuid~=nil and v.selfGuid~=observed.selfGuid or v.visitId~=nil and v.visitId~=observed.visitId then return end
+    if observed.mapId==v.destinationMapId then return end
     if v.startRecovery~=nil and (type(v.startRecovery)~="table" or not finite(v.startRecovery.absoluteBearingRadians) or
        math.abs(v.startRecovery.absoluteBearingRadians)>pi or not uint(v.startRecovery.durationMs) or
        v.startRecovery.durationMs<1 or v.startRecovery.durationMs>500) then return end
@@ -51,9 +70,10 @@ function M.request(v,observed)
     return task
 end
 function M.validate(task)
-    return task.kind=="enter_instance" and taskid(task.id) and ident(task.selfGuid) and ident(task.visitId) and ident(task.ownerGuid) and
-        type(task.sessionId)=="string" and uint(task.destinationMapId) and type(task.allowedTriggerIds)=="table" and
-        type(task.history)=="table" and type(task.serial)=="number" and (not task.operation or type(task.operation.capability)=="string")
+    if not taskid(task.id) or not ident(task.selfGuid) or not ident(task.visitId) or type(task.sessionId)~="string" or
+       type(task.history)~="table" or type(task.serial)~="number" or task.operation and type(task.operation.capability)~="string" then return false end
+    if task.kind=="go_to" then return uint(task.mapId) and destination(task.routeGoal) and arrival_radius(task.arrivalDistance) end
+    return task.kind=="enter_instance" and ident(task.ownerGuid) and uint(task.destinationMapId) and type(task.allowedTriggerIds)=="table"
 end
 local function base(task,obs,cap)
     return {capability=cap,sessionId=task.sessionId,selfGuid=task.selfGuid,visitId=obs.visitId}
@@ -100,7 +120,7 @@ function M.on_event(task,event)
         if not result_bound(task,r) or type(r.position)~="table" then task.error="status_reply_unbound";task.blocked=true;return end
         task.actions=r
         if op.cleanup then task.cleanupStatus={visitId=op.visitId,state=r} end
-        if task.stage=="status" then task.stage="references" elseif task.stage=="refresh" then task.stage=task.afterRefresh end
+        if task.stage=="status" then task.stage=task.kind=="go_to" and "prepare" or "references" elseif task.stage=="refresh" then task.stage=task.afterRefresh end
     elseif op.capability=="area_trigger_reference" then
         if not result_bound(task,r) or r.visitId~=task.visitId then task.error="reference_reply_unbound";task.blocked=true;return end
         local chosen,distance
@@ -131,8 +151,11 @@ function M.on_event(task,event)
            not r.start or r.start.revision~=op.expectedPositionRevision then task.error="route_reply_unbound";task.blocked=true;return end
         task.route=r;task.stage="travel"
     elseif op.capability=="travel_to" then
-        if not result_bound(task,r) or r.motionUnconfirmed==true then
+        if not result_bound(task,r) or r.motionUnconfirmed==true or r.moving==true or r.traveling==true then
             task.uncertain=op;task.history[#task.history+1]={operation=op,receipt=receipt};task.error="travel_effect_unconfirmed";return
+        end
+        if task.kind=="go_to" and r.reason~="exploration_within_distance" and r.reason~="exploration_ground_progress_checkpoint" then
+            task.error=r.reason or "travel_refused";task.blocked=true
         end
         task.route=nil;task.actions=r;task.stage="refresh";task.afterRefresh="prepare"
     elseif op.capability=="move_body" then
@@ -155,7 +178,8 @@ function M.commit(task,chosen)
 end
 local function view(task,phase,action)
     return {task=task,hold=true,action=action,status={id=task.id,kind=task.kind,phase=phase,error=task.error,
-        destinationMapId=task.destinationMapId,triggerId=task.volume and task.volume.triggerId,
+        destinationMapId=task.destinationMapId or (task.kind=="go_to" and task.mapId or nil),
+        destination=task.kind=="go_to" and task.routeGoal or nil,triggerId=task.volume and task.volume.triggerId,
         clientRequestId=task.notifyId,delivery=task.native,uncertain=task.uncertain~=nil}}
 end
 local function request(task,obs,cap) return base(task,obs,cap) end
@@ -214,16 +238,39 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
         waiting.hold=false
         return waiting
     end
-    if obs.visitId~=task.visitId or obs.mapId~=task.mapId then return view(task,"unlinked_visit_change_custody_retained") end
-    if task.finishing or in_combat then
+    local independent=task.kind=="go_to"
+    if obs.visitId~=task.visitId or obs.mapId~=task.mapId then
+        if not independent then return view(task,"unlinked_visit_change_custody_retained") end
+        task.finishing=task.finishing or "visit_changed"
+    end
+    local settled=independent and self and self.present==true and self.aliveKnown==true and self.alive==true and
+        self.mapKnown==true and self.mapId==task.mapId and self.positionKnown==true and self.movementKnown==true and
+        self.moving~=true and ident(self.positionRevision) and obs.navigation and obs.navigation.motionUnconfirmed~=true
+    -- An arrival candidate can go stale while the lease is being released.
+    -- Cancel, replacement, death and visit changes remain terminal intent.
+    if task.arrival then
+        if task.finishing or not (settled and at_goal(task,self)) then
+            task.arrival=nil;task.cleanupStatus=nil;task.stage="status"
+        else task.arrival=arrival_position(self) end
+    end
+    if independent and self and self.combatKnown==true and self.inCombat==true then in_combat=true end
+    if independent and in_combat and task.error=="exploration_character_unsafe_or_in_combat" then task.blocked=nil;task.error=nil end
+    if task.finishing or task.arrival or in_combat or independent and task.pausedForEncounter then
         local a,done=cleanup(task,obs)
         if not done then return propose("reconciling_entry_custody",a) end
-        if task.finishing then return {task=task,done=true,status={id=task.id,kind=task.kind,phase="complete",reason=task.finishing}} end
-        return view(task,"waiting_for_current_encounter")
+        if task.arrival then task.finishing=(task.arrival.estimated or task.arrival.inferred) and "destination_at_client_estimate" or "destination_observed" end
+        if task.finishing then return {task=task,done=true,status={id=task.id,kind=task.kind,phase="complete",reason=task.finishing,position=task.arrival}} end
+        local waiting=view(task,in_combat and "waiting_for_current_encounter" or "paused_for_nearby_hazard")
+        if independent then waiting.hold=false;task.stage="status" end
+        return waiting
     end
     if task.blocked then
         local a,done=cleanup(task,obs)
         if not done then return propose("reconciling_refused_entry_custody",a) end
+        if independent then
+            task.finishing=task.error or "travel_refused"
+            return {task=task,done=true,status={id=task.id,kind=task.kind,phase="complete",reason=task.finishing}}
+        end
         return view(task,"entry_refused_inspect_before_retry")
     end
     if task.stage=="status" or task.stage=="refresh" then return propose("reading_current_entry_status",request(task,obs,"instance_entry_status")) end
@@ -234,12 +281,32 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
         task.afterRefresh=task.stage=="travel" and "travel" or "prepare";task.stage="refresh"
         return view(task,"current_client_position_required")
     end
+    if independent and state.motionUnconfirmed~=true and state.moving~=true and state.traveling~=true and at_goal(task,p) then
+        if not settled or not at_goal(task,self) then
+            task.stage="status"
+            return view(task,"waiting_for_current_destination_position")
+        end
+        task.arrival=arrival_position(self)
+        task.cleanupStatus={visitId=obs.visitId,state=state}
+        return view(task,"settled_at_destination")
+    end
     local owner=state.interactionOwner or "";local ms=tonumber(state.interactionLeaseRemainingMs or "0")
-    if owner~="" and (owner~="exploration" or not task.token) then return view(task,"foreign_interaction_custody") end
-    if owner=="" and task.token then task.error="owned_lease_lapsed";task.blocked=true;return view(task,"owned_lease_lapsed") end
+    if owner~="" and (owner~="exploration" or not task.token) then
+        if independent then task.stage="status" end
+        return view(task,"foreign_interaction_custody")
+    end
+    if owner=="" and task.token then
+        if independent then task.lastLease={token=task.token,visitId=task.leaseVisit,absentOrReplacedObserved=true};task.token=nil;task.leaseVisit=nil
+        else task.error="owned_lease_lapsed";task.blocked=true;return view(task,"owned_lease_lapsed") end
+    end
     if not task.token or not ms or ms<=M.tuning.renew_below_ms then
         local a=request(task,obs,"acquire_idle_interaction");a.owner="exploration";a.token=task.token;a.leaseMs=M.tuning.lease_ms
         task.afterLease=task.stage;return propose(task.token and "renewing_entry_custody" or "acquiring_entry_custody",a)
+    end
+    if independent then
+        local a=request(task,obs,"travel_to")
+        a.token=task.token;a.mapId=task.mapId;a.x=task.routeGoal.x;a.y=task.routeGoal.y;a.z=task.routeGoal.z;a.arrivalDistance=task.arrivalDistance
+        return propose("traveling_to_destination",a)
     end
     if task.startRecovery and not task.recoveryDone then
         local self=(obs.players or {})[obs.selfGuid]

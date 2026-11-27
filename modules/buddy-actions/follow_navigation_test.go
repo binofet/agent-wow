@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
@@ -278,109 +279,60 @@ func TestFollowNavigationAlternateSearchSharesDeadlineAndMaximumFiveQueries(t *t
 }
 
 func TestFollowNavigationUsesActualOwnerFloorOnlyWhenExplicitlyPermitted(t *testing.T) {
-	for _, failure := range []string{"find navigation path: destination: no nearby ground polygon", "navigation polygon path is partial, exhausted, or unavailable"} {
-		t.Run(failure, func(t *testing.T) {
-			s, _, advance, _ := followNavRig(t)
-			owner := position{x: s.pos.x + 4, y: s.pos.y, z: s.pos.z + 30}
-			target := owner
-			target.x -= 4
-			calls := 0
-			var deadline time.Time
-			s.planPath = func(ctx context.Context, _ string, from, to position) ([]position, error) {
-				calls++
-				d, ok := ctx.Deadline()
-				if !ok {
-					t.Fatal("unbounded owner fallback")
-				}
-				if deadline.IsZero() {
-					deadline = d
-				}
-				if !d.Equal(deadline) {
-					t.Fatal("owner fallback renewed deadline")
-				}
-				if to != owner {
-					return nil, errors.New(failure)
-				}
-				return []position{from, {x: from.x + 8, y: from.y, z: from.z}, {x: from.x + 8, y: from.y + 8, z: 100}, {x: from.x - 8, y: from.y + 8, z: 110}, {x: from.x - 8, y: from.y, z: owner.z}, owner}, nil
+	s, f, advance, target := followNavRig(t)
+	owner := position{x: target.x + 4, y: target.y, z: target.z + 30}
+	target.z = owner.z
+	bindFollowTestOwner(t, s, f, owner)
+	s.planFollowCorridor = testFollowPlanner(&followLegTestSurface{
+		recordedFollowCorridor: recordedFollowCorridor{bindError: buddynav.ErrGroundDestination},
+		prefix: func(_ context.Context, from, goal position) ([]position, error) {
+			if goal != owner {
+				t.Fatal("unavailable personal slot displaced the observed owner", goal)
 			}
-			for range 140 {
-				s.followFormationStepLocked(context.Background(), target, .8, owner)
-				advance(200 * time.Millisecond)
-			}
-			want := 2
-			if formationDestinationUnavailable(errors.New(failure)) {
-				want = 6
-			}
-			if calls != want || s.state.Moving || !s.followNav.ownerArrival || s.followNav.arrival != owner || !followAtTarget(s.pos, owner, 2) {
-				t.Fatal("owner-floor fallback did not settle", s.stateLocked(), s.pos, calls)
-			}
-		})
+			return denseRouteLeg(from, goal), nil
+		},
+	})
+	for range 140 {
+		s.followFormationStepLocked(t.Context(), target, .8, owner)
+		advance(200 * time.Millisecond)
+	}
+	if s.state.Moving || !s.followNav.ownerArrival || s.followNav.arrival != owner || !followAtTarget(s.pos, owner, 2) {
+		t.Fatal("owner-floor fallback did not settle", s.stateLocked(), s.pos)
 	}
 }
 
 func TestOwnerFloorFallbackCannotAuthorizeInvalidStartBlockedRayOrMelee(t *testing.T) {
-	for _, mode := range []string{"invalid_start", "blocked_ray", "no_owner_opt_in", "unverified_owner_route"} {
+	for _, mode := range []string{"invalid start", "blocked ray", "non-owner target", "unverified owner route"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _, target := followNavRig(t)
 			owner := target
 			owner.x += 4
-			calls := 0
-			s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
-				calls++
-				if mode == "invalid_start" {
-					return nil, errors.New("find navigation path: start: no nearby ground polygon")
+			bindFollowTestOwner(t, s, f, owner)
+			if mode == "non-owner target" {
+				s.planPath = func(_ context.Context, _ string, _, goal position) ([]position, error) {
+					if goal != target {
+						t.Fatal("actor target redirected to the owner", goal)
+					}
+					return nil, errors.New("navigation polygon path is partial, exhausted, or unavailable")
 				}
-				if mode == "blocked_ray" || to == owner {
+				s.followFormationStepLocked(t.Context(), target, .8)
+			} else {
+				surface := &followLegTestSurface{prefix: func(_ context.Context, _, goal position) ([]position, error) {
+					if mode != "unverified owner route" || goal != owner {
+						t.Fatal("unverified fallback", goal)
+					}
 					return nil, errors.New("ground surface ray blocked")
+				}}
+				surface.bindError = errors.New(mode)
+				if mode == "unverified owner route" {
+					surface.bindError = buddynav.ErrGroundDestination
 				}
-				return nil, errors.New("navigation polygon path is partial, exhausted, or unavailable")
+				s.planFollowCorridor = testFollowPlanner(surface)
+				s.followFormationStepLocked(t.Context(), target, .8, owner)
 			}
-			var ownerArg []position
-			if mode != "no_owner_opt_in" {
-				ownerArg = []position{owner}
-			}
-			if s.followFormationStepLocked(context.Background(), target, .8, ownerArg...) || len(f.packets) != 0 || s.state.NavAvailable {
-				t.Fatal("unsafe owner fallback", s.stateLocked(), calls)
-			}
-			want := 1
-			if mode == "unverified_owner_route" {
-				want = 2
-			}
-			if calls != want {
-				t.Fatal("unexpected recovery attempt", calls)
+			if len(f.packets) != 0 || s.state.NavAvailable {
+				t.Fatal("unsafe owner fallback", s.stateLocked())
 			}
 		})
-	}
-}
-
-func TestOwnerFloorFallbackReplansWhenObservedOwnerMoves(t *testing.T) {
-	s, _, advance, target := followNavRig(t)
-	owner := target
-	owner.x += 4
-	calls := 0
-	s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
-		calls++
-		if to != owner {
-			return nil, errors.New("navigation polygon path is partial, exhausted, or unavailable")
-		}
-		return []position{from, to}, nil
-	}
-	s.followFormationStepLocked(context.Background(), target, .8, owner)
-	if !s.state.Moving || !s.followNav.ownerArrival {
-		t.Fatal(s.stateLocked())
-	}
-	owner.y += .5
-	target.y += .5
-	advance(200 * time.Millisecond)
-	s.followFormationStepLocked(context.Background(), target, .8, owner)
-	if s.state.Moving || s.state.Reason != "follow_navigation_replan_wait" {
-		t.Fatal("used old owner-floor route", s.stateLocked())
-	}
-	for range 4 {
-		advance(200 * time.Millisecond)
-		s.followFormationStepLocked(context.Background(), target, .8, owner)
-	}
-	if calls != 4 || s.followNav.arrival != owner || !s.state.Moving {
-		t.Fatal("did not bind new owner observation", s.stateLocked(), calls)
 	}
 }

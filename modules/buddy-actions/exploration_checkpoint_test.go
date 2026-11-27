@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"context"
 	"encoding/binary"
+	"math"
 	"testing"
 	"time"
 
@@ -125,17 +126,17 @@ func TestExplorationTwoShortLegsAfterSlowSnapshotStopAtFreshPose(t *testing.T) {
 }
 
 func TestExplorationCheckpointFailuresKeepCauseAndNoUnknownReplay(t *testing.T) {
-	for _, kind := range []string{"clock_regressed", "geometry", "geometry_stop_unknown", "heartbeat_unknown", "heartbeat_not_dispatched", "correction"} {
+	for _, kind := range []string{"clock_regressed", "measured_slope", "slope_stop_unknown", "heartbeat_unknown", "heartbeat_not_dispatched", "correction"} {
 		t.Run(kind, func(t *testing.T) {
 			s, f, advance, r := explorationRig(t)
 			s.planMapPath = func(_ context.Context, _ string, _ uint32, a, b position) ([]position, error) {
 				return []position{a, b}, nil
 			}
-			if kind == "geometry" || kind == "geometry_stop_unknown" {
+			if kind == "measured_slope" || kind == "slope_stop_unknown" {
 				r.X = 1510
 				r.Z = 90
 			}
-			if kind == "geometry_stop_unknown" {
+			if kind == "slope_stop_unknown" {
 				f.failSend = true
 				f.failSendOpcode = opcode.MSGMoveStop
 			}
@@ -160,11 +161,27 @@ func TestExplorationCheckpointFailuresKeepCauseAndNoUnknownReplay(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			expected := map[string]string{"clock_regressed": "exploration_clock_regressed", "geometry": "exploration_step_geometry_invalid", "geometry_stop_unknown": "exploration_step_geometry_invalid_stop_unconfirmed", "heartbeat_unknown": "exploration_movement_transport_unconfirmed", "heartbeat_not_dispatched": "exploration_movement_not_dispatched", "correction": "exploration_movement_prewrite_refused"}[kind]
+			expected := map[string]string{"clock_regressed": "exploration_clock_regressed", "measured_slope": "exploration_within_distance", "slope_stop_unknown": "transport_error_outcome_unconfirmed", "heartbeat_unknown": "exploration_movement_transport_unconfirmed", "heartbeat_not_dispatched": "exploration_movement_not_dispatched", "correction": "exploration_movement_prewrite_refused"}[kind]
+			if kind == "measured_slope" || kind == "slope_stop_unknown" {
+				previous := playerPosition(f.world.Self)
+				for _, packet := range f.packets {
+					if packet.Opcode != opcode.MSGMoveHeartbeat {
+						continue
+					}
+					next := explorationPacketPosition(t, packet.Payload)
+					if math.Abs(float64(next.z-previous.z)) > 2.001 {
+						t.Fatalf("one frame skipped the slope: %+v to %+v", previous, next)
+					}
+					previous = next
+				}
+				if previous.z <= f.world.Self.Z {
+					t.Fatal("no physically progressing slope input")
+				}
+			}
 			if got.Reason != expected || got.Traveling {
 				t.Fatal("failure cause conflated", kind, got)
 			}
-			if kind == "geometry_stop_unknown" || kind == "heartbeat_unknown" {
+			if kind == "slope_stop_unknown" || kind == "heartbeat_unknown" {
 				if !got.MotionUnconfirmed {
 					t.Fatal("ambiguous effect cleared", got)
 				}
