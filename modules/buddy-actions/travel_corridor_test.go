@@ -20,29 +20,21 @@ func (f *fixtureTravelSurface) Destination() buddynav.Point { return f.path[len(
 func (f *fixtureTravelSurface) PathAhead(ctx context.Context, _, _ buddynav.Point) ([]buddynav.Point, error) {
 	return f.path, ctx.Err()
 }
-func fixtureTravelPath(s *Service, read bool) openTravelSurface {
+func fixtureTravelPath(plan func(context.Context, string, uint32, position, position) ([]position, error), densify bool) openTravelSurface {
 	return func(ctx context.Context, dir string, id uint32, a, b buddynav.Point) (travelSurface, error) {
-		var path []position
-		var err error
-		if read {
-			if s.planLegPath == nil {
-				return nil, errors.New("fixture planner missing")
-			}
-			path, err = s.planLegPath(ctx, dir, id, navPosition(a), navPosition(b))
-		} else {
-			p, perr := s.mapNavigationPath(ctx, dir, id, navPosition(a), navPosition(b))
-			if perr != nil {
-				return nil, perr
-			}
-			if len(p) > 0 {
-				path = append(path, p[0])
-			}
-			for i := 1; i < len(p); i++ {
-				path = append(path, denseRouteLeg(p[i-1], p[i])[1:]...)
-			}
+		path, err := plan(ctx, dir, id, navPosition(a), navPosition(b))
+		if err != nil {
+			return nil, err
 		}
-		if err != nil || len(path) == 0 {
+		if len(path) == 0 {
 			return nil, errors.New("fixture did not supply a route")
+		}
+		if densify {
+			samples := []position{path[0]}
+			for i := 1; i < len(path); i++ {
+				samples = append(samples, denseRouteLeg(path[i-1], path[i])[1:]...)
+			}
+			path = samples
 		}
 		points := make([]buddynav.Point, len(path))
 		for i, p := range path {

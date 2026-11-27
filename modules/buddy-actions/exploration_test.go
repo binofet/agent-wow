@@ -22,7 +22,7 @@ import (
 func explorationRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *actionsv1.TravelToRequest) {
 	t.Helper()
 	s, f, advance := rig(t)
-	s.openTravel = fixtureTravelPath(s, false)
+	s.openTravel = fixtureTravelPath(s.mapNavigationPath, true)
 	f.world.Owner = nil
 	f.world.Self.MapId = 1
 	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = 1500, 1500, 80

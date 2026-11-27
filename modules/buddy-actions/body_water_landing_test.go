@@ -189,6 +189,7 @@ func TestMaraudonFollowWaterExecutionFromMeasuredLedge(t *testing.T) {
 			}
 			s.posKnown, s.navDataDir = false, dir
 			s.planMapPath = planMapNavigation
+			s.planFollowCorridor = openFollowCorridor
 			released := false
 			s.bodyMotionWait = func(_ context.Context, dt time.Duration) error {
 				advance(dt)

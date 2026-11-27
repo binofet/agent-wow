@@ -10,18 +10,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func planLegNavigation(ctx context.Context, root string, mapID uint32, from, to position) ([]position, error) {
-	points, err := buddynav.PlanLegContext(ctx, root, mapID, buddynav.Point{X: from.x, Y: from.y, Z: from.z}, buddynav.Point{X: to.x, Y: to.y, Z: to.z})
-	if err != nil {
-		return nil, err
-	}
-	path := make([]position, len(points))
-	for i, p := range points {
-		path[i] = position{x: p.X, y: p.Y, z: p.Z}
-	}
-	return path, nil
-}
-
 // PlanRouteLeg is observational only: no lease, controller, cast, packet or
 // movement is changed. A returned endpoint is guidance, never a player pose or
 // permission to move. TravelTo revalidates its own custody and starting pose.
