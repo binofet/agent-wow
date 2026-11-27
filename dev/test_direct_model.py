@@ -747,6 +747,114 @@ class LocalPromptBudgetTests(unittest.TestCase):
             transcript_path=path, conversation_key='body:87:owner', request_id='same-request',
             read_only_tools={'observe'}, **kwargs)
 
+    @staticmethod
+    def gm_selection_receipt(args, operation):
+        from direct_tools import packed, sha
+        command, selected = args['command'], args.get('select_guid')
+        selection = dict(sessionId='aw-7', selfGuid='87', worldVisitRevision='17', requestedGuid=selected,
+            observedTargetKnown=True, observedTargetGuid='12', selectionMatches=selected=='12',
+            locallyResolvedSelectedGuid='12', realmCommandTargetKnown=False, actionsPosition=dict(x=1,y=2,z=3),
+            resolutionEvidence='client_observation_only_not_realm_command_receipt',
+            rawSelf=dict(guid='87', present=True, mapKnown=True, mapId=1, targetKnown=True, targetGuid='12',
+                learnedSpells=[dict(spellId=n,known=True) for n in range(80)]))
+        return dict(ok=True, result=dict(command=command, selectedGuid=selected,
+            commandSHA256=sha(packed(dict(command=command,selectGuid=selected))), operationId=operation,
+            sessionId='aw-7', transportWritten=True, commandTransportWritten=True, selectionTransportWritten=False,
+            gameEffectClaimed=False, completion='effect_not_yet_verified', selection=selection,
+            feedback=dict(status='observed',messages=[dict(sequence='173',text='synthetic realm reply')])))
+
+    def test_bound_historical_gm_receipts_page_and_reopen_without_command_replay(self):
+        from direct_tools import context_page, context_tool_schema
+        schemas = [context_tool_schema(), dict(type='function',function=dict(name='gm_execute',
+            parameters=dict(type='object',properties=dict(command=dict(type='string'),select_guid=dict(type='string')),
+                required=['command'])))]
+        system = 'Current bound system and authority'
+        owner = dict(role='user',content='Keep the earlier writes and check what the old command returned.')
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'conversation.json'
+            def generate(client, user, identity, dispatch, **options):
+                return client.generate(system,[user],None,schemas,dispatch,natural=True,transcript_path=path,
+                    conversation_key='synthetic-bound-owner',request_id=identity,read_only_tools={'context_read'},**options)
+            commands = []
+            for n in range(14):
+                args = dict(command=f'.lookup item sample{n}') if n<8 else dict(command=f'.additem {1000+n}',select_guid='12')
+                call_id = f'gm-{n}'
+                def execute(name, actual):
+                    self.assertEqual((name,actual),('gm_execute',args))
+                    commands.append(call_id)
+                    return self.gm_selection_receipt(actual,'operation-'+str(n))
+                generate(self.Transport([chat((call_id,'gm_execute',args)),ActiveContextTests.text()]),
+                    dict(role='user',content=f'Original owner request {n}'),f'prior-{n}',execute)
+            prior = json.loads(path.read_text())['messages']
+            old_write = next(i for i,row in enumerate(prior) if row.get('tool_call_id')=='gm-8')
+            location = ['conversationArchive',str(old_write),'content']
+            context = {'conversationArchive':{}}
+            def archive(reference, original):
+                context['conversationArchive'][str(reference['transcriptMessage'])] = dict(content=original)
+            def read(name, args):
+                self.assertEqual(name,'context_read')
+                return dict(ok=True,result=context_page(context,**args))
+            # Count each serialized test byte as one synthetic token. Production uses the configured model's meter.
+            client = self.Transport([chat(('recover-original','context_read',dict(path=location,limit=4096))),
+                ActiveContextTests.text()],local_prompt_token_limit=40960,
+                local_token_counter=lambda payload:len(json.dumps(payload,separators=(',',':')).encode()))
+            generate(client,owner,'current',read,archive_read=archive)
+            outgoing = client.sent[0]['messages']
+            self.assertEqual((outgoing[0]['content'],outgoing[-1]),(system,owner))
+            paged = []
+            for i,row in enumerate(prior):
+                wire = outgoing[i+1]
+                if row.get('role')!='tool' or row['tool_call_id'] in ('gm-12','gm-13'):
+                    self.assertEqual(row,wire)
+                    continue
+                projected = json.loads(wire['content'])
+                marker = projected.pop('hostArchivedSelection')
+                self.assertEqual(marker['field'],'result.selection.rawSelf')
+                self.assertEqual(marker['resultSHA256'],hashlib.sha256(row['content'].encode()).hexdigest())
+                self.assertEqual(context_page(context,path=marker['contextPath'],limit=4096)['value'],row['content'])
+                expected = json.loads(row['content'])
+                del expected['result']['selection']['rawSelf']['learnedSpells']
+                self.assertEqual(projected,expected)
+                paged.append(wire['tool_call_id'])
+            self.assertEqual(paged,[f'gm-{n}' for n in range(12)])
+            page = next(row for row in client.sent[1]['messages'] if row.get('tool_call_id')=='recover-original')
+            self.assertEqual(json.loads(page['content'])['result']['value'],prior[old_write]['content'])
+            self.assertEqual(prior,json.loads(path.read_text())['messages'][:len(prior)])
+            with self.assertRaisesRegex(ModelError,'conversation_request_already_entered'):
+                generate(self.Transport([]),owner,'current',lambda *_:self.fail('replayed prior request'))
+            self.assertEqual(commands,[f'gm-{n}' for n in range(14)])
+
+    def test_uncertain_current_unbound_or_unpageable_gm_selection_remains_exact(self):
+        from direct_tools import context_tool_schema
+        args = dict(command='.additem 123',select_guid='12')
+        fingerprint = hashlib.sha256(direct_model._packed(['gm_execute',args],1000)).hexdigest()
+        reader = context_tool_schema()['function']
+        for case in ('current_owner','pending','unknown_fingerprint','command_unknown','unwritten','foreign_selection',
+                'wrong_digest','raw_receipt','no_archive','no_reader','incomplete_batch','within_budget'):
+            with self.subTest(case=case):
+                value = self.gm_selection_receipt(args,'operation-1')
+                receipt = value['result']
+                if case=='command_unknown': receipt['commandOutcomeUnknown']=True
+                if case=='unwritten': receipt['commandTransportWritten']=False
+                if case=='foreign_selection': receipt['selection']['sessionId']='aw-8'
+                if case=='wrong_digest': receipt['commandSHA256']='0'*64
+                if case=='raw_receipt': receipt['selection']['rawSelf']['lastOperation']=dict(outcome='observed')
+                rows=[dict(role='user',content='Original owner')]
+                for i in range(3):
+                    call=chat((str(i),'gm_execute',args))['choices'][0]['message']
+                    if case=='incomplete_batch' and i==0:
+                        call['tool_calls'].append(dict(call['tool_calls'][0],id='missing'))
+                    rows.extend([call,dict(role='tool',tool_call_id=str(i),content=json.dumps(value))])
+                if case!='current_owner': rows.append(dict(role='user',content='Next owner request'))
+                client = self.Transport([],local_prompt_budget_bytes=200000)
+                client.last_receipt = {}
+                archive = None if case=='no_archive' else lambda *_:self.fail('ineligible historical receipt was paged')
+                payload, audit = client._local_prompt('Current system',rows,[] if case=='no_reader' else [reader],
+                    {'context_read'},{fingerprint:True} if case=='unknown_fingerprint' else {},
+                    {'calls':[{}]} if case=='pending' else None,canonical=rows,aggressive=case!='within_budget',archive_read=archive)
+                self.assertEqual(audit['archivedSelectionSnapshotCount'],0)
+                self.assertEqual(payload['messages'][1:],rows)
+
     def test_late_overflow_compacts_history_without_reentering_completed_mutation(self):
         replies = [chat(('r0', 'observe', dict(key='old'))),
             chat(('r1', 'observe', dict(key='custody'))), chat(('r2', 'observe', dict(key='recent'))),

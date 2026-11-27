@@ -245,6 +245,36 @@ def _receipt_evidence(value):
     return False
 
 
+def _pageable_gm_selection(value, args):
+    """Identify the duplicate World snapshot attached to a written native command receipt."""
+    if (not isinstance(args, dict) or not isinstance(value, dict) or
+            set(value) != {"ok", "result"} or value["ok"] is not True):
+        return False
+    receipt = value["result"]
+    if not isinstance(receipt, dict):
+        return False
+    command, selected = args.get("command"), args.get("select_guid")
+    if (not isinstance(command, str) or receipt.get("command") != command or
+            "selectedGuid" not in receipt or receipt["selectedGuid"] != selected or
+            receipt.get("commandTransportWritten") is not True or receipt.get("transportWritten") is not True or
+            type(receipt.get("selectionTransportWritten")) is not bool or receipt.get("gameEffectClaimed") is not False or
+            not isinstance(receipt.get("operationId"), str) or not receipt["operationId"] or
+            not isinstance(receipt.get("sessionId"), str) or not receipt["sessionId"] or
+            receipt.get("commandOutcomeUnknown") or receipt.get("selectionOutcomeUnknown") or _read_custody(value)):
+        return False
+    command_key = json.dumps(dict(command=command, selectGuid=selected), separators=(",", ":")).encode()
+    if receipt.get("commandSHA256") != hashlib.sha256(command_key).hexdigest():
+        return False
+    selection = receipt.get("selection")
+    if (not isinstance(selection, dict) or selection.get("sessionId") != receipt["sessionId"] or
+            "requestedGuid" not in selection or selection["requestedGuid"] != selected or
+            selection.get("resolutionEvidence") != "client_observation_only_not_realm_command_receipt"):
+        return False
+    raw = selection.get("rawSelf")
+    return (isinstance(raw, dict) and raw.get("present") is True and raw.get("guid") is not None and
+            str(raw["guid"]) == str(selection.get("selfGuid")) and not _receipt_evidence(raw))
+
+
 def protected_read_evidence(value):
     return _read_custody(value) or _receipt_evidence(value)
 
@@ -731,7 +761,7 @@ class DirectModel:
 
     def _local_prompt(self, system, active, tools, read_only_tools, unknown, pending, *, canonical,
                       aggressive=False, archive_read=None):
-        """Only outgoing historical pure-read bodies may be replaced, never receipts.
+        """Page historical reads and redundant selection observations on the outgoing copy.
 
         Byte limits are transport limits, not token estimates. An optional trusted
         host counter must count this exact model's rendered payload (including
@@ -774,6 +804,11 @@ class DirectModel:
         before_bytes, before_tokens = measure()
         size, tokens = before_bytes, before_tokens
         changed = []
+        archived_selections = 0
+        current_selections = []
+        current_user = max((i for i, row in enumerate(canonical) if row.get("role") == "user"), default=-1)
+        page_selections = archive_read is not None and "context_read" in read_only_tools and any(
+            tool.get("name") == "context_read" for tool in tools)
         # Recent batches retain exact visible content, calls and results,
         # including mixed read/mutation batches. Only auxiliary thinking keys
         # above are omitted; no partial pair or altered call ID is produced.
@@ -798,37 +833,62 @@ class DirectModel:
                         {m.get("tool_call_id") for _, m in results} != set(group["calls"])):
                     continue
                 for index, message in results:
-                    if index in protected: continue
                     call_id = message.get("tool_call_id")
                     call = group["calls"][call_id]
                     function = call.get("function", {})
                     name, original = function.get("name"), message.get("content")
                     if not isinstance(original, str): continue
+                    historical_gm = name == "gm_execute" and current_user >= 0 and page_selections
+                    if index in protected and not historical_gm: continue
                     try:
                         args = _decode(function["arguments"])
-                        if not self._read_only_call(name, args, read_only_tools): continue
                         fingerprint = hashlib.sha256(_packed([name, args], self.max_request_bytes)).hexdigest()
+                        if fingerprint in unknown: continue
                         full = canonical[index]["content"]
                         result = _decode(full)
-                        if fingerprint in unknown or protected_read_evidence(result): continue
+                        page_selection = historical_gm and _pageable_gm_selection(result, args)
+                        if not page_selection and (index in protected or
+                                not self._read_only_call(name, args, read_only_tools) or protected_read_evidence(result)):
+                            continue
                     except (KeyError, TypeError, ValueError, RecursionError, UnicodeError): continue
                     raw = full.encode()
                     reference = dict(transcriptMessage=index, toolCallId=call_id,
                         resultSHA256=hashlib.sha256(raw).hexdigest(), resultBytes=len(raw))
-                    marker = dict(hostArchivedRead=reference, tool=name,
-                        note="Historical pure-read body omitted from this API copy, not a summary or current fact. "
-                            "Exact call and full result remain in the same durable transcript. "
-                            "Refresh the original read for current facts; no action or receipt was omitted.")
+                    path = ['conversationArchive', str(index), 'content']
+                    if page_selection:
+                        selection = result["result"]["selection"]
+                        raw_self = selection["rawSelf"]
+                        selection["rawSelf"] = {key:raw_self[key] for key in
+                            ("guid", "present", "mapKnown", "mapId", "targetKnown", "targetGuid") if key in raw_self}
+                        result["hostArchivedSelection"] = dict(reference, field="result.selection.rawSelf", contextPath=path)
+                        marker = result
+                    else:
+                        marker = dict(hostArchivedRead=reference, tool=name,
+                            note="Historical pure-read body omitted from this API copy, not a summary or current fact. "
+                                "Exact call and full result remain in the same durable transcript. "
+                                "Refresh the original read for current facts; no action or receipt was omitted.")
+                        if archive_read is not None: marker['contextPath'] = path
+                    replacement = _packed(marker, self.max_request_bytes*8).decode()
+                    if len(replacement.encode()) >= len(original.encode()): continue
+                    if page_selection and index > current_user:
+                        current_selections.append((index,replacement,reference,full))
+                        continue
                     if archive_read is not None:
                         archive_read(copy.deepcopy(reference), full)
-                        marker['contextPath'] = ['conversationArchive', str(index), 'content']
-                    replacement = _packed(marker, self.max_request_bytes).decode()
-                    if len(replacement.encode()) >= len(original.encode()): continue
                     projected[index]["content"] = replacement
-                    changed.append(reference)
-        if changed: size, tokens = measure()
+                    if page_selection: archived_selections += 1
+                    else: changed.append(reference)
+        if changed or archived_selections: size, tokens = measure()
+        # A long running owner turn can itself outgrow the window. Only defer its older
+        # ancillary World snapshots if paging earlier turns still leaves the payload over budget.
+        if current_selections and not fits(size, tokens):
+            for index, replacement, reference, full in current_selections:
+                archive_read(copy.deepcopy(reference), full)
+                projected[index]["content"] = replacement
+            archived_selections += len(current_selections)
+            size, tokens = measure()
         audit = dict(reason="context_overflow" if aggressive else "configured_budget",
-            canonicalMessagesUnchanged=True, archivedReadResults=changed,
+            canonicalMessagesUnchanged=True, archivedReadResults=changed, archivedSelectionSnapshotCount=archived_selections,
             archivedAssistantReasoning=auxiliary,
             beforeBytes=before_bytes, afterBytes=size, byteLimit=self.local_prompt_budget_bytes,
             beforeTokens=before_tokens, afterTokens=tokens, tokenLimit=self.local_prompt_token_limit,
