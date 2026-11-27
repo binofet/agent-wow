@@ -36,6 +36,7 @@ func destinationPlanningContext(ctx context.Context) (context.Context, context.C
 
 type destinationOwner struct {
 	lastSeen, formation  bool
+	mountedLastSeen      bool
 	gravity              destinationGravity
 	token                string
 	guid, followRevision uint64
