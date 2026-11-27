@@ -132,8 +132,9 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 		if scope == nil || m.session.SendScopedPacket == nil {
 			return modcb.PacketNotDispatchedError("transport scope is unsupported by this host")
 		}
-		if count, valid, supplied := modcb.IncomingFlightpathWorldPackets(ctx); supplied || modcb.FlightpathQueryPacket(opcode, payload) {
-			if module != actionsModule || !modcb.FlightpathQueryPacket(opcode, payload) || !valid || count == math.MaxUint64 || !routeScopeBound(scope) {
+		flightmaster := modcb.FlightpathGroundPacket(opcode, payload)
+		if count, valid, supplied := modcb.IncomingFlightpathWorldPackets(ctx); supplied || flightmaster {
+			if module != actionsModule || !flightmaster || !valid || count == math.MaxUint64 || !routeScopeBound(scope) {
 				return modcb.PacketNotDispatchedError("current native flightmaster observation required")
 			}
 			ctx = modsession.WithFlightpathWorldCheck(ctx, func() bool {

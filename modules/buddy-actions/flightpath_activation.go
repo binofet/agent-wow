@@ -135,6 +135,12 @@ func (s *Service) ActivateFlightpath(ctx context.Context, request *actionsv1.Fli
 	if err != nil {
 		return refuse("flightpath activation world observations unavailable: " + err.Error())
 	}
+	query := &actionsv1.FlightpathQueryRequest{SessionId: r.SessionId, SelfGuid: r.SelfGuid, VisitId: r.VisitId,
+		Token: r.Token, NpcGuid: r.NpcGuid, Mode: "activate"}
+	ctx, w, stop, reason := s.flightpathGroundObservationLocked(ctx, query, w)
+	if reason != "" {
+		return refuse(reason)
+	}
 	if reason := safeQuestCharacter(w, r.SelfGuid); reason != "" {
 		return refuse("flightpath_activation_" + reason)
 	}
@@ -147,8 +153,7 @@ func (s *Service) ActivateFlightpath(ctx context.Context, request *actionsv1.Fli
 	if w.SelfCopperKnown {
 		op.MoneyBeforeKnown, op.MoneyBeforeCopper, op.MoneyBeforeRevision = true, w.SelfCopper, w.SelfCopperRevision
 	}
-	query := &actionsv1.FlightpathQueryRequest{SessionId: r.SessionId, SelfGuid: r.SelfGuid, VisitId: r.VisitId, Token: r.Token, NpcGuid: r.NpcGuid}
-	if reason := s.flightpathQueryGuardLocked(ctx, query, w, now, nil); reason != "" {
+	if reason := s.flightpathQueryGuardLocked(ctx, query, w, now, stop); reason != "" {
 		return refuse(reason)
 	}
 	if w.Self.PositionInferred {
@@ -167,7 +172,7 @@ func (s *Service) ActivateFlightpath(ctx context.Context, request *actionsv1.Fli
 	payload := binary.LittleEndian.AppendUint64(make([]byte, 0, 16), r.NpcGuid)
 	payload = binary.LittleEndian.AppendUint32(payload, r.SourceNode)
 	payload = binary.LittleEndian.AppendUint32(payload, r.DestinationNode)
-	if err := s.sendPacketLocked(ctx, opcode.CMSGActivatetaxi, payload); err != nil {
+	if err := s.sendPacketLocked(ctx, opcode.CMSGActivatetaxi, payload, stop.GetTransportScope()); err != nil {
 		op.Error = boundedPolicyDiagnostic(err.Error(), 240)
 		if modcb.PacketWasNotDispatched(err) {
 			op.Pending, op.Phase = false, "not_dispatched"

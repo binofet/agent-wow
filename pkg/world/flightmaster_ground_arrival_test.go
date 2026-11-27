@@ -15,7 +15,7 @@ import (
 const flightmasterTestGUID = uint64(0xf130000625000045)
 
 func TestFlightmasterQueryScopeRequiresTheSameKnownPhysicalGroundStop(t *testing.T) {
-	for _, change := range []string{"status", "menu", "missing World confirmation", "new STOP at same coordinate",
+	for _, change := range []string{"status", "menu", "paid hop", "missing World confirmation", "new STOP at same coordinate",
 		"new START", "new uncertain write", "own correction", "same map new visit", "active impulse",
 		"not actually stationary", "activation packet", "missing GUID"} {
 		t.Run(change, func(t *testing.T) {
@@ -35,6 +35,10 @@ func TestFlightmasterQueryScopeRequiresTheSameKnownPhysicalGroundStop(t *testing
 			switch change {
 			case "menu":
 				code = opcode.CMSGTaxiqueryavailablenodes
+			case "paid hop":
+				code = opcode.CMSGActivatetaxi
+				payload = binary.LittleEndian.AppendUint32(payload, 6)
+				payload = binary.LittleEndian.AppendUint32(payload, 8)
 			case "missing World confirmation":
 				ctx = context.Background()
 			case "new STOP at same coordinate":
@@ -60,7 +64,7 @@ func TestFlightmasterQueryScopeRequiresTheSameKnownPhysicalGroundStop(t *testing
 			}
 			before := c.writes
 			_, _, err := e.writeContext(ctx, code, payload, scope)
-			if change == "status" || change == "menu" {
+			if change == "status" || change == "menu" || change == "paid hop" {
 				if err != nil || c.writes != before+1 {
 					t.Fatal(err, c.writes)
 				}
@@ -72,8 +76,12 @@ func TestFlightmasterQueryScopeRequiresTheSameKnownPhysicalGroundStop(t *testing
 }
 
 func TestFlightmasterSocketDrainsAlreadyReceivedTargetMovementOrDespawn(t *testing.T) {
-	for _, code := range []uint16{opcode.SMSGMonsterMove, opcode.SMSGDestroyObject} {
-		t.Run(opcode.WorldName(uint32(code)), func(t *testing.T) {
+	for _, pair := range []struct{ incoming, outgoing uint16 }{
+		{opcode.SMSGMonsterMove, opcode.CMSGTaxinodeStatusQuery}, {opcode.SMSGDestroyObject, opcode.CMSGTaxinodeStatusQuery},
+		{opcode.SMSGMonsterMove, opcode.CMSGActivatetaxi}, {opcode.SMSGDestroyObject, opcode.CMSGActivatetaxi},
+	} {
+		code := pair.incoming
+		t.Run(opcode.WorldName(uint32(code))+"/"+opcode.WorldName(uint32(pair.outgoing)), func(t *testing.T) {
 			c := &scopeWriteConn{}
 			e := scopedBodyEngine(t, c)
 			rt := &scopeObservedRuntime{observedRuntime: newObserved(), facts: make(chan *modv1.WorldPacket, 128)}
@@ -107,7 +115,12 @@ func TestFlightmasterSocketDrainsAlreadyReceivedTargetMovementOrDespawn(t *testi
 				rt.Close()
 			})
 			ctx := modsession.WithFlightpathWorldCheck(context.Background(), func() bool { return len(rt.facts) == 0 })
-			req := writeRequest{ctx: ctx, op: opcode.CMSGTaxinodeStatusQuery, body: binary.LittleEndian.AppendUint64(nil, flightmasterTestGUID), transportScope: stop, reply: make(chan error, 1)}
+			body := binary.LittleEndian.AppendUint64(nil, flightmasterTestGUID)
+			if pair.outgoing == opcode.CMSGActivatetaxi {
+				body = binary.LittleEndian.AppendUint32(body, 6)
+				body = binary.LittleEndian.AppendUint32(body, 8)
+			}
+			req := writeRequest{ctx: ctx, op: uint32(pair.outgoing), body: body, transportScope: stop, reply: make(chan error, 1)}
 			e.s.writes <- req
 			select {
 			case err := <-req.reply:

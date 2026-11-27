@@ -30,6 +30,22 @@ func FlightpathQueryPacket(op uint32, payload []byte) bool {
 	if (op != opcode.CMSGTaxinodeStatusQuery && op != opcode.CMSGTaxiqueryavailablenodes) || len(payload) != 8 {
 		return false
 	}
-	guid := binary.LittleEndian.Uint64(payload)
+	return flightmasterGUID(binary.LittleEndian.Uint64(payload))
+}
+
+// FlightpathGroundPacket is the set of ordinary flightmaster packets that can
+// bind to a proved ground STOP. Free Lua discovery retains its query-only check.
+func FlightpathGroundPacket(op uint32, payload []byte) bool {
+	if op != opcode.CMSGActivatetaxi {
+		return FlightpathQueryPacket(op, payload)
+	}
+	if len(payload) != 16 || !flightmasterGUID(binary.LittleEndian.Uint64(payload)) {
+		return false
+	}
+	from, to := binary.LittleEndian.Uint32(payload[8:]), binary.LittleEndian.Uint32(payload[12:])
+	return from > 0 && from <= 448 && to > 0 && to <= 448 && from != to
+}
+
+func flightmasterGUID(guid uint64) bool {
 	return guid>>48 == 0xf130 && guid&0xffffff != 0 && (guid>>24)&0xffffff != 0
 }

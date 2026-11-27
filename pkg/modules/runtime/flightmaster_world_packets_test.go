@@ -29,6 +29,8 @@ func TestFlightmasterWorldCountMatchesTheActualOrderedSubscriber(t *testing.T) {
 	w := buddyworld.NewIndependentService(99)
 	scope := &modv1.TransportScope{ConnectionId: "test", SelfGuid: 99, VisitBound: true, VisitRevision: 9, MotionRevision: 5}
 	npc := binary.LittleEndian.AppendUint64(nil, 0xf130000625000045)
+	booking := binary.LittleEndian.AppendUint32(npc, 6)
+	booking = binary.LittleEndian.AppendUint32(booking, 8)
 	inst := m.instances["buddy-world"]
 	consume := func() {
 		t.Helper()
@@ -77,6 +79,9 @@ func TestFlightmasterWorldCountMatchesTheActualOrderedSubscriber(t *testing.T) {
 		if err := write(ctx, opcode.CMSGTaxinodeStatusQuery, npc, scope); !modcb.PacketWasNotDispatched(err) {
 			t.Fatal(err)
 		}
+		if err := write(ctx, opcode.CMSGActivatetaxi, booking, scope); !modcb.PacketWasNotDispatched(err) {
+			t.Fatal(err)
+		}
 	}
 	consume()
 	if err := write(old, opcode.CMSGTaxinodeStatusQuery, npc, scope); !modcb.PacketWasNotDispatched(err) {
@@ -86,9 +91,19 @@ func TestFlightmasterWorldCountMatchesTheActualOrderedSubscriber(t *testing.T) {
 	if err := write(current, opcode.CMSGTaxiqueryavailablenodes, npc, scope); err != nil {
 		t.Fatal(err)
 	}
+	if err := write(current, opcode.CMSGActivatetaxi, booking, scope); err != nil {
+		t.Fatal(err)
+	}
+	invalidDest := append([]byte(nil), booking...)
+	binary.LittleEndian.PutUint32(invalidDest[12:], 449)
 	for _, err := range []error{
 		write(context.Background(), opcode.CMSGTaxinodeStatusQuery, npc, scope),
 		write(current, opcode.CMSGActivatetaxi, npc, scope),
+		write(current, opcode.CMSGActivatetaxi, invalidDest, scope),
+		write(current, opcode.CMSGActivatetaxiexpress, booking, scope),
+		write(context.Background(), opcode.CMSGActivatetaxi, booking, scope),
+		m.modulePacketWriter(sid, actionsModule)(current, opcode.CMSGActivatetaxi, booking),
+		m.moduleScopedPacketWriter(sid, "buddy-world")(current, opcode.CMSGActivatetaxi, booking, scope),
 		write(current, opcode.CMSGTaxinodeStatusQuery, []byte{0}, scope),
 		m.modulePacketWriter(sid, actionsModule)(current, opcode.CMSGTaxinodeStatusQuery, npc),
 		m.moduleScopedPacketWriter(sid, "buddy-world")(current, opcode.CMSGTaxinodeStatusQuery, npc, scope),
@@ -98,7 +113,7 @@ func TestFlightmasterWorldCountMatchesTheActualOrderedSubscriber(t *testing.T) {
 			t.Fatal("scope leaked", err)
 		}
 	}
-	if writes != 2 {
+	if writes != 3 {
 		t.Fatal(writes)
 	}
 }

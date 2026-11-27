@@ -65,7 +65,7 @@ func (s *Service) flightpathQueryBodyReasonLocked(r *actionsv1.FlightpathQueryRe
 	flags := w.GetSelf().GetUnitFlags()
 	if r.Opportunity != nil && (r.Mode == "status" || r.Mode == "discover") {
 		// A stationary ordinary rider can speak to a currently witnessed
-		// flightmaster. Paid flight and its arrival use their original guards.
+		// flightmaster. Paid departures still require an ordinary unmounted body.
 		flags = s.groundTravelUnitFlags(w.GetSelf())
 	}
 	return safeQuestCharacterFlags(w, r.SelfGuid, movementflags.GroundCompatible, flags)
@@ -106,7 +106,7 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 	}
 	if stop != nil {
 		npc := w.GetRequestedCreature()
-		if w.Self.PositionInferred || (r.Mode != "status" && r.Mode != "discover") ||
+		if w.Self.PositionInferred || r.Mode == "arrival" ||
 			stop.Opcode != opcode.MSGMoveStop || !samePortalCoreVisit(stop.TransportScope, portalObservedWorldScope(w, r.SelfGuid)) ||
 			npc.GetGuid() != r.NpcGuid || !w.GetRequestedCreatureStationaryPositionKnown() {
 			return "flightpath_ground_arrival_or_flightmaster_changed"
@@ -149,6 +149,31 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 		return "flightpath_flightmaster_not_observed"
 	}
 	return ""
+}
+
+// The realm need not echo ordinary ground movement or refresh a stationary
+// spawn. A departure can use the body's last written STOP and a final World
+// read of that exact NPC. Arrival settlement has its own observed spline proof.
+func (s *Service) flightpathGroundObservationLocked(ctx context.Context, r *actionsv1.FlightpathQueryRequest, w *worldv1.SnapshotResponse) (context.Context, *worldv1.SnapshotResponse, *modv1.WorldPacket, string) {
+	npc := w.GetRequestedCreature()
+	if r.Mode == "arrival" || npc.GetGuid() != r.NpcGuid || !w.GetRequestedCreatureStationaryPositionKnown() ||
+		w.GetSelf().GetPositionAgeMs() <= 2000 && npc.PositionAgeMs <= 2000 && npc.ObservationAgeMs <= 2000 {
+		return ctx, w, nil, ""
+	}
+	stop, err := modcb.ReadSettledBodySource(ctx, s.session, r.SessionId, r.SelfGuid)
+	if err != nil {
+		return ctx, nil, nil, "flightpath_written_ground_stop_unavailable"
+	}
+	final, err := s.snapshot(ctx, r.NpcGuid)
+	if err != nil {
+		return ctx, nil, nil, "flightpath final world observation unavailable"
+	}
+	n, overflow := bits.Add64(final.ObservedPackets, final.IgnoredPackets, 0)
+	n, overflow2 := bits.Add64(n, final.MalformedPackets, 0)
+	if overflow != 0 || overflow2 != 0 || n == 0 || n == math.MaxUint64 {
+		return ctx, nil, nil, "flightpath_world_packet_sequence_unavailable"
+	}
+	return modcb.WithFlightpathWorldPackets(ctx, n), final, stop, ""
 }
 
 func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.FlightpathQueryRequest) (*actionsv1.FlightpathObservationResponse, error) {
@@ -227,29 +252,9 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	if err != nil {
 		return refuse("flightpath world observations unavailable: " + err.Error())
 	}
-	// The realm typically does not echo our ordinary steps or republish an
-	// unchanged stationary spawn. For menu/status queries, obtain the last
-	// actual STOP, then reread that specific NPC and the current body.
-	var stop *modv1.WorldPacket
-	var sendScope *modv1.TransportScope
-	npc := w.GetRequestedCreature()
-	if (r.Mode == "status" || r.Mode == "discover") && npc.GetGuid() == r.NpcGuid && w.GetRequestedCreatureStationaryPositionKnown() &&
-		(w.GetSelf().GetPositionAgeMs() > 2000 || npc.PositionAgeMs > 2000 || npc.ObservationAgeMs > 2000) {
-		stop, err = modcb.ReadSettledBodySource(ctx, s.session, r.SessionId, r.SelfGuid)
-		if err != nil {
-			return refuse("flightpath_written_ground_stop_unavailable")
-		}
-		w, err = s.snapshot(ctx, r.NpcGuid)
-		if err != nil {
-			return refuse("flightpath final world observation unavailable")
-		}
-		n, overflow := bits.Add64(w.ObservedPackets, w.IgnoredPackets, 0)
-		n, overflow2 := bits.Add64(n, w.MalformedPackets, 0)
-		if overflow != 0 || overflow2 != 0 || n == 0 || n == math.MaxUint64 {
-			return refuse("flightpath_world_packet_sequence_unavailable")
-		}
-		ctx = modcb.WithFlightpathWorldPackets(ctx, n)
-		sendScope = stop.TransportScope
+	ctx, w, stop, reason := s.flightpathGroundObservationLocked(ctx, r, w)
+	if reason != "" {
+		return refuse(reason)
 	}
 	if reason := s.flightpathQueryBodyReasonLocked(r, w); reason != "" {
 		return refuse("flightpath_" + reason)
@@ -283,7 +288,7 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	if r.Mode == "discover" || r.Mode == "arrival" {
 		opcodeID = opcode.CMSGTaxiqueryavailablenodes
 	}
-	if err := s.sendPacketLocked(ctx, opcodeID, payload, sendScope); err != nil {
+	if err := s.sendPacketLocked(ctx, opcodeID, payload, stop.GetTransportScope()); err != nil {
 		op.Error = boundedPolicyDiagnostic(err.Error(), 240)
 		if modcb.PacketWasNotDispatched(err) {
 			op.Pending = false
