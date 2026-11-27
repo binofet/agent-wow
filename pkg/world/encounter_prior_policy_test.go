@@ -985,7 +985,7 @@ func TestGoToRespectsStandingHazardAndReleasesItsOwnLeaseFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"near existing stance", "far existing stance", "near while traveling", "uncertain cleanup"} {
+	for _, mode := range []string{"near existing stance", "far existing stance", "unconfirmed stance", "old visit stance", "near while traveling", "uncertain cleanup"} {
 		t.Run(mode, func(t *testing.T) {
 			host, err := behavior.NewSession(t.Context(), fallbackSession, withStandingRange(string(raw)))
 			if err != nil {
@@ -1004,13 +1004,23 @@ func TestGoToRespectsStandingHazardAndReleasesItsOwnLeaseFirst(t *testing.T) {
 				npc.X = 3
 			}
 			next := func() behavior.Decision { return p.decide(observeRanged(t, p, o, false)) }
-			if mode == "near existing stance" || mode == "far existing stance" {
+			if mode == "near existing stance" || mode == "far existing stance" || mode == "unconfirmed stance" || mode == "old visit stance" {
 				settlePriorLease(t, p, o, false)
 			} else {
 				next()
 			}
 			waitTaskCommand(t, p, map[string]any{"task": "go_to", "id": "walk", "mapId": 349, "x": 100, "y": 0, "z": 0})
+			if mode == "old visit stance" {
+				o.VisitId++
+			}
+			o.Navigation.MotionUnconfirmed = mode == "unconfirmed stance"
 			d := next()
+			if mode == "old visit stance" || mode == "unconfirmed stance" {
+				if d.Output["action"] != nil {
+					t.Fatal("destination interrupted unsettled movement", d.Output["action"])
+				}
+				return
+			}
 			expect := func(cap string) map[string]any {
 				t.Helper()
 				a, _ := d.Output["action"].(map[string]any)
