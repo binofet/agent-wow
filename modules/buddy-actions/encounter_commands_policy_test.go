@@ -162,6 +162,9 @@ func TestAutomaticPolymorphRespondsToPartyPressure(t *testing.T) {
 		{"tank at threshold", 75, 1, false, true},
 		{"two mobs on a priest", 100, 5, false, true},
 		{"explicit moon on easy pull", 100, 1, true, true},
+		{"dead victim", 0, 5, false, false},
+		{"victim left map", 50, 5, false, false},
+		{"victim absent", 50, 5, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			host, err := behavior.NewSession(context.Background(), "commands-body", commandPolicySource(t))
@@ -174,6 +177,14 @@ func TestAutomaticPolymorphRespondsToPartyPressure(t *testing.T) {
 			victim := proto.Clone(obs.Players["1"]).(*actionsv1.EncounterPlayer)
 			victim.Guid, victim.HealthKnown, victim.Health, victim.MaxHealth = 3, true, tc.health, 100
 			victim.ClassKnown, victim.ClassId = true, tc.class
+			switch tc.name {
+			case "dead victim":
+				victim.Alive = proto.Bool(false)
+			case "victim left map":
+				victim.MapId = proto.Uint32(1)
+			case "victim absent":
+				victim.Present = false
+			}
 			obs.Players["3"] = victim
 			target := encounterGUID(sheepTarget)
 			add := obs.Targets[target]

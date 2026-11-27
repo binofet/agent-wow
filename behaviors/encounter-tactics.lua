@@ -300,11 +300,17 @@ local function automatic_control(input)
     end
 
     local focused, attempted = input.focusTargets or {}, input.attemptedTargets or {}
+    local unavailable = {}
+    for member in pairs(members) do
+        local p=(input.players or {})[member]
+        if p and (p.present~=true or p.aliveKnown and p.alive~=true or p.healthKnown and (p.health or 0)==0 or
+            p.mapKnown and input.mapId~=nil and p.mapId~=input.mapId) then unavailable[member]=true end
+    end
     local threats, attackers, currentVictim = 0, {}, {}
     for target,npc in pairs(input.targets or {}) do
         local age=tonumber(npc.attackAgeMs)
         if guid(target) and alive(npc) and npc.attackable and not (observed[target] or {}).active and
-           npc.attackVictimKnown and members[npc.attackVictimGuid] and age and age>=0 and age<=5000 then
+           npc.attackVictimKnown and members[npc.attackVictimGuid] and not unavailable[npc.attackVictimGuid] and age and age>=0 and age<=5000 then
             local victim=npc.attackVictimGuid
             currentVictim[target]=victim
             attackers[victim]=(attackers[victim] or 0)+1
@@ -327,7 +333,7 @@ local function automatic_control(input)
             local victim=currentVictim[target]
             local health = tonumber(npc.healthPercent)
             if target ~= focus and not focused[target] and not attempted[target] and npc.inRange and health and health > 25 then
-                if target == preferred and (not victim or pressured[victim]) then
+                if target == preferred and not (npc.attackVictimKnown and unavailable[npc.attackVictimGuid]) and (not victim or pressured[victim]) then
                     renew, renewIsThreat = target, victim~=nil
                 elseif victim and pressured[victim] and (not choice or health > choiceHealth or
                         health == choiceHealth and (age < choiceAge or age == choiceAge and target < choice)) then
@@ -336,7 +342,7 @@ local function automatic_control(input)
             end
         end
     end
-    if renew and threats > (renewIsThreat and 1 or 0) then
+    if renew and (renewIsThreat or not choice) and threats > (renewIsThreat and 1 or 0) then
         choice = renew
     elseif threats < 2 then
         return wait("automatic_control_waiting_for_add")
