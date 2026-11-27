@@ -78,7 +78,9 @@ func (s *Service) formationNavigationPath(ctx context.Context, target position, 
 		}
 		return arrival, arrivalStop, true
 	}
-	slotFloorMismatch := false
+	// PlanMap can reject the normalized destination before returning its
+	// samples. A start or corridor failure cannot authorize an owner fallback.
+	slotFloorMismatch := err != nil && strings.HasSuffix(err.Error(), "navigation normalized endpoint is outside destination tolerance")
 	if err == nil {
 		if arrival, radius, ok := validate(path, target, false); ok {
 			return path, arrival, radius, false, nil

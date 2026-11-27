@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -152,7 +153,7 @@ func TestGroundFollowKeepsUnsupportedJumpAndTurnsBounded(t *testing.T) {
 }
 
 func TestNormalizedSlotOnSlopeUsesOnlyVerifiedObservedOwnerFloor(t *testing.T) {
-	for _, mode := range []string{"owner", "no observed owner", "unreachable owner floor", "horizontal slot miss"} {
+	for _, mode := range []string{"owner", "planner rejected destination floor", "planner rejected start floor", "no observed owner", "unreachable owner floor", "horizontal slot miss"} {
 		t.Run(mode, func(t *testing.T) {
 			s, _, _, target := followNavRig(t)
 			owner := target
@@ -160,6 +161,12 @@ func TestNormalizedSlotOnSlopeUsesOnlyVerifiedObservedOwnerFloor(t *testing.T) {
 			s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
 				end := to
 				if to == target {
+					switch mode {
+					case "planner rejected destination floor":
+						return nil, errors.New("navigation normalized endpoint is outside destination tolerance")
+					case "planner rejected start floor":
+						return nil, errors.New("navigation normalized start is outside start tolerance")
+					}
 					end.z += 1.75
 					if mode == "horizontal slot miss" {
 						end.x++
@@ -175,7 +182,7 @@ func TestNormalizedSlotOnSlopeUsesOnlyVerifiedObservedOwnerFloor(t *testing.T) {
 				observed = []position{owner}
 			}
 			path, arrival, _, ownerArrival, err := s.formationNavigationPath(context.Background(), target, .8, observed...)
-			if mode == "owner" {
+			if mode == "owner" || mode == "planner rejected destination floor" {
 				if err != nil || !ownerArrival || arrival != owner || path[len(path)-1] != owner {
 					t.Fatal("independent verified owner route missing", path, arrival, ownerArrival, err)
 				}
