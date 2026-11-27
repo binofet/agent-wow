@@ -237,7 +237,7 @@ func (s *Service) portalMovementAllowedLocked(w *worldv1.SnapshotResponse) bool 
 // connected after taking a turn. Use an intermediate point only when the
 // physical planner verifies both the approach to it and the route to the portal.
 func (s *Service) portalCatchUpTarget(ctx context.Context, ground position, candidates []position) (position, bool) {
-	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, actionsTickBudget)
 	defer cancel()
 	for _, candidate := range candidates {
 		if ctx.Err() != nil || !validPortalCandidate(candidate, s.pos, ground) {

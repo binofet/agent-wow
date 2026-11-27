@@ -3,7 +3,9 @@ package buddyactions
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -54,8 +56,25 @@ func TestOrdinaryFollowFromOutsideEntranceRequiresPartyDestination(t *testing.T)
 			s, f, advance := portalEntryRig(t)
 			s.navDataDir = "fixture"
 			if root := os.Getenv("BUDDY_NAV_TEST_DATA"); root != "" {
-				s.navDataDir = root
+				// A separate root keeps this route cold even when another test
+				// has already cached the same map window in this process.
+				s.navDataDir = t.TempDir()
+				for _, part := range []string{"maps", "mmaps", "vmaps"} {
+					if err := os.Symlink(filepath.Join(root, part), filepath.Join(s.navDataDir, part)); err != nil {
+						t.Fatal(err)
+					}
+				}
 				s.planMapPath = planMapNavigation
+			}
+			plan := s.planMapPath
+			s.planMapPath = func(ctx context.Context, root string, mapID uint32, from, to position) ([]position, error) {
+				if s.followPortal.movementInProgress {
+					end, ok := ctx.Deadline()
+					if !ok || time.Until(end) < 300*time.Millisecond {
+						return nil, errors.New("cold map window needs the parent tick")
+					}
+				}
+				return plan(ctx, root, mapID, from, to)
 			}
 			park := position{x: -6071.37, y: -2955.16, z: 209.782}
 			putAtPortal(f.world.Self, 0, park)

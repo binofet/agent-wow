@@ -1271,6 +1271,8 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 	return stopped
 }
 
+const actionsTickBudget = 750 * time.Millisecond
+
 // The internal work budget starts only after this body's single writer is
 // admitted. Waiting behind another RPC must not turn a healthy World callback
 // into an already-expired read. The parent deadline/cancellation still wins.
@@ -1280,7 +1282,7 @@ func (s *Service) runTick(ctx context.Context) time.Duration {
 	if ctx.Err() != nil {
 		return 0
 	}
-	call, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+	call, cancel := context.WithTimeout(ctx, actionsTickBudget)
 	defer cancel()
 	s.tickLocked(context.WithValue(call, followRunParentKey{}, ctx))
 	if s.followNav.checkpointAt.IsZero() || len(s.followNav.path) == 0 || !s.state.Moving || s.state.MotionUnconfirmed {
