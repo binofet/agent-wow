@@ -13,6 +13,16 @@ import (
 
 func portalDistanceFixture(t *testing.T, offset position) (*Service, *fakeSession, func(time.Duration)) {
 	t.Helper()
+	s, f, advance := portalDistanceScene(t, offset)
+	s.observeDungeonPortalLocked(f.world, s.now())
+	if s.followPortal.portal.trigger != dungeonEntrances[2].trigger || s.followPortal.witness == 0 {
+		t.Fatal("fixture did not observe the owner at the actual entrance", s.followPortal, s.formation.lastFailure)
+	}
+	return s, f, advance
+}
+
+func portalDistanceScene(t *testing.T, offset position) (*Service, *fakeSession, func(time.Duration)) {
+	t.Helper()
 	s, f, advance := rig(t)
 	s.sessionID = f.party.SessionId
 	s.navDataDir = "/client/portal-distance-fixture"
@@ -31,10 +41,6 @@ func portalDistanceFixture(t *testing.T, offset position) (*Service, *fakeSessio
 		t.Fatal("fixture could not bind its actual source pose")
 	}
 	s.lastWorld = f.world
-	s.observeDungeonPortalLocked(f.world, s.now())
-	if s.followPortal.portal.trigger != portal.trigger || s.followPortal.witness == 0 {
-		t.Fatal("fixture did not observe the owner at the actual entrance", s.followPortal)
-	}
 	return s, f, advance
 }
 
@@ -169,9 +175,14 @@ func TestPortalDistanceFinalTriggerRejectsPoseChangedAfterLuaDecision(t *testing
 func TestPortalDistanceMalformedRemoteCannotReuseOldSightingOrEnter(t *testing.T) {
 	for _, name := range []string{"missing catchingUp", "wrong catchingUp type", "host transport error"} {
 		t.Run(name, func(t *testing.T) {
-			s, f, advance := portalDistanceFixture(t, position{})
+			s, f, advance := portalDistanceScene(t, position{})
 			host := newFollowPolicySession(t, s, f)
 			s.UseHostFollowPolicy()
+			s.observeDungeonPortalLocked(f.world, s.now())
+			if s.followPortal.portal.trigger != dungeonEntrances[2].trigger || s.followPortal.witness == 0 ||
+				len(host.inputs) != 1 || host.inputs[0]["mode"] != "portal_sighting" || s.formation.sourceRevision != host.runtime.Status().Revision {
+				t.Fatal("current remote source did not establish the original sighting", s.followPortal, s.formation.lastFailure)
+			}
 			if name == "host transport error" {
 				host.bad = "transport"
 			} else {

@@ -245,6 +245,10 @@ def _receipt_evidence(value):
     return False
 
 
+def protected_read_evidence(value):
+    return _read_custody(value) or _receipt_evidence(value)
+
+
 def _decode(raw):
     def unique(pairs):
         result = {}
@@ -627,7 +631,7 @@ class DirectModel:
                     function=calls[row['tool_call_id']]['function']
                     fingerprint=hashlib.sha256(_packed([function['name'],_decode(function['arguments'])],self.max_request_bytes)).hexdigest()
                     value=_decode(row['content'])
-                    if not self._read_only_call(function['name'], _decode(function['arguments']), read_only_tools) or fingerprint in unknown or _read_custody(value) or _receipt_evidence(value):
+                    if not self._read_only_call(function['name'], _decode(function['arguments']), read_only_tools) or fingerprint in unknown or protected_read_evidence(value):
                         protected.add(index)
                         if assistant_index is not None: protected.add(assistant_index)
                 except (KeyError,TypeError,ValueError,UnicodeError,RecursionError):
@@ -806,7 +810,7 @@ class DirectModel:
                         fingerprint = hashlib.sha256(_packed([name, args], self.max_request_bytes)).hexdigest()
                         full = canonical[index]["content"]
                         result = _decode(full)
-                        if fingerprint in unknown or _read_custody(result) or _receipt_evidence(result): continue
+                        if fingerprint in unknown or protected_read_evidence(result): continue
                     except (KeyError, TypeError, ValueError, RecursionError, UnicodeError): continue
                     raw = full.encode()
                     reference = dict(transcriptMessage=index, toolCallId=call_id,
