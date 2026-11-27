@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"context"
 	"crypto/subtle"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"math"
 	"time"
 
@@ -62,7 +63,7 @@ func (s *Service) explorationContextLocked(ctx context.Context, token string, ma
 		}
 	}
 	d, _ := ctx.Value(destinationOwnerKey{}).(destinationOwner)
-	if reason := safeQuestCharacterMode(w, s.selfGUID, func(f, x uint32) bool { return destinationSelfMode(w, f, x) || d.gravity.current(w) }); reason != "" {
+	if reason := safeQuestCharacterFlags(w, s.selfGUID, func(f, x uint32) bool { return destinationSelfMode(w, f, x) || d.gravity.current(w) }, s.groundTravelUnitFlags(w.Self)); reason != "" {
 		return "exploration_" + reason
 	}
 	if w.Self.MapId != mapID {
@@ -159,7 +160,7 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		call = context.WithValue(call, idleMotionScopeKey{}, scope)
 	}
 	from, revision, root := s.pos, s.positionRevision, s.navDataDir
-	swimming, allowWater := s.swimming, !s.state.InteractionHarvest && root != "" && waterMovementAllowed(s.lastWorld)
+	swimming, allowWater := s.swimming, !s.state.InteractionHarvest && root != "" && s.lastWorld.GetSelf().GetUnitFlags()&movementflags.Mounted == 0 && waterMovementAllowed(s.lastWorld)
 	// Navmesh geometry is speed-independent. Retain the observed speed across
 	// its unlocked planning interval; every following checkpoint refreshes it.
 	intervalSpeed := observedRunSpeed(s.lastWorld.GetSelf())

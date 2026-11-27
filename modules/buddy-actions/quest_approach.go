@@ -45,6 +45,9 @@ func safeQuestCharacter(w *worldv1.SnapshotResponse, selfGUID uint64) string {
 }
 
 func safeQuestCharacterMode(w *worldv1.SnapshotResponse, selfGUID uint64, compatible func(uint32, uint32) bool) string {
+	return safeQuestCharacterFlags(w, selfGUID, compatible, w.GetSelf().GetUnitFlags())
+}
+func safeQuestCharacterFlags(w *worldv1.SnapshotResponse, selfGUID uint64, compatible func(uint32, uint32) bool, unitFlags uint32) string {
 	if w == nil || w.Self == nil || w.Self.Guid != selfGUID || !w.Self.Present {
 		return "character_missing_or_identity_mismatch"
 	}
@@ -59,7 +62,7 @@ func safeQuestCharacterMode(w *worldv1.SnapshotResponse, selfGUID uint64, compat
 		return "character_ordinary_ground_movement_unknown"
 	}
 	const unsafe = uint32(0x1 | 0x4 | 0x00040000 | 0x00080000 | 0x00100000 | 0x00400000 | 0x00800000 | 0x01000000 | 0x02000000 | 0x08000000)
-	if !p.UnitFlagsKnown || p.UnitFlags&unsafe != 0 {
+	if !p.UnitFlagsKnown || unitFlags&unsafe != 0 {
 		return "character_unsafe_or_in_combat"
 	}
 	return ""

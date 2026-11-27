@@ -18,6 +18,9 @@ func safeSelfCombat(w *worldv1.SnapshotResponse, selfGUID uint64) string {
 }
 
 func safeSelfMovement(w *worldv1.SnapshotResponse, selfGUID uint64, compatible func(uint32, uint32) bool) string {
+	return safeSelfMovementFlags(w, selfGUID, compatible, w.GetSelf().GetUnitFlags())
+}
+func safeSelfMovementFlags(w *worldv1.SnapshotResponse, selfGUID uint64, compatible func(uint32, uint32) bool, unitFlags uint32) string {
 	if w == nil || w.Self == nil || w.Self.Guid != selfGUID {
 		return "player_identity_mismatch"
 	}
@@ -29,7 +32,7 @@ func safeSelfMovement(w *worldv1.SnapshotResponse, selfGUID uint64, compatible f
 		return "unsupported_movement_state"
 	}
 	const unsafe = movementflags.UnsafeUnitFlags
-	if !p.UnitFlagsKnown || p.UnitFlags&unsafe != 0 {
+	if !p.UnitFlagsKnown || unitFlags&unsafe != 0 {
 		return "unsafe_unit_state"
 	}
 	return ""

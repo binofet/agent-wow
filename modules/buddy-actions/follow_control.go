@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	"context"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -64,13 +65,18 @@ func (s *Service) followFormationLocked(ctx context.Context, world *worldv1.Snap
 
 // Only the observed leader may be airborne: the follower still travels on
 // verified ground segments. Keep the shared combat/interaction guard strict.
-func safeFollowPlayers(world *worldv1.SnapshotResponse, selfGUID uint64, groundFollow bool) string {
+func (s *Service) safeFollowPlayers(world *worldv1.SnapshotResponse, selfGUID uint64, groundFollow bool) string {
 	if !groundFollow || world == nil || world.Owner == nil {
 		return safePlayers(world, selfGUID)
 	}
 	// FALLING and FALLING_FAR describe a jump/fall, not swimming or flight.
 	// Require a fresh target even for a purely vertical jump.
 	const falling uint32 = 0x1000 | 0x2000
+	if (world.GetSelf().GetUnitFlags()|world.Owner.GetUnitFlags())&movementflags.Mounted != 0 {
+		// An airborne leader may guide an ordinary pedestrian below. A mounted
+		// route requires both actual bodies to remain on ordinary ground.
+		return safePlayerMovementFlags(world, selfGUID, movementflags.GroundCompatible, movementflags.GroundCompatible, s.groundTravelUnitFlags)
+	}
 	if world.Owner.MovementFlags&falling == 0 {
 		return safePlayers(world, selfGUID)
 	}

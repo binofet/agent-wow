@@ -33,18 +33,18 @@ func TestFollowJumpUsesGroundRouteAndKeepsOtherGuards(t *testing.T) {
 		}
 		for _, bad := range []uint32{0x200, 0x200000, 0x1000000, 0x2000000} {
 			f.world.Owner.MovementFlags = 0x1000 | bad
-			if safeFollowPlayers(f.world, 1, true) == "" {
+			if s.safeFollowPlayers(f.world, 1, true) == "" {
 				t.Fatal("unsafe leader mode", bad)
 			}
 		}
 		f.world.Owner.MovementFlags = 0x1000
 		f.world.Owner.PositionAgeMs = 2001
-		if safeFollowPlayers(f.world, 1, true) != "owner_moving_position_stale" {
+		if s.safeFollowPlayers(f.world, 1, true) != "owner_moving_position_stale" {
 			t.Fatal("stale airborne leader")
 		}
 		f.world.Owner.PositionAgeMs = 0
 		f.world.Self.MovementFlags = 0x1000
-		if safeFollowPlayers(f.world, 1, true) == "" {
+		if s.safeFollowPlayers(f.world, 1, true) == "" {
 			t.Fatal("airborne follower allowed")
 		}
 	}

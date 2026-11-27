@@ -741,6 +741,9 @@ func safePlayerMovement(snapshot *worldv1.SnapshotResponse, selfGUID uint64, swi
 	return safePlayerMovementModes(snapshot, selfGUID, compatible, compatible)
 }
 func safePlayerMovementModes(snapshot *worldv1.SnapshotResponse, selfGUID uint64, selfMode, ownerMode func(uint32, uint32) bool) string {
+	return safePlayerMovementFlags(snapshot, selfGUID, selfMode, ownerMode, (*worldv1.PlayerState).GetUnitFlags)
+}
+func safePlayerMovementFlags(snapshot *worldv1.SnapshotResponse, selfGUID uint64, selfMode, ownerMode func(uint32, uint32) bool, unitFlags func(*worldv1.PlayerState) uint32) string {
 	if snapshot == nil || snapshot.Self == nil || snapshot.Owner == nil {
 		return "players_unknown"
 	}
@@ -775,7 +778,7 @@ func safePlayerMovementModes(snapshot *worldv1.SnapshotResponse, selfGUID uint64
 		return "unit_flags_unknown"
 	}
 	const unsafe = movementflags.UnsafeUnitFlags
-	if (a.UnitFlags|b.UnitFlags)&unsafe != 0 {
+	if (unitFlags(a)|unitFlags(b))&unsafe != 0 {
 		return "unsafe_unit_state"
 	}
 	return ""
@@ -983,7 +986,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		return false
 	}
 	if moving && s.followGoalExecuting != nil &&
-		(!s.currentFollowFormationGoalLocked(*s.followGoalExecuting, w) || swim == nil && safeFollowPlayers(w, s.selfGUID, s.navDataDir != "") != "" || swim != nil && s.safeRouteFollowLocked(w) != "") {
+		(!s.currentFollowFormationGoalLocked(*s.followGoalExecuting, w) || swim == nil && s.safeFollowPlayers(w, s.selfGUID, s.navDataDir != "") != "" || swim != nil && s.safeRouteFollowLocked(w) != "") {
 		s.state.Reason = "follow_formation_goal_changed_before_movement"
 		return false
 	}
@@ -1475,7 +1478,7 @@ func (s *Service) tickLocked(ctx context.Context) {
 	if swimFollow {
 		reason = s.safeRouteFollowLocked(snapshot)
 	} else {
-		reason = safeFollowPlayers(snapshot, s.selfGUID, following && s.navDataDir != "")
+		reason = s.safeFollowPlayers(snapshot, s.selfGUID, following && s.navDataDir != "")
 	}
 	if reason != "" {
 		// Unknown or temporarily unsafe observations pause enabled intent. A

@@ -51,13 +51,39 @@ def dispel_types(rows):
     # ordinary dispellable Magic, Curse, Disease and Poison categories.
     return {r[0]:r[2] for r in sorted(rows,key=lambda r:r[0]) if 1<=r[2]<=4}
 
+def ground_mount_speeds(spells, skill_abilities, templates):
+    # AzerothCore HandleAuraMounted uses the mounted creature template's VehicleId.
+    # Motorcycles have the same two DBC auras as an ordinary horse.
+    vehicles = {row['entry']: row['vehicleid'] for row in sql.sql_rows(templates)}
+    mounts = {row[2] for row in skill_abilities if row[1] == 777}
+    speeds = {}
+    for r in spells:
+        if r[0] not in mounts:
+            continue
+        effects = [i for i in range(3) if r[71+i]]
+        mounted = [i for i in effects if r[71+i] == 6 and r[95+i] == 78 and r[86+i] == 1 and r[89+i] == 0]
+        ground = [i for i in effects if r[71+i] == 6 and r[95+i] == 32 and r[86+i] == 1 and r[89+i] == 0]
+        if len(mounted) != 1 or len(ground) != 1 or vehicles.get(r[110+mounted[0]]) != 0:
+            continue
+        if any(i not in mounted + ground and not (r[71+i] == 77 and r[86+i] == 1) for i in effects):
+            continue
+        speed = signed(r[80+ground[0]]) + 1
+        if 0 < speed <= 100:
+            speeds[r[0]] = speed
+    return dict(sorted(speeds.items()))
+
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--dbc-dir',type=Path,required=True);p.add_argument('--source',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--dbc-dir',type=Path,required=True);p.add_argument('--source',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--mount-templates',type=Path,help='pinned public creature_template.sql for the ground mount reference');a=p.parse_args()
     manifest=json.loads((a.source/'manifest.json').read_text());rank=a.source/'spell_ranks.sql'
     for name in ('spell_ranks','spell_custom_attr'):
         if hashlib.sha256((a.source/(name+'.sql')).read_bytes()).hexdigest()!=manifest['files'][name]['sha256']:raise ValueError(name+' source checksum mismatch')
     a.output.mkdir(parents=True,exist_ok=True);count=0
     spell_table=dbc(a.dbc_dir/'Spell.dbc',234)
+    if a.mount_templates:
+        if hashlib.sha256(a.mount_templates.read_bytes()).hexdigest() != '0066e4fd35b809986dd325487515087f5a95f4ffe50ea03846c8d8bf5196870a':
+            raise ValueError('ground mount creature_template.sql differs from pinned 49bdb66c')
+        mounts = ground_mount_speeds(spell_table[0], dbc(a.dbc_dir/'SkillLineAbility.dbc',14)[0], a.mount_templates)
+        (a.output/'ground-mounts.json').write_text(json.dumps(mounts,separators=(',',':'))+'\n')
     with (a.output/'spells.jsonl').open('w') as out:
         for value in build(a.dbc_dir,rank,spell_table):out.write(json.dumps(value,ensure_ascii=False,separators=(',',':'))+'\n');count+=1
     (a.output/'dispel-types.json').write_text(json.dumps(dispel_types(spell_table[0]),separators=(',',':'))+'\n')

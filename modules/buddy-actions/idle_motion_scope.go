@@ -118,7 +118,11 @@ func (s *Service) idleMotionCurrentFailureLocked(b *idleMotionScope, w *worldv1.
 			return movementflags.GroundCompatible(flags, extra) || extra == 0 && (flags == 0x1000 || flags == 0x1001 || flags == swimMovementFlag || flags == swimMovementFlag|1)
 		}
 	}
-	if why := safeSelfMovement(w, s.selfGUID, compatible); why != "" {
+	flags := w.GetSelf().GetUnitFlags()
+	if !b.landing && s.state.Traveling && s.state.InteractionOwner == "exploration" && !s.state.InteractionHarvest {
+		flags = s.groundTravelUnitFlags(w.Self)
+	}
+	if why := safeSelfMovementFlags(w, s.selfGUID, compatible, flags); why != "" {
 		return "observed_body_unsafe: " + why
 	}
 	observed := portalObservedWorldScope(w, s.selfGUID)
