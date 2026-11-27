@@ -39,6 +39,10 @@ local function at_goal(task,p)
     local g=task.routeGoal
     return point(p) and (g.x-p.x)^2+(g.y-p.y)^2+(g.z-p.z)^2<=task.arrivalDistance^2
 end
+local function arrival_position(self)
+    return {mapId=self.mapId,x=self.x,y=self.y,z=self.z,worldPositionRevision=self.positionRevision,
+        estimated=self.positionEstimated==true,inferred=self.positionInferred==true}
+end
 function M.request(v,observed)
     if not observed or not ident(observed.selfGuid) or not ident(observed.visitId) or type(observed.sessionId)~="string" or
        v.sessionId~=nil and v.sessionId~=observed.sessionId or v.selfGuid~=nil and v.selfGuid~=observed.selfGuid or
@@ -241,18 +245,20 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
     end
     local settled=independent and self and self.present==true and self.aliveKnown==true and self.alive==true and
         self.mapKnown==true and self.mapId==task.mapId and self.positionKnown==true and self.movementKnown==true and
-        self.moving~=true and obs.navigation and obs.navigation.motionUnconfirmed~=true
+        self.moving~=true and ident(self.positionRevision) and obs.navigation and obs.navigation.motionUnconfirmed~=true
     -- An arrival candidate can go stale while the lease is being released.
     -- Cancel, replacement, death and visit changes remain terminal intent.
-    if task.arrival and (task.finishing or not (settled and at_goal(task,self))) then
-        task.arrival=nil;task.cleanupStatus=nil;task.stage="status"
+    if task.arrival then
+        if task.finishing or not (settled and at_goal(task,self)) then
+            task.arrival=nil;task.cleanupStatus=nil;task.stage="status"
+        else task.arrival=arrival_position(self) end
     end
     if independent and self and self.combatKnown==true and self.inCombat==true then in_combat=true end
     if independent and in_combat and task.error=="exploration_character_unsafe_or_in_combat" then task.blocked=nil;task.error=nil end
     if task.finishing or task.arrival or in_combat then
         local a,done=cleanup(task,obs)
         if not done then return propose("reconciling_entry_custody",a) end
-        if task.arrival then task.finishing=task.arrival.estimated and "destination_at_client_estimate" or "destination_observed" end
+        if task.arrival then task.finishing=(task.arrival.estimated or task.arrival.inferred) and "destination_at_client_estimate" or "destination_observed" end
         if task.finishing then return {task=task,done=true,status={id=task.id,kind=task.kind,phase="complete",reason=task.finishing,position=task.arrival}} end
         local waiting=view(task,"waiting_for_current_encounter")
         if independent then waiting.hold=false;task.stage="status" end
@@ -280,7 +286,7 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
             task.stage="status"
             return view(task,"waiting_for_current_destination_position")
         end
-        task.arrival={mapId=p.mapId,x=p.x,y=p.y,z=p.z,revision=p.revision,estimated=p.estimated==true}
+        task.arrival=arrival_position(self)
         task.cleanupStatus={visitId=obs.visitId,state=state}
         return view(task,"settled_at_destination")
     end

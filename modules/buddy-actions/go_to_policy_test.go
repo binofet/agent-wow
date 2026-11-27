@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -214,5 +215,27 @@ func TestGoToCancelOrReplacementRetiresProvisionalArrival(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestGoToReportsLatestPositionWithinGoal(t *testing.T) {
+	p := newInstanceEntryPolicyFixture(t)
+	p.command(goToCommand(p, 0))
+	p.dispatch("instance_entry_status")
+	w := p.f.world.Self
+	w.X += .5
+	w.PositionRevision++
+	if out := p.step(); out["task"].(map[string]any)["phase"] != "settled_at_destination" {
+		t.Fatal(out)
+	}
+	w.X += .25
+	w.PositionRevision++
+	out := p.step()
+	last := out["task"].(map[string]any)
+	result, _ := last["position"].(map[string]any)
+	x, known := result["x"].(float64)
+	if !known || float32(x) != w.X || result["worldPositionRevision"] != strconv.FormatUint(w.PositionRevision, 10) ||
+		result["estimated"] != false || result["inferred"] != false || last["reason"] != "destination_observed" || len(p.f.packets) != 0 {
+		t.Fatal(out)
 	}
 }
