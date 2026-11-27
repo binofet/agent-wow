@@ -255,12 +255,12 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
     end
     if independent and self and self.combatKnown==true and self.inCombat==true then in_combat=true end
     if independent and in_combat and task.error=="exploration_character_unsafe_or_in_combat" then task.blocked=nil;task.error=nil end
-    if task.finishing or task.arrival or in_combat then
+    if task.finishing or task.arrival or in_combat or independent and task.pausedForEncounter then
         local a,done=cleanup(task,obs)
         if not done then return propose("reconciling_entry_custody",a) end
         if task.arrival then task.finishing=(task.arrival.estimated or task.arrival.inferred) and "destination_at_client_estimate" or "destination_observed" end
         if task.finishing then return {task=task,done=true,status={id=task.id,kind=task.kind,phase="complete",reason=task.finishing,position=task.arrival}} end
-        local waiting=view(task,"waiting_for_current_encounter")
+        local waiting=view(task,in_combat and "waiting_for_current_encounter" or "paused_for_nearby_hazard")
         if independent then waiting.hold=false;task.stage="status" end
         return waiting
     end

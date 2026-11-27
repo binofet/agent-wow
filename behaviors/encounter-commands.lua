@@ -1054,6 +1054,16 @@ local function ranged_travel_safe(obs,row,in_combat,attack_age_limit)
     return true
 end
 
+local function ranged_handoff_pending(obs,frame,hold,ground)
+    local nav=obs.navigation or {}
+    local self=(obs.players or {})[obs.selfGuid]
+    return #frame.pending~=0 or nav.motionUnconfirmed==true or
+            hold and (hold.sessionId~=obs.sessionId or hold.selfGuid~=obs.selfGuid or
+                hold.visitId and hold.visitId~=obs.visitId or hold.mapId and hold.mapId~=obs.mapId) or
+            ground and (ground.uncertain or ground.operation or ground.awaiting and
+                (ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or
+                 not observe_ground_input(ground,obs,self,movement and movement.current_pose(self))))
+end
 local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task_view)
     out.rangedStance=status
     if not row then
@@ -1061,15 +1071,7 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
         if not hold and not (ground and (ground.operation or ground.uncertain or ground.awaiting)) then return end
         -- Retire an ended stance through its own acknowledged token. The
         -- position of the body or its former target is irrelevant to release.
-        local nav=obs.navigation or {}
-        local self=(obs.players or {})[obs.selfGuid]
-        local protected=#frame.pending~=0 or nav.motionUnconfirmed==true or
-            hold and (hold.sessionId~=obs.sessionId or hold.selfGuid~=obs.selfGuid or
-                hold.visitId and hold.visitId~=obs.visitId or hold.mapId and hold.mapId~=obs.mapId) or
-            ground and (ground.uncertain or ground.operation or ground.awaiting and
-                (ground.sessionId~=obs.sessionId or ground.selfGuid~=obs.selfGuid or ground.visitId~=obs.visitId or
-                 not observe_ground_input(ground,obs,self,movement and movement.current_pose(self))))
-        if protected then
+        if ranged_handoff_pending(obs,frame,hold,ground) then
             local cap=out.action and out.action.capability
             if cap~="cancel_spell" and cap~="stop_movement" and cap~="melee_stop" then out.action=nil end
             out.followFormation,out.portalCatchup=nil,nil
@@ -1080,16 +1082,24 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
         return
     end
     local task=task_view and task_view.task
-    if row.origin=="learned_prior" and task and task.kind=="rally_to" then
+    if row.origin=="learned_prior" and task and (task.kind=="rally_to" or task.kind=="go_to") then
+        local go_to=task.kind=="go_to"
+        if go_to and (task.operation or task.uncertain) then return end
         if task_view.rangedTravelSafe then
-            status.phase="yielding_to_explicit_rally"
+            if go_to and ranged_handoff_pending(obs,frame,state.rangedHold,state.rangedGround) then
+                out.action,out.followFormation,out.portalCatchup=nil,nil,nil
+                status.phase="waiting_for_native_custody";return
+            end
+            status.phase=go_to and "yielding_to_explicit_destination" or "yielding_to_explicit_rally"
             if #frame.pending==0 then ranged_hold(obs,frame,out,row,status,false) end
             return
         end
-        -- Let the rally settle its own movement/token before the default tries
-        -- to acquire. These exact proposals still commit through task custody.
-        if task.pausedForEncounter and task_view.action==out.action and out.action and
-           (out.action.capability=="stop_movement" or out.action.capability=="movement_owner") then return end
+        -- Voluntary travel settles its own movement/token before withdrawal.
+        if task.pausedForEncounter and task_view.action==out.action and out.action then
+            local cap=out.action.capability
+            if go_to and (cap=="instance_entry_status" or cap=="release_interaction") or
+               not go_to and (cap=="stop_movement" or cap=="movement_owner") then return end
+        end
     end
     local ids,nearest,distance,complete=ranged_targets(obs,row)
     status.matchedTargets=#ids

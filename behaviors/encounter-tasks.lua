@@ -132,6 +132,7 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act,pause_rally)
         return view
     end
     if destination_task(task.kind) then
+        if task.kind=="go_to" then task.pausedForEncounter=pause_rally==true or nil end
         local view=instance_entry and instance_entry.step(task,obs,frame,sequence,in_combat,can_act)
         if not view then return {status={phase="instance_entry_handler_unavailable"},hold=true,task=task} end
         if view.done then pop(task) end
