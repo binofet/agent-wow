@@ -79,7 +79,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ß≤
+É∏
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -476,7 +476,7 @@ flagsKnown
 stateKnown
 state (RstateD
 creator_selected_target_guid (H RcreatorSelectedTargetGuidàB
-_creator_selected_target_guid"ù
+_creator_selected_target_guid"
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -533,7 +533,31 @@ activeCast:
 npc_flags_known+ (RnpcFlagsKnown4
 faction_template_known, (RfactionTemplateKnown+
 unit_flags_2_known- (RunitFlags2Known0
-movement_flags_known. (RmovementFlagsKnown"®
+movement_flags_known. (RmovementFlagsKnownQ
+visible_auras/ (2,.warcraftbuddy.world.v1.VisibleCreatureAurasRvisibleAuras"Ú
+VisibleCreatureAuras
+complete (Rcomplete
+revision (RrevisionA
+slots (2+.warcraftbuddy.world.v1.VisibleCreatureAuraRslots#
+cleared_slots (RclearedSlots(
+full_revision (H RfullRevisionàB
+_full_revision"ë
+VisibleCreatureAura
+slot (Rslot
+spell_id (RspellId
+flags (Rflags!
+caster_level (RcasterLevel*
+stacks_or_charges (RstacksOrCharges$
+caster_guid (H R
+casterGuidà+
+max_duration_ms (HRmaxDurationMsà&
+remaining_ms (HRremainingMsà
+positive	 (Rpositive
+negative
+ (RnegativeB
+_caster_guidB
+_max_duration_msB
+_remaining_ms"®
 CreatureCast
 spell_id (RspellId
 

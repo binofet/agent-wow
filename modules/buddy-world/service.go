@@ -67,6 +67,7 @@ type observed struct {
 	receivedMotionInvalid       bool
 	receivedPosition            bool
 	cast                        observedCreatureCast
+	auras                       *observedCreatureAuras
 	mainhandKnown               bool
 	mainhand                    uint64
 	offhandKnown                bool
@@ -225,6 +226,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 	handled, err := parsePacket(packet.Opcode, packet.Payload, &next, observedAt)
 	if err != nil {
 		s.state.invalidateCreatureStationarity(packet.Opcode, packet.Payload)
+		s.state.invalidateCreatureAuras(packet.Opcode, packet.Payload)
 		if objectUpdate {
 			_ = grpc.SetTrailer(ctx, metadata.Pairs(modcb.BodyInputBarrierTrailer, modcb.BodyUpdateMalformed))
 			// The rejected batch could contain a new or moved unit.

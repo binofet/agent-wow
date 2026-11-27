@@ -3,9 +3,11 @@ package buddyactions
 import (
 	"encoding/binary"
 	"errors"
-	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
-	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"time"
+
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/auraupdate"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
 // AuraApplication::BuildUpdatePacket and Player::GetAurasForTarget, not a
@@ -47,64 +49,18 @@ type auraDelta struct {
 }
 
 func decodeBuffAuras(p []byte, all bool) (uint64, []auraDelta, error) {
-	bad := errors.New("malformed complete aura update")
-	guid, n, err := readGUID(p)
-	if err != nil || guid == 0 {
-		return 0, nil, bad
+	guid, slots, err := auraupdate.Decode(p, all)
+	if err != nil {
+		return 0, nil, err
 	}
-	p = p[n:]
-	var out []auraDelta
-	seen := map[byte]bool{}
-	for len(p) > 0 {
-		if len(out) >= 255 || len(p) < 5 || p[0] == 255 || seen[p[0]] {
-			return 0, nil, bad
-		}
-		slot := p[0]
-		seen[slot] = true
-		spell := binary.LittleEndian.Uint32(p[1:])
-		p = p[5:]
-		a := observedBuffAura{spell: spell}
-		if spell != 0 {
-			if spell > 0x7fffffff || len(p) < 3 {
-				return 0, nil, bad
-			}
-			flags := p[0]
-			p = p[3:]
-			if flags&0x40 != 0 || flags&0x90 == 0x90 {
-				return 0, nil, bad
-			}
-			a.positive = flags&0x10 != 0 && flags&7 != 0
-			a.negative = flags&0x80 != 0 && flags&7 != 0
-			if flags&8 != 0 {
-				a.caster = guid
-			} else {
-				caster, m, e := readGUID(p)
-				if e != nil {
-					return 0, nil, bad
-				}
-				a.caster = caster
-				p = p[m:]
-			}
-			if flags&0x20 != 0 {
-				if len(p) < 8 {
-					return 0, nil, bad
-				}
-				max := binary.LittleEndian.Uint32(p)
-				duration := binary.LittleEndian.Uint32(p[4:])
-				if max == 0 || max > 0x7fffffff || duration > max {
-					return 0, nil, bad
-				}
-				a.durationKnown = true
-				a.duration = duration
-				p = p[8:]
-			}
-		} else if all {
-			return 0, nil, bad
-		}
-		out = append(out, auraDelta{slot: slot, aura: a})
-	}
-	if !all && len(out) != 1 {
-		return 0, nil, bad
+	out := make([]auraDelta, 0, len(slots))
+	for _, slot := range slots {
+		// Existing cast/dispellability evidence needs a visible effect on the application.
+		effects := slot.Flags&7 != 0
+		out = append(out, auraDelta{slot: slot.Index, aura: observedBuffAura{
+			spell: slot.SpellID, caster: slot.CasterGUID, positive: effects && slot.Positive(), negative: effects && slot.Negative(),
+			durationKnown: slot.HasDuration(), duration: slot.RemainingMS,
+		}})
 	}
 	return guid, out, nil
 }

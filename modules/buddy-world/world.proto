@@ -514,6 +514,35 @@ message CreatureState {
   bool faction_template_known = 44;
   bool unit_flags_2_known = 45;
   bool movement_flags_known = 46;
+  // Omitted until this visible creature has a usable same-visit aura update.
+  VisibleCreatureAuras visible_auras = 47;
+}
+
+message VisibleCreatureAuras {
+  // True after a complete list, including a genuinely empty list.
+  bool complete = 1;
+  uint64 revision = 2;
+  // Latest observed applications, ordered by their visible slot.
+  repeated VisibleCreatureAura slots = 3;
+  // An explicitly cleared slot is known even before a full list arrives.
+  repeated uint32 cleared_slots = 4;
+  // Present after a full list. Equality with revision identifies a fresh full update.
+  optional uint64 full_revision = 5;
+}
+
+message VisibleCreatureAura {
+  uint32 slot = 1;
+  uint32 spell_id = 2;
+  uint32 flags = 3;
+  uint32 caster_level = 4;
+  // One display byte holds the stack count or charges, as chosen by the realm.
+  uint32 stacks_or_charges = 5;
+  optional uint64 caster_guid = 6;
+  optional uint32 max_duration_ms = 7;
+  // Counts down from the received duration. Only a packet replaces or clears a slot.
+  optional uint32 remaining_ms = 8;
+  bool positive = 9;
+  bool negative = 10;
 }
 
 // A cast observed in a normal server spell-start event. An expired cast or

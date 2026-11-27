@@ -329,7 +329,7 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, out *actionsv1
 				AttackObservation: &actionsv1.EncounterAttackObservation{VictimKnown: c.AttackVictimKnown,
 					VictimGuid: c.AttackVictimGuid, AgeMs: c.AttackAgeMs, TargetKnown: c.TargetKnown, TargetGuid: c.TargetGuid},
 				PositionKnown: c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}),
-				Trajectory:    c.Trajectory, ActiveCast: c.ActiveCast, LevelKnown: c.LevelKnown,
+				Trajectory:    c.Trajectory, ActiveCast: c.ActiveCast, VisibleAuras: c.VisibleAuras, LevelKnown: c.LevelKnown,
 				ObservationAgeMs: c.ObservationAgeMs, FactionTemplateKnown: c.FactionTemplateKnown,
 				OwnDamageFamilies: s.encounterOwnDamageFamilies(c.Guid),
 			}

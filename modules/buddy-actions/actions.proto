@@ -1014,6 +1014,7 @@ message EncounterCreature {
   bool faction_template_known = 40;
   // Exact entry key into creature_templates when this GUID and its observed entry agree.
   optional uint32 template_entry = 41;
+  warcraftbuddy.world.v1.VisibleCreatureAuras visible_auras = 42;
 }
 message EncounterFlightmaster {
   bool stationary_position_known = 1;
