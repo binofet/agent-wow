@@ -126,6 +126,29 @@ class DirectToolTests(unittest.TestCase):
         selected = self.tools.dispatch("session_catalog", dict(method="buddy-actions.cast_spell"))['result']
         self.assertEqual(set(selected['messages']), {'request', 'response'})
 
+    def test_inspect_observed_enemy_by_guid_in_normal_read_tool(self):
+        guid = "17379391043560013849"
+        row = dict(guid=guid, levelKnown=True, level=38, targetKnown=True, targetGuid="3")
+        call = self.rpc.call
+
+        def snapshot(method, params, **kwargs):
+            result = call(method, params, **kwargs)
+            if method == "buddy-world.snapshot" and params.get("creatureGuid") == guid:
+                result["requestedCreature"] = dict(row)
+            return result
+
+        self.rpc.call = snapshot
+        args = dict(method="buddy-world.snapshot", params=dict(creatureGuid=guid),
+                    path=["requestedCreature"], limit=128)
+        self.allowed = self.gm_allowed = False
+        page = self.tools.dispatch("read_observation", args)
+        self.assertTrue(page["ok"], page)
+        self.assertEqual({r["key"]: r["value"] for r in page["result"]["rows"]}, row)
+        self.assertFalse(page["result"]["truncated"])
+        args["params"]["creatureGuid"] = "100"
+        self.assertFalse(self.tools.dispatch("read_observation", args)["ok"])
+        self.assertEqual(self.rpc.writes, [])
+
     def chat_tools(self, chat_session_id):
         return DirectTools(self.rpc, self.rpc.sid, self.rpc.guid, self.workspace, self.host,
             allowed=lambda: self.allowed, cancelled=lambda: self.cancelled,

@@ -89,22 +89,22 @@ func (s *Service) queryControlTemplateLocked(ctx context.Context, target *worldv
 	s.sendLocked(ctx, opcode.CMSGCreatureQuery, creaturequery.Request(target.Entry, target.Guid))
 }
 
-func (s *Service) observeControlTemplateLocked(payload []byte) {
+func (s *Service) observeCreatureTemplateLocked(payload []byte) {
 	if len(payload) < 4 || s.closed {
 		return
 	}
 	entry := binary.LittleEndian.Uint32(payload) & 0x7fffffff
 	proof, requested := s.controlTemplates[entry]
-	if !requested {
-		return
-	}
 	template, err := creaturequery.Decode(payload)
 	if err != nil {
-		if len(payload) != 4 || binary.LittleEndian.Uint32(payload)&0x80000000 == 0 {
+		if requested && (len(payload) != 4 || binary.LittleEndian.Uint32(payload)&0x80000000 == 0) {
 			s.state.MalformedPackets++
 		}
 		return
 	}
-	proof.creatureType = template.CreatureType
-	s.controlTemplates[entry] = proof
+	s.creatureTooltips.store(template)
+	if requested {
+		proof.creatureType = template.CreatureType
+		s.controlTemplates[entry] = proof
+	}
 }

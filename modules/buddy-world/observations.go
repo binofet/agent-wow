@@ -272,6 +272,8 @@ func creatureSnapshot(p *observed, s *observations, now time.Time) *worldv1.Crea
 	healthKnown := p.known[unitHealth] && p.known[unitMaxHealth] && p.fields[unitMaxHealth] > 0 && p.fields[unitHealth] <= p.fields[unitMaxHealth]
 	r := &worldv1.CreatureState{Guid: p.guid, Entry: p.fields[objectEntry], NpcFlags: p.fields[unitNPCFlags], Present: p.present, MapKnown: p.mapKnown, MapId: p.mapID, PositionKnown: p.positionKnown, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation, PositionAgeMs: age(now, p.positionAt), PositionRevision: p.positionRevision, ObservationAgeMs: age(now, p.observedAt), HealthKnown: healthKnown, Health: p.fields[unitHealth], MaxHealth: p.fields[unitMaxHealth], AliveKnown: healthKnown, Alive: healthKnown && p.fields[unitHealth] > 0 && p.fields[unitDynamicFlags]&0x20 == 0, UnitFlags: p.fields[unitFlags], DynamicFlags: p.fields[unitDynamicFlags], MovementFlags: p.movementFlags}
 	r.FactionTemplate = p.fields[0x37]
+	r.NpcFlagsKnown, r.FactionTemplateKnown = p.known[unitNPCFlags], p.known[0x37]
+	r.UnitFlags_2Known, r.MovementFlagsKnown = p.known[0x3c], p.movementKnown
 	r.StationaryPositionKnown = r.NpcFlags&0x2000 != 0 && p.positionKnown && !p.positionInferred && p.stationaryPosition
 	r.UnitFlagsKnown = p.known[unitFlags]
 	r.DynamicFlagsKnown = p.known[unitDynamicFlags]
@@ -284,7 +286,8 @@ func creatureSnapshot(p *observed, s *observations, now time.Time) *worldv1.Crea
 	r.CombatReach = math.Float32frombits(p.fields[0x42])
 	r.CombatReachKnown = p.known[0x42] && validFloat(r.CombatReach) && r.CombatReach >= 0 && r.CombatReach <= 50
 	r.Level = p.fields[0x36]
-	r.LevelKnown = p.known[0x36] && r.Level > 0 && r.Level <= 80
+	// UNIT_FIELD_LEVEL is set from a uint8 for creatures, including levels above the player cap.
+	r.LevelKnown = p.known[0x36] && r.Level > 0 && r.Level <= math.MaxUint8
 	if r.Alive && sameCreatureCastMap(p, &s.players[0]) {
 		r.ActiveCast = p.cast.snapshot(now)
 	}
@@ -368,6 +371,14 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 		r.TrainerCreatures = r.TrainerCreatures[:maxCreatureResults]
 	}
 	if len(r.NearbyCreatures) > 32 {
+		if r.Self.GetTargetKnown() && r.Self.TargetGuid != r.OwnerTarget.GetGuid() {
+			for _, creature := range r.NearbyCreatures[32:] {
+				if creature.Guid == r.Self.TargetGuid {
+					r.SelectedCreatureOutsideNearby = creature
+					break
+				}
+			}
+		}
 		r.NearbyCreatures = r.NearbyCreatures[:32]
 		r.NearbyCreaturesComplete = false
 	}

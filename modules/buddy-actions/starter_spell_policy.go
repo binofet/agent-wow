@@ -166,6 +166,10 @@ func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, targe
 		AliveKnown: target.AliveKnown, HealthKnown: target.HealthKnown, Health: target.Health, MaxHealth: target.MaxHealth,
 		UnitFlagsKnown: target.UnitFlagsKnown, UnitFlags: target.UnitFlags,
 		OwnDamageFamilies: s.encounterOwnDamageFamilies(target.Guid)}
+	creature.LevelKnown = target.LevelKnown
+	if target.LevelKnown {
+		creature.Level = proto.Uint32(target.Level)
+	}
 	if target.AliveKnown {
 		creature.Alive = proto.Bool(target.Alive)
 	}
@@ -174,7 +178,6 @@ func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, targe
 	if !a || !b {
 		return nil, nil, false
 	}
-	targetJSON["levelKnown"], targetJSON["level"] = target.LevelKnown, target.Level
 	if selection == coldridgeCasterSelection {
 		selfJSON["baseManaKnown"], selfJSON["baseMana"] = self.BaseManaKnown, self.BaseMana
 	}
