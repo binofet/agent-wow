@@ -157,3 +157,62 @@ func TestGoToRequiresCurrentPositionThroughRelease(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+func TestGoToCancelOrReplacementRetiresProvisionalArrival(t *testing.T) {
+	for _, mode := range []string{"cancel", "supersede"} {
+		for _, held := range []bool{false, true} {
+			name := mode + " at start"
+			if held {
+				name = mode + " with lease"
+			}
+			t.Run(name, func(t *testing.T) {
+				p := newInstanceEntryPolicyFixture(t)
+				dx := float32(0)
+				if held {
+					dx = 12
+				}
+				p.command(goToCommand(p, dx))
+				p.dispatch("instance_entry_status")
+				if held {
+					p.dispatch("acquire_idle_interaction")
+					p.s.openTravel = func(_ context.Context, _ string, _ uint32, _, dst buddynav.Point) (travelSurface, error) {
+						return &straightTripSurface{goal: dst}, nil
+					}
+					p.s.approachDelay = func(ctx context.Context, d time.Duration) error { p.advance(d); return ctx.Err() }
+					p.dispatch("travel_to")
+					p.dispatch("instance_entry_status")
+				}
+				if out := p.step(); out["task"].(map[string]any)["phase"] != "settled_at_destination" {
+					t.Fatal(out)
+				}
+				receipt := "canceled"
+				if mode == "cancel" {
+					p.command(map[string]any{"task": "cancel_task", "id": "trip-1"})
+				} else {
+					next := goToCommand(p, 50)
+					next["id"] = "trip-2"
+					p.command(next)
+					receipt = "superseded"
+				}
+				count := len(p.f.packets)
+				p.f.world.Self.X += 40
+				p.f.world.Self.PositionRevision++
+				if held {
+					p.dispatch("instance_entry_status")
+					p.dispatch("release_interaction")
+				}
+				out := p.step()
+				task := out["task"].(map[string]any)
+				if task["id"] != "trip-1" || task["reason"] != receipt || task["position"] != nil || p.currentTask() != nil || len(p.f.packets) != count || p.s.interactionToken != "" {
+					t.Fatal("old command reclaimed custody", out, p.methods)
+				}
+				if mode == "supersede" {
+					p.dispatch("instance_entry_status")
+					if p.currentTask()["id"] != "trip-2" {
+						t.Fatal("replacement did not take over", p.currentTask())
+					}
+				}
+			})
+		}
+	}
+}
