@@ -4911,6 +4911,7 @@ class Conversation:
         params = {"afterSequence": "0", "limit": 256}
         if continuation is not None:
             if not isinstance(self.brain, DirectBrain):raise ConversationError("Explicit owner continuation requires the direct model path")
+            params['afterSequence'] = str(continuation['sequence'] - 1)
             params['sessionId'] = continuation['chatSessionId']
         result = self.rpc.call("buddy-chat.poll", params)
         latest = integer(result.get("latestSequence", "0"))

@@ -4825,8 +4825,15 @@ class RetainedOwnerContinuationTests(unittest.TestCase):
                     rpc.polls += 1
                     if rpc.before_poll:rpc.before_poll(rpc)
                     if params.get('sessionId',rpc.chat) != rpc.chat:raise converse.CursorReset('Chat body changed')
-                    return poll([copy.deepcopy(row) for row in outer.rows if int(row['sequence'])>int(params.get('afterSequence','0'))],
-                                latest=int(outer.rows[-1]['sequence']),sessionId=rpc.chat,cursorLost=rpc.lost)
+                    latest = int(outer.rows[-1]['sequence'])
+                    oldest = max(1, latest - 255)
+                    after = int(params.get('afterSequence', '0'))
+                    rows = [copy.deepcopy(row) for row in outer.rows if int(row['sequence']) >= max(after + 1, oldest)]
+                    rows = rows[:params['limit']]
+                    result = poll(rows, latest=latest, sessionId=rpc.chat, oldestSequence=str(oldest),
+                                  cursorLost=rpc.lost or after + 1 < oldest)
+                    result['nextSequence'] = rows[-1]['sequence'] if rows else str(after)
+                    return result
                 if method == 'session.describe':return dict(sessionId=rpc.core,characterGuid=rpc.guid)
                 if method == 'buddy-chat.send':return dict(transportWritten=True)
                 raise AssertionError('Unexpected gameplay/tool RPC: '+method)
@@ -4876,7 +4883,7 @@ class RetainedOwnerContinuationTests(unittest.TestCase):
         self.assertEqual(len(sends),1);self.assertNotEqual(sends[0]['text'],self.rows[1]['text'])
         self.assertEqual(ack.read_bytes(),before);self.assertEqual(self.receipt_path.read_bytes(),retained)
         self.assertEqual(self.rows,original)
-        self.assertEqual([p['afterSequence'] for m,p in self.rpc.calls if m=='buddy-chat.poll'][0],'0')
+        self.assertEqual([p['afterSequence'] for m,p in self.rpc.calls if m=='buddy-chat.poll'][0],'108')
         self.assertTrue(all(p['afterSequence']=='110' for m,p in self.rpc.calls[1:] if m=='buddy-chat.poll'))
         loop.tick();self.assertEqual(len(self.requests),1) # No ordinary-tick continuation replay.
 
@@ -4884,6 +4891,43 @@ class RetainedOwnerContinuationTests(unittest.TestCase):
         loop=self.loop(resume_whispers=True);loop.tick()
         self.assertEqual(self.requests,[])
         self.assertEqual(loop.cursor,110)
+        self.assertEqual(self.rpc.calls[0], ('buddy-chat.poll', {'afterSequence':'0', 'limit':256}))
+
+    def test_continuation_reads_the_retained_owner_whisper_after_older_chat_was_evicted(self):
+        self.rows = [message(i, 'Nearby conversation', sender=4) for i in range(1, 434)]
+        self.rows[426] = message(427, 'Please continue this task', channel='WHISPER', receiverGuid='87')
+        self.binding[2] = '427'
+        receipt = json.loads(self.receipt_path.read_bytes())
+        converse.write_json(self.receipt_path, dict(receipt, cursor=427))
+        original = self.receipt_path.read_bytes()
+
+        from_zero = self.rpc.call('buddy-chat.poll', {'afterSequence':'0', 'limit':256})
+        self.assertTrue(from_zero['cursorLost'])
+        self.assertEqual((from_zero['oldestSequence'], from_zero['nextSequence']), ('178', '433'))
+        self.assertIn(self.rows[426], from_zero['messages'])
+
+        loop = self.loop(continue_owner_whisper=self.binding)
+        loop.tick()
+        self.assertEqual(self.rpc.calls[1], ('buddy-chat.poll', {'afterSequence':'426', 'limit':256, 'sessionId':'chat-current'}))
+        self.assertEqual(loop.cursor, 433)
+        self.assertEqual(self.requests[0]['messages'], [{'role':'user', 'content':self.rows[426]['text']}])
+        self.assertEqual(self.requests[0]['toolRequestId'], self.binding[3])
+        loop.tick()
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(self.receipt_path.read_bytes(), original)
+
+    def test_continuation_refuses_if_the_requested_whisper_was_evicted(self):
+        self.rows.extend(message(i, 'Nearby conversation', sender=4) for i in range(111, 366))
+        with self.assertRaisesRegex(converse.ConversationError, 'complete current chat window'):
+            self.loop(continue_owner_whisper=self.binding).tick()
+        self.assertEqual(self.requests, [])
+        self.assertFalse(any(method == 'buddy-chat.send' for method, _ in self.rpc.calls))
+
+    def test_retained_whisper_requires_the_complete_suffix(self):
+        page = self.rpc.call('buddy-chat.poll', {'afterSequence':'108', 'limit':1, 'sessionId':'chat-current'})
+        self.assertEqual((page['cursorLost'], page['nextSequence'], page['latestSequence']), (False, '109', '110'))
+        with self.assertRaisesRegex(converse.ConversationError, 'complete current chat window'):
+            self.loop().retained_owner_whisper(page, converse.owner_whisper_continuation(self.binding))
 
     def test_continued_tool_namespace_preserves_real_gm_alias_and_new_task_custody(self):
         from test_gm_command_evidence import GMCommandEvidenceTests
