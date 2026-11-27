@@ -26,13 +26,14 @@ type followNavigation struct {
 	arrivalStop                         float64
 	arrivalKnown                        bool
 	ownerArrival                        bool
+	ownerVisit, ownerFollowRevision     uint64
 	intermediateLeg                     bool
 	legVisit                            uint64
 	legOwner                            position
 	expected                            position
 	selfRevision                        uint64
 	mapID                               uint32
-	nextPlanAt                          time.Time
+	nextPlanAt, checkpointAt            time.Time
 	lastError                           string
 }
 
@@ -77,11 +78,19 @@ func (s *Service) formationNavigationPath(ctx context.Context, target position, 
 		}
 		return arrival, arrivalStop, true
 	}
+	// PlanMap can reject the normalized destination before returning its
+	// samples. A start or corridor failure cannot authorize an owner fallback.
+	slotFloorMismatch := err != nil && strings.HasSuffix(err.Error(), "navigation normalized endpoint is outside destination tolerance")
 	if err == nil {
 		if arrival, radius, ok := validate(path, target, false); ok {
 			return path, arrival, radius, false, nil
 		}
-		return nil, position{}, 0, false, errors.New("formation route exceeds point limit or ends outside the slot")
+		// An offset shares its leader's reported altitude. On a slope the
+		// verified floor may miss that height at exactly the requested XY.
+		// Only the ordinary observed-owner fallback can try its own floor.
+		arrival := path[len(path)-1]
+		slotFloorMismatch = followHorizontalDistance(arrival, target) <= stop && math.Abs(float64(arrival.z-target.z)) > 1.5
+		err = errors.New("formation route exceeds point limit or ends outside the slot")
 	}
 	if formationDestinationUnavailable(err) {
 		for _, offset := range [][2]float32{{1.25, 0}, {-1.25, 0}, {0, 1.25}, {0, -1.25}} {
@@ -108,7 +117,7 @@ func (s *Service) formationNavigationPath(ctx context.Context, target position, 
 	// melee and other users never change their target to the owner. A complete
 	// separate route still has to validate the actual observed owner's floor.
 	partial := strings.Contains(err.Error(), "navigation polygon path is partial, exhausted, or unavailable") || strings.Contains(err.Error(), "navigation straight path is partial or unavailable")
-	if len(ownerFallback) == 1 && (formationDestinationUnavailable(err) || partial) {
+	if len(ownerFallback) == 1 && (slotFloorMismatch || formationDestinationUnavailable(err) || partial) {
 		owner := ownerFallback[0]
 		if ctx.Err() != nil {
 			return nil, position{}, 0, false, ctx.Err()
@@ -167,21 +176,29 @@ func followCollinear(a, b, c position) bool {
 }
 
 func followPathStep(from position, path []position, index int, budget float64) (position, int, bool) {
+	p, next, _, ok := followStride(from, path, index, budget, math.Inf(1))
+	return p, next, ok
+}
+
+// Follow the measured polyline up to the first turn, the travel budget or
+// the per-packet vertical bound. Return the distance travelled on the path
+// so the normal controller can wake when the body actually reaches a turn.
+func followStride(from position, path []position, index int, budget, maxDZ float64) (position, int, float64, bool) {
 	if !finite(from) || index < 0 || index > len(path) || math.IsNaN(budget) || math.IsInf(budget, 0) || budget <= 0 {
-		return from, index, false
+		return from, index, 0, false
 	}
 	p := from
 	for index < len(path) && distance(p, path[index]) <= 0.005 {
 		index++
 	}
 	if index == len(path) {
-		return p, index, true
+		return p, index, 0, true
 	}
-	first := index
+	first, available := index, budget
 	for index < len(path) && budget > 0.0001 {
 		goal := path[index]
 		if !finite(goal) {
-			return from, index, false
+			return from, index, 0, false
 		}
 		d := distance(p, goal)
 		if d <= 0.005 {
@@ -189,6 +206,13 @@ func followPathStep(from position, path []position, index int, budget float64) (
 			continue
 		}
 		step := math.Min(budget, d)
+		if dz := float64(goal.z) - float64(from.z); math.Abs(dz) > maxDZ && math.Abs(float64(goal.z)-float64(p.z)) <= maxDZ {
+			// Clip a climb accumulated across verified samples. A single
+			// unsupported height jump must still fail the packet bound.
+			boundary := float64(from.z) + math.Copysign(maxDZ, dz)
+			toBoundary := (boundary - float64(p.z)) / (float64(goal.z) - float64(p.z))
+			step = math.Min(step, math.Max(0, toBoundary*d))
+		}
 		p.o = followFacing(p, goal)
 		f := float32(step / d)
 		p.x += (goal.x - p.x) * f
@@ -214,12 +238,40 @@ func followPathStep(from position, path []position, index int, budget float64) (
 			}
 		}
 	}
-	return p, index, finite(p)
+	return p, index, available - budget, finite(p)
+}
+
+// A periodic tick still handles all the ordinary follow and safety work. A
+// nearer verified corner or height boundary can request one earlier tick,
+// without retaining authority or moving the body from a timer callback.
+func (f *followNavigation) groundCheckpoint(from position, at time.Time, speed float64) time.Time {
+	const horizon = 0.6
+	budget := speed * horizon
+	point, _, used, ok := followStride(from, f.path, f.index, budget, 2)
+	if !ok || math.Abs(float64(point.z-from.z)) > 2 || used <= 0 || used >= budget-0.0001 {
+		return time.Time{}
+	}
+	return at.Add(time.Duration(math.Ceil(used / speed * float64(time.Second))))
+}
+
+// An already-verified route to a previous sighting can carry a moving body
+// until the normal replan. Each such packet must still make physical progress
+// toward the currently observed owner. Reaching the old endpoint is not arrival.
+func (s *Service) advancingOwnerFloorPrefix(w *worldv1.SnapshotResponse, next position) bool {
+	f, owner := &s.followNav, w.GetOwner()
+	if !f.ownerArrival || f.ownerVisit == 0 || w.GetVisitRevision() != f.ownerVisit ||
+		s.followRevision != f.ownerFollowRevision || (!s.state.Following && s.followGoalExecuting == nil) ||
+		owner.GetPositionInferred() || owner.GetMovementFlags()&0x3f == 0 || s.safeFollowPlayers(w, s.selfGUID, true) != "" {
+		return false
+	}
+	current := playerPosition(owner)
+	return distance(next, current) < distance(s.pos, current)
 }
 
 func (s *Service) followFormationStepLocked(ctx context.Context, target position, stopDistance float64, ownerFallback ...position) bool {
 	now := s.now()
 	f := &s.followNav
+	f.checkpointAt = time.Time{}
 	if f.pointDetour && (len(s.currentMovementPointsLocked()) == 0 || f.pointEscape && pointClearance(s.pos, s.currentMovementPointsLocked()) >= 0) {
 		f.Reset()
 	}
@@ -258,12 +310,20 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	if s.state.MotionUnconfirmed {
 		return fail("motion_unconfirmed_explicit_stop_required", errors.New("movement stop is unconfirmed"))
 	}
+	if len(ownerFallback) == 1 && s.planFollowCorridor != nil {
+		var last *destinationOwner
+		if bound, ok := ctx.Value(destinationOwnerKey{}).(destinationOwner); ok && bound.lastSeen {
+			last = &bound
+		}
+		return s.stepOnFollowCorridorLocked(ctx, now, target, stopDistance, ownerFallback[0], last, fail, arrived)
+	}
 	if f.legVisit != 0 && (distance(f.target, target) > 1.5 || len(ownerFallback) != 1 || distance(f.legOwner, ownerFallback[0]) > 1.5) {
 		// A leg belongs to its planned owner/slot, not whichever owner pose
 		// happens to be visible on a later tick inside the replan throttle.
 		f.path, f.arrivalKnown = nil, false
 	}
-	ownerArrivalValid := (!f.ownerArrival || len(ownerFallback) == 1 && distance(f.arrival, ownerFallback[0]) <= .25) &&
+	ownerArrivalValid := (!f.ownerArrival || len(ownerFallback) == 1 && distance(f.arrival, ownerFallback[0]) <= .25 &&
+		(f.ownerVisit == 0 || f.ownerVisit == s.lastWorld.GetVisitRevision() && f.ownerFollowRevision == s.followRevision)) &&
 		(f.legVisit == 0 || f.legVisit == s.lastWorld.GetVisitRevision())
 	arrival := f.arrival
 	if f.ownerArrival && ownerArrivalValid {
@@ -281,8 +341,19 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		}
 		return ok
 	}
-	validCached := len(f.path) != 0 && ownerArrivalValid && f.selfRevision == s.positionRevision && f.mapID == s.posMap && distance(f.expected, s.pos) <= 0.05
-	needsPlan := !validCached || f.index >= len(f.path) || distance(f.target, target) > 1.5
+	continuePrefix := false
+	if f.ownerArrival && !ownerArrivalValid && len(ownerFallback) == 1 && s.state.Moving && f.expected == s.pos &&
+		s.lastWorld.GetOwner() != nil && playerPosition(s.lastWorld.Owner) == ownerFallback[0] {
+		// Re-use only the unconsumed physical prefix. On exhausting it, a
+		// moving owner needs a new observed destination immediately.
+		if f.index < len(f.path) {
+			continuePrefix = s.advancingOwnerFloorPrefix(s.lastWorld, f.path[f.index])
+		} else if s.advancingOwnerFloorPrefix(s.lastWorld, ownerFallback[0]) {
+			f.nextPlanAt = time.Time{}
+		}
+	}
+	validCached := len(f.path) != 0 && (ownerArrivalValid || continuePrefix) && f.selfRevision == s.positionRevision && f.mapID == s.posMap && distance(f.expected, s.pos) <= 0.05
+	needsPlan := !validCached || !ownerArrivalValid || f.index >= len(f.path) || distance(f.target, target) > 1.5
 	if needsPlan && !now.Before(f.nextPlanAt) {
 		f.path = nil
 		f.nextPlanAt = now.Add(750 * time.Millisecond)
@@ -332,6 +403,11 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		f.index, f.target, f.expected, f.selfRevision, f.mapID = 0, target, s.pos, s.positionRevision, s.posMap
 		f.arrival, f.arrivalStop, f.arrivalKnown = arrival, arrivalStop, true
 		f.ownerArrival = ownerArrival
+		f.ownerVisit, f.ownerFollowRevision = 0, 0
+		if ownerArrival && s.lastWorld.GetOwner() != nil && playerPosition(s.lastWorld.Owner) == arrival {
+			f.ownerVisit, f.ownerFollowRevision = s.lastWorld.GetVisitRevision(), s.followRevision
+		}
+		continuePrefix = false
 		f.intermediateLeg = intermediate
 		f.legVisit = legVisit
 		if legVisit != 0 {
@@ -380,6 +456,11 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			return w, allowed
 		}))
 	}
+	return s.advanceFormationGroundLocked(ctx, now, ownerFallback, continuePrefix, fail, arrived)
+}
+
+func (s *Service) advanceFormationGroundLocked(ctx context.Context, now time.Time, ownerFallback []position, continuePrefix bool, fail func(string, error) bool, arrived func() bool) bool {
+	f := &s.followNav
 	for f.index < len(f.path) && distance(s.pos, f.path[f.index]) <= 0.005 {
 		f.index++
 	}
@@ -411,6 +492,9 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			}
 		}
 		if changedRoute {
+			if _, retained := ctx.Value(followCorridorMovementKey{}).(followCorridor); retained {
+				s.state.NavReason = "client_ground_hazard_detour"
+			}
 			f.path, f.index, f.pointDetour = adjusted, 0, true
 			f.pointEscape = pointClearance(s.pos, s.currentMovementPointsLocked()) < 0
 			for f.index < len(f.path) && distance(s.pos, f.path[f.index]) <= .005 {
@@ -421,6 +505,14 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			}
 		}
 	}
+	speed := observedRunSpeed(s.lastWorld.GetSelf())
+	// Only an ordinary follow with a currently observed owner schedules the
+	// periodic controller. Other users keep their own cadence and custody.
+	schedule := func() {
+		if len(ownerFallback) == 1 && speed > 0 {
+			f.checkpointAt = f.groundCheckpoint(s.pos, s.posAt, speed)
+		}
+	}
 	if !s.state.Moving {
 		p := s.pos
 		p.o = followFacing(p, f.path[f.index])
@@ -429,6 +521,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			return false
 		}
 		f.expected = s.pos
+		schedule()
 		s.state.Reason = "following_formation"
 		return true
 	}
@@ -437,30 +530,60 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		return fail("follow_tick_late", errors.New("formation movement checkpoint is late"))
 	}
 	if elapsed < 0.15 {
-		return true
+		schedule()
+		if f.checkpointAt.IsZero() || now.Before(f.checkpointAt) {
+			return true
+		}
 	}
-	speed := observedRunSpeed(s.lastWorld.GetSelf())
 	if speed == 0 {
 		return fail("follow_speed_unknown", errors.New("current observed run speed is unavailable"))
 	}
-	p, index, ok := followPathStep(s.pos, f.path, f.index, speed*elapsed)
+	p, index, _, ok := followStride(s.pos, f.path, f.index, speed*elapsed, 2)
 	if !ok || math.Abs(float64(p.z-s.pos.z)) > 2 || distance(s.pos, p) > speed*elapsed+0.01 {
 		return fail("follow_navigation_invalid_step", errors.New("formation movement exceeded a verified ground segment"))
 	}
+	if index < len(f.path) && followHorizontalDistance(p, f.path[index]) > .005 {
+		// At a turn the body remains in forward motion. Face into the
+		// next verified segment as soon as its corner is reached.
+		p.o = followFacing(p, f.path[index])
+	}
+	if continuePrefix {
+		previous, _ := ctx.Value(movementPrewriteGuardKey{}).(movementPrewriteGuard)
+		ctx = withMovementPrewriteGuard(ctx, func(call context.Context, w *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool) {
+			if previous != nil {
+				var allowed bool
+				w, allowed = previous(call, w)
+				if !allowed {
+					return w, false
+				}
+			}
+			if !s.advancingOwnerFloorPrefix(w, p) {
+				s.state.Reason = "follow_owner_floor_route_changed"
+				return w, false
+			}
+			return w, true
+		})
+	}
+	proof := &navigationSpeedProof{from: s.pos, speed: speed, elapsed: elapsed}
+	ctx = context.WithValue(ctx, navigationSpeedProofKey{}, proof)
 	if !s.movementLocked(ctx, opcode.MSGMoveHeartbeat, p, true) {
 		f.path = nil
 		s.stopLocked(ctx)
+		if proof.refused && !s.state.MotionUnconfirmed {
+			s.state.Reason = "follow_observed_run_speed_changed"
+		}
 		return false
 	}
 	f.index, f.expected = index, s.pos
 	s.state.Reason = "following_formation"
-	arrival = f.arrival
+	arrival := f.arrival
 	if f.ownerArrival && len(ownerFallback) == 1 {
 		arrival = ownerFallback[0]
 	}
-	if followAtTarget(s.pos, arrival, f.arrivalStop) {
+	if !continuePrefix && followAtTarget(s.pos, arrival, f.arrivalStop) {
 		return arrived()
 	}
+	schedule()
 	return true
 }
 

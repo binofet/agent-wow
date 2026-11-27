@@ -171,6 +171,8 @@ type Service struct {
 	followRevision                       uint64
 	followMount                          followMountState
 	followNav                            followNavigation
+	followGround                         groundedFollow
+	planFollowCorridor                   followCorridorPlanner
 	followPortal                         dungeonPortalFollow
 	portalGoal                           portalCatchupGoal
 	portalGoalRevision                   uint64
@@ -200,7 +202,7 @@ type Service struct {
 }
 
 func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
-	s := &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planRecoveryPath: planRecoveryNavigation, planLegPath: planLegNavigation, planColdridgePath: planColdridgeNavigation, planColdridge182Path: planColdridge182Navigation}
+	s := &Service{planFollowCorridor: openFollowCorridor, session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planRecoveryPath: planRecoveryNavigation, planLegPath: planLegNavigation, planColdridgePath: planColdridgeNavigation, planColdridge182Path: planColdridge182Navigation}
 	if len(sessionID) == 1 && len(sessionID[0]) <= 128 {
 		s.sessionID = sessionID[0]
 	}
@@ -661,14 +663,26 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 }
 
 func (s *Service) Run(ctx context.Context) {
-	ticker := time.NewTicker(200 * time.Millisecond)
+	const period = 200 * time.Millisecond
+	ticker := time.NewTicker(period)
 	defer ticker.Stop()
+	checkpoint := time.NewTimer(period)
+	checkpoint.Stop()
+	defer checkpoint.Stop()
+	var early <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.runTick(ctx)
+		case <-early:
+		}
+		delay := s.runTick(ctx)
+		early = nil
+		checkpoint.Stop()
+		if delay > 0 && delay < period {
+			checkpoint.Reset(delay)
+			early = checkpoint.C
 		}
 	}
 }
@@ -1262,15 +1276,21 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 // The internal work budget starts only after this body's single writer is
 // admitted. Waiting behind another RPC must not turn a healthy World callback
 // into an already-expired read. The parent deadline/cancellation still wins.
-func (s *Service) runTick(ctx context.Context) {
+func (s *Service) runTick(ctx context.Context) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if ctx.Err() != nil {
-		return
+		return 0
 	}
 	call, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
 	defer cancel()
 	s.tickLocked(context.WithValue(call, followRunParentKey{}, ctx))
+	if s.followNav.checkpointAt.IsZero() || len(s.followNav.path) == 0 || !s.state.Moving || s.state.MotionUnconfirmed {
+		return 0
+	}
+	// Wrath's movement clock has millisecond resolution. A delayed or
+	// sub-millisecond boundary still gets one fresh, fully checked tick.
+	return max(time.Millisecond, s.followNav.checkpointAt.Sub(s.now()))
 }
 
 func (s *Service) Tick(ctx context.Context) {
@@ -1282,6 +1302,7 @@ func (s *Service) Tick(ctx context.Context) {
 }
 
 func (s *Service) tickLocked(ctx context.Context) {
+	s.followNav.checkpointAt = time.Time{}
 	s.expireMovementOwnerLocked()
 	s.observeHostWeaponMetadataLocked(ctx)
 	if s.bodyMoving {
