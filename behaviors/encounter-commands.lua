@@ -341,7 +341,7 @@ local function automatic_target(obs, request, focusGuid)
         return best
     end
     local result = tactics.decide({kind="automatic_control",casterGuid=obs.selfGuid,inCombat=true,
-        party=obs.party,focusGuid=focusGuid,focusTargets=focused,controlObserved=observed,targets=targets,
+        party=obs.party,players=obs.players,mapId=obs.mapId,focusGuid=focusGuid,focusTargets=focused,controlObserved=observed,targets=targets,
         preferredGuid=request.boundGuid,capabilities={{guid=obs.selfGuid,technique="polymorph",ready=true}}})
     return result.control and result.control.targetGuid
 end
