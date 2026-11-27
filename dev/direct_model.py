@@ -279,89 +279,140 @@ def protected_read_evidence(value):
     return _read_custody(value) or _receipt_evidence(value)
 
 
-def _closed_gm_turn(messages, first, end, read_only, unknown, limit):
-    """Index a replied-to turn whose tool calls all have identified, settled transport."""
-    final = messages[end-1]
-    if (final.get("role") != "assistant" or final.get("tool_calls") or
-            not isinstance(final.get("content"), str) or not final["content"]):
-        return None
-    owners, issued, calls = [], [], {}
-    for i in range(first, end):
-        row = messages[i]
-        role = row.get("role")
-        if role == "tool":
-            call_id = row.get("tool_call_id")
-            if not isinstance(call_id, str) or call_id not in calls: return None
+def _gm_request_spans(messages, start, requests, limit):
+    """Recover old input boundaries from the actual hashes, including consecutive independent whispers."""
+    known, legacy = {}, {}
+    for key, row in requests.items():
+        if not isinstance(row, dict): continue
+        first = row.get("firstMessage")
+        if type(first) is int:
+            if 0 <= first < start:
+                known[first] = (key, row)
+        elif isinstance(row.get("inputSHA256"), str):
+            legacy.setdefault(row["inputSHA256"], []).append(key)
+    boundaries = dict(known)
+    i = 0
+    while i < start:
+        if i in known:
+            end = known[i][1].get("endMessage")
+            if type(end) is int and i < end <= start:
+                i = end
+                continue
+        if messages[i].get("role") != "user" or i in known:
+            i += 1
+            continue
+        end = i+1
+        while end < start and end not in known and messages[end].get("role") == "user": end += 1
+        # A run may be several independent requests which received no answer, or a single
+        # request with several USER messages. Only the unique complete hash segmentation binds them.
+        raw = [_packed(row,limit) for row in messages[i:end]]
+        ways, edges = {end:1}, {}
+        for first in reversed(range(i,end)):
+            digest = hashlib.sha256(b"[")
+            for last in range(first,end):
+                if last != first: digest.update(b",")
+                digest.update(raw[last-i])
+                completed = digest.copy()
+                completed.update(b"]")
+                identities = legacy.get(completed.hexdigest())
+                if identities and ways.get(last+1):
+                    ways[first] = min(2, ways.get(first,0) + ways[last+1])
+                    edges[first] = (last+1,identities)
+        if ways.get(i) == 1:
+            pos = i
+            while pos < end:
+                following, identities = edges[pos]
+                boundaries[pos] = (identities[0] if len(identities)==1 else None, {})
+                pos = following
+        else:
+            # Leave all unmatched/ambiguous owner rows in the working prompt.
+            for pos in range(i,end): boundaries[pos] = (None,None)
+        i = end
+    starts = sorted(boundaries)
+    return [(first, end, *boundaries[first]) for first, end in zip(starts,starts[1:]+[start])]
+
+
+def _gm_returned_batch(messages, first, end, read_only, unknown, limit):
+    """Describe writes only when all results match this exact assistant tool batch."""
+    try:
+        calls = {}
+        for call in messages[first]["tool_calls"]:
+            call_id, fn = call["id"], call["function"]
+            args = _decode(fn["arguments"])
+            if (not isinstance(call_id,str) or not call_id or call_id in calls or
+                    not isinstance(fn["name"],str) or not isinstance(args,dict)): return None
+            calls[call_id] = (fn["name"],args)
+        if not calls or len(calls) != end-first-1: return None
+        issued = []
+        for i in range(first+1,end):
+            row = messages[i]
+            call_id = row["tool_call_id"]
             name, args = calls.pop(call_id)
             value = _decode(row["content"])
-            if not isinstance(value, dict) or value.get("ok") is not True or _read_custody(value): return None
-            fingerprint = hashlib.sha256(_packed([name,args], limit)).hexdigest()
-            if fingerprint in unknown: return None
+            fingerprint = hashlib.sha256(_packed([name,args],limit)).hexdigest()
+            if fingerprint in unknown or _read_custody(value): return None
             if name == "gm_execute":
                 if not _pageable_gm_selection(value,args): return None
                 result = value["result"]
                 feedback = result.get("feedback")
-                if (not isinstance(feedback, dict) or feedback.get("error") or feedback.get("cursorLost")
-                        or feedback.get("status") not in ("observed", "no_reply_yet")): return None
-                if any(value for key,value in result.items() if key.lower().endswith(("error","failure","unknown"))):
+                if (not isinstance(feedback,dict) or feedback.get("error") or feedback.get("cursorLost")
+                        or feedback.get("status") not in ("observed","no_reply_yet")): return None
+                if any(item for key,item in result.items() if key.lower().endswith(("error","failure","unknown"))):
                     return None
-                issued.append(dict(toolCallId=call_id, message=i, **{key:result[key] for key in (
-                    "command","commandSHA256","selectedGuid","sessionId","operationId","transportWritten",
-                    "selectionTransportWritten","commandTransportWritten","gameEffectClaimed","completion")}))
+                issued.append(dict(toolCallId=call_id,message=i,**{key:result[key] for key in
+                    ("command","commandSHA256","selectedGuid","sessionId","operationId","transportWritten",
+                     "selectionTransportWritten","commandTransportWritten","gameEffectClaimed","completion")}))
             elif not DirectModel._read_only_call(name,args,read_only) or protected_read_evidence(value):
                 return None
-        elif calls:
-            return None
-        elif role == "user" and isinstance(row.get("content"),str):
-            owners.append(i)
-        elif role == "assistant":
-            native = row.get("tool_calls", [])
-            if not isinstance(native,list): return None
-            for call in native:
-                call_id, fn = call["id"], call["function"]
-                if not isinstance(call_id,str) or not call_id or call_id in calls: return None
-                args = _decode(fn["arguments"])
-                if not isinstance(args,dict) or not isinstance(fn["name"],str): return None
-                calls[call_id] = (fn["name"],args)
-        else:
-            return None
-    if calls or not owners: return None
-    return dict(firstMessage=first,lastMessage=end-1,ownerMessages=owners,assistantReply=end-1,issuedCommands=issued)
+        return issued
+    except (ValueError,TypeError,KeyError,RecursionError,UnicodeError,ModelError):
+        return None
 
 
 def _gm_history_window(messages, start, requests, read_only, unknown, incoming, limit):
-    """Keep the current request, latest prior evidence and unsafe turns in their original roles."""
-    recorded = {row["firstMessage"]:(key,row) for key,row in requests.items()
-        if isinstance(row,dict) and type(row.get("firstMessage")) is int and 0 <= row["firstMessage"] < start}
-    starts = []
-    for i in range(start):
-        record = recorded.get(i)
-        if record:
-            starts.append(i)
-        elif messages[i].get("role") == "user" and (i == 0 or messages[i-1].get("role") != "user"):
-            if starts and starts[-1] in recorded: continue
-            starts.append(i)
-    previous = [i for i in range(start) if messages[i].get("role") == "tool"]
-    last_result = previous[-1] if previous else None
+    """Keep current intent, last real evidence and every unsafe older tool pair in its original role."""
+    spans = _gm_request_spans(messages,start,requests,limit)
     current_text = [row["content"] for row in incoming if row.get("role") == "user"]
-    turns, archived = {}, {}
+    matching = next((first for first,end,_,_ in reversed(spans) if current_text and
+        [row.get("content") for row in messages[first:end] if row.get("role")=="user"] == current_text),None)
+    recent_batches = [i for i in range(start) if messages[i].get("role")=="assistant" and messages[i].get("tool_calls")][-2:]
+    turns, archived, hidden = {}, {}, set()
     issued = 0
-    matching = None
-    for first,end in zip(starts,starts[1:]):
-        if last_result is not None and first <= last_result < end: continue
-        try:
-            turn = _closed_gm_turn(messages,first,end,read_only,unknown,limit)
-        except (ValueError,TypeError,KeyError,RecursionError,UnicodeError,ModelError):
-            turn = None
-        if turn is None: continue
-        if first in recorded:
-            identity, original = recorded[first]
-            if original.get("endMessage") != end: continue
-            turn["requestId"] = identity
-        if [messages[i]["content"] for i in turn["ownerMessages"]] == current_text:
-            matching = first
-        issued += len(turn["issuedCommands"])
+    for first,end,identity,record in spans:
+        owners, written, eligible = [], [], []
+        safe = True
+        i = first
+        while i < end:
+            row = messages[i]
+            if row.get("role") == "user":
+                owners.append(i)
+            elif row.get("role") == "assistant" and row.get("tool_calls"):
+                batch_end = i+1
+                while batch_end < end and messages[batch_end].get("role") == "tool": batch_end += 1
+                batch = _gm_returned_batch(messages,i,batch_end,read_only,unknown,limit)
+                if batch is None or i in recent_batches: safe = False
+                else:
+                    written.extend(batch)
+                    eligible.extend(range(i,batch_end))
+                i = batch_end
+                continue
+            elif row.get("role") != "assistant":
+                safe = False
+            i += 1
+        if not owners: continue
+        final = messages[end-1]
+        replied = (final.get("role")=="assistant" and not final.get("tool_calls") and
+            isinstance(final.get("content"),str) and bool(final["content"]))
+        closed = end < start and safe and replied and record is not None and (
+            "firstMessage" not in record or record.get("endMessage")==end)
+        if not closed and not eligible: continue
+        turn = dict(firstMessage=first,lastMessage=end-1,ownerMessages=owners,issuedCommands=written,
+            wholeTurnPaged=closed)
+        if replied and record is not None: turn["assistantReply"] = end-1
+        if identity is not None: turn["requestId"] = identity
+        issued += len(written)
         turns[str(first)] = turn
+        hidden.update(range(first,end) if closed else eligible)
         for i in range(first,end):
             archived[str(i)] = {key:value for key,value in messages[i].items()
                 if key not in ("reasoning","reasoning_content")}
@@ -369,9 +420,9 @@ def _gm_history_window(messages, start, requests, read_only, unknown, incoming, 
     archive = dict(turns=turns,messages=archived)
     note = dict(archivedOwnerTurns=len(turns),issuedCommandReceipts=issued,
         turnsPath=["conversationArchive","turns"],messagesPath=["conversationArchive","messages"])
-    if matching is not None: note["lastIdenticalOwnerTextTurn"] = ["conversationArchive","turns",str(matching)]
-    keep = [i for i in range(start) if str(i) not in archived]
-    return keep, archive, note
+    if str(matching) in turns and turns[str(matching)]["wholeTurnPaged"]:
+        note["lastIdenticalOwnerTextTurn"] = ["conversationArchive","turns",str(matching)]
+    return [i for i in range(start) if i not in hidden],archive,note
 
 
 def _decode(raw):
@@ -1134,8 +1185,8 @@ class DirectModel:
                     if plan is not None:
                         local_window, history, archived_turns = plan
                         archive_history(history)
-                        system = ("Host conversation archive. Earlier owner turns with recorded replies and original "
-                            "native command receipts are available through context_read. Each write retains its "
+                        system = ("Host conversation archive. Earlier messages and original native command receipts "
+                            "are available through context_read. Each turn identifies any observed reply and each write retains its "
                             "transport and effect evidence. Use the current owner instruction for new actions. " +
                             json.dumps(archived_turns,separators=(",",":")) + "\n" + system)
                 index = 0
