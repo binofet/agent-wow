@@ -1080,16 +1080,20 @@ local function ranged_filter(obs,frame,sequence,out,row,status,choose_spell,task
         return
     end
     local task=task_view and task_view.task
-    if row.origin=="learned_prior" and task and task.kind=="rally_to" then
+    if row.origin=="learned_prior" and task and (task.kind=="rally_to" or task.kind=="go_to") then
+        local go_to=task.kind=="go_to"
+        if go_to and (task.operation or task.uncertain) then return end
         if task_view.rangedTravelSafe then
-            status.phase="yielding_to_explicit_rally"
+            status.phase=go_to and "yielding_to_explicit_destination" or "yielding_to_explicit_rally"
             if #frame.pending==0 then ranged_hold(obs,frame,out,row,status,false) end
             return
         end
-        -- Let the rally settle its own movement/token before the default tries
-        -- to acquire. These exact proposals still commit through task custody.
-        if task.pausedForEncounter and task_view.action==out.action and out.action and
-           (out.action.capability=="stop_movement" or out.action.capability=="movement_owner") then return end
+        -- Voluntary travel settles its own movement/token before withdrawal.
+        if task.pausedForEncounter and task_view.action==out.action and out.action then
+            local cap=out.action.capability
+            if go_to and (cap=="instance_entry_status" or cap=="release_interaction") or
+               not go_to and (cap=="stop_movement" or cap=="movement_owner") then return end
+        end
     end
     local ids,nearest,distance,complete=ranged_targets(obs,row)
     status.matchedTargets=#ids

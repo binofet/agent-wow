@@ -7,6 +7,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"google.golang.org/protobuf/proto"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -972,6 +973,108 @@ func TestCreepingSludgeKeepsReadyRangedDamageAndOrdinaryCare(t *testing.T) {
 				if a["capability"] != "heal" || a["targetGuid"] != "8" {
 					t.Fatal("suppressed existing care", d.Output)
 				}
+			}
+		})
+	}
+}
+
+// The generic destination and a standing class rule run in the full shipped Lua
+// program. Both use their own native lease and only their own settled receipt.
+func TestGoToRespectsStandingHazardAndReleasesItsOwnLeaseFirst(t *testing.T) {
+	raw, err := exec.Command("python3", "-B", filepath.Join("..", "..", "dev", "encounter-bundle")).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"near existing stance", "far existing stance", "near while traveling", "uncertain cleanup"} {
+		t.Run(mode, func(t *testing.T) {
+			host, err := behavior.NewSession(t.Context(), fallbackSession, withStandingRange(string(raw)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(host.Close)
+			p := &fallbackPolicyTest{t: t, host: host}
+			o := sludgePriorObservation()
+			o.Navigation.BodyMovementSupported = true
+			self := o.Players["4"]
+			self.CombatKnown = true
+			self.X, self.Y, self.Z = 0, 0, 0
+			npc := o.Targets[fallbackGUID(fallbackNPC)]
+			npc.X, npc.Y, npc.Z = 80, 0, 0
+			if mode == "near existing stance" {
+				npc.X = 3
+			}
+			next := func() behavior.Decision { return p.decide(observeRanged(t, p, o, false)) }
+			if mode == "near existing stance" || mode == "far existing stance" {
+				settlePriorLease(t, p, o, false)
+			} else {
+				next()
+			}
+			waitTaskCommand(t, p, map[string]any{"task": "go_to", "id": "walk", "mapId": 349, "x": 100, "y": 0, "z": 0})
+			d := next()
+			expect := func(cap string) map[string]any {
+				t.Helper()
+				a, _ := d.Output["action"].(map[string]any)
+				if a["capability"] != cap {
+					t.Fatal("unexpected action", cap, d.Output["action"], d.Output["task"], d.Output["rangedStance"])
+				}
+				return a
+			}
+			if mode == "near existing stance" {
+				expect("move_body")
+				if d.Output["task"].(map[string]any)["phase"] != "paused_for_nearby_hazard" {
+					t.Fatal(d.Output)
+				}
+				return
+			}
+			if mode == "far existing stance" {
+				a := expect("movement_owner")
+				if a["mode"] != "release" || a["owner"] != "ranged:maraudon_sludge_backline" {
+					t.Fatal(a)
+				}
+				return
+			}
+			state := map[string]any{"sessionId": fallbackSession, "selfGuid": "4", "position": map[string]any{"known": true, "mapKnown": true, "mapId": 349, "x": 0, "y": 0, "z": 0, "revision": "1"}}
+			receipt := func(cap string, value map[string]any, phase string, unknown bool) {
+				t.Helper()
+				expect(cap)
+				id, err := host.ReserveAction(d)
+				if err != nil {
+					t.Fatal(err)
+				}
+				payload := map[string]any{"capability": cap, "phase": phase, "result": value}
+				outcome := behavior.ActionConfirmed
+				if unknown {
+					outcome = behavior.ActionSettledUnverified
+					payload["reconciliationRequired"] = true
+				}
+				if _, err = host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: outcome, Payload: payload}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			receipt("instance_entry_status", state, "instance_entry_status_returned", false)
+			d = next()
+			state["interactionOwner"] = "exploration"
+			state["interactionLeaseRemainingMs"] = "30000"
+			receipt("acquire_idle_interaction", map[string]any{"token": "travel-token", "state": state}, "interaction_acquired", false)
+			npc.X = 3
+			d = next()
+			receipt("instance_entry_status", state, "instance_entry_status_returned", false)
+			d = next()
+			token := expect("release_interaction")
+			if token["token"] != "travel-token" || token["owner"] != "exploration" {
+				t.Fatal(token)
+			}
+			receipt("release_interaction", nil, "interaction_released", mode == "uncertain cleanup")
+			d = next()
+			if mode == "uncertain cleanup" {
+				if d.Output["action"] != nil || d.Output["task"].(map[string]any)["phase"] != "reconcile_release_interaction" {
+					t.Fatal(d.Output)
+				}
+				return
+			}
+			a := expect("movement_owner")
+			if a["owner"] != "ranged:maraudon_sludge_backline" || a["mode"] != "acquire" || d.Output["task"].(map[string]any)["phase"] != "paused_for_nearby_hazard" {
+				t.Fatal(d.Output)
 			}
 		})
 	}
