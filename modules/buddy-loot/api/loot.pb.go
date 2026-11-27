@@ -913,8 +913,10 @@ type OpenGatherRequest struct {
 	ExpectedInventoryRevision uint64                 `protobuf:"varint,11,opt,name=expected_inventory_revision,json=expectedInventoryRevision,proto3" json:"expected_inventory_revision,omitempty"`
 	ExpectedQuestLogRevision  uint64                 `protobuf:"varint,12,opt,name=expected_quest_log_revision,json=expectedQuestLogRevision,proto3" json:"expected_quest_log_revision,omitempty"`
 	Approach                  bool                   `protobuf:"varint,13,opt,name=approach,proto3" json:"approach,omitempty"`
-	unknownFields             protoimpl.UnknownFields
-	sizeCache                 protoimpl.SizeCache
+	// Only for a completed, separately planned quest-object ground approach.
+	ApproachWorldRevision uint64 `protobuf:"varint,14,opt,name=approach_world_revision,json=approachWorldRevision,proto3" json:"approach_world_revision,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *OpenGatherRequest) Reset() {
@@ -1036,6 +1038,13 @@ func (x *OpenGatherRequest) GetApproach() bool {
 		return x.Approach
 	}
 	return false
+}
+
+func (x *OpenGatherRequest) GetApproachWorldRevision() uint64 {
+	if x != nil {
+		return x.ApproachWorldRevision
+	}
+	return 0
 }
 
 type CloseCorpseRequest struct {
@@ -2319,7 +2328,7 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"request_id\x18\x04 \x01(\tR\trequestId\x12<\n" +
 	"\x1aexpected_position_revision\x18\x05 \x01(\x04R\x18expectedPositionRevision\x128\n" +
 	"\x18expected_corpse_revision\x18\x06 \x01(\x04R\x16expectedCorpseRevision\x12>\n" +
-	"\x1bexpected_inventory_revision\x18\a \x01(\x04R\x19expectedInventoryRevision\"\x90\x04\n" +
+	"\x1bexpected_inventory_revision\x18\a \x01(\x04R\x19expectedInventoryRevision\"\xc8\x04\n" +
 	"\x11OpenGatherRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -2338,7 +2347,8 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	" \x01(\x04R\x16expectedObjectRevision\x12>\n" +
 	"\x1bexpected_inventory_revision\x18\v \x01(\x04R\x19expectedInventoryRevision\x12=\n" +
 	"\x1bexpected_quest_log_revision\x18\f \x01(\x04R\x18expectedQuestLogRevision\x12\x1a\n" +
-	"\bapproach\x18\r \x01(\bR\bapproach\"\xc1\x01\n" +
+	"\bapproach\x18\r \x01(\bR\bapproach\x126\n" +
+	"\x17approach_world_revision\x18\x0e \x01(\x04R\x15approachWorldRevision\"\xc1\x01\n" +
 	"\x12CloseCorpseRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +

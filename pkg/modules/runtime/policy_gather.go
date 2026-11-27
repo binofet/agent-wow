@@ -56,6 +56,12 @@ func (p *SessionPolicy) resolveGatherLoot(action map[string]any) (PolicyDispatch
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact request ID and explicit approach choice required")
 	}
 	params["requestId"], params["approach"] = requestID, approach
+	if raw, present := action["approachWorldRevision"]; present {
+		if approach || !gatherCounter(raw) {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "stopped quest ground arrival required")
+		}
+		params["approachWorldRevision"] = raw
+	}
 	encoded, err := json.Marshal(params)
 	if err != nil {
 		return PolicyDispatch{}, err
@@ -76,6 +82,9 @@ func (p *SessionPolicy) resolveGatherLoot(action map[string]any) (PolicyDispatch
 	}
 	for i := 0; i < expected.Fields().Len(); i++ {
 		want := expected.Fields().Get(i)
+		if want.Name() == "approach_world_revision" && selected.ApproachWorldRevision == 0 {
+			continue
+		}
 		field := method.Descriptor().Input().Fields().ByName(want.Name())
 		if field == nil || field.Number() != want.Number() || field.Kind() != want.Kind() || field.IsList() || field.IsMap() {
 			return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "installed gather request is incompatible")

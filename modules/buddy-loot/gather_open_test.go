@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -231,5 +232,35 @@ func TestGatherWrittenOpeningWithoutWindowSurvivesEnableToggle(t *testing.T) {
 	next.RequestId = "new-id-after-written-unknown"
 	if _, err := s.OpenGather(context.Background(), next); status.Code(err) != codes.FailedPrecondition || len(f.packets) != before {
 		t.Fatal("enable/new ID replayed an uncertain written opening", err, f.packets)
+	}
+}
+
+func TestGatherTravelArrivalRemainsBoundThroughFinalWorldRead(t *testing.T) {
+	for _, mode := range []string{"current", "beyond verified range", "stale arrival", "corrected after acquisition", "corrected before cast"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _ := harvestRig(t)
+			enable(t, s)
+			r := exactGatherRequest(s, f)
+			r.ApproachWorldRevision = f.world.Self.PositionRevision
+			f.actions.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: r.SourceGuid, VisitId: r.VisitId, Ready: true, Phase: "in_position", QuestArrivalWorldRevision: r.ApproachWorldRevision}
+			switch mode {
+			case "beyond verified range":
+				f.world.QuestObjects[0].X = 3.5
+			case "stale arrival":
+				f.actions.TargetMovement.Ready = false
+			case "corrected after acquisition":
+				f.afterAcquire = func() { f.world.Self.PositionRevision++; f.actions.Position.Revision++ }
+			case "corrected before cast":
+				f.afterRenew = func() { f.world.Self.PositionRevision++ }
+			}
+			op, err := s.OpenGather(context.Background(), r)
+			if mode == "current" {
+				if err != nil || !op.GetOpeningTransportWritten() || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGCastSpell {
+					t.Fatal(op, err, f.packets)
+				}
+			} else if op.GetOpeningTransportAttempted() || len(f.packets) != 0 {
+				t.Fatal("expired arrival reached the wire", op, err, f.packets)
+			}
+		})
 	}
 }

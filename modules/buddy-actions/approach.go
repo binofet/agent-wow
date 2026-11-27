@@ -10,6 +10,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
+	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -303,12 +304,24 @@ func approachCorpse(w *worldv1.SnapshotResponse, guid uint64) *worldv1.CreatureS
 // This movement exception is bound to the acting character's actual own quest
 // log, never to a party member's quests or an arbitrary game-object target.
 func ownHarvestQuest(w *worldv1.SnapshotResponse, self uint64, objectEntry uint32) bool {
+	return ownQuestContainerObjective(w, self, objectEntry, 0, 0)
+}
+
+func ownQuestContainerObjective(w *worldv1.SnapshotResponse, self uint64, objectEntry, questID, itemID uint32) bool {
 	if w == nil || w.Self == nil || w.Self.Guid != self || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
 		return false
 	}
 	container, ok := gamecatalog.Default().Container(objectEntry)
 	if !ok || !container.OrdinaryQuestOpening() {
 		return false
+	}
+	var owned uint64
+	if questID != 0 {
+		counts, known := harvestguard.CompleteOwnItemCounts(w, self)
+		if !known {
+			return false
+		}
+		owned = counts[itemID]
 	}
 	var seen [25]bool
 	found := false
@@ -319,7 +332,8 @@ func ownHarvestQuest(w *worldv1.SnapshotResponse, self uint64, objectEntry uint3
 		seen[q.Slot] = true
 		if q.QuestId != 0 && !q.Complete && !q.Failed && q.State&3 == 0 {
 			for _, item := range container.QuestItems {
-				if item.QuestID == q.QuestId && item.ItemID != 0 && item.Count != 0 {
+				if item.QuestID == q.QuestId && item.ItemID != 0 && item.Count != 0 &&
+					(questID == 0 || item.QuestID == questID && item.ItemID == itemID && owned < uint64(item.Count)) {
 					found = true
 				}
 			}

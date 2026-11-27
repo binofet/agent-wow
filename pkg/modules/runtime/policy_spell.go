@@ -333,8 +333,8 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		op.movement.phase = state.BodyMovement.Phase
 		op.movement.detail = state.BodyMovement.Detail
 	}
-	if op.movement != nil && (op.movement.idleBound || op.movement.landing || op.capability == "movement_points_step") {
-		op.movement.unknown = op.movement.unknown || state.MotionUnconfirmed || (op.movement.landing || op.capability == "movement_points_step") && err != nil && (op.attempted || op.written)
+	if op.movement != nil && (op.movement.idleBound || op.movement.landing || op.movement.questObject || op.capability == "movement_points_step") {
+		op.movement.unknown = op.movement.unknown || state.MotionUnconfirmed || (op.movement.landing || op.movement.questObject || op.capability == "movement_points_step") && err != nil && (op.attempted || op.written)
 	}
 	if err == nil && op.capability == "release_interaction" && state.InteractionOwner == "" {
 		// The exact lease is released. A STOP write/returned metadata is not a

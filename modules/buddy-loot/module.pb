@@ -815,7 +815,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-­È
+§Ë
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1982,7 +1982,7 @@ family_set" (R	familySet!
 misc (Rmisc"^
 EncounterPeriodicDamage&
 damage_per_tick (RdamagePerTick
-	period_ms (RperiodMs"„
+	period_ms (RperiodMs"½
 ApproachTargetRequest
 
 session_id (	R	sessionId
@@ -1999,7 +1999,14 @@ requireLos
 min_range_yards	 (RminRangeYards4
 clearance_target_guids
  (RclearanceTargetGuids'
-clearance_yards (RclearanceYards"Þ
+clearance_yards (RclearanceYards
+quest_id (RquestId"
+quest_item_id (RquestItemId2
+quest_object_revision (RquestObjectRevision,
+quest_log_revision (RquestLogRevision8
+quest_inventory_revision (RquestInventoryRevision2
+quest_follow_revision (RquestFollowRevision(
+quest_owner_guid (RquestOwnerGuid"Ÿ
 TargetMovementState
 target_guid (R
 targetGuid
@@ -2014,7 +2021,8 @@ requireLos
 min_range_yards (RminRangeYards4
 clearance_target_guids	 (RclearanceTargetGuids'
 clearance_yards
- (RclearanceYards"Ì
+ (RclearanceYards?
+quest_arrival_world_revision (RquestArrivalWorldRevision"Ì
 EncounterSupport(
 caster_in_combat (RcasterInCombatR
 resurrections (2,.warcraftbuddy.actions.v1.ResurrectionOptionRresurrectionsI
@@ -2571,7 +2579,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 ObserveSummoning.google.protobuf.Empty..warcraftbuddy.actions.v1.SummoningObservationy
 UseSummoningObject3.warcraftbuddy.actions.v1.UseSummoningObjectRequest..warcraftbuddy.actions.v1.SummoningObservations
 RespondToSummon0.warcraftbuddy.actions.v1.RespondToSummonRequest..warcraftbuddy.actions.v1.SummoningObservationBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
-ÇF
+ÿF
 modules/buddy-loot/loot.protowarcraftbuddy.loot.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto")
 EnableRequest
 enabled (Renabled"Y
@@ -2661,7 +2669,7 @@ corpseGuid
 request_id (	R	requestId<
 expected_position_revision (RexpectedPositionRevision8
 expected_corpse_revision (RexpectedCorpseRevision>
-expected_inventory_revision (RexpectedInventoryRevision"
+expected_inventory_revision (RexpectedInventoryRevision"È
 OpenGatherRequest
 
 session_id (	R	sessionId
@@ -2680,7 +2688,8 @@ request_id (	R	requestId
  (RexpectedObjectRevision>
 expected_inventory_revision (RexpectedInventoryRevision=
 expected_quest_log_revision (RexpectedQuestLogRevision
-approach (Rapproach"Á
+approach (Rapproach6
+approach_world_revision (RapproachWorldRevision"Á
 CloseCorpseRequest
 
 session_id (	R	sessionId

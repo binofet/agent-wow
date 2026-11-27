@@ -34,6 +34,7 @@ type policyMovement struct {
 	followsOwner bool
 	airborne     bool
 	idleBound    bool
+	questObject  bool
 	unknown      bool
 	sequence     uint64
 	phase        string
@@ -137,6 +138,27 @@ func (p *SessionPolicy) resolveMovement(action map[string]any, capability string
 		}
 		values["min_range_yards"] = protoreflect.ValueOfFloat32(float32(minimum))
 	}
+	questObject := targetGUID>>48 == 0xf110
+	if questObject {
+		if !stop && (radius != 3 || !los || behind) {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "quest container requires a three-yard line-of-sight approach")
+		}
+		for name, key := range map[protoreflect.Name]string{"quest_id": "questId", "quest_item_id": "questItemId"} {
+			n, ok := jsonUint(action[key], math.MaxUint32)
+			if !ok || n == 0 {
+				return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact positive quest container objective required")
+			}
+			values[name] = protoreflect.ValueOfUint32(uint32(n))
+		}
+		for name, key := range map[protoreflect.Name]string{"quest_object_revision": "questObjectRevision", "quest_log_revision": "questLogRevision", "quest_inventory_revision": "questInventoryRevision", "quest_follow_revision": "questFollowRevision", "quest_owner_guid": "questOwnerGuid"} {
+			raw, ok := action[key].(string)
+			n, err := strconv.ParseUint(raw, 10, 64)
+			if !ok || err != nil || raw != strconv.FormatUint(n, 10) || n == 0 && key != "questFollowRevision" && key != "questOwnerGuid" {
+				return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact quest container and owner observation required")
+			}
+			values[name] = protoreflect.ValueOfUint64(n)
+		}
+	}
 	if raw, exists := action["clearanceTargetGuids"]; exists {
 		ids, ok := raw.([]any)
 		clearance, valid := action["clearanceYards"].(float64)
@@ -159,7 +181,7 @@ func (p *SessionPolicy) resolveMovement(action map[string]any, capability string
 		values["clearance_target_guids"] = protoreflect.ValueOfList(list)
 		values["clearance_yards"] = protoreflect.ValueOfFloat32(float32(clearance))
 	}
-	op := &policySpell{vm: p.vm, capability: capability, target: targetGUID, encounterVisit: visitID, movement: &policyMovement{self: selfGUID, stop: stop}}
+	op := &policySpell{vm: p.vm, capability: capability, target: targetGUID, encounterVisit: visitID, movement: &policyMovement{self: selfGUID, stop: stop, questObject: questObject}}
 	dispatch, err := p.preparePolicyDispatch("approach_target", values, op)
 	if err == nil {
 		// Motion is a physical step, not a cast awaiting a server spell effect.
@@ -174,12 +196,12 @@ func (m *Manager) invokePolicyMovement(ctx context.Context, inst *instance, md m
 	outcome, payload := m.invokePolicySpell(ctx, inst, md, req, op)
 	m.policySpells.mu.Lock()
 	delete(m.policySpells.active, op.token)
-	if (op.movement.landing || op.capability == "movement_points_step") && outcome == behavior.ActionUnknown {
+	if (op.movement.landing || op.movement.questObject || op.capability == "movement_points_step") && outcome == behavior.ActionUnknown {
 		op.movement.unknown = true
 	}
-	if (op.movement.idleBound || op.movement.landing || op.capability == "release_interaction" || op.capability == "movement_points_step") && op.movement.unknown {
+	if (op.movement.idleBound || op.movement.landing || op.movement.questObject || op.capability == "release_interaction" || op.capability == "movement_points_step") && op.movement.unknown {
 		payload["reconciliationRequired"] = true
-		if op.capability == "movement_points_step" {
+		if op.capability == "movement_points_step" || op.movement.questObject {
 			payload["motion_unconfirmed"] = true
 		}
 	}
