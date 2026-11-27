@@ -198,13 +198,26 @@ function M.step(task,obs,frame,sequence,in_combat,can_act)
     end
     local self=(obs.players or {})[obs.selfGuid]
     if self and self.aliveKnown==true and self.alive==false then task.finishing=task.finishing or "dead" end
+    -- A canceled walk on the old map cannot arrive at its old coordinates
+    -- after another transfer. Keep its unsettled operation in the checkpoint.
+    local walk=task.operation or task.uncertain
+    if task.finishing=="canceled" and not task.notifyId and not task.destinationVisit and not task.canceledApproach and
+       ident(obs.visitId) and (#obs.visitId>#task.visitId or #obs.visitId==#task.visitId and obs.visitId>task.visitId) and
+       obs.mapId==task.destinationMapId and self and self.present==true and self.mapKnown==true and self.mapId==obs.mapId and
+       type(frame.pending)=="table" and next(frame.pending)==nil and not (task.operation and task.uncertain) and
+       (not walk or walk.capability=="travel_to" and walk.sessionId==task.sessionId and walk.selfGuid==task.selfGuid and
+        walk.visitId==task.visitId and walk.mapId==task.mapId and walk.token==task.token and task.token) then
+        task.canceledApproach={observedVisit=obs.visitId,operation=task.operation,uncertain=task.uncertain}
+        task.operation,task.uncertain=nil,nil
+    end
     if task.operation then return view(task,"waiting_for_"..task.operation.capability) end
     if task.uncertain then return view(task,"reconcile_"..task.uncertain.capability) end
     if task.notifyId and not task.destinationVisit and not (task.native and task.native.notDispatched==true) then
         return propose("observing_trigger_delivery",request(task,obs,"area_trigger_observation"))
     end
-    if task.destinationVisit then
-        if obs.visitId~=task.destinationVisit or obs.mapId~=task.destinationMapId then return view(task,"waiting_for_destination_observation") end
+    local arrivedVisit=task.destinationVisit or task.canceledApproach and task.canceledApproach.observedVisit
+    if arrivedVisit then
+        if obs.visitId~=arrivedVisit or obs.mapId~=task.destinationMapId then return view(task,"waiting_for_destination_observation") end
         local a,done=cleanup(task,obs)
         if not done then return propose("reconciling_old_visit_custody",a) end
         if task.finishing or regroup(task,obs) then task.finishing=task.finishing or "regroup_observed";return {task=task,done=true,status={id=task.id,kind=task.kind,phase="complete",reason=task.finishing}} end
