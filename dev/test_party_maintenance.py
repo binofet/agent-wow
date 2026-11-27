@@ -465,11 +465,8 @@ class MaintenanceTests(unittest.TestCase):
 
     def test_stop_during_inn_leg_releases_exploration_and_never_changes_enabled_intents(self):
         self.inn_rig();self.rpc.block_travel=threading.Event()
-        stopped=threading.Event();self.agent.stopped=stopped.is_set
-        timer=threading.Timer(.05,stopped.set);timer.start()
-        try:
-            with self.assertRaises(m.Error):self.tick()
-        finally:timer.join()
+        self.agent.stopped=lambda: 'buddy-actions.travel_to' in self.methods()
+        with self.assertRaisesRegex(m.Error,'Class trainer travel stopped'):self.tick()
         self.assertIsNone(self.rpc.token)
         self.assertEqual(self.methods().count('buddy-actions.travel_to'),1)
         self.assertNotIn('buddy-actions.travel_trainer',self.methods())

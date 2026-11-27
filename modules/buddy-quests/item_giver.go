@@ -4,35 +4,56 @@ import (
 	"context"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	questsv1 "github.com/agent-wow/agent-wow/modules/buddy-quests/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// Public item_template:1972 Westfall Deed starts184. Item1971 is the
-// quest-supplied delivery item; it cannot start this quest.
-const deedStarterEntry, deedQuestID uint32 = 1972, 184
-
 type itemGiverBinding struct {
-	inventoryRevision       uint64
-	guid                    uint64
-	bag, slot, entry, count uint32
+	visit, inventoryRevision, containerGUID, guid uint64
+	bag, slot, entry, count, questID, mapID       uint32
+	repeatable                                    bool
 }
 type itemGiverOffer struct {
 	binding  itemGiverBinding
 	revision uint64
 }
 
+type itemQuestReservation struct {
+	guid, visit, baselineLogRevision, rejectedFullLogRevision uint64
+	rewarded                                                  bool
+}
+
+// A quest-identified realm failure may arrive after the write callback was
+// lost. A World read begun after that packet must still see its original visit.
+type itemQuestFailure struct {
+	acceptance *questsv1.Acceptance
+	visit      uint64
+	reason     uint32
+}
+
+func (s *Service) itemQuestReservedLocked(binding itemGiverBinding) bool {
+	prior, ok := s.reservedItemQuests[binding.questID]
+	if prior.rejectedFullLogRevision != 0 && s.state.QuestLogKnown &&
+		s.state.QuestLogRevision > prior.rejectedFullLogRevision && s.inLogLocked(0) {
+		return false // A fresh offer can use the newly observed empty slot.
+	}
+	return ok && (!binding.repeatable || !prior.rewarded || prior.guid == binding.guid)
+}
+
 func itemGiverGUID(guid uint64) bool { return guid>>48 == 0x4000 && guid&0xffffffffffff != 0 }
 
 // A GUID is not ownership. Require the whole coherent carried layout and the
 // exact individually observed item, including equipped bag contents.
-func ownedDeed(w *worldv1.SnapshotResponse, guid uint64) (itemGiverBinding, error) {
+func ownedQuestStarter(w *worldv1.SnapshotResponse, guid uint64) (itemGiverBinding, error) {
 	fail := func() (itemGiverBinding, error) {
-		return itemGiverBinding{}, status.Error(codes.FailedPrecondition, "actual complete owned Westfall Deed inventory binding unavailable")
+		return itemGiverBinding{}, status.Error(codes.FailedPrecondition, "eligible owned manual quest starter and complete carried inventory required")
 	}
-	if w == nil || !w.InventoryKnown || w.InventoryRevision == 0 || len(w.InventoryBags) != 5 || !itemGiverGUID(guid) {
+	if w.GetVisitRevision() == 0 || !w.GetSelf().GetLevelKnown() || w.Self.Level == 0 || !w.Self.MapKnown ||
+		!w.InventoryKnown || w.InventoryRevision == 0 || len(w.InventoryBags) != 5 || !itemGiverGUID(guid) {
 		return fail()
 	}
 	var found itemGiverBinding
@@ -52,8 +73,10 @@ func ownedDeed(w *worldv1.SnapshotResponse, guid uint64) (itemGiverBinding, erro
 				return fail()
 			}
 			continue
-		} else if !bag.MetadataKnown || !itemGiverGUID(bag.ContainerGuid) || bag.SlotCount == 0 || bag.SlotCount > 36 {
+		} else if !bag.MetadataKnown || bag.Entry == 0 || !itemGiverGUID(bag.ContainerGuid) || items[bag.ContainerGuid] || bag.SlotCount == 0 || bag.SlotCount > 36 {
 			return fail()
+		} else {
+			items[bag.ContainerGuid] = true
 		}
 		if len(bag.Slots) != int(bag.SlotCount) {
 			return fail()
@@ -75,10 +98,12 @@ func ownedDeed(w *worldv1.SnapshotResponse, guid uint64) (itemGiverBinding, erro
 			}
 			items[slot.ItemGuid] = true
 			if slot.ItemGuid == guid {
-				if !slot.MetadataKnown || slot.Entry != deedStarterEntry || slot.StackCount != 1 {
+				starter, ok := gamecatalog.ManualQuestStarter(slot.Entry)
+				if !slot.MetadataKnown || !ok || w.Self.Level < starter.MinLevel || slot.StackCount == 0 || slot.StackCount > starter.MaxStack {
 					return fail()
 				}
-				found = itemGiverBinding{w.InventoryRevision, guid, bag.Bag, slot.Slot, slot.Entry, slot.StackCount}
+				found = itemGiverBinding{visit: w.VisitRevision, mapID: w.Self.MapId, inventoryRevision: w.InventoryRevision, containerGUID: bag.ContainerGuid,
+					guid: guid, bag: bag.Bag, slot: slot.Slot, entry: slot.Entry, count: slot.StackCount, questID: starter.QuestID, repeatable: starter.Repeatable}
 			}
 		}
 	}
@@ -89,12 +114,17 @@ func ownedDeed(w *worldv1.SnapshotResponse, guid uint64) (itemGiverBinding, erro
 }
 
 func itemGiverScene(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64) bool {
-	if w == nil || w.Self == nil || w.Self.Guid != self || self == 0 || !w.Self.Present || !w.Self.LevelKnown || w.Self.Level < 8 || !w.Self.AliveKnown || !w.Self.Alive ||
+	if w == nil || w.Self == nil || w.Self.Guid != self || self == 0 || !w.Self.Present || !w.Self.AliveKnown || !w.Self.Alive ||
 		!w.Self.UnitFlagsKnown || w.Self.UnitFlags&(0x1|0x4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 ||
 		!w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) {
 		return false
 	}
 	return a != nil && !a.Moving && !a.MotionUnconfirmed && !a.CastPending && !a.AutoAttacking && !a.AutoAttackUnconfirmed && !a.Traveling && !a.Practicing && questPositionBound(w, a, self)
+}
+
+func (s *Service) itemQuestAvailableLocked(w *worldv1.SnapshotResponse, binding itemGiverBinding) bool {
+	return w.SelfQuestLogKnown && w.SelfQuestLogRevision != 0 && w.SelfQuestLogRevision == s.state.QuestLogRevision &&
+		s.state.QuestLogKnown && s.inLogLocked(0) && !s.inLogLocked(binding.questID) && !s.itemQuestReservedLocked(binding)
 }
 
 func (s *Service) itemGate(ctx context.Context, guid uint64) (*worldv1.SnapshotResponse, error) {
@@ -106,13 +136,13 @@ func (s *Service) itemGate(ctx context.Context, guid uint64) (*worldv1.SnapshotR
 	if err != nil {
 		return nil, err
 	}
-	binding, err := ownedDeed(w, guid)
+	binding, err := ownedQuestStarter(w, guid)
 	if err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
 	expected := s.activeItemGiver
-	matches := expected != nil && *expected == binding
+	matches := expected != nil && *expected == binding && s.itemQuestAvailableLocked(w, binding)
 	s.mu.Unlock()
 	if !matches || !itemGiverScene(w, a, s.selfGUID) || a.InteractionOwner != "quests" || a.InteractionLeaseRemainingMs < 1000 {
 		return nil, status.Error(codes.FailedPrecondition, "owned quest starter, current safe body or lease changed")
@@ -122,29 +152,23 @@ func (s *Service) itemGate(ctx context.Context, guid uint64) (*worldv1.SnapshotR
 
 // Called after reserve and before acquiring a lease, so an unowned/arbitrary
 // item cannot even stop formation. For selected offers retain its exact epoch.
-func (s *Service) bindItemGiver(ctx context.Context, guid uint64, fromOffer bool) error {
+func (s *Service) bindItemGiver(ctx context.Context, guid uint64, fromOffer bool) (uint32, error) {
 	w, err := s.world(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	binding, err := ownedDeed(w, guid)
+	binding, err := ownedQuestStarter(w, guid)
 	if err != nil {
-		return err
-	}
-	if !w.Self.LevelKnown || w.Self.Level < 8 {
-		return status.Error(codes.FailedPrecondition, "deed quest requires actual known level8")
+		return 0, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.deedAcceptReserved {
-		return status.Error(codes.FailedPrecondition, "deed acceptance already reserved for this body")
-	}
-	if !s.state.QuestLogKnown || s.inLogLocked(deedQuestID) {
-		return status.Error(codes.FailedPrecondition, "own deed quest log is unknown or already contains184")
+	if !s.itemQuestAvailableLocked(w, binding) {
+		return 0, status.Error(codes.FailedPrecondition, "item quest already reserved, active or own quest log unavailable")
 	}
 	if fromOffer && (s.itemGiverOffer == nil || s.itemGiverOffer.binding != binding || s.state.Offer == nil || s.itemGiverOffer.revision != s.state.Offer.Revision) {
-		return status.Error(codes.FailedPrecondition, "quest starter inventory changed since the actual offer")
+		return 0, status.Error(codes.FailedPrecondition, "quest starter inventory or visit changed since the actual offer")
 	}
 	s.activeItemGiver = &binding
-	return nil
+	return binding.questID, nil
 }

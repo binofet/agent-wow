@@ -21,6 +21,7 @@ func deedRig(bag uint32) (*Service, *fakeSession) {
 	f.world.QuestObjects = nil
 	f.world.Self.LevelKnown = true
 	f.world.Self.Level = 9
+	f.world.VisitRevision = 1
 	f.world.InventoryKnown = true
 	f.world.InventoryRevision = 10
 	for n := uint32(0); n < 5; n++ {
