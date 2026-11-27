@@ -52,6 +52,7 @@ func generate(directory string) ([]byte, error) {
 	fmt.Fprintln(&out, "// Source: "+clientdata.ReleaseURL)
 	fmt.Fprintln(&out, "// Field layouts: https://github.com/wowdev/WoWDBDefs/tree/master/definitions")
 	fmt.Fprintln(&out, "\npackage maps")
+	var dungeonIDs []uint32
 	for _, table := range []struct {
 		file, variable string
 		fields, label  uint32
@@ -83,10 +84,26 @@ func generate(directory string) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", table.file, err)
 			}
+			dungeonIDs = dungeons
 			fmt.Fprintf(&out, "\n// Map.dbc: %d party and raid maps, by InstanceType.\n", len(dungeons))
 			fmt.Fprintln(&out, "var dungeonMapIDs = [...]uint32{")
 			for _, id := range dungeons {
 				fmt.Fprintf(&out, "%d,\n", id)
+			}
+			fmt.Fprintln(&out, "}")
+		} else {
+			records, _, err := dbcBlocks(data, table.fields)
+			if err != nil {
+				return nil, err
+			}
+			fmt.Fprintln(&out, "\n// AreaTable.dbc root zones on party and raid maps.")
+			fmt.Fprintln(&out, "var dungeonZoneMaps = map[uint32]uint32{")
+			for len(records) != 0 {
+				zone, mapID, parent := binary.LittleEndian.Uint32(records), binary.LittleEndian.Uint32(records[4:]), binary.LittleEndian.Uint32(records[8:])
+				if _, found := slices.BinarySearch(dungeonIDs, mapID); found && parent == 0 && zone != 0 {
+					fmt.Fprintf(&out, "%d: %d,\n", zone, mapID)
+				}
+				records = records[table.fields*4:]
 			}
 			fmt.Fprintln(&out, "}")
 		}

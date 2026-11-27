@@ -20,6 +20,11 @@ packets:
   SMSG_UPDATE_OBJECT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_COMPRESSED_UPDATE_OBJECT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_DESTROY_OBJECT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_PARTY_MEMBER_STATS: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_PARTY_MEMBER_STATS_FULL: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_GROUP_LIST: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_GROUP_DESTROYED: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_GROUP_UNINVITE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_POWER_UPDATE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_ATTACKSTART: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_ATTACKSTOP: /warcraftbuddy.world.v1.BuddyWorld/OnPacket

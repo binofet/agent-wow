@@ -2,12 +2,15 @@ package buddyactions
 
 import (
 	"context"
+	"encoding/binary"
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/areatriggerreference"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
+	"github.com/agent-wow/agent-wow/pkg/maps"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
 type dungeonPortal struct {
@@ -26,12 +29,20 @@ func (p dungeonPortal) contains(mapID uint32, point position, margin float64) bo
 	return p.reference.Contains(mapID, float64(point.x), float64(point.y), float64(point.z), margin)
 }
 
+var portalReferencesByMap = func() map[uint32][]areatriggerreference.Trigger {
+	byMap := make(map[uint32][]areatriggerreference.Trigger)
+	for _, ref := range areatriggerreference.All() {
+		byMap[ref.SourceMap] = append(byMap[ref.SourceMap], ref)
+	}
+	return byMap
+}()
+
 // References identify a unique volume, not realm admission or a route. Never
 // choose between overlapping volumes: Lua's observed-owner intent is not proof
 // of which ambiguous trigger the realm would accept.
 func witnessedPortal(mapID uint32, point position) (dungeonPortal, bool) {
 	var found dungeonPortal
-	for _, reference := range areatriggerreference.All() {
+	for _, reference := range portalReferencesByMap[mapID] {
 		if reference.Contains(mapID, float64(point.x), float64(point.y), float64(point.z), 0) {
 			if found.trigger != 0 {
 				return dungeonPortal{}, false
@@ -45,6 +56,10 @@ func witnessedPortal(mapID uint32, point position) (dungeonPortal, bool) {
 type dungeonPortalFollow struct {
 	portal                dungeonPortal
 	ground                position
+	requiresPartyZone     bool
+	formationEpoch        uint64
+	zoneRequested         bool
+	groupGUID             uint64
 	seenAt, lostAt        time.Time
 	approaching, notified bool
 	movementInProgress    bool
@@ -61,6 +76,28 @@ type dungeonPortalFollow struct {
 	witness               uint64
 	catchUpHost           bool
 	movementIntent        portalIntent
+}
+
+// Outside a trigger, proximity supplies only a candidate for the missing
+// owner's later party location. Never choose between nearby entrances.
+func nearbyDungeonEntrance(mapID uint32, p position) (dungeonPortal, position, bool) {
+	var found dungeonPortal
+	var goal position
+	for _, ref := range portalReferencesByMap[mapID] {
+		if !maps.IsDungeon(ref.DestinationMap) {
+			continue
+		}
+		x, y, ok := ref.InteriorApproach(float64(p.x), float64(p.y), float64(p.z))
+		candidate := position{x: float32(x), y: float32(y), z: p.z, o: p.o}
+		if !ok || distance(p, candidate) > 12 {
+			continue
+		}
+		if found.trigger != 0 {
+			return dungeonPortal{}, position{}, false
+		}
+		found, goal = portalReference(ref), candidate
+	}
+	return found, goal, found.trigger != 0
 }
 
 func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now time.Time) {
@@ -100,11 +137,18 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 	// Reappearance ends this crossing attempt. A later disappearance requires
 	// a new sighting at an entrance, even if the character remains nearby.
 	s.followPortal = dungeonPortalFollow{}
-	if safePlayers(w, s.selfGUID) != "" || owner.PositionAgeMs > 2000 {
+	if safePlayers(w, s.selfGUID) != "" || owner.PositionInferred {
 		return
 	}
 	ground := playerPosition(owner)
-	if portal, found := witnessedPortal(owner.MapId, ground); found {
+	portal, found := witnessedPortal(owner.MapId, ground)
+	remote := !found
+	if remote {
+		portal, ground, found = nearbyDungeonEntrance(owner.MapId, ground)
+	} else if owner.PositionAgeMs > 2000 {
+		return
+	}
+	if found {
 		sourceScope := clonePortalScope(portalObservedWorldScope(w, s.selfGUID))
 		catchingUp, valid := s.portalSightingPolicyLocked(w, now)
 		if !valid || !s.legacyPortalIntentLocked(s.now()) && !s.currentFollowFormationGoalLocked(s.followGoal, w) {
@@ -112,7 +156,7 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 			return
 		}
 		witness := f.witness
-		if witness == 0 || f.portal.trigger != portal.trigger || f.sourceVisit != w.VisitRevision ||
+		if witness == 0 || f.requiresPartyZone != remote || f.portal.trigger != portal.trigger || f.sourceVisit != w.VisitRevision ||
 			f.followRevision != s.followRevision || f.ownerPoseRevision != owner.PositionRevision ||
 			f.ground != ground || f.catchingUp != catchingUp || !f.lostAt.IsZero() || f.notified || !samePortalCoreVisit(f.sourceScope, sourceScope) {
 			s.portalWitnessRevision++
@@ -120,13 +164,22 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 			s.portalGoal = portalCatchupGoal{}
 		}
 		s.followPortal = dungeonPortalFollow{
-			portal:        portal,
-			ground:        ground,
-			seenAt:        now.Add(-time.Duration(owner.PositionAgeMs) * time.Millisecond),
-			catchingUp:    catchingUp,
-			sourceSession: s.sessionID, sourceSelf: s.selfGUID,
+			portal:            portal,
+			ground:            ground,
+			requiresPartyZone: remote,
+			seenAt:            now.Add(-time.Duration(owner.PositionAgeMs) * time.Millisecond),
+			catchingUp:        catchingUp,
+			sourceSession:     s.sessionID, sourceSelf: s.selfGUID,
 			sourceVisit: w.VisitRevision, followRevision: s.followRevision, ownerPoseRevision: owner.PositionRevision, witness: witness,
 			sourceScope: clonePortalScope(sourceScope),
+		}
+		// A visible stationary player may have held the same coordinate for
+		// minutes. This nearby sighting still requires a separate later map.
+		if remote {
+			s.followPortal.seenAt = now
+			if s.currentFollowFormationGoalLocked(s.followGoal, w) {
+				s.followPortal.formationEpoch = s.hostEncounterEpoch
+			}
 		}
 		return
 	}
@@ -148,6 +201,7 @@ func (s *Service) portalSourceWitnessCurrentLocked(w *worldv1.SnapshotResponse) 
 		f.portal.trigger != 0 &&
 		owner != nil && owner.Guid == ownerGUID && !owner.Present &&
 		(!owner.MapKnown || owner.MapId == f.portal.source || owner.MapId == f.portal.destination) &&
+		(!f.requiresPartyZone || f.groupGUID != 0 && owner.MapKnown && owner.MapId == f.portal.destination) &&
 		safeQuestCharacter(w, s.selfGUID) == "" && p.MapId == f.portal.source &&
 		distance(playerPosition(p), f.ground) <= buddynav.MaxRouteLength
 }
@@ -232,6 +286,31 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		s.state.Reason = "follow_waiting_for_instance_transfer"
 		return true
 	}
+	if f.requiresPartyZone {
+		if f.lostAt.IsZero() || !s.legacyPortalIntentLocked(now) && !(f.formationEpoch != 0 && f.formationEpoch == s.hostEncounterEpoch && s.hostEncounterActiveLocked()) {
+			return false
+		}
+		eligible := s.portalPolicyWithIntentLocked(w, now, true)
+		if !eligible.Valid || !eligible.Eligible {
+			return false
+		}
+		group := s.readPartyStateLocked(ctx)
+		g := group.GetGroup()
+		if group.GetSessionId() != s.sessionID || g.GetGroupGuid() == 0 || !s.onlineHealingGroup(g)[ownerGUID] || f.zoneRequested && f.groupGUID != g.GroupGuid {
+			s.followPortal = dungeonPortalFollow{}
+			s.portalGoal = portalCatchupGoal{}
+			return false
+		}
+		if !f.zoneRequested {
+			f.zoneRequested, f.groupGUID = true, g.GroupGuid
+			if !w.GetOwner().GetMapKnown() {
+				_ = s.sendPacketLocked(ctx, opcode.CMSGRequestPartyMemberStats, binary.LittleEndian.AppendUint64(nil, ownerGUID))
+			}
+		}
+		if !w.GetOwner().GetMapKnown() || w.Owner.MapId != f.portal.destination {
+			return false
+		}
+	}
 	intent, current := s.capturePortalIntentLocked(w)
 	if !current {
 		return false
@@ -258,7 +337,7 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		s.state.Reason = "follow_waiting_at_instance_entrance"
 		return true
 	}
-	if !s.healingPartyLocked(ctx)[ownerGUID] || !s.refreshPositionLocked(w) ||
+	if !s.portalPartyCurrentLocked(ctx) || !s.refreshPositionLocked(w) ||
 		!s.stopAutoAttackLocked(ctx) || s.state.AutoAttackUnconfirmed || !s.portalIntentCurrentLocked(intent, w) {
 		s.stopLocked(ctx)
 		s.state.Reason = "follow_instance_party_or_pose_unavailable"
@@ -338,4 +417,13 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 	f.movementInProgress = false
 	f.movementIntent = portalIntent{}
 	return true
+}
+
+func (s *Service) portalPartyCurrentLocked(ctx context.Context) bool {
+	f := s.followPortal
+	if !f.requiresPartyZone {
+		return s.healingPartyLocked(ctx)[ownerGUID]
+	}
+	state := s.readPartyStateLocked(ctx)
+	return f.groupGUID != 0 && state.GetSessionId() == s.sessionID && state.GetGroup().GetGroupGuid() == f.groupGUID && s.onlineHealingGroup(state.GetGroup())[ownerGUID]
 }
