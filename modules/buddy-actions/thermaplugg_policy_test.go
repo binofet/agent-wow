@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -78,6 +79,7 @@ func TestThermapluggRawObservedRoomUsesDefaultRuntime(t *testing.T) {
 	f.objects[142211].State = 0
 	for i := uint32(0); i < 32; i++ {
 		creature := proto.Clone(f.world.OwnerTarget).(*worldv1.CreatureState)
+		creature.NpcFlagsKnown, creature.UnitFlags_2Known, creature.FactionTemplateKnown, creature.MovementFlagsKnown = true, true, true, true
 		creature.Entry = 50000 + i // Synthetic unrelated observed creatures.
 		creature.Guid = uint64(0xf130)<<48 | uint64(creature.Entry)<<24 | 1
 		f.world.NearbyCreatures = append(f.world.NearbyCreatures, creature)
@@ -85,6 +87,28 @@ func TestThermapluggRawObservedRoomUsesDefaultRuntime(t *testing.T) {
 	s.starterSpells.runtime = nil
 	if !s.thermapluggButtonsTickLocked(context.Background(), f.world) || len(f.packets) != 1 || s.starterSpells.lastError != "" {
 		t.Fatal("ordinary bounded room exceeded the actual default selector contract", s.starterSpells.lastError, f.packets)
+	}
+}
+
+func TestThermapluggRoomInputPreservesEveryPreviouslyExposedCreatureField(t *testing.T) {
+	s, f, _ := thermapluggRig(t)
+	creature := f.world.OwnerTarget
+	creature.NpcFlagsKnown, creature.MovementFlagsKnown = true, true
+	creature.ActiveCast = &worldv1.CreatureCast{SpellId: 2054, RemainingMs: 731, TargetGuid: s.selfGUID}
+	source, ok := starterJSON(creature)
+	row := thermapluggCreatures(f.world)[0].(map[string]any)
+	if !ok {
+		t.Fatal("actual creature encoding failed")
+	}
+	fields := creature.ProtoReflect().Descriptor().Fields()
+	for i := range fields.Len() {
+		field := fields.Get(i)
+		value, exists := row[field.JSONName()]
+		original, wasPresent := source[field.JSONName()]
+		if field.Number() <= 42 && (exists != wasPresent || !reflect.DeepEqual(value, original)) ||
+			field.Number() > 42 && exists {
+			t.Fatalf("room field %s: got %v/%t, original %v/%t", field.Name(), value, exists, original, wasPresent)
+		}
 	}
 }
 
