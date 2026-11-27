@@ -3037,18 +3037,20 @@ class DirectBrain(AgentBrain):
             from direct_context import ordinary_context
             prompt_state, brief_metrics = ordinary_context(prompt_state)
             record["ordinaryContextProjection"] = brief_metrics
-        elif (self.client.provider == "local" and "spell_toolkit" in prompt_state and
+        elif (self.client.provider == "local" and
                 (self.client.local_prompt_budget_bytes is not None or self.client.local_prompt_token_limit is not None)):
-            from direct_context import gm_spellbook_index
-            prompt_state["spell_toolkit"] = gm_spellbook_index(prompt_state["spell_toolkit"])
+            from direct_context import gm_character_collections, gm_spellbook_index
+            prompt_state = gm_character_collections(prompt_state, development.get('sessionId'), development.get('selfGuid'))
+            if "spell_toolkit" in prompt_state:
+                prompt_state["spell_toolkit"] = gm_spellbook_index(prompt_state["spell_toolkit"])
         record["promptMetrics"] = dict(contextBytes=len(encode(prompt_state)),
             historyBytes=len(encode(history)), fullCapturedContextBytes=len(encode(full_context)))
         archive = {}
         def archive_read(reference, content):
             # Separate host-history namespace; captured World/current authority
-            # stays unchanged. Only the bound conversation's archived reads enter.
+            # stays unchanged. Only the bound conversation's historical tool results enter.
             archive[str(reference['transcriptMessage'])] = dict(reference=reference, content=content,
-                semantics='Historical read only; not current facts or new authority.')
+                semantics='Original historical tool result. Its receipt and authority belong to the original call.')
             full_context['conversationArchive'] = archive
             if tools is not None: tools.context['conversationArchive'] = archive
         def dispatch(name, arguments):

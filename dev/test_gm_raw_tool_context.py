@@ -24,6 +24,119 @@ class RawGMContextTests(unittest.TestCase):
     gm_guide_fixture = brain_fixtures.DirectBrainIntegrationTests.gm_guide_fixture
     gm_primer_fixture = brain_fixtures.DirectBrainIntegrationTests.gm_primer_fixture
 
+    def test_budgeted_gm_owned_collections_leave_room_for_lookup_grant_and_readback(self):
+        from direct_context import encode
+        with self.gm_primer_fixture() as (brain, state, clients):
+            sid = clients['87'].core
+            state['development']['gmTasks'] = brain_fixtures.converse.gm_tasks.tools(self.workspace,'87',clients['87'].url)
+            user = 'Look up the requested supplies, grant them once, and inspect the result.'
+            state['current_request']['messages'] = [dict(text=user)]
+            state['journal'] = dict(sessionId=sid,questLogRevision='19',entries=[
+                dict(questId=100+i,templateKnown=True,details='A synthetic quest description. '*23) for i in range(12)])
+            inventory = state['inventory'] = dict(sessionId=sid,known=True,inventoryRevision='21',freeSlots=2,
+                itemsTruncated=False,items=[dict(itemGuid=str(500+i),entry=1000+i,metadataKnown=True,
+                    name='Synthetic carried item',count=3,bag=0,slot=i) for i in range(32)],
+                gear=dict(equipmentKnown=True,candidatesTruncated=False,candidates=[dict(entry=1000+i,
+                    gearEquipEligible=False,conservativeUpgrade=False,gearBlockedReason='slot_or_skill_unavailable')
+                    for i in range(40)]))
+            custody=dict(operationId='retained-uncertain',outcomeUnknown=True,replayAllowed=False)
+            state['journal']['entries'][7]['pendingReceipt']=custody
+            inventory['items'][5]['receipt']=dict(operationId='retained-written',transportWritten=True)
+            original = copy.deepcopy(state)
+            captured = []
+            def seed(payload,*_):
+                captured.append(copy.deepcopy(payload))
+                return brain_fixtures.spoken()
+            with mock.patch.object(brain.client,'_http',side_effect=seed):
+                brain.generate([],state)
+            transcript = next((self.state/'api-conversations').glob('*.json'))
+            saved = json.loads(transcript.read_text())
+            receipt = model_fixtures.LocalPromptBudgetTests.gm_selection_receipt
+            for i in range(14):
+                args = dict(command=f'.lookup item item{i}') if i<8 else dict(command=f'.additem {1000+i}',select_guid='12')
+                result = receipt(args,f'historical-{i}')
+                saved['messages'].extend([dict(role='user',content=f'Past owner instruction {i}'),
+                    brain_fixtures.chat((f'old-{i}','gm_execute',args))['choices'][0]['message'],
+                    dict(role='tool',tool_call_id=f'old-{i}',content=encode(result).decode())])
+            transcript.write_text(json.dumps(saved))
+            # Set up a deterministic synthetic meter with 791 units of room after history-only paging.
+            # The production meter still counts the configured model's actual tool-aware template.
+            history = saved['messages']+[dict(role='user',content=user)]
+            prior, _ = brain.client._local_prompt(captured[0]['messages'][0]['content'],history,
+                [tool['function'] for tool in captured[0]['tools']],{'context_read'},{},None,canonical=history,
+                aggressive=True,archive_read=lambda *_:None)
+            offset = 40169-len(encode(prior))//4
+            def meter(payload): return offset+len(encode(payload))//4
+            brain.client = direct_model.DirectModel('local',brain.model,brain.client.base_url,
+                local_prompt_token_limit=40960,local_token_counter=meter)
+            commands = []
+            def native(tools, gm, args, operation_id=None):
+                commands.append(args['command'])
+                result = receipt(args,operation_id)['result']
+                result['selection']['rawSelf']['observationAgeMs']=str(len(commands)*70)
+                if args['command'].startswith('.additem'):
+                    result['feedback'].update(status='no_reply_yet',messages=[],systemMessages=[])
+                if args['command'].startswith('.character check bag'):
+                    line = dict(sequence=str(len(commands)),text=f'Bag {len(commands)-2}: [Synthetic item] x 3')
+                    result['feedback'].update(messages=[line],systemMessages=[line])
+                return result
+            bag_queries = [f'.character check bag {i}' for i in range(1,6)]
+            replies = [brain_fixtures.chat(('lookup','gm_execute',dict(command='.lookup item supplies'))),
+                brain_fixtures.chat(('grant','gm_execute',dict(command='.additem 1012',select_guid='12'))),
+                *[brain_fixtures.chat((f'bag-{i}','gm_execute',dict(command=command,select_guid='12')))
+                    for i,command in enumerate(bag_queries,1)],
+                brain_fixtures.chat(('fresh','gm_inspect',dict(path=['clients','1','rawSelf','guid'])),
+                    ('quest','context_read',dict(path=['journal','entries','2','questId'])),
+                    ('item','context_read',dict(path=['inventory','items','3','itemGuid'])),
+                    ('gear','context_read',dict(path=['inventory','gear','candidates','4','entry']))),
+                brain_fixtures.spoken()]
+            payloads = []
+            def provider(payload,*_):
+                payloads.append(copy.deepcopy(payload))
+                return replies.pop(0)
+            with mock.patch.object(brain.client,'_http',side_effect=provider), \
+                    mock.patch.object(direct_tools.DirectTools,'_gm_execute',native):
+                brain.generate([],state)
+            self.assertEqual(commands,['.lookup item supplies','.additem 1012',*bag_queries])
+            self.assertEqual(len(payloads),9)
+            prefix='Current observations and control state JSON:\n'
+            system, brief = payloads[0]['messages'][0]['content'].split(prefix,1)
+            brief=json.loads(brief)
+            self.assertEqual(brief['inventory']['items']['retainedRowsByIndex']['5'],inventory['items'][5])
+            self.assertEqual(brief['journal']['entries']['retainedRowsByIndex']['7'],state['journal']['entries'][7])
+            self.assertEqual(brief['inventory']['gear']['candidates']['contextPath'],['inventory','gear','candidates'])
+            self.assertEqual(brief['inventory']['inventoryRevision'],'21')
+            self.assertEqual(brief['journal']['questLogRevision'],'19')
+            last = {r['tool_call_id']:json.loads(r['content']) for r in payloads[-1]['messages'] if r.get('role')=='tool'}
+            self.assertEqual([last[key]['result']['value'] for key in ('quest','item','gear')],[102,'503',1004])
+            self.assertEqual(last['fresh']['result']['value'],'1')
+            self.assertFalse(last['grant']['result']['gameEffectClaimed'])
+            self.assertEqual(last['grant']['result']['feedback']['messages'],[])
+            self.assertIn('hostArchivedSelection',last['lookup'])
+            self.assertNotIn('hostArchivedSelection',last['bag-5'])
+            self.assertEqual(last['bag-5']['result']['feedback']['systemMessages'][0]['text'],'Bag 5: [Synthetic item] x 3')
+            self.assertEqual(saved['messages'],json.loads(transcript.read_text())['messages'][:len(saved['messages'])])
+            self.assertEqual(state,original)
+            old_sizes = []
+            for payload in payloads:
+                full = copy.deepcopy(payload)
+                view = json.loads(full['messages'][0]['content'].split(prefix,1)[1])
+                view.update(journal=state['journal'],inventory=inventory)
+                full['messages'][0]['content'] = system+prefix+encode(view).decode()
+                old_sizes.append(meter(full))
+                self.assertLessEqual(meter(payload),40960)
+            self.assertGreater(max(old_sizes),40960)
+
+    def test_gm_collection_projection_requires_current_own_data_and_retains_small_rows(self):
+        from direct_context import gm_character_collections
+        state=dict(journal=dict(sessionId='aw-foreign',entries=[dict(questId=1,details='x'*9000)]),
+            inventory=dict(sessionId='aw-own',known=False,items=[dict(itemGuid='7',extra='x'*8000)]))
+        self.assertEqual(gm_character_collections(state,'aw-own','87'),state)
+        state['inventory'].update(known=True,selfGuid='12')
+        self.assertEqual(gm_character_collections(state,'aw-own','87'),state)
+        state['inventory']=dict(sessionId='aw-own',known=True,items=[dict(itemGuid='7')])
+        self.assertEqual(gm_character_collections(state,'aw-own','87'),state)
+
     def test_index_never_enlarges_a_small_or_already_compact_spellbook(self):
         from direct_context import gm_spellbook_index
         small = dict(spells=[dict(spellId=1, name='One', mechanicsHint=dict(targetMask=2))])

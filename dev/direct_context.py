@@ -259,6 +259,44 @@ def _development_context(source):
     return result
 
 
+def gm_character_collections(state, session_id, self_guid):
+    """Give the GM a path into its own captured journal and bags while keeping action evidence inline."""
+    from direct_model import protected_read_evidence
+
+    def index(section, key, path, identity, known=None):
+        rows = section.get(key)
+        if not isinstance(rows, list) or not rows:
+            return section
+        descriptor = dict(contextPath=path, capturedCount=len(rows))
+        if known:
+            descriptor["confirmedKnownCount"] = sum(isinstance(row, dict) and row.get(known) is True for row in rows)
+            descriptor["knownField"] = known
+        retained = {str(i):row for i, row in enumerate(rows)
+            if not isinstance(row, dict) or identity not in row or protected_read_evidence(row)}
+        if retained: descriptor["retainedRowsByIndex"] = retained
+        if len(encode(descriptor)) >= len(encode(rows)):
+            return section
+        return dict(section, **{key:descriptor})
+
+    view = dict(state)
+    if not isinstance(session_id, str) or not session_id or not self_guid:
+        return view
+    def own(section):
+        return (isinstance(section, dict) and section.get("sessionId") == session_id and
+            all(str(section[key]) == str(self_guid) for key in ("selfGuid", "characterGuid") if key in section))
+    journal = state.get("journal")
+    if own(journal):
+        view["journal"] = index(journal,"entries",["journal","entries"],"questId","templateKnown")
+    inventory = state.get("inventory")
+    if own(inventory) and inventory.get("known") is True:
+        inventory = index(inventory,"items",["inventory","items"],"itemGuid","metadataKnown")
+        gear = inventory.get("gear")
+        if isinstance(gear, dict):
+            inventory = dict(inventory,gear=index(gear,"candidates",["inventory","gear","candidates"],"entry"))
+        view["inventory"] = inventory
+    return view
+
+
 def gm_spellbook_index(toolkit):
     """Index large learned spell catalogs in the same order as their captured rows."""
     from direct_model import protected_read_evidence
