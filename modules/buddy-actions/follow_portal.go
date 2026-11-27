@@ -233,11 +233,21 @@ func (s *Service) portalMovementAllowedLocked(w *worldv1.SnapshotResponse) bool 
 	return policy.Valid && policy.Eligible && policy.Ready
 }
 
+func (s *Service) followPlanBudget(entrance bool) time.Duration {
+	if entrance && s.followPortal.requiresPartyZone {
+		// This fixed approach can load the cold mesh using the existing body
+		// tick. A visible formation slot and legacy catch-up candidates keep
+		// their short shared planning deadline.
+		return actionsTickBudget
+	}
+	return 250 * time.Millisecond
+}
+
 // A single query can find a partial corridor between two floors that become
 // connected after taking a turn. Use an intermediate point only when the
 // physical planner verifies both the approach to it and the route to the portal.
 func (s *Service) portalCatchUpTarget(ctx context.Context, ground position, candidates []position) (position, bool) {
-	ctx, cancel := context.WithTimeout(ctx, actionsTickBudget)
+	ctx, cancel := context.WithTimeout(ctx, s.followPlanBudget(true))
 	defer cancel()
 	for _, candidate := range candidates {
 		if ctx.Err() != nil || !validPortalCandidate(candidate, s.pos, ground) {
