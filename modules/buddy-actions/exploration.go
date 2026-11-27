@@ -165,7 +165,11 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		return nil, nil
 	}
 	if s.idleInteraction.token != "" {
-		scope, err := s.newIdleMotionScopeLocked(call, token, s.lastWorld, false)
+		mode := ""
+		if !s.state.InteractionHarvest && !s.swimming && movementflags.GroundCompatible(s.lastWorld.Self.MovementFlags, s.lastWorld.Self.ExtraMovementFlags) {
+			mode = "ground_travel"
+		}
+		scope, err := s.newBodyMotionScopeLocked(call, token, s.lastWorld, false, mode)
 		if err != nil {
 			s.state.Reason = "exploration_idle_scope_unavailable"
 			s.mu.Unlock()

@@ -881,7 +881,14 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 				// Only fresh fully validated cleanup of its prior writes remains.
 				motion.cleanupOnly = true
 			}
-			if motion.writes > 0 && !errors.Is(err, errNavigationSpeedChanged) && !errors.Is(err, errIdleMotionReadUnavailable) && !errors.Is(err, errIdleMotionStopOnly) {
+			if motion.groundTravel && motion.writes > 0 && !motion.broken {
+				// This frame never reached the socket. Keep the preceding written frame
+				// for its owed STOP; cleanup will re-prove the body before doing anything.
+				motion.cleanupOnly = true
+				if op == opcode.MSGMoveStop {
+					s.state.MotionUnconfirmed = true
+				}
+			} else if motion.writes > 0 && !errors.Is(err, errNavigationSpeedChanged) && !errors.Is(err, errIdleMotionReadUnavailable) && !errors.Is(err, errIdleMotionStopOnly) {
 				motion.broken = true
 				s.state.MotionUnconfirmed = true
 			}
@@ -893,12 +900,19 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 		if motion.binding.token != "" {
 			s.idleMotion = motion
 		}
-		motion.lastOpcode, motion.lastPayload = op, append([]byte(nil), payload...)
+		if !motion.groundTravel {
+			motion.lastOpcode, motion.lastPayload = op, append([]byte(nil), payload...)
+		}
 	}
 	if _, err := s.session.SendPacket(sendCtx, request); err != nil {
 		f := s.destinationFlight
 		if motion != nil && motion.destination != nil && !motion.selfOnly && f != nil && !f.airborne && !f.release && modcb.RouteOwnerChangeBeforeWrite(err) {
 			f.release = true
+		} else if motion != nil && motion.groundTravel && motion.writes > 0 && modcb.PacketWasNotDispatched(err) {
+			motion.cleanupOnly = true
+			if op == opcode.MSGMoveStop {
+				s.state.MotionUnconfirmed = true
+			}
 		} else if motion != nil && (!modcb.PacketWasNotDispatched(err) || motion.writes > 0) {
 			motion.broken = true
 			s.state.MotionUnconfirmed = true
@@ -913,7 +927,7 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 
 	s.state.TransportWrites++
 	if motion != nil {
-		if err := s.idleMotionAfterWriteLocked(ctx, motion, op, payload); err != nil {
+		if err := s.idleMotionAfterWriteLocked(ctx, motion, op, payload, request.TransportScope); err != nil {
 			s.lastTransportError = err
 			s.state.NavReason = boundedPolicyDiagnostic("packet written; source report unavailable: "+err.Error(), 240)
 			return err
@@ -1095,7 +1109,11 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	if !moving && op == opcode.MSGMoveStop && s.state.InteractionOwner == "exploration" && s.idleInteraction.token != "" && s.idleInteraction.token == s.interactionToken {
 		_, portalStop := ctx.Value(portalStopGuardKey{}).(portalStopAdmission)
 		if !portalStop {
-			if scope, ok := ctx.Value(idleMotionScopeKey{}).(*idleMotionScope); ok && scope != nil {
+			scope, _ := ctx.Value(idleMotionScopeKey{}).(*idleMotionScope)
+			if scope == nil && s.idleMotion != nil && s.idleMotion.groundTravel && !s.idleMotion.broken && s.idleMotion.writes > 0 && s.idleMotion.lastOpcode != opcode.MSGMoveStop && s.idleMotion.binding == s.idleInteraction {
+				scope = s.idleMotion
+			}
+			if scope != nil {
 				cleanup := *scope
 				cleanup.cleanupOnly = true
 				ctx = context.WithValue(ctx, idleMotionScopeKey{}, &cleanup)
