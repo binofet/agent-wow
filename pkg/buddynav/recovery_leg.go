@@ -39,6 +39,10 @@ func PlanRecoveryLegContext(ctx context.Context, dataDir string, mapID uint32, s
 // every returned segment still passes the normal floor, obstacle, water and
 // step checks. It grants no movement or interaction authority.
 func PlanLegContext(ctx context.Context, dataDir string, mapID uint32, start, destination Point) ([]Point, error) {
+	if distance(start, destination) > MaxRouteLength {
+		route, err := planGroundCorridor(ctx, dataDir, mapID, start, destination, true)
+		return route.leg, err
+	}
 	return planLegContext(ctx, dataDir, mapID, start, destination, false)
 }
 

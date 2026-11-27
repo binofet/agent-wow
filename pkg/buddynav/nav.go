@@ -677,12 +677,7 @@ func loadMeshRegion(dir string, region Region) (mesh *detour.DtNavMesh, err erro
 
 var errNoMeshTiles = errors.New("navigation tile window is missing")
 
-func loadMeshTiles(ctx context.Context, dir string, mapID uint32, tiles []string, maxBytes int64) (mesh *detour.DtNavMesh, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			mesh, err = nil, errors.New("invalid navigation mesh data")
-		}
-	}()
+func openMeshHeader(dir string, mapID uint32) (*detour.DtNavMesh, error) {
 	data, err := readBounded(filepath.Join(dir, fmt.Sprintf("%03d.mmap", mapID)), 28)
 	if err != nil {
 		return nil, err
@@ -702,9 +697,22 @@ func loadMeshTiles(ctx context.Context, dir string, mapID uint32, tiles []string
 	if !finite(params.TileWidth) || !finite(params.TileHeight) || params.TileWidth < 100 || params.TileWidth > 1000 || params.TileHeight < 100 || params.TileHeight > 1000 || params.MaxTiles == 0 || params.MaxTiles > 4096 || params.MaxPolys == 0 || params.MaxPolys > 1<<31 {
 		return nil, errors.New("invalid or excessive mmap parameters")
 	}
-	mesh = detour.DtAllocNavMesh()
+	mesh := detour.DtAllocNavMesh()
 	if st := mesh.Init(&params); detour.DtStatusFailed(st) {
 		return nil, errors.New("initialize navigation mesh failed")
+	}
+	return mesh, nil
+}
+
+func loadMeshTiles(ctx context.Context, dir string, mapID uint32, tiles []string, maxBytes int64) (mesh *detour.DtNavMesh, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			mesh, err = nil, errors.New("invalid navigation mesh data")
+		}
+	}()
+	mesh, err = openMeshHeader(dir, mapID)
+	if err != nil {
+		return nil, err
 	}
 	loaded := 0
 	var totalBytes int64
