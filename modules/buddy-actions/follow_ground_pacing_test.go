@@ -14,6 +14,7 @@ import (
 // Both the goal and its complete route change as the mounted leader advances.
 func TestMountedFollowPacesVerifiedGroundWithMovingOwner(t *testing.T) {
 	s, f, advance := formationRig(t, 1, 5)
+	s.formation.runtime = healthyServiceTravelRuntime(t)
 	ctx := context.Background()
 	start := playerPosition(f.world.Self)
 	height := func(x float32) float32 {
