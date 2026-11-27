@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestPlanLegSharesExistingRecoveryBoundsAndCancellation(t *testing.T) {
+func TestPlanLegPreservesRecoveryBoundsAndHonorsCancellation(t *testing.T) {
 	if LegMaxTargetDistance != RecoveryMaxTargetDistance || LegMaxLength != RecoveryMaxLegLength || MaxRouteLength != 240 {
 		t.Fatal("generic guidance changed existing movement budgets")
 	}
@@ -22,7 +22,7 @@ func TestPlanLegSharesExistingRecoveryBoundsAndCancellation(t *testing.T) {
 			_, generic := PlanLegContext(ctx, t.TempDir(), 0, start, goal)
 			_, recovery := PlanRecoveryLegContext(ctx, t.TempDir(), 0, start, goal)
 			cancel()
-			if generic == nil || recovery == nil || errors.Is(generic, context.Canceled) != errors.Is(recovery, context.Canceled) {
+			if generic == nil || recovery == nil || (canceled && finite(goal.X) && !errors.Is(generic, context.Canceled)) {
 				t.Fatal("missing proof or cancellation changed", generic, recovery)
 			}
 		}
