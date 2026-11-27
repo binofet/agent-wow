@@ -17,7 +17,7 @@ import (
 // the owner loop writes it. World/Actions queues can lag a same-map entry.
 // Legacy unscoped STOP remains available through its existing path.
 func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []byte, requested *modv1.TransportScope, prior *modv1.WorldPacket) error {
-	if requested != nil && modcb.FlightpathQueryPacket(op, body) {
+	if requested != nil && modcb.FlightpathGroundPacket(op, body) {
 		// The socket owner has drained ready packets. Its latest known STOP
 		// and the complete World observation must both still be current here.
 		stop := e.ownMovementReport
@@ -29,7 +29,7 @@ func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []by
 		}
 		i, ok := movementinfo.OwnFrame(stop.Payload, requested.SelfGuid)
 		if !ok || !movementflags.GroundCompatible(i.Flags, uint32(i.ExtraFlags)) || i.Flags&0xff != 0 || i.FallTime != 0 {
-			return modcb.PacketNotDispatchedError("flightmaster query requires a written stationary ground STOP")
+			return modcb.PacketNotDispatchedError("flightmaster interaction requires a written stationary ground STOP")
 		}
 		return nil
 	}

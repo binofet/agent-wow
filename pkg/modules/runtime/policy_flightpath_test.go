@@ -75,8 +75,10 @@ func TestFreePolicyFlightmasterWriterConsumesOnlyTheSelectedPacket(t *testing.T)
 			md, _ := metadata.FromOutgoingContext(modcb.WithPolicySpell(context.Background(), token))
 			ctx := metadata.NewIncomingContext(context.Background(), md)
 			body := binary.LittleEndian.AppendUint64(nil, npc)
+			booking := binary.LittleEndian.AppendUint32(body, 6)
+			booking = binary.LittleEndian.AppendUint32(booking, 8)
 			write := m.modulePacketWriter(sid, actionsModule)
-			for _, err := range []error{write(ctx, opcode.CMSGActivatetaxi, body), write(ctx, want, binary.LittleEndian.AppendUint64(nil, npc+1)), write(ctx, want, body[:7]), m.modulePacketWriter("other", actionsModule)(ctx, want, body)} {
+			for _, err := range []error{write(ctx, opcode.CMSGActivatetaxi, booking), write(ctx, want, binary.LittleEndian.AppendUint64(nil, npc+1)), write(ctx, want, body[:7]), m.modulePacketWriter("other", actionsModule)(ctx, want, body)} {
 				if !modcb.PacketWasNotDispatched(err) {
 					t.Fatal("unselected packet reached socket", err)
 				}

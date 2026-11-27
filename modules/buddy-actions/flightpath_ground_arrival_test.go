@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	"context"
+	"encoding/binary"
 	"math"
 	"testing"
 
@@ -97,7 +98,7 @@ func TestFlightpathGroundArrivalRequiresCurrentStopAndRequestedStationarySpawn(t
 	}
 }
 
-func TestFlightpathGroundArrivalPreservesUnknownAndPaidSource(t *testing.T) {
+func TestFlightpathGroundArrivalPreservesUnknownAndRequiresCurrentStopForBooking(t *testing.T) {
 	x := walkedToFlightmaster(t)
 	x.f.failSend = true
 	v, request := x.query(t, "status")
@@ -112,10 +113,103 @@ func TestFlightpathGroundArrivalPreservesUnknownAndPaidSource(t *testing.T) {
 	x.packet(t, opcode.SMSGTaxinodeStatus, flightpathStatusPayload(x.npc, 1))
 	x.query(t, "discover")
 	x.packet(t, opcode.SMSGShowtaxinodes, flightpathMenuPayload(x.npc, 12, 2, 12))
+	x.f.ownMovementReport = nil
 	activate := flightpathActivationRequest(t, x)
 	assertFlightpathActivationNotDispatched(t, flightpathActivate(t, x, activate), activate)
 	if len(x.f.packets) != 2 {
 		t.Fatal("an older ground arrival escaped the paid guard", x.f.packets)
+	}
+}
+
+func TestFlightpathPaidBookingAfterOrdinaryGroundTravel(t *testing.T) {
+	s, f, advance, travel := instanceEntryIdleTravelFixture(t)
+	arrival, err := s.TravelTo(context.Background(), travel)
+	if err != nil || arrival.GetReason() != "exploration_within_distance" || arrival.GetMotionUnconfirmed() ||
+		countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 {
+		t.Fatal(arrival, err)
+	}
+	const guid = uint64(0xf130000625000001)
+	npc := &worldv1.CreatureState{Guid: guid, Entry: 1573, NpcFlags: 0x2000, Present: true, MapKnown: true, MapId: travel.MapId,
+		PositionKnown: true, PositionRevision: 4, X: travel.X, Y: travel.Y, Z: travel.Z, PositionAgeMs: 60000, ObservationAgeMs: 60000,
+		AliveKnown: true, Alive: true, HealthKnown: true, Health: 100, UnitFlagsKnown: true}
+	w := f.world
+	w.Self.PositionAgeMs, w.ObservedPackets = 60000, 51
+	w.RequestedCreatureStationaryPositionKnown = true
+	w.SelfCopperKnown, w.SelfCopper, w.SelfCopperRevision = true, 1500, 8
+	w.NearbyCreatures = []*worldv1.CreatureState{npc}
+	f.lookupCreatures = map[uint64]*worldv1.CreatureState{guid: npc}
+	client := &flightpathSession{fakeSession: f}
+	s.session = client
+	x := &flightpathRig{s: s, f: f, client: client, advance: advance, npc: guid, token: travel.Token}
+	x.query(t, "status")
+	x.packet(t, opcode.SMSGTaxinodeStatus, flightpathStatusPayload(guid, 1))
+	x.query(t, "discover")
+	x.packet(t, opcode.SMSGShowtaxinodes, flightpathMenuPayload(guid, 6, 6, 8))
+	if !x.observation(t).GetOperation().GetMenuKnown() {
+		t.Fatal("verified walk and ordinary status did not produce a menu")
+	}
+	r := flightpathActivationRequest(t, x)
+	r.SourceNode, r.DestinationNode = 6, 8
+	got := flightpathActivate(t, x, r)
+	if op := got.Activation; !op.TransportWritten || !op.Pending || op.ActivationAccepted || !op.MoneyBeforeKnown || op.MoneyBeforeCopper != 1500 {
+		t.Fatal("booking after proven stationary arrival", op)
+	}
+	p := f.packets[len(f.packets)-1]
+	if p.Opcode != opcode.CMSGActivatetaxi || len(p.Payload) != 16 || binary.LittleEndian.Uint64(p.Payload) != guid ||
+		binary.LittleEndian.Uint32(p.Payload[8:]) != 6 || binary.LittleEndian.Uint32(p.Payload[12:]) != 8 ||
+		!proto.Equal(p.TransportScope, f.ownMovementReport.TransportScope) {
+		t.Fatal(p)
+	}
+	assertFlightpathActivationNoInventedEffects(t, got.Activation)
+	again := flightpathActivate(t, x, r)
+	if !proto.Equal(again, got) || countPackets(f, opcode.CMSGActivatetaxi) != 1 {
+		t.Fatal("same booking repeated", again)
+	}
+}
+
+func TestFlightpathGroundBookingUsesCurrentWalletBodyAndFlightmaster(t *testing.T) {
+	for _, change := range []string{"wallet", "lease", "visit", "NPC despawn", "channel", "unconfirmed movement", "unknown write"} {
+		t.Run(change, func(t *testing.T) {
+			x := walkedToFlightmaster(t)
+			x.query(t, "status")
+			x.packet(t, opcode.SMSGTaxinodeStatus, flightpathStatusPayload(x.npc, 1))
+			x.query(t, "discover")
+			x.packet(t, opcode.SMSGShowtaxinodes, flightpathMenuPayload(x.npc, 12, 2, 12))
+			r := flightpathActivationRequest(t, x)
+			x.f.onOwnMovementReport = func(*modv1.WorldPacket) {
+				switch change {
+				case "wallet":
+					x.f.world.SelfCopperRevision++
+				case "lease":
+					x.s.interactionToken = "replaced"
+				case "visit":
+					x.f.world.VisitRevision++
+				case "NPC despawn":
+					delete(x.f.lookupCreatures, x.npc)
+				case "channel":
+					x.f.world.Self.ChannelSpellId = 10
+				case "unconfirmed movement":
+					x.s.state.MotionUnconfirmed = true
+				case "unknown write":
+					x.f.failSend = true
+				}
+			}
+			got := flightpathActivate(t, x, r)
+			writes := countPackets(x.f, opcode.CMSGActivatetaxi)
+			if change == "unknown write" {
+				if !got.Activation.Pending || !got.Activation.TransportUnknown || got.Activation.TransportWritten || writes != 1 {
+					t.Fatal(got)
+				}
+			} else {
+				assertFlightpathActivationNotDispatched(t, got, r)
+				if writes != 0 {
+					t.Fatal("revoked departure sent a booking")
+				}
+			}
+			if again := flightpathActivate(t, x, r); !proto.Equal(again, got) || countPackets(x.f, opcode.CMSGActivatetaxi) != writes {
+				t.Fatal("retained disposition changed on replay", again)
+			}
+		})
 	}
 }
 
