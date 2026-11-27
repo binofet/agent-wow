@@ -9,6 +9,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -302,16 +303,11 @@ func approachCorpse(w *worldv1.SnapshotResponse, guid uint64) *worldv1.CreatureS
 // This movement exception is bound to the acting character's actual own quest
 // log, never to a party member's quests or an arbitrary game-object target.
 func ownHarvestQuest(w *worldv1.SnapshotResponse, self uint64, objectEntry uint32) bool {
-	questID := uint32(0)
-	switch objectEntry {
-	case 161557:
-		questID = 3904
-	case 176793:
-		questID = 5545
-	default:
+	if w == nil || w.Self == nil || w.Self.Guid != self || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
 		return false
 	}
-	if w == nil || w.Self == nil || w.Self.Guid != self || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
+	container, ok := gamecatalog.Default().Container(objectEntry)
+	if !ok || !container.OrdinaryQuestOpening() {
 		return false
 	}
 	var seen [25]bool
@@ -321,8 +317,12 @@ func ownHarvestQuest(w *worldv1.SnapshotResponse, self uint64, objectEntry uint3
 			return false
 		}
 		seen[q.Slot] = true
-		if q.QuestId == questID && !q.Complete && !q.Failed && q.State&3 == 0 {
-			found = true
+		if q.QuestId != 0 && !q.Complete && !q.Failed && q.State&3 == 0 {
+			for _, item := range container.QuestItems {
+				if item.QuestID == q.QuestId && item.ItemID != 0 && item.Count != 0 {
+					found = true
+				}
+			}
 		}
 	}
 	return found

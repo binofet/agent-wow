@@ -23,6 +23,11 @@ type Container struct {
 }
 type Catalog struct{ objects map[uint32]Container }
 
+// OrdinaryQuestOpening restricts quest gathering to ordinary opening spells.
+func (c Container) OrdinaryQuestOpening() bool {
+	return c.Type == 3 && c.Action == "open_and_loot" && (c.OpenSpell == 3365 || c.OpenSpell == 6477 || c.OpenSpell == 6478)
+}
+
 // Decode copies the input into a private immutable index. Tests can supply
 // unfamiliar content without adding IDs to gameplay code.
 func Decode(data []byte) (*Catalog, error) {

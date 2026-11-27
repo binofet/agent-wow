@@ -44,7 +44,7 @@ func (s *Service) observeGatherCandidates(w *worldv1.SnapshotResponse, out *loot
 		}
 		entries[object.Entry] = true
 		record, ok := s.catalog.Container(object.Entry)
-		if !ok || record.Type != 3 || record.Action != "open_and_loot" || !ordinaryOpeningSpell(record.OpenSpell) {
+		if !ok || !record.OrdinaryQuestOpening() {
 			continue
 		}
 		for _, relation := range record.QuestItems {

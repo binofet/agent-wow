@@ -274,6 +274,30 @@ func TestHarvestApproachFinalClockRetainsExactBodyVisit(t *testing.T) {
 	}
 }
 
+func TestHarvestApproachUsesObservedQuestAndCataloguedContainer(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		entry, quest uint32
+		wantMovement bool
+	}{
+		{"Krom Stoutarm's Chest", 124389, 1360, true},
+		{"Sunken Chest", 32, 125, true},
+		{"different incomplete quest", 124389, 125, false},
+		{"unrelated game object", 999999, 1360, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f, _, req := harvestApproachRig(t)
+			g := f.world.QuestObjects[0]
+			g.Entry, g.Guid = tc.entry, uint64(0xf110)<<48|uint64(tc.entry)<<24|42
+			req.GameObjectGuid, f.world.SelfQuestLog[0].QuestId = g.Guid, tc.quest
+			out, err := s.ApproachLoot(context.Background(), req)
+			if err != nil || out.GetMoving() != tc.wantMovement || (countPackets(f, opcode.MSGMoveStartForward) == 1) != tc.wantMovement {
+				t.Fatalf("expected movement %v, got moving=%v reason=%q packets=%d error=%v", tc.wantMovement, out.GetMoving(), out.GetReason(), len(f.packets), err)
+			}
+		})
+	}
+}
+
 func TestHarvestApproachRequiresExactOneTargetAndOwnIncompleteQuest(t *testing.T) {
 	for _, mode := range []string{"both", "neither", "wrong_token", "no_nav", "no_quest", "complete", "failed", "unknown_log", "partial_log", "duplicate_slot", "foreign_self", "absent", "wrong_entry", "wrong_guid", "wrong_type", "unknown_flags", "in_use", "not_selectable", "other_map", "unknown_position", "far", "vertical", "duplicate_object", "combat", "swimming", "unsafe_motion"} {
 		t.Run(mode, func(t *testing.T) {
