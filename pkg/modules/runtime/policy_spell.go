@@ -57,6 +57,7 @@ type policySpell struct {
 	summoning      *policySummoning
 	genericRequest *actionsv1.CastSpellRequest
 	cancelRequest  *actionsv1.CancelSpellRequest
+	dismount       *actionsv1.DismountGroundRequest
 	token          string
 	origin         modsession.WriteOrigin
 	admitted       bool
@@ -74,7 +75,7 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	case "area_trigger_reference", "area_trigger_observation", "notify_area_trigger", "instance_entry_status", "plan_route_leg", "travel_to":
 		return p.resolveInstanceEntry(action, capability)
 	}
-	if capability == "cast_spell" || capability == "cancel_spell" {
+	if capability == "cast_spell" || capability == "cancel_spell" || capability == "dismount_ground" {
 		return p.resolveGenericSpell(action, capability == "cancel_spell")
 	}
 	if capability == "release_interaction" {
@@ -342,6 +343,11 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	if op.cancelRequest != nil && err == nil && state.GetLastSpellOperation().GetOperationRevision() == op.cancelRequest.ExpectedOperationRevision && state.GetLastSpellOperation().GetCancelAttempted() && !op.attempted {
 		return behavior.ActionSettledUnverified, op.payload("cancel_already_attempted_no_replay", false, false, false)
 	}
+	if op.dismount != nil && op.written {
+		// An ordinary cancel has no direct server reply. The native observer
+		// retains the exact mount through the independent aura/flag readback.
+		return behavior.ActionSettledUnverified, op.payload("dismount_written_waiting_for_state", true, false, false)
+	}
 	if op.cancelRequest != nil && op.attempted {
 		// Cancellation transport never completes the original cast/channel.
 		// Its own finite action has no separate future effect reservation.
@@ -414,6 +420,9 @@ func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
 	}
 	if op.capability == "acquire_idle_interaction" {
 		return false // Custody metadata cannot authorize any physical packet.
+	}
+	if op.dismount != nil {
+		return code == opcode.CMSGCancelMountAura && len(payload) == 0
 	}
 	if op.genericRequest != nil || op.cancelRequest != nil {
 		return op.matchesGenericPacket(code, payload)
@@ -530,7 +539,7 @@ func (p *SessionPolicy) recordSpellTransport(op *policySpell, receipt *behavior.
 	if op.effect != nil && !(receipt.Outcome == behavior.ActionUnknown && op.effect.Outcome == behavior.ActionUnknown) {
 		spells.pending = append(spells.pending, op.effect)
 	}
-	if op.effect != nil || !op.attempted || op.cancelRequest != nil {
+	if op.effect != nil || !op.attempted || op.cancelRequest != nil || op.dismount != nil && op.written {
 		delete(spells.active, op.token)
 	}
 	return spells.flush(p.vm)
@@ -598,6 +607,13 @@ func (op *policySpell) decodeEffect(body []byte) (behavior.ActionOutcome, map[st
 	}
 	if native.SpellId != op.spell || native.TargetGuid != target || native.Capability != op.capability {
 		return "", nil, nil
+	}
+	if op.dismount != nil && native.VisitId == op.encounterVisit && native.Phase == "observed_ground_mount_state" {
+		outcome := behavior.ActionSettledUnverified
+		if native.TransportWritten && native.EffectObserved {
+			outcome = behavior.ActionConfirmed
+		}
+		return outcome, op.payload(native.Phase, native.TransportWritten, false, native.EffectObserved), nil
 	}
 	if native.Capability == "resurrect" && native.Phase == "confirmed_alive" {
 		// Older native clients used GO plus subsequent life as their only

@@ -96,13 +96,59 @@ function M.follow_formation(frame, obs, sequence)
         startDistance=planned.startDistance,stopDistance=planned.stopDistance,
         ready=planned.ready == true,hold=planned.hold == true,phase=planned.phase}
 end
+local mount_preparation
+local proposed_mount
+function M.follow_mount(obs,sequence)
+    proposed_mount=nil
+    local nav=obs.navigation or {}
+    local fact=nav.groundMount
+    if not follow_requested(nav) or type(fact)~="table" or fact.ready~=true or fact.attemptedForOwnerState==true or
+       not portal_revision(nav.ownerGuid) or not portal_binding_revision(nav.followRevision) or
+       not portal_revision(fact.ownerMountRevision) or not obs.spellbookKnown then return end
+    for _,p in pairs(obs.players or {}) do
+        if p.inCombat then return end
+    end
+    for _,target in pairs(obs.targets or {}) do
+        if target.engaged==true and target.alive~=false then return end
+    end
+    local spell,score,cap
+    if fact.ownerMounted==true and (fact.ownerGroundSpell or 0)>0 and fact.selfMounted==false then
+        for id,row in pairs(obs.spells or {}) do
+            local speed=row.groundMountSpeedPercent
+            local n=tonumber(id)
+            if row.known and row.available and portal_uint32(n) and n>0 and type(speed)=="number" and speed>0 and
+               (not score or speed>score or speed==score and n<spell) then spell,score=n,speed end
+        end
+        cap="cast_spell"
+    elseif fact.ownerMounted==false and fact.ownerDismounted==true and fact.selfMounted==true and
+           (fact.selfGroundSpell or 0)>0 then spell,cap=fact.selfGroundSpell,"dismount_ground" end
+    if not spell then return end
+    local guard={ownerGuid=nav.ownerGuid,followRevision=nav.followRevision,ownerMountRevision=fact.ownerMountRevision}
+    local key=obs.sessionId..":"..obs.selfGuid..":"..obs.visitId..":"..nav.followRevision..":"..fact.ownerMountRevision
+    if fact.followMoving==true then
+        if mount_preparation==key then return end
+        local action={capability="movement_owner",sessionId=obs.sessionId,selfGuid=obs.selfGuid,
+                      mode="acquire",owner="ground_mount_follow",leaseMs=3000,visitId=obs.visitId,spellId=spell,followMount=guard}
+        proposed_mount={action=action,key=key}
+        return action
+    end
+    return {capability=cap,sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,
+            observationSequence=sequence,spellId=spell,
+            followMount=guard}
+end
+function M.commit_follow_mount(action)
+    if proposed_mount and proposed_mount.action==action then mount_preparation=proposed_mount.key end
+    proposed_mount=nil
+end
+
 local water_probe
 function M.export_state()
-    return {memory=formation_memory,identity=formation_identity,waterProbe=water_probe}
+    return {memory=formation_memory,identity=formation_identity,waterProbe=water_probe,mountPreparation=mount_preparation}
 end
 function M.import_state(saved)
     if type(saved) ~= "table" then return false end
-    formation_memory, formation_identity, water_probe = saved.memory, saved.identity, saved.waterProbe
+    if saved.mountPreparation~=nil and type(saved.mountPreparation)~="string" then return false end
+    formation_memory, formation_identity, water_probe, mount_preparation = saved.memory, saved.identity, saved.waterProbe, saved.mountPreparation
     return true
 end
 

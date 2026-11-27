@@ -814,7 +814,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-îµ
+ÓÁ
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -835,7 +835,7 @@ objectGuid
 	elevation (R	elevation
 speed (Rspeed'
 movement_opcode (RmovementOpcode
-movement (Rmovement"™
+movement (Rmovement"è
 CastSpellRequest
 
 session_id (	R	sessionId
@@ -845,7 +845,8 @@ session_id (	R	sessionId
 targets (2*.warcraftbuddy.actions.v1.SpellCastTargetsRtargetsM
 
 trajectory (2-.warcraftbuddy.actions.v1.SpellCastTrajectoryR
-trajectory"à
+trajectoryM
+follow_mount (2*.warcraftbuddy.actions.v1.FollowMountGuardRfollowMount"à
 CancelSpellRequest
 
 session_id (	R	sessionId
@@ -909,14 +910,17 @@ spec_index (R	specIndex
 
 rank_index (R	rankIndex
 
-request_id (	R	requestId"™
+request_id (	R	requestId"ž
 MovementOwnerRequest
 
 session_id (	R	sessionId
 	self_guid (RselfGuid
 owner (	Rowner
 token (	Rtoken
-lease_ms (RleaseMs"~
+lease_ms (RleaseMsM
+follow_mount (2*.warcraftbuddy.actions.v1.FollowMountGuardRfollowMount
+visit_id (RvisitId
+spell_id (RspellId"~
 MovementOwnerRelease
 
 session_id (	R	sessionId
@@ -1726,7 +1730,7 @@ owner_guid (R	ownerGuid6
 ready (Rready
 hold (Rhold'
 follow_revision (RfollowRevision
-phase (	Rphase"Î
+phase (	Rphase"£	
 NavigationObservation6
 body_movement_supported (RbodyMovementSupported
 	following (R	following
@@ -1752,7 +1756,8 @@ goal_known (R	goalKnown
 portal (21.warcraftbuddy.actions.v1.PortalFollowObservationRportal:
 movement_points_supported (RmovementPointsSupportedV
 movement_points (2-.warcraftbuddy.actions.v1.MovementPointsStateRmovementPoints4
-body_landing_supported (RbodyLandingSupported"7
+body_landing_supported (RbodyLandingSupportedS
+ground_mount (20.warcraftbuddy.actions.v1.FollowMountObservationRgroundMount"7
 PortalPoint
 x (Rx
 y (Ry
@@ -1903,7 +1908,7 @@ targetGuid"M
 EncounterEngagement
 victim_guid (R
 victimGuid
-age_ms (RageMs"š
+age_ms (RageMs"×
 EncounterSpell
 known (Rknown
 ready (Rready
@@ -1948,7 +1953,8 @@ targetRule
 
 family_set" (R	familySet!
 family_flags# (RfamilyFlagsP
-aura_effects$ (2-.warcraftbuddy.actions.v1.EncounterAuraEffectRauraEffects"m
+aura_effects$ (2-.warcraftbuddy.actions.v1.EncounterAuraEffectRauraEffects;
+ground_mount_speed_percent% (RgroundMountSpeedPercent"m
 EncounterAuraEffect
 kind (Rkind
 a (Ra
@@ -2436,14 +2442,48 @@ session_id (	R	sessionId
 summoner_guid (RsummonerGuid
 accept (H Racceptˆ.
 expected_group_guid (RexpectedGroupGuidB	
-_accept2Ü6
+_accept"Œ
+FollowMountGuard
+
+owner_guid (R	ownerGuid'
+follow_revision (RfollowRevision0
+owner_mount_revision (RownerMountRevision"Ø
+DismountGroundRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+spell_id (RspellIdM
+follow_mount (2*.warcraftbuddy.actions.v1.FollowMountGuardRfollowMount"®
+FollowMountObservation&
+self_mounted (H RselfMountedˆ(
+owner_mounted (HRownerMountedˆ*
+self_ground_spell (RselfGroundSpell,
+owner_ground_spell (RownerGroundSpell0
+owner_mount_revision (RownerMountRevision)
+owner_dismounted (RownerDismounted)
+self_run_speed (HRselfRunSpeedˆ+
+owner_run_speed (HRownerRunSpeedˆ
+ready	 (Rready#
+follow_moving
+ (RfollowMoving
+
+last_phase (	R	lastPhase9
+attempted_for_owner_state (RattemptedForOwnerState+
+transport_written (RtransportWritten'
+effect_observed (ReffectObservedB
+_self_mountedB
+_owner_mountedB
+_self_run_speedB
+_owner_run_speed2À7
 BuddyActions~
 AreaTriggerReference5.warcraftbuddy.actions.v1.AreaTriggerReferenceRequest/.warcraftbuddy.actions.v1.AreaTriggerReferencesw
 NotifyAreaTrigger2.warcraftbuddy.actions.v1.NotifyAreaTriggerRequest..warcraftbuddy.actions.v1.AreaTriggerOperation`
 AreaTriggerObservation.google.protobuf.Empty..warcraftbuddy.actions.v1.AreaTriggerOperationj
 TalentState,.warcraftbuddy.actions.v1.TalentStateRequest-.warcraftbuddy.actions.v1.TalentStateResponsej
 LearnTalent,.warcraftbuddy.actions.v1.LearnTalentRequest-.warcraftbuddy.actions.v1.TalentStateResponseX
-	CastSpell*.warcraftbuddy.actions.v1.CastSpellRequest.warcraftbuddy.actions.v1.State\
+	CastSpell*.warcraftbuddy.actions.v1.CastSpellRequest.warcraftbuddy.actions.v1.Stateb
+DismountGround/.warcraftbuddy.actions.v1.DismountGroundRequest.warcraftbuddy.actions.v1.State\
 CancelSpell,.warcraftbuddy.actions.v1.CancelSpellRequest.warcraftbuddy.actions.v1.State‚
 FlightpathReference4.warcraftbuddy.actions.v1.FlightpathReferenceRequest5.warcraftbuddy.actions.v1.FlightpathReferenceResponseh
 FlightpathObservation.google.protobuf.Empty7.warcraftbuddy.actions.v1.FlightpathObservationResponse|

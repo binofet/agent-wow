@@ -28,7 +28,15 @@ func (p *SessionPolicy) resolveGenericSpell(action map[string]any, cancel bool) 
 	op := &policySpell{vm: p.vm, capability: "cast_spell", encounterVisit: visit}
 	var req proto.Message
 	method := "cast_spell"
-	if cancel {
+	dismount := action["capability"] == "dismount_ground"
+	if dismount {
+		method = "dismount_ground"
+		op.capability = method
+		fields["followMount"] = action["followMount"]
+		r := &actionsv1.DismountGroundRequest{}
+		req = r
+		op.dismount = r
+	} else if cancel {
 		method = "cancel_spell"
 		op.capability = method
 		fields["expectedOperationRevision"] = action["expectedOperationRevision"]
@@ -37,6 +45,9 @@ func (p *SessionPolicy) resolveGenericSpell(action map[string]any, cancel bool) 
 		req = r
 		op.cancelRequest = r
 	} else {
+		if v, ok := action["followMount"]; ok {
+			fields["followMount"] = v
+		}
 		if v, ok := action["targets"]; ok {
 			fields["targets"] = v
 		}
@@ -54,7 +65,13 @@ func (p *SessionPolicy) resolveGenericSpell(action map[string]any, cancel bool) 
 	if err != nil {
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "invalid exact generic spell DTO: "+err.Error())
 	}
-	if cancel {
+	if dismount {
+		r := op.dismount
+		if r.SpellId == 0 || r.GetFollowMount().GetOwnerGuid() == 0 || r.GetFollowMount().GetOwnerMountRevision() == 0 {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact witnessed owner and ground mount required")
+		}
+		op.spell = r.SpellId
+	} else if cancel {
 		if op.cancelRequest.SpellId == 0 || op.cancelRequest.ExpectedOperationRevision == 0 {
 			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact active spell and operation revision required")
 		}

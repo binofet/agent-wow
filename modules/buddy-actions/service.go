@@ -168,6 +168,7 @@ type Service struct {
 	followGoal                           followFormationGoal
 	followGoalExecuting                  *followFormationGoal
 	followRevision                       uint64
+	followMount                          followMountState
 	followNav                            followNavigation
 	followPortal                         dungeonPortalFollow
 	portalGoal                           portalCatchupGoal

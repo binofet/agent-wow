@@ -90,6 +90,14 @@ func (s *Service) CastSpell(ctx context.Context, r *actionsv1.CastSpellRequest) 
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
+	if guard := r.GetFollowMount(); guard != nil {
+		if r.Targets != nil || r.Trajectory != nil || modcb.PolicySpellToken(ctx) == "" {
+			return nil, status.Error(codes.FailedPrecondition, "follow mount requires the normal Lua writer and implicit self target")
+		}
+		if err := s.admitFollowMountLocked(ctx, w, guard, r.SpellId, false, false); err != nil {
+			return nil, err
+		}
+	}
 	s.castCount++
 	payload, _ := spellcast.Encode(s.castCount, r)
 	until := s.now().Add(3 * time.Second)
@@ -112,6 +120,16 @@ func (s *Service) CastSpell(ctx context.Context, r *actionsv1.CastSpellRequest) 
 	s.state.LastCastTargetGuid = target
 	s.state.LastCastFailure = 0
 	err = s.sendPacketLocked(modcb.ForwardPolicySpell(ctx), opcode.CMSGCastSpell, payload)
+	if r.FollowMount != nil {
+		m := s.startFollowMountLocked(r.SpellId, false)
+		m.cast = op
+		m.written = err == nil
+		if modcb.PacketWasNotDispatched(err) {
+			m.phase = "not_dispatched"
+		} else if err != nil {
+			m.phase = "transport_unknown"
+		}
+	}
 	if modcb.PacketWasNotDispatched(err) {
 		op.view.Phase = "not_dispatched"
 		s.state.CastPending = false

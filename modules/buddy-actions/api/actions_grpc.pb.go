@@ -27,6 +27,7 @@ const (
 	BuddyActions_TalentState_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/TalentState"
 	BuddyActions_LearnTalent_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/LearnTalent"
 	BuddyActions_CastSpell_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/CastSpell"
+	BuddyActions_DismountGround_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/DismountGround"
 	BuddyActions_CancelSpell_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/CancelSpell"
 	BuddyActions_FlightpathReference_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathReference"
 	BuddyActions_FlightpathObservation_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation"
@@ -104,6 +105,7 @@ type BuddyActionsClient interface {
 	TalentState(ctx context.Context, in *TalentStateRequest, opts ...grpc.CallOption) (*TalentStateResponse, error)
 	LearnTalent(ctx context.Context, in *LearnTalentRequest, opts ...grpc.CallOption) (*TalentStateResponse, error)
 	CastSpell(ctx context.Context, in *CastSpellRequest, opts ...grpc.CallOption) (*State, error)
+	DismountGround(ctx context.Context, in *DismountGroundRequest, opts ...grpc.CallOption) (*State, error)
 	CancelSpell(ctx context.Context, in *CancelSpellRequest, opts ...grpc.CallOption) (*State, error)
 	FlightpathReference(ctx context.Context, in *FlightpathReferenceRequest, opts ...grpc.CallOption) (*FlightpathReferenceResponse, error)
 	FlightpathObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
@@ -235,6 +237,16 @@ func (c *buddyActionsClient) CastSpell(ctx context.Context, in *CastSpellRequest
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyActions_CastSpell_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) DismountGround(ctx context.Context, in *DismountGroundRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_DismountGround_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -901,6 +913,7 @@ type BuddyActionsServer interface {
 	TalentState(context.Context, *TalentStateRequest) (*TalentStateResponse, error)
 	LearnTalent(context.Context, *LearnTalentRequest) (*TalentStateResponse, error)
 	CastSpell(context.Context, *CastSpellRequest) (*State, error)
+	DismountGround(context.Context, *DismountGroundRequest) (*State, error)
 	CancelSpell(context.Context, *CancelSpellRequest) (*State, error)
 	FlightpathReference(context.Context, *FlightpathReferenceRequest) (*FlightpathReferenceResponse, error)
 	FlightpathObservation(context.Context, *emptypb.Empty) (*FlightpathObservationResponse, error)
@@ -995,6 +1008,9 @@ func (UnimplementedBuddyActionsServer) LearnTalent(context.Context, *LearnTalent
 }
 func (UnimplementedBuddyActionsServer) CastSpell(context.Context, *CastSpellRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CastSpell not implemented")
+}
+func (UnimplementedBuddyActionsServer) DismountGround(context.Context, *DismountGroundRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DismountGround not implemented")
 }
 func (UnimplementedBuddyActionsServer) CancelSpell(context.Context, *CancelSpellRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CancelSpell not implemented")
@@ -1316,6 +1332,24 @@ func _BuddyActions_CastSpell_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).CastSpell(ctx, req.(*CastSpellRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_DismountGround_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DismountGroundRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).DismountGround(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_DismountGround_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).DismountGround(ctx, req.(*DismountGroundRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2520,6 +2554,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CastSpell",
 			Handler:    _BuddyActions_CastSpell_Handler,
+		},
+		{
+			MethodName: "DismountGround",
+			Handler:    _BuddyActions_DismountGround_Handler,
 		},
 		{
 			MethodName: "CancelSpell",

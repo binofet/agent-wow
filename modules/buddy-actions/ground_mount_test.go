@@ -77,3 +77,130 @@ func TestOrdinaryGroundMountTravelTo(t *testing.T) {
 		})
 	}
 }
+
+func TestFollowMountPreparationRechecksSelectionAndStopsOnce(t *testing.T) {
+	for _, change := range []string{"current", "manual_stop", "combat", "swimming", "another_mount", "unknown_motion"} {
+		t.Run(change, func(t *testing.T) {
+			s, f, _, ctx, advance := targetMovementFixture(t)
+			toggle(t, s, true)
+			learnSpells(s, 23238)
+			mountForTravel(t, s, f.world.Owner, 23240)
+			f.world.Owner.X += 15
+			for i := 0; i < 8 && !s.state.Moving; i++ {
+				s.Tick(ctx)
+				advance(100 * time.Millisecond)
+			}
+			obs := s.followMountObservationLocked(ctx, f.world)
+			if !obs.Ready || !obs.FollowMoving || countPackets(f, opcode.MSGMoveStartForward) != 1 {
+				t.Fatal(s.stateLocked(), obs, f.packets)
+			}
+			guard := &actionsv1.FollowMountGuard{OwnerGuid: f.world.Owner.Guid, FollowRevision: s.followRevision, OwnerMountRevision: obs.OwnerMountRevision}
+			r := &actionsv1.MovementOwnerRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, VisitId: f.world.VisitRevision, SpellId: 23238, FollowMount: guard, Owner: "ground_mount_follow", LeaseMs: 3000}
+			switch change {
+			case "manual_stop":
+				toggle(t, s, false)
+			case "combat":
+				f.world.Self.UnitFlags |= 0x80000
+			case "swimming":
+				f.world.Self.MovementFlags = 0x200000
+			case "another_mount":
+				mountForTravel(t, s, f.world.Owner, 458)
+			case "unknown_motion":
+				s.state.MotionUnconfirmed = true
+			}
+			before := countPackets(f, opcode.MSGMoveStop)
+			_, err := s.AcquireMovement(ctx, r)
+			if change != "current" {
+				if err == nil || countPackets(f, opcode.MSGMoveStop) != before {
+					t.Fatal(change, err, s.stateLocked(), f.packets)
+				}
+				return
+			}
+			if err != nil || countPackets(f, opcode.MSGMoveStop) != 1 || s.state.Moving || !s.state.Following {
+				t.Fatal(err, s.stateLocked(), f.packets)
+			}
+			if _, err = s.CastSpell(ctx, &actionsv1.CastSpellRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, VisitId: r.VisitId, SpellId: r.SpellId, FollowMount: guard}); err != nil || countPackets(f, opcode.CMSGCastSpell) != 1 {
+				t.Fatal(err, s.stateLocked(), f.packets)
+			}
+		})
+	}
+}
+
+func TestOwnerDismountDoesNotCancelNewOwnMount(t *testing.T) {
+	for _, prior := range []bool{false, true} {
+		s, f, _, ctx, _ := targetMovementFixture(t)
+		toggle(t, s, true)
+		mountForTravel(t, s, f.world.Owner, 23240)
+		if prior {
+			mountForTravel(t, s, f.world.Self, 23238)
+		}
+		previous := s.followMountObservationLocked(ctx, f.world)
+		if !previous.GetOwnerMounted() {
+			t.Fatal(previous)
+		}
+		f.world.Owner.UnitFlags &^= movementflags.Mounted
+		s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdateAll, Payload: packedGUID(f.world.Owner.Guid)})
+		edge := s.followMountObservationLocked(ctx, f.world)
+		if !edge.OwnerDismounted {
+			t.Fatal(edge)
+		}
+		// Remove and reapply the same rank between observations; the earlier
+		// owner transition cannot cancel an independently selected new mount.
+		s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdateAll, Payload: packedGUID(s.selfGUID)})
+		mountForTravel(t, s, f.world.Self, 23238)
+		guard := &actionsv1.FollowMountGuard{OwnerGuid: f.world.Owner.Guid, FollowRevision: s.followRevision, OwnerMountRevision: edge.OwnerMountRevision}
+		_, err := s.DismountGround(ctx, &actionsv1.DismountGroundRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, VisitId: 1, SpellId: 23238, FollowMount: guard})
+		if err == nil || countPackets(f, opcode.CMSGCancelMountAura) != 0 {
+			t.Fatal(prior, err, f.packets)
+		}
+	}
+}
+
+func TestFollowMountRevalidatesTheBodyAndActualOwner(t *testing.T) {
+	for _, reason := range []string{"speed_only", "bare_flag", "foreign_aura", "owner_taxi", "self_swim", "owner_flight", "passenger_mount", "self_control", "intervening_stop", "cast_unknown", "stale_owner", "foreign_visit", "unlearned", "flight_spell"} {
+		t.Run(reason, func(t *testing.T) {
+			s, f, _, ctx, _ := targetMovementFixture(t)
+			learnSpells(s, 23238, 32235)
+			toggle(t, s, true)
+			owner, self := f.world.Owner, f.world.Self
+			mountForTravel(t, s, owner, 23240)
+			v := s.followMountObservationLocked(ctx, f.world)
+			r := &actionsv1.CastSpellRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, VisitId: f.world.VisitRevision, SpellId: 23238, FollowMount: &actionsv1.FollowMountGuard{OwnerGuid: owner.Guid, FollowRevision: s.followRevision, OwnerMountRevision: v.OwnerMountRevision}}
+			switch reason {
+			case "speed_only", "bare_flag":
+				s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdateAll, Payload: packedGUID(owner.Guid)})
+				if reason == "speed_only" {
+					owner.UnitFlags &^= movementflags.Mounted
+				}
+			case "foreign_aura":
+				s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdateAll, Payload: buffAura(owner.Guid, self.Guid, 7, 23240, 0)})
+			case "owner_taxi":
+				owner.UnitFlags |= 0x100000
+			case "self_swim":
+				self.MovementFlags = 0x200000
+			case "owner_flight":
+				owner.MovementFlags = 0x2000000
+			case "passenger_mount":
+				mountForTravel(t, s, owner, 60424)
+			case "self_control":
+				s.clientControlLost = true
+			case "intervening_stop":
+				toggle(t, s, false)
+			case "cast_unknown":
+				s.state.CastPending = true
+			case "stale_owner":
+				owner.MovementFlags = 1
+				owner.PositionAgeMs = 3000
+			case "foreign_visit":
+				r.VisitId++
+			case "unlearned":
+				r.SpellId = 458
+			case "flight_spell":
+				r.SpellId = 32235
+			}
+			if _, err := s.CastSpell(ctx, r); err == nil || countPackets(f, opcode.CMSGCastSpell) != 0 {
+				t.Fatal(reason, err, f.packets)
+			}
+		})
+	}
+}
