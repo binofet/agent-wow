@@ -10077,8 +10077,17 @@ type ApproachTargetRequest struct {
 	MinRangeYards        float32                `protobuf:"fixed32,9,opt,name=min_range_yards,json=minRangeYards,proto3" json:"min_range_yards,omitempty"`
 	ClearanceTargetGuids []uint64               `protobuf:"varint,10,rep,packed,name=clearance_target_guids,json=clearanceTargetGuids,proto3" json:"clearance_target_guids,omitempty"`
 	ClearanceYards       float32                `protobuf:"fixed32,11,opt,name=clearance_yards,json=clearanceYards,proto3" json:"clearance_yards,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// A quest-container detour must keep the exact selected objective, observed
+	// source and owner intent through its movement write. It cannot open loot.
+	QuestId                uint32 `protobuf:"varint,12,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	QuestItemId            uint32 `protobuf:"varint,13,opt,name=quest_item_id,json=questItemId,proto3" json:"quest_item_id,omitempty"`
+	QuestObjectRevision    uint64 `protobuf:"varint,14,opt,name=quest_object_revision,json=questObjectRevision,proto3" json:"quest_object_revision,omitempty"`
+	QuestLogRevision       uint64 `protobuf:"varint,15,opt,name=quest_log_revision,json=questLogRevision,proto3" json:"quest_log_revision,omitempty"`
+	QuestInventoryRevision uint64 `protobuf:"varint,16,opt,name=quest_inventory_revision,json=questInventoryRevision,proto3" json:"quest_inventory_revision,omitempty"`
+	QuestFollowRevision    uint64 `protobuf:"varint,17,opt,name=quest_follow_revision,json=questFollowRevision,proto3" json:"quest_follow_revision,omitempty"`
+	QuestOwnerGuid         uint64 `protobuf:"varint,18,opt,name=quest_owner_guid,json=questOwnerGuid,proto3" json:"quest_owner_guid,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ApproachTargetRequest) Reset() {
@@ -10188,6 +10197,55 @@ func (x *ApproachTargetRequest) GetClearanceYards() float32 {
 	return 0
 }
 
+func (x *ApproachTargetRequest) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+func (x *ApproachTargetRequest) GetQuestItemId() uint32 {
+	if x != nil {
+		return x.QuestItemId
+	}
+	return 0
+}
+
+func (x *ApproachTargetRequest) GetQuestObjectRevision() uint64 {
+	if x != nil {
+		return x.QuestObjectRevision
+	}
+	return 0
+}
+
+func (x *ApproachTargetRequest) GetQuestLogRevision() uint64 {
+	if x != nil {
+		return x.QuestLogRevision
+	}
+	return 0
+}
+
+func (x *ApproachTargetRequest) GetQuestInventoryRevision() uint64 {
+	if x != nil {
+		return x.QuestInventoryRevision
+	}
+	return 0
+}
+
+func (x *ApproachTargetRequest) GetQuestFollowRevision() uint64 {
+	if x != nil {
+		return x.QuestFollowRevision
+	}
+	return 0
+}
+
+func (x *ApproachTargetRequest) GetQuestOwnerGuid() uint64 {
+	if x != nil {
+		return x.QuestOwnerGuid
+	}
+	return 0
+}
+
 type TargetMovementState struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	TargetGuid           uint64                 `protobuf:"varint,1,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
@@ -10200,8 +10258,14 @@ type TargetMovementState struct {
 	MinRangeYards        float32                `protobuf:"fixed32,8,opt,name=min_range_yards,json=minRangeYards,proto3" json:"min_range_yards,omitempty"`
 	ClearanceTargetGuids []uint64               `protobuf:"varint,9,rep,packed,name=clearance_target_guids,json=clearanceTargetGuids,proto3" json:"clearance_target_guids,omitempty"`
 	ClearanceYards       float32                `protobuf:"fixed32,10,opt,name=clearance_yards,json=clearanceYards,proto3" json:"clearance_yards,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Own World position revision at a still-current stopped quest arrival.
+	QuestArrivalWorldRevision uint64 `protobuf:"varint,11,opt,name=quest_arrival_world_revision,json=questArrivalWorldRevision,proto3" json:"quest_arrival_world_revision,omitempty"`
+	// Current party observations protected by this stopped detour, including self.
+	QuestArrivalGuardGuids            []uint64 `protobuf:"varint,12,rep,packed,name=quest_arrival_guard_guids,json=questArrivalGuardGuids,proto3" json:"quest_arrival_guard_guids,omitempty"`
+	QuestArrivalOwnerGuid             uint64   `protobuf:"varint,13,opt,name=quest_arrival_owner_guid,json=questArrivalOwnerGuid,proto3" json:"quest_arrival_owner_guid,omitempty"`
+	QuestArrivalOwnerPositionRevision uint64   `protobuf:"varint,14,opt,name=quest_arrival_owner_position_revision,json=questArrivalOwnerPositionRevision,proto3" json:"quest_arrival_owner_position_revision,omitempty"`
+	unknownFields                     protoimpl.UnknownFields
+	sizeCache                         protoimpl.SizeCache
 }
 
 func (x *TargetMovementState) Reset() {
@@ -10300,6 +10364,34 @@ func (x *TargetMovementState) GetClearanceTargetGuids() []uint64 {
 func (x *TargetMovementState) GetClearanceYards() float32 {
 	if x != nil {
 		return x.ClearanceYards
+	}
+	return 0
+}
+
+func (x *TargetMovementState) GetQuestArrivalWorldRevision() uint64 {
+	if x != nil {
+		return x.QuestArrivalWorldRevision
+	}
+	return 0
+}
+
+func (x *TargetMovementState) GetQuestArrivalGuardGuids() []uint64 {
+	if x != nil {
+		return x.QuestArrivalGuardGuids
+	}
+	return nil
+}
+
+func (x *TargetMovementState) GetQuestArrivalOwnerGuid() uint64 {
+	if x != nil {
+		return x.QuestArrivalOwnerGuid
+	}
+	return 0
+}
+
+func (x *TargetMovementState) GetQuestArrivalOwnerPositionRevision() uint64 {
+	if x != nil {
+		return x.QuestArrivalOwnerPositionRevision
 	}
 	return 0
 }
@@ -15935,7 +16027,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x04misc\x18\x05 \x01(\x05R\x04misc\"^\n" +
 	"\x17EncounterPeriodicDamage\x12&\n" +
 	"\x0fdamage_per_tick\x18\x01 \x01(\x01R\rdamagePerTick\x12\x1b\n" +
-	"\tperiod_ms\x18\x02 \x01(\rR\bperiodMs\"\x84\x03\n" +
+	"\tperiod_ms\x18\x02 \x01(\rR\bperiodMs\"\xbd\x05\n" +
 	"\x15ApproachTargetRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -15952,7 +16044,14 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0fmin_range_yards\x18\t \x01(\x02R\rminRangeYards\x124\n" +
 	"\x16clearance_target_guids\x18\n" +
 	" \x03(\x04R\x14clearanceTargetGuids\x12'\n" +
-	"\x0fclearance_yards\x18\v \x01(\x02R\x0eclearanceYards\"\xde\x02\n" +
+	"\x0fclearance_yards\x18\v \x01(\x02R\x0eclearanceYards\x12\x19\n" +
+	"\bquest_id\x18\f \x01(\rR\aquestId\x12\"\n" +
+	"\rquest_item_id\x18\r \x01(\rR\vquestItemId\x122\n" +
+	"\x15quest_object_revision\x18\x0e \x01(\x04R\x13questObjectRevision\x12,\n" +
+	"\x12quest_log_revision\x18\x0f \x01(\x04R\x10questLogRevision\x128\n" +
+	"\x18quest_inventory_revision\x18\x10 \x01(\x04R\x16questInventoryRevision\x122\n" +
+	"\x15quest_follow_revision\x18\x11 \x01(\x04R\x13questFollowRevision\x12(\n" +
+	"\x10quest_owner_guid\x18\x12 \x01(\x04R\x0equestOwnerGuid\"\xe5\x04\n" +
 	"\x13TargetMovementState\x12\x1f\n" +
 	"\vtarget_guid\x18\x01 \x01(\x04R\n" +
 	"targetGuid\x12\x19\n" +
@@ -15967,7 +16066,11 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0fmin_range_yards\x18\b \x01(\x02R\rminRangeYards\x124\n" +
 	"\x16clearance_target_guids\x18\t \x03(\x04R\x14clearanceTargetGuids\x12'\n" +
 	"\x0fclearance_yards\x18\n" +
-	" \x01(\x02R\x0eclearanceYards\"\xcc\x04\n" +
+	" \x01(\x02R\x0eclearanceYards\x12?\n" +
+	"\x1cquest_arrival_world_revision\x18\v \x01(\x04R\x19questArrivalWorldRevision\x129\n" +
+	"\x19quest_arrival_guard_guids\x18\f \x03(\x04R\x16questArrivalGuardGuids\x127\n" +
+	"\x18quest_arrival_owner_guid\x18\r \x01(\x04R\x15questArrivalOwnerGuid\x12P\n" +
+	"%quest_arrival_owner_position_revision\x18\x0e \x01(\x04R!questArrivalOwnerPositionRevision\"\xcc\x04\n" +
 	"\x10EncounterSupport\x12(\n" +
 	"\x10caster_in_combat\x18\x01 \x01(\bR\x0ecasterInCombat\x12R\n" +
 	"\rresurrections\x18\x02 \x03(\v2,.warcraftbuddy.actions.v1.ResurrectionOptionR\rresurrections\x12I\n" +

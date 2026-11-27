@@ -86,6 +86,8 @@ message OpenGatherRequest {
   uint64 expected_position_revision = 9; uint64 expected_object_revision = 10;
   uint64 expected_inventory_revision = 11; uint64 expected_quest_log_revision = 12;
   bool approach = 13;
+  // Only for a completed, separately planned quest-object ground approach.
+  uint64 approach_world_revision = 14;
 }
 message CloseCorpseRequest { string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3; bool retire_unconfirmed = 4; uint64 source_guid = 5; }
 message CorpseOperation {

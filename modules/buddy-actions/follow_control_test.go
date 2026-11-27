@@ -9,6 +9,7 @@ import (
 
 	"github.com/agent-wow/agent-wow/behaviors"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
@@ -131,8 +132,8 @@ func TestFormationFollowKeepsHealingAndLateTickStopPriority(t *testing.T) {
 	}
 }
 
-func TestFormationCatchUpUsesVerifiedRoutesUpTo200Yards(t *testing.T) {
-	for _, gap := range []float32{90, 150, 200, 201} {
+func TestFormationCatchUpUsesVerifiedGroundPrefixAtAnySupportedDistance(t *testing.T) {
+	for _, gap := range []float32{90, 150, 200, 201, 2354} {
 		s, f, advance := formationRig(t, 4, 8)
 		// Exercise the full real policy's verified-route geometry with a healthy
 		// semantic fixture. The separate production watchdog retains its 5ms limit.
@@ -144,16 +145,19 @@ func TestFormationCatchUpUsesVerifiedRoutesUpTo200Yards(t *testing.T) {
 			t.Fatal(err)
 		}
 		s.formation.runtime = runtime
+		f.world.VisitRevision = 1
 		f.world.Owner.X += gap
-		plans := 0
-		s.planMapPath = func(_ context.Context, _ string, mapID uint32, from, to position) ([]position, error) {
+		plots := 0
+		start := playerPosition(f.world.Self)
+		corner := position{x: start.x + 3, y: start.y + 5, z: start.z}
+		s.planFollowCorridor = func(_ context.Context, _ string, mapID uint32, _, _ buddynav.Point) (followCorridor, error) {
 			if mapID != f.world.Self.MapId {
 				t.Fatal("follow planned on a different map", mapID)
 			}
-			plans++
-			// The route first goes sideways. Movement must use this verified
-			// segment rather than a direct chord toward the distant owner.
-			return []position{from, {x: from.x + 3, y: from.y + 5, z: from.z}, {x: to.x, y: from.y + 5, z: to.z}, to}, nil
+			plots++
+			return &followLegTestSurface{prefix: func(_ context.Context, from, _ position) ([]position, error) {
+				return denseRouteLeg(from, corner), nil
+			}}, nil
 		}
 		toggle(t, s, true)
 		for i := 0; i < 5; i++ {
@@ -161,11 +165,8 @@ func TestFormationCatchUpUsesVerifiedRoutesUpTo200Yards(t *testing.T) {
 			advance(200 * time.Millisecond)
 		}
 		dx, dy := float64(s.pos.x-f.world.Self.X), float64(s.pos.y-f.world.Self.Y)
-		if gap <= 200 && (plans != 1 || !s.state.Moving || !s.state.NavAvailable || dx <= 0 || dy <= 0 || math.Abs(dx*5-dy*3) > .01 || distance(s.pos, playerPosition(f.world.Self)) > 5.6) {
-			t.Fatal("observed owner was not followed along the bounded verified segment", gap, s.stateLocked(), s.pos, plans)
-		}
-		if gap > 200 && (plans != 0 || s.state.Moving || len(f.packets) != 0 || s.state.Reason != "formation_owner_outside_supported_range") {
-			t.Fatal("follow exceeded its catch-up bound", gap, s.stateLocked(), plans)
+		if plots != 1 || !s.state.Moving || !s.state.NavAvailable || dx <= 0 || dy <= 0 || math.Abs(dx*5-dy*3) > .01 || distance(s.pos, start) > 5.6 {
+			t.Fatal("observed owner was not followed along the bounded verified segment", gap, s.stateLocked(), s.pos, plots)
 		}
 	}
 }

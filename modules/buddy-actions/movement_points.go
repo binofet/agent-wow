@@ -307,7 +307,13 @@ func (s *Service) movementPointRouteLocked(ctx context.Context, path []position,
 		candidateGoal := start
 		candidateGoal.x += float32(d[0] * 6)
 		candidateGoal.y += float32(d[1] * 6)
-		candidate, err := s.mapNavigationPath(planCtx, s.navDataDir, s.posMap, start, candidateGoal)
+		var candidate []position
+		var err error
+		if retained, ok := ctx.Value(followCorridorMovementKey{}).(followCorridor); ok {
+			candidate, err = s.followAvoidancePath(planCtx, retained, start, candidateGoal)
+		} else {
+			candidate, err = s.mapNavigationPath(planCtx, s.navDataDir, s.posMap, start, candidateGoal)
+		}
 		if err == nil {
 			// The ordinary planner permits a nearby snapped start. Include
 			// the actual body-to-snap join in circle and first-prefix proofs.

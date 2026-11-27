@@ -17,7 +17,7 @@ type harvestRecipe struct{ questID, objectEntry, itemID, openSpell uint32 }
 
 func (s *Service) harvestRecipes(entry uint32) []harvestRecipe {
 	record, ok := s.catalog.Container(entry)
-	if !ok || record.Type != 3 || record.Action != "open_and_loot" || !ordinaryOpeningSpell(record.OpenSpell) {
+	if !ok || !record.OrdinaryQuestOpening() {
 		return nil
 	}
 	var recipes []harvestRecipe

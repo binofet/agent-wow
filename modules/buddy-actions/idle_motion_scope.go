@@ -17,6 +17,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type idleMotionScopeKey struct{}
@@ -31,9 +32,11 @@ type idleMotionScope struct {
 	rawRevision, clientRevision, rawMovementRevision uint64
 	mapID                                            uint32
 	cleanupOnly, broken, landing, selfOnly           bool
+	groundTravel                                     bool
 	writes                                           uint64
 	lastAttempt                                      string
 	lastOpcode                                       uint32
+	groundWriteRevision                              uint64
 	lastPayload                                      []byte
 }
 
@@ -120,14 +123,14 @@ func (s *Service) idleMotionCurrentFailureLocked(b *idleMotionScope, w *worldv1.
 		}
 	}
 	flags := w.GetSelf().GetUnitFlags()
-	if !b.landing && s.state.Traveling && s.state.InteractionOwner == "exploration" && !s.state.InteractionHarvest {
+	if !b.landing && (s.state.Traveling || b.groundTravel && b.cleanupOnly) && s.state.InteractionOwner == "exploration" && !s.state.InteractionHarvest {
 		flags = s.groundTravelUnitFlags(w.Self)
 	}
 	if why := safeSelfMovementFlags(w, s.selfGUID, compatible, flags); why != "" {
 		return "observed_body_unsafe: " + why
 	}
 	observed := portalObservedWorldScope(w, s.selfGUID)
-	if !samePortalCoreVisit(b.initial, observed) || !samePortalCoreVisit(b.initial, b.current) || observed.MotionRevision < b.initial.MotionRevision || (!b.landing && observed.MotionRevision > b.current.MotionRevision) {
+	if !samePortalCoreVisit(b.initial, observed) || !samePortalCoreVisit(b.initial, b.current) || observed.MotionRevision < b.initial.MotionRevision || (!b.landing && !(b.groundTravel && b.writes > 0) && observed.MotionRevision > b.current.MotionRevision) {
 		return "transport_source_changed"
 	}
 	return ""
@@ -144,17 +147,21 @@ func (s *Service) newIdleMotionScopeLocked(ctx context.Context, token string, w 
 // Finite landings pin every successful frame to the attempt that wrote it.
 // Core can return its original bytes across a contiguous run of parsed VALUES.
 func (s *Service) readBodyMotionReport(ctx context.Context, b *idleMotionScope) (*modv1.WorldPacket, error) {
+	if b.groundTravel && b.writes > 0 {
+		return modcb.ReadBodyInputReport(ctx, s.session, s.sessionID, s.selfGUID, "", true)
+	}
 	if b.landing {
 		return modcb.ReadBodyInputReport(ctx, s.session, s.sessionID, s.selfGUID, b.lastAttempt, b.selfOnly)
 	}
 	return modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
 }
 
-func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly bool, landingMode string) (*idleMotionScope, error) {
-	landing := landingMode != ""
+func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly bool, mode string) (*idleMotionScope, error) {
+	groundTravel := mode == "ground_travel"
+	landing := mode != "" && !groundTravel
 	b := &idleMotionScope{binding: s.idleInteraction, initial: clonePortalScope(portalObservedWorldScope(w, s.selfGUID)),
 		rawPose: playerPosition(w.GetSelf()), pose: s.pos, rawRevision: s.positionRevision, clientRevision: s.posRevision,
-		rawMovementRevision: w.GetSelfMovementFacts().GetRevision(), mapID: s.posMap, cleanupOnly: cleanupOnly, landing: landing, selfOnly: landingMode == "ground_or_water"}
+		rawMovementRevision: w.GetSelfMovementFacts().GetRevision(), mapID: s.posMap, cleanupOnly: cleanupOnly, landing: landing, groundTravel: groundTravel, selfOnly: mode == "ground_or_water"}
 	if landing && token == "" {
 		b.binding = idleInteractionBinding{sessionID: s.sessionID, selfGUID: s.selfGUID, visit: w.GetVisitRevision()}
 	}
@@ -172,7 +179,7 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 	prior, err := s.readBodyMotionReport(ctx, b)
 	needPose := s.posEstimated || w.GetSelf().GetPositionInferred()
 	settled := false
-	if err != nil && status.Code(err) == codes.FailedPrecondition && landing && needPose {
+	if err != nil && status.Code(err) == codes.FailedPrecondition && (landing || b.groundTravel) && needPose {
 		// For a genuinely new selection, a stationary STOP still supplies its
 		// exact pose across a destination or ordinary posture change. Start any
 		// new control decision at the newly parsed World source instead.
@@ -181,7 +188,7 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 	}
 	if err == nil {
 		p, valid := idleMotionPacketPose(prior.Payload, s.selfGUID)
-		if !valid || !idleMotionOpcode(prior.Opcode) || !samePortalCoreVisit(b.initial, prior.TransportScope) || !landing && prior.TransportScope.MotionRevision < b.initial.MotionRevision || needPose && p != b.pose {
+		if !valid || !idleMotionOpcode(prior.Opcode) || !samePortalCoreVisit(b.initial, prior.TransportScope) || !landing && !settled && prior.TransportScope.MotionRevision < b.initial.MotionRevision || needPose && p != b.pose {
 			return nil, modcb.PacketNotDispatchedError("idle motion prior report no longer matches the captured body")
 		}
 		freshFollow := b.destination != nil && b.destination.token == "" && !b.destination.lastSeen
@@ -247,11 +254,30 @@ func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotion
 			return nil, errNavigationSpeedChanged
 		}
 	}
-	return clonePortalScope(b.current), nil
+	source := b.current
+	if b.groundTravel && b.writes > 0 {
+		// The physical read returns the original written frame only across positively
+		// classified changes to this body. A competing identical packet still has
+		// a different physical revision. Keep the exact scope of the World read
+		// which checked the body and any requested NPC or owner above.
+		prior, err := s.readBodyMotionReport(ctx, b)
+		if err != nil || prior.GetOpcode() != b.lastOpcode || !bytes.Equal(prior.GetPayload(), b.lastPayload) || !proto.Equal(prior.GetTransportScope(), b.current) {
+			return nil, modcb.PacketNotDispatchedError("leased ground travel no longer has its exact prior body frame")
+		}
+		if observed := portalObservedWorldScope(w, s.selfGUID); observed.MotionRevision > source.MotionRevision {
+			source = observed
+		}
+	}
+	return clonePortalScope(source), nil
 }
 
-func (s *Service) idleMotionAfterWriteLocked(ctx context.Context, b *idleMotionScope, op uint32, payload []byte) error {
+func (s *Service) idleMotionAfterWriteLocked(ctx context.Context, b *idleMotionScope, op uint32, payload []byte, sent *modv1.TransportScope) error {
 	b.writes++
+	if b.groundTravel {
+		// A strict socket reservation advances once on this write. Pin the unique
+		// physical revision even if World or the subsequent report is unavailable.
+		b.groundWriteRevision = sent.GetMotionRevision() + 1
+	}
 	if b.destination != nil {
 		// The completed write is a fact about our body. Any next voluntary
 		// route frame separately checks its owner at the socket reservation.
@@ -271,6 +297,7 @@ func (s *Service) idleMotionAfterWriteLocked(ctx context.Context, b *idleMotionS
 	post.current = r.GetTransportScope()
 	if err != nil || worldErr != nil || ctx.Err() != nil || r.GetOpcode() != op || !bytes.Equal(r.GetPayload(), payload) ||
 		!samePortalCoreVisit(b.initial, r.GetTransportScope()) || r.GetTransportScope().GetMotionRevision() <= b.current.MotionRevision ||
+		b.groundTravel && (b.groundWriteRevision == 0 || r.GetTransportScope().GetMotionRevision() != b.groundWriteRevision) ||
 		!s.idleMotionCurrentLocked(&post, w, now) {
 		b.broken = true
 		if err != nil {
@@ -279,7 +306,7 @@ func (s *Service) idleMotionAfterWriteLocked(ctx context.Context, b *idleMotionS
 		return errors.New("idle motion known write lacks its exact current post-write source report")
 	}
 	observed := portalObservedWorldScope(w, s.selfGUID)
-	if !b.landing && observed.MotionRevision > r.TransportScope.MotionRevision {
+	if !b.landing && !b.groundTravel && observed.MotionRevision > r.TransportScope.MotionRevision {
 		b.broken = true
 		return errors.New("idle motion parsed source superseded the written report")
 	}
@@ -319,6 +346,7 @@ func (s *Service) observeIdleMotionStoppedLocked(ctx context.Context) bool {
 		r, err := s.readBodyMotionReport(ctx, b)
 		if err == nil && freshErr == nil && ctx.Err() == nil && s.idleInteraction == b.binding && s.interactionToken == b.binding.token &&
 			r.Opcode == opcode.MSGMoveStop && bytes.Equal(r.Payload, b.lastPayload) && samePortalCoreVisit(b.initial, r.TransportScope) &&
+			(!b.groundTravel || b.groundWriteRevision != 0 && r.TransportScope.MotionRevision == b.groundWriteRevision) &&
 			samePortalCoreVisit(b.initial, portalObservedWorldScope(fresh, s.selfGUID)) {
 			p, valid := idleMotionPacketPose(r.Payload, s.selfGUID)
 			if valid && p == s.pos && s.positionRevision == fresh.Self.PositionRevision && fresh.VisitRevision == b.binding.visit {

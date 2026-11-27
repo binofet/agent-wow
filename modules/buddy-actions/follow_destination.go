@@ -74,25 +74,45 @@ func (s *Service) followLastSeenLocked(ctx context.Context, w *worldv1.SnapshotR
 		}
 		return true
 	}
+	if s.planFollowCorridor != nil && !s.swimming && s.swimFollow.drop == nil && movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) {
+		s.lastStep = now
+		call := context.WithValue(ctx, destinationOwnerKey{}, d)
+		if s.followFormationStepLocked(call, last.target, 1.5, last.target) {
+			if s.state.Reason == "within_follow_formation" {
+				s.state.Reason = "at_last_seen_follow_position"
+			} else if s.state.Reason == "following_formation" {
+				s.state.Reason = "following_last_seen_position"
+			}
+		}
+		return true
+	}
+	return s.followLastSeenSurfaceLocked(ctx, w, d, now, false)
+}
+
+func (s *Service) followLastSeenSurfaceLocked(ctx context.Context, w *worldv1.SnapshotResponse, d destinationOwner, now time.Time, mixedOnly bool) bool {
 	r := &s.swimFollow
 	if r.owner != d || len(r.path) == 0 || r.revision != s.positionRevision || r.mapID != s.posMap || distance(r.expected, s.pos) > .05 {
 		if r.owner == d && now.Before(r.nextPlan) {
 			s.state.Reason = "last_seen_follow_replan_wait"
 			return true
 		}
-		*r = swimFollowRoute{owner: d, target: last.target, expected: s.pos, mapID: s.posMap, revision: s.positionRevision, nextPlan: now.Add(750 * time.Millisecond)}
+		*r = swimFollowRoute{owner: d, target: d.target, expected: s.pos, mapID: s.posMap, revision: s.positionRevision, nextPlan: now.Add(750 * time.Millisecond)}
 		planCtx, cancel := destinationPlanningContext(ctx)
 		defer cancel()
-		path, err := s.mapNavigationPath(planCtx, s.navDataDir, s.posMap, s.pos, last.target)
-		if err == nil && !s.swimming {
+		var path []position
+		var err error
+		if !mixedOnly && !s.swimming {
+			path, err = s.mapNavigationPath(planCtx, s.navDataDir, s.posMap, s.pos, d.target)
+		}
+		if !mixedOnly && err == nil && !s.swimming {
 			r.path, r.wet = path, make([]bool, len(path))
 		} else {
-			if mounted || !waterMovementAllowed(w) {
+			if d.mountedLastSeen || !waterMovementAllowed(w) {
 				s.stopLocked(ctx)
 				s.state.Reason = "last_seen_follow_route_unavailable"
 				return true
 			}
-			next, e := s.planMixedDestination(planCtx, s.navDataDir, s.posMap, s.pos, last.target, observedRunSpeed(w.Self), s.swimming, destinationGravitySource(w, s.pos), nil)
+			next, e := s.planMixedDestination(planCtx, s.navDataDir, s.posMap, s.pos, d.target, observedRunSpeed(w.Self), s.swimming, destinationGravitySource(w, s.pos), nil)
 			if e != nil {
 				s.stopLocked(ctx)
 				s.state.Reason = "last_seen_follow_route_unavailable"

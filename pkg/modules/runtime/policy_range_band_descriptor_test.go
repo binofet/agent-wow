@@ -33,7 +33,7 @@ func TestRangeBandAttestationRequiresExactInstalledInputAndEcho(t *testing.T) {
 							x := descriptorpb.FieldDescriptorProto_TYPE_STRING
 							f.Type = &x
 						case "wrong_tag":
-							x := int32(12)
+							x := int32(1000) // Unused so this is a valid descriptor with the wrong tag.
 							f.Number = &x
 						case "scalar_guids":
 							x := descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL

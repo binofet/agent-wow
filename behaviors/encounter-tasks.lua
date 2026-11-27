@@ -4,6 +4,7 @@ local M = {tuning={lease_ms=3000,renew_below_ms=1500,response_yards=10,anchor_ya
 local state = {retired={}}
 local instance_entry = encounter_instance_entry
 local summoning = encounter_party_summon
+local function destination_task(kind) return kind=="enter_instance" or kind=="go_to" end
 local function number(n) return type(n)=="number" and n==n and n>-math.huge and n<math.huge end
 local function id(s) return type(s)=="string" and #s>0 and #s<=80 end
 local function guid(s)
@@ -26,6 +27,7 @@ end
 local function finish(task,reason) task.finishing=task.finishing or reason end
 local function pop(task)
     state.last={id=task.id,kind=task.kind,phase="complete",reason=task.finishing}
+    if task.arrival then state.last.position=task.arrival end
     if task.kind=="enter_instance" then state.retired[task.id]={reason=task.finishing,task=task}
     else state.retired[task.id]=task.finishing end
     state.current=nil
@@ -51,9 +53,9 @@ function M.on_event(event)
     end
     local task=state.current
     if summoning then summoning.on_event(task and task.kind=="party_summon" and task or nil,event) end
-    if task and task.kind=="enter_instance" and instance_entry then instance_entry.on_event(task,event) end
+    if task and destination_task(task.kind) and instance_entry then instance_entry.on_event(task,event) end
     local receipt=event.receipt
-    if task and task.kind~="enter_instance" and task.operation and receipt then
+    if task and not destination_task(task.kind) and task.operation and receipt then
         local p=receipt.payload or {}
         local op=task.operation
         if p.capability=="movement_owner" and p.owner==op.owner and p.mode==op.mode then
@@ -82,10 +84,10 @@ function M.on_event(event)
         if state.next and (v.id==nil or v.id==state.next.id) then
             state.retired[state.next.id]="canceled";state.next=nil
         end
-    elseif v.task=="wait_for_pull" or v.task=="enter_instance" or v.task=="rally_to" or v.task=="party_summon" then
+    elseif v.task=="wait_for_pull" or destination_task(v.task) or v.task=="rally_to" or v.task=="party_summon" then
         local next_task
         if v.task=="party_summon" then next_task=summoning and summoning.request(v)
-        elseif v.task=="enter_instance" then next_task=instance_entry and instance_entry.request(v,state.observed)
+        elseif destination_task(v.task) then next_task=instance_entry and instance_entry.request(v,state.observed)
         else next_task=request(v) end
         if not next_task then state.inputError="invalid_"..v.task.."_intent"
         elseif not state.retired[next_task.id] and (not task or task.id~=next_task.id) then
@@ -129,7 +131,8 @@ function M.step(obs,frame,sequence,targets,in_combat,can_act,pause_rally)
         if view.done then pop(task) end
         return view
     end
-    if task.kind=="enter_instance" then
+    if destination_task(task.kind) then
+        if task.kind=="go_to" then task.pausedForEncounter=pause_rally==true or nil end
         local view=instance_entry and instance_entry.step(task,obs,frame,sequence,in_combat,can_act)
         if not view then return {status={phase="instance_entry_handler_unavailable"},hold=true,task=task} end
         if view.done then pop(task) end
@@ -295,7 +298,7 @@ function M.commit(view,chosen)
         if chosen.capability=="approach_target" then view.task.approached=true
         elseif chosen.capability=="stop_movement" then view.task.stopIssued=true end
     end
-    if view and view.task and view.task.kind=="enter_instance" and instance_entry then
+    if view and view.task and destination_task(view.task.kind) and instance_entry then
         instance_entry.commit(view.task,chosen);return
     end
     if view and view.task and chosen and chosen.capability=="movement_owner" then
@@ -312,7 +315,7 @@ function M.allow(view,obs,proposed)
     if view.task and view.task.kind=="party_summon" then return view.action==proposed end
     if view.task and view.task.kind=="rally_to" and
        (view.action==proposed or view.task.pausedForEncounter and view.rangedWithdrawal==proposed) then return true end
-    if view.task and view.task.kind=="enter_instance" then
+    if view.task and destination_task(view.task.kind) then
         if view.action==proposed then return true end
         -- Entry owns voluntary travel only; current defense and healing retain
         -- their ordinary scheduler and native custody checks.

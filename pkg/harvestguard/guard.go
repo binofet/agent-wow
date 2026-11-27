@@ -116,3 +116,23 @@ func WorldReason(w *worldv1.SnapshotResponse, self uint64, protected []uint64) s
 	}
 	return ""
 }
+
+// StationaryQuestOwner binds a long detour to a visible, stopped owner on the same ground map.
+func StationaryQuestOwner(w *worldv1.SnapshotResponse, guid uint64) bool {
+	p := w.GetOwner()
+	return guid != 0 && p.GetGuid() == guid && p.Present && p.MapKnown && p.MapId == w.GetSelf().GetMapId() &&
+		p.AliveKnown && p.Alive && p.UnitFlagsKnown && p.UnitFlags&0x80000 == 0 && p.PositionKnown && p.PositionRevision != 0 && !p.PositionInferred &&
+		p.MovementFlagsKnown && movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) && p.MovementFlags&0xff == 0 && finite(p)
+}
+
+// QuestArrivalPartyCurrent rechecks the party captured at the physical arrival
+// against the latest World, including changes after the opening lease renewed.
+func QuestArrivalPartyCurrent(w *worldv1.SnapshotResponse, self uint64, guard []uint64, owner, ownerRevision uint64) bool {
+	if WorldReason(w, self, guard) != "" {
+		return false
+	}
+	if owner == 0 {
+		return ownerRevision == 0
+	}
+	return StationaryQuestOwner(w, owner) && w.Owner.PositionRevision == ownerRevision
+}

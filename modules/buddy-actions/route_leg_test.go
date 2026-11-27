@@ -21,13 +21,13 @@ func routeLegRig(t *testing.T) (*Service, *fakeSession, *actionsv1.PlanRouteLegR
 	if _, err := s.snapshot(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	s.planLegPath = func(_ context.Context, _ string, _ uint32, from, goal position) ([]position, error) {
+	s.openTravel = fixtureTravelPath(func(_ context.Context, _ string, _ uint32, from, goal position) ([]position, error) {
 		end := goal
 		if end.x-from.x > 150 {
 			end.x = from.x + 150
 		}
 		return denseRouteLeg(from, end), nil
-	}
+	}, false)
 	p := s.clientPositionLocked()
 	return s, f, &actionsv1.PlanRouteLegRequest{SessionId: s.sessionID, SelfGuid: 4, ExpectedPositionRevision: p.Revision, MapId: p.MapId, X: p.X + 300, Y: p.Y, Z: p.Z}
 }
@@ -87,7 +87,7 @@ func TestRouteLegAllowsFreshMovementAndCapturesRequestValues(t *testing.T) {
 	s.state.Moving = true
 	f.world.Self.MovementFlags, f.world.Self.PositionAgeMs = 1, 1000
 	original := proto.Clone(req).(*actionsv1.PlanRouteLegRequest)
-	s.planLegPath = func(_ context.Context, _ string, mapID uint32, from, goal position) ([]position, error) {
+	s.openTravel = fixtureTravelPath(func(_ context.Context, _ string, mapID uint32, from, goal position) ([]position, error) {
 		if mapID != original.MapId || goal.x != original.X {
 			t.Fatal("planner received caller-mutated values")
 		}
@@ -98,22 +98,31 @@ func TestRouteLegAllowsFreshMovementAndCapturesRequestValues(t *testing.T) {
 		end := from
 		end.x += 150
 		return denseRouteLeg(from, end), nil
-	}
+	}, false)
 	out, err := s.PlanRouteLeg(context.Background(), req)
 	if err != nil || out.SessionId != original.SessionId || out.SelfGuid != original.SelfGuid || out.GoalReached || !s.state.Moving || len(f.packets) != 0 {
 		t.Fatal("query stopped motion or changed its request binding", out, err)
 	}
 }
 
+func TestRouteLegAcceptsDistantDestinationWithLocalStep(t *testing.T) {
+	s, f, req := routeLegRig(t)
+	req.X = f.world.Self.X + 8000
+	out, err := s.PlanRouteLeg(context.Background(), req)
+	if err != nil || out.GoalReached || out.Endpoint.X != f.world.Self.X+150 || len(f.packets) != 0 {
+		t.Fatal(out, err)
+	}
+}
+
 func TestRouteLegRejectsStaleOrUnknownBindingsBeforePlanner(t *testing.T) {
-	for _, mode := range []string{"nil", "sid", "guid", "revision", "map", "unknown", "motion_unknown", "moving_stale", "nan", "budget", "closing", "world_error"} {
+	for _, mode := range []string{"nil", "sid", "guid", "revision", "map", "unknown", "motion_unknown", "moving_stale", "nan", "closing", "world_error"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, req := routeLegRig(t)
 			calls := 0
-			s.planLegPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+			s.openTravel = fixtureTravelPath(func(context.Context, string, uint32, position, position) ([]position, error) {
 				calls++
 				return nil, nil
-			}
+			}, false)
 			switch mode {
 			case "nil":
 				req = nil
@@ -133,8 +142,6 @@ func TestRouteLegRejectsStaleOrUnknownBindingsBeforePlanner(t *testing.T) {
 				f.world.Self.MovementFlags, f.world.Self.PositionAgeMs = 1, 2001
 			case "nan":
 				req.Z = float32(math.NaN())
-			case "budget":
-				req.X = f.world.Self.X + 1201
 			case "closing":
 				s.closed = true
 			case "world_error":
@@ -151,7 +158,7 @@ func TestRouteLegRechecksBodyAndPoseAfterPlanning(t *testing.T) {
 	for _, mode := range []string{"raw_revision", "raw_position", "map", "sid", "closed", "client_revision", "client_position", "uncertainty", "world_error"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, req := routeLegRig(t)
-			s.planLegPath = func(_ context.Context, _ string, _ uint32, from, _ position) ([]position, error) {
+			s.openTravel = fixtureTravelPath(func(_ context.Context, _ string, _ uint32, from, _ position) ([]position, error) {
 				end := from
 				end.x += 150
 				switch mode {
@@ -179,7 +186,7 @@ func TestRouteLegRechecksBodyAndPoseAfterPlanning(t *testing.T) {
 					f.failSnapshot = true
 				}
 				return denseRouteLeg(from, end), nil
-			}
+			}, false)
 			if _, err := s.PlanRouteLeg(context.Background(), req); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 0 {
 				t.Fatal("returned stale authority", err, f.packets)
 			}
@@ -193,7 +200,7 @@ func TestRouteLegRejectsMalformedOutputAndCancellation(t *testing.T) {
 			s, f, req := routeLegRig(t)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			s.planLegPath = func(_ context.Context, _ string, _ uint32, from, _ position) ([]position, error) {
+			s.openTravel = fixtureTravelPath(func(_ context.Context, _ string, _ uint32, from, _ position) ([]position, error) {
 				end := from
 				end.x += 150
 				path := denseRouteLeg(from, end)
@@ -219,7 +226,7 @@ func TestRouteLegRejectsMalformedOutputAndCancellation(t *testing.T) {
 					cancel()
 				}
 				return path, nil
-			}
+			}, false)
 			_, err := s.PlanRouteLeg(ctx, req)
 			if err == nil || len(f.packets) != 0 {
 				t.Fatal(mode, err, f.packets)

@@ -2,7 +2,8 @@
 -- Exact packet/effect settlement is native; corpse and bound-container windows
 -- share this policy. Native gathering executes only a caller-selected recipe.
 local M={tuning={searchRange=12,maxHeight=1.5,openRange=3.75,responseTimeoutMs=2000,windowTimeoutMs=12000,
- reserveQuestSlots=1,resumeMinFreeSlots=1,gatherSearchRange=12,gatherOpenRange=4.5,gatherPreferNearest=true}}
+ reserveQuestSlots=1,resumeMinFreeSlots=1,gatherSearchRange=12,gatherOpenRange=4.5,gatherPreferNearest=true,
+ gatherDetours=true,gatherStallSeconds=5}}
 local state={seen={},paused={},sequence=0}
 local observed
 local function id(value)return type(value)=="string" and value~="" and value~="0" end
@@ -105,6 +106,53 @@ local function gather_frame(o,encounter)
  end
  return active,attempted,retired
 end
+-- Longer trips are opportunities for a quiet group to pause. Follow remains
+-- enrolled; each step needs a fresh choice and a complete native ground route.
+local function detour_owner(o,encounter,trip)
+ local nav=encounter.navigation or {}
+ if nav.independent==true then return not trip or trip.owner==nil end
+ local owner=o.owner
+ if not owner or not id(owner.guid) then return not nav.following and not id(nav.ownerGuid) and (not trip or not trip.owner) end
+ local p=(o.actions or {}).position
+ if owner.present~=true or owner.aliveKnown~=true or not owner.alive or owner.positionInferred or
+  owner.mapKnown~=true or zero(owner.mapId)~=zero(p.mapId) or owner.unitFlagsKnown~=true or
+  math.floor(zero(owner.unitFlags)/524288)%2==1 or owner.movementFlagsKnown~=true or zero(owner.movementFlags)%256~=0 or
+  zero(owner.movementFlags)>=2147483648 or zero(owner.movementFlags)%268435456>511 or zero(owner.extraMovementFlags)~=0 then return false end
+ local x,y,z=pose(owner)
+ if not x then return false end
+ if trip then
+  return owner.guid==trip.owner and (x-trip.x)^2+(y-trip.y)^2+(z-trip.z)^2<=2.25
+ end
+ local d=distance(p,owner)
+ if d and d<=18 then return true,owner.guid,x,y,z end
+ return false
+end
+local function finish_trip(frame,o,now,reason)
+ local t=state.trip
+ state.trip=nil
+ state.lastTrip={guid=t.guid,visit=t.visit,rawRevision=t.rawRevision}
+ local skips=state.detourSkips or {}
+ -- A single observation exposes at most 32 sources. Forget expired/absent ones.
+ local present={}
+ for _,object in ipairs(o.questObjects or {}) do present[object.guid]=true end
+ for guid,entry in pairs(skips) do
+  if entry.visit~=t.visit or entry.untilMs<=now or not present[guid] then skips[guid]=nil end
+ end
+ if present[t.guid] then skips[t.guid]={visit=t.visit,untilMs=now+30000} end
+ state.detourSkips=skips
+ local a=o.actions or {}
+ local m=a.targetMovement or {}
+ local out={phase=reason}
+ if a.moving and not a.motionUnconfirmed and m.targetGuid==t.guid and m.visitId==t.visit and
+    #frame.pending==0 and not a.castPending and not a.traveling and not id(a.interactionOwner) then
+  out.releaseMovement=true
+  out.action={capability="stop_movement",sessionId=o.sessionId,selfGuid=o.selfGuid,targetGuid=t.guid,visitId=t.visit,
+   questId=t.quest,questItemId=t.item,questObjectRevision=t.revision,questLogRevision=t.questRevision,
+   questInventoryRevision=t.inventoryRevision,questFollowRevision=t.followRevision or "0",questOwnerGuid=t.owner or "0",
+   observationSequence=frame.input.observationSequence}
+ end
+ return out
+end
 local function gather_choice(frame,o,encounter)
  if (o.state or {}).enabled~=true then return end
  local active,attempted,retired=gather_frame(o,encounter)
@@ -124,36 +172,96 @@ local function gather_choice(frame,o,encounter)
   type(opening)~="number" or opening~=opening or opening<=0 or opening>4.5 or
   type(height)~="number" or height~=height or height<0 or height>1.5 or
   type(M.tuning.gatherPreferNearest)~="boolean" then return end
- local selected,recipe,best
+ local selected,recipe,best,outside
+ local now=frame.clock and finite(frame.clock.monotonicMs)
+ local trip=state.trip
+ local stall=M.tuning.gatherStallSeconds
+ local speed=s.speedsKnown and finite(s.runSpeed)
+ local available=now and M.tuning.gatherDetours==true and speed and speed>0 and speed<=14 and finite(stall) and stall>0 and
+  s.positionKnown==true and not s.positionInferred and decimal(s.positionRevision) and
+  o.itemCountsKnown==true and (not trip and not a.moving or trip and trip.visit==o.visitId) and not a.traveling
+ local counts={}
+ if o.itemCountsKnown==true then
+  for _,row in ipairs(o.itemCounts or {}) do counts[row.itemId]=tonumber(row.count) end
+ end
+ local ownerOK,owner,x,y,z=detour_owner(o,encounter,trip)
+ if trip and available and ((p.x or 0)-trip.lastX)^2+((p.y or 0)-trip.lastY)^2+((p.z or 0)-trip.lastZ)^2>=.25^2 then
+  trip.lastX,trip.lastY,trip.lastZ,trip.progressAt=p.x or 0,p.y or 0,p.z or 0,now
+ end
+ if trip and (trip.cancel or not available or not ownerOK or now-trip.progressAt>=stall*1000 or
+  (encounter.navigation or {}).followRevision~=trip.followRevision or o.questLogRevision~=trip.questRevision or o.inventoryRevision~=trip.inventoryRevision) then
+  return finish_trip(frame,o,now or 0,"quest_container_detour_interrupted")
+ end
+ local movement=a.targetMovement or {}
+ if trip and movement.targetGuid==trip.guid and movement.visitId==trip.visit and movement.phase and
+    movement.phase~="in_position" and movement.phase~="approaching" and movement.phase~="quest_object_replanning" and movement.phase~="awaiting_movement_decision" then
+  return finish_trip(frame,o,now,"quest_container_detour_unavailable")
+ end
  for _,g in ipairs(o.questObjects) do
+  local skip=(state.detourSkips or {})[g.guid]
   if g.present==true and g.typeKnown==true and g.gameObjectType==3 and g.mapKnown==true and
    (g.mapId or 0)==(p.mapId or 0) and g.positionKnown==true and decimal(g.positionRevision) and
    g.flagsKnown==true and (g.flags or 0)%2==0 and math.floor((g.flags or 0)/8)%2==0 and
    math.floor((g.flags or 0)/16)%2==0 and not attempted[g.guid] and not retired[g.guid] and
-   not state.seen[g.guid] and not state.paused[g.guid] then
+   not state.seen[g.guid] and not state.paused[g.guid] and
+   (not skip or skip.visit~=o.visitId or now and now>=skip.untilMs) then
    local d,h=distance(p,g)
-   if d and d<=range and h<=height then
+   local local_range=d and d<=range and h<=height
+   local extended=(trip~=nil or not local_range) and available and ownerOK and d~=nil
+   if (local_range or extended) and (not trip or trip.guid==g.guid and trip.revision==g.positionRevision) then
     for _,r in ipairs(o.gatherRecipes) do
-     if r.objectEntry==g.entry and active[r.questId] and (r.openSpell==3365 or r.openSpell==6477 or r.openSpell==6478) and
+     if r.objectEntry==g.entry and active[r.questId] and (o.itemCountsKnown~=true or (counts[r.itemId] or 0)<r.count) and
+      (not trip or trip.quest==r.questId and trip.item==r.itemId) and (r.openSpell==3365 or r.openSpell==6477 or r.openSpell==6478) and
       (not selected or M.tuning.gatherPreferNearest and d<best or not M.tuning.gatherPreferNearest and d>best or
        d==best and (smaller_guid(g.guid,selected.guid) or g.guid==selected.guid and recipe_before(r,recipe))) then
-      selected,recipe,best=g,r,d
+      selected,recipe,best,outside=g,r,d,extended
      end
     end
    end
   end
  end
- if not selected then return end
+ if not selected then
+  if trip then return finish_trip(frame,o,now or 0,"quest_container_no_longer_needed_or_present") end
+  return
+ end
+ if trip or outside then
+  if not trip then
+   trip={guid=selected.guid,visit=o.visitId,revision=selected.positionRevision,quest=recipe.questId,item=recipe.itemId,
+    owner=owner,x=x,y=y,z=z,progressAt=now,lastX=p.x or 0,lastY=p.y or 0,lastZ=p.z or 0,followRevision=(encounter.navigation or {}).followRevision,
+    questRevision=o.questLogRevision,inventoryRevision=o.inventoryRevision,rawRevision=s.positionRevision}
+   state.trip=trip
+  end
+  trip.rawRevision=s.positionRevision
+  if not (movement.targetGuid==trip.guid and movement.visitId==trip.visit and movement.phase=="in_position" and
+   movement.ready and decimal(movement.questArrivalWorldRevision) and movement.questArrivalWorldRevision==s.positionRevision and
+   not a.moving and best<=math.min(opening,3) and math.abs((selected.z or 0)-(p.z or 0))<=height) then
+   return {phase="approach_observed_quest_container",sourceGuid=selected.guid,action={capability="approach_target",
+    sessionId=o.sessionId,selfGuid=o.selfGuid,targetGuid=selected.guid,visitId=o.visitId,rangeYards=3,requireLos=true,
+    questId=trip.quest,questItemId=trip.item,questObjectRevision=trip.revision,questLogRevision=trip.questRevision,
+    questInventoryRevision=trip.inventoryRevision,questFollowRevision=trip.followRevision or "0",questOwnerGuid=trip.owner or "0",
+    observationSequence=frame.input.observationSequence}}
+  end
+ end
  local approach=best>opening or a.moving==true
  return {phase=approach and "approach_selected_container" or "open_selected_container",sourceGuid=selected.guid,
   action={capability="loot_gather",sessionId=o.sessionId,selfGuid=o.selfGuid,sourceGuid=selected.guid,
    questId=recipe.questId,itemId=recipe.itemId,openSpell=recipe.openSpell,requestId="gather-"..tostring(state.sequence),
    visitId=o.visitId,expectedPositionRevision=p.revision,expectedObjectRevision=selected.positionRevision,
    expectedInventoryRevision=o.inventoryRevision,expectedQuestLogRevision=o.questLogRevision,approach=approach,
+   approachWorldRevision=trip and movement.questArrivalWorldRevision or nil,
    observationSequence=frame.input.observationSequence}}
 end
 function M.on_event(event)
- if event.kind=="corpse_loot_observation" then
+ if event.kind=="command" and state.trip then
+  state.trip.cancel=true
+ elseif event.receipt and event.receipt.payload and (event.receipt.payload.capability=="approach_target" or event.receipt.payload.capability=="stop_movement") then
+  local p=event.receipt.payload
+  local t=state.trip or state.lastTrip
+  if t and p.target_guid==t.guid and p.visit_id==t.visit and (p.reconciliationRequired or p.motion_unconfirmed or event.receipt.outcome=="unknown") then
+   state.uncertainTrip={guid=t.guid,visit=t.visit,rawRevision=t.rawRevision}
+   state.trip=nil
+  end
+ elseif event.kind=="corpse_loot_observation" then
   observed=event.value;state.sequence=event.sequence
   if state.sessionId~=observed.sessionId then state={seen={},paused={},sessionId=observed.sessionId,sequence=event.sequence} end
   -- Absence is not proof that an uncertain corpse is a new loot source.
@@ -198,7 +306,10 @@ function M.on_event(event)
    (p.opening_transport_attempted==nil or p.opening_transport_attempted==false) and
    (p.transport_written==nil or p.transport_written==false)
   if not no_open and id(p.source_guid) and (p.opening_transport_attempted or outcome=="unknown" or
-   outcome=="settled_unverified" or outcome=="confirmed") then state.seen[p.source_guid]=true end
+   outcome=="settled_unverified" or outcome=="confirmed") then
+   state.seen[p.source_guid]=true
+   if state.trip and state.trip.guid==p.source_guid then state.trip=nil end
+  end
  end
  return true
 end
@@ -310,6 +421,20 @@ function M.decide(frame,encounter,quiet,urgent)
   if (o.state or {}).pendingGameObjectGuid==pending and (o.window or {}).observed~=true then return {phase="retained_container_opening",corpseGuid=pending} end
   if #frame.pending~=0 then return {phase="existing_action_custody",corpseGuid=pending} end
   return process_window(frame,o,urgent)
+ end
+ local unresolved=state.uncertainTrip
+ if unresolved then
+  local raw,old=s.positionRevision,unresolved.rawRevision
+  local fresh=decimal(raw) and decimal(old) and (#raw>#old or #raw==#old and raw>old)
+  if unresolved.visit==o.visitId and not (fresh and s.positionKnown==true and not s.positionInferred and s.movementFlagsKnown==true and
+   zero(s.movementFlags)%256==0 and zero(s.movementFlags)<2147483648 and zero(s.movementFlags)%268435456<=511 and zero(s.extraMovementFlags)==0 and not a.moving and not a.motionUnconfirmed) then
+   return {phase="awaiting_confirmed_quest_movement",holdMovement=true}
+  end
+  state.uncertainTrip=nil
+ end
+ if state.trip and #frame.pending~=0 then return {phase="awaiting_quest_container_step",holdMovement=true} end
+ if state.trip and (not quiet or a.motionUnconfirmed or o.inventoryKnown~=true or (o.generalFreeSlots or 0)<1) then
+  return finish_trip(frame,o,frame.clock and finite(frame.clock.monotonicMs) or 0,"quest_container_yield_to_party")
  end
  if not quiet or #frame.pending~=0 or s.present~=true or s.aliveKnown~=true or s.alive~=true or
   s.unitFlagsKnown~=true or math.floor((s.unitFlags or 0)/524288)%2==1 or

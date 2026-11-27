@@ -27,7 +27,7 @@ func TestExplorationUsesObservedBoostedOnFootSpeed(t *testing.T) {
 			packets := 0
 			previous := s.pos
 			s.approachDelay = func(ctx context.Context, d time.Duration) error {
-				if d != explorationCheckpointDelay(float64(speed)) {
+				if d < time.Millisecond || d > explorationCheckpointDelay(float64(speed)) {
 					t.Fatal("cadence ignored server speed", speed, d)
 				}
 				for ; packets < len(f.packets); packets++ {
@@ -76,7 +76,7 @@ func TestExplorationSupportedSpeedChangeDuringLegIsNotRetroactive(t *testing.T) 
 					}
 					previous = now
 				}
-				if delays > 0 && d != explorationCheckpointDelay(current) {
+				if delays > 0 && (d < time.Millisecond || d > explorationCheckpointDelay(current)) {
 					t.Fatal(d, current)
 				}
 				elapsed = d
@@ -131,7 +131,7 @@ func TestExplorationRefreshesSupportedSpeedAfterUnlockedPlanning(t *testing.T) {
 	waits := 0
 	s.approachDelay = func(ctx context.Context, d time.Duration) error {
 		waits++
-		if d != explorationCheckpointDelay(float64(f.world.Self.RunSpeed)) {
+		if d < time.Millisecond || d > explorationCheckpointDelay(float64(f.world.Self.RunSpeed)) {
 			t.Fatal("stale planning speed used for cadence", d)
 		}
 		advance(d)

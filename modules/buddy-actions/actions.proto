@@ -1087,6 +1087,15 @@ message ApproachTargetRequest {
   float min_range_yards = 9;
   repeated uint64 clearance_target_guids = 10;
   float clearance_yards = 11;
+  // A quest-container detour must keep the exact selected objective, observed
+  // source and owner intent through its movement write. It cannot open loot.
+  uint32 quest_id = 12;
+  uint32 quest_item_id = 13;
+  uint64 quest_object_revision = 14;
+  uint64 quest_log_revision = 15;
+  uint64 quest_inventory_revision = 16;
+  uint64 quest_follow_revision = 17;
+  uint64 quest_owner_guid = 18;
 }
 message TargetMovementState {
   uint64 target_guid = 1;
@@ -1099,6 +1108,12 @@ message TargetMovementState {
   float min_range_yards = 8;
   repeated uint64 clearance_target_guids = 9;
   float clearance_yards = 10;
+  // Own World position revision at a still-current stopped quest arrival.
+  uint64 quest_arrival_world_revision = 11;
+  // Current party observations protected by this stopped detour, including self.
+  repeated uint64 quest_arrival_guard_guids = 12;
+  uint64 quest_arrival_owner_guid = 13;
+  uint64 quest_arrival_owner_position_revision = 14;
 }
 message EncounterSupport {
   bool caster_in_combat = 1;

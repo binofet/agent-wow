@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -231,5 +232,72 @@ func TestGatherWrittenOpeningWithoutWindowSurvivesEnableToggle(t *testing.T) {
 	next.RequestId = "new-id-after-written-unknown"
 	if _, err := s.OpenGather(context.Background(), next); status.Code(err) != codes.FailedPrecondition || len(f.packets) != before {
 		t.Fatal("enable/new ID replayed an uncertain written opening", err, f.packets)
+	}
+}
+
+func TestGatherTravelArrivalRemainsBoundThroughFinalWorldRead(t *testing.T) {
+	for _, mode := range []string{"current", "beyond verified range", "stale arrival", "corrected after acquisition", "corrected before cast", "quest fulfilled before cast", "enough items acquired before cast", "partial stack still needed", "bag unreadable before cast", "quest revision changed", "owner starts moving", "owner repositioned", "group enters combat", "independent owner walks"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _ := harvestRig(t)
+			enable(t, s)
+			r := exactGatherRequest(s, f)
+			r.ApproachWorldRevision = f.world.Self.PositionRevision
+			f.actions.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: r.SourceGuid, VisitId: r.VisitId, Ready: true, Phase: "in_position", QuestArrivalWorldRevision: r.ApproachWorldRevision, QuestArrivalGuardGuids: []uint64{r.SelfGuid}}
+			switch mode {
+			case "beyond verified range":
+				f.world.QuestObjects[0].X = 3.5
+			case "stale arrival":
+				f.actions.TargetMovement.Ready = false
+			case "corrected after acquisition":
+				f.afterAcquire = func() { f.world.Self.PositionRevision++; f.actions.Position.Revision++ }
+			case "corrected before cast":
+				f.afterRenew = func() { f.world.Self.PositionRevision++ }
+			case "quest fulfilled before cast":
+				f.afterRenew = func() { f.world.SelfQuestLog[0].Complete = true }
+			case "enough items acquired before cast", "partial stack still needed":
+				f.afterRenew = func() {
+					f.world.InventoryBags[0].Slots[0] = &worldv1.BackpackSlot{Slot: 0, ItemGuid: 0x4000000000001212, Entry: r.ItemId, StackCount: 8, MetadataKnown: true}
+					if mode == "partial stack still needed" {
+						f.world.InventoryBags[0].Slots[0].StackCount = 1
+					}
+				}
+			case "bag unreadable before cast":
+				f.afterRenew = func() { f.world.InventoryBags[4].ContentsKnown = false }
+			case "quest revision changed":
+				f.afterRenew = func() { f.world.SelfQuestLogRevision++ }
+			case "owner starts moving", "owner repositioned", "group enters combat", "independent owner walks":
+				owner := proto.Clone(f.world.Self).(*worldv1.PlayerState)
+				owner.Guid, owner.PositionRevision = 3, 2
+				f.world.Owner = owner
+				m := f.actions.TargetMovement
+				if mode != "independent owner walks" {
+					m.QuestArrivalOwnerGuid, m.QuestArrivalOwnerPositionRevision = 3, 2
+					m.QuestArrivalGuardGuids = append(m.QuestArrivalGuardGuids, 3)
+				}
+				peer := proto.Clone(owner).(*worldv1.PlayerState)
+				peer.Guid = 5
+				f.world.NearbyPlayers = []*worldv1.PlayerState{peer}
+				m.QuestArrivalGuardGuids = append(m.QuestArrivalGuardGuids, 5)
+				f.afterRenew = func() {
+					switch mode {
+					case "owner repositioned":
+						owner.PositionRevision++
+						owner.X += 4
+					case "group enters combat":
+						peer.UnitFlags |= 0x80000
+					default:
+						owner.MovementFlags = 1
+					}
+				}
+			}
+			op, err := s.OpenGather(context.Background(), r)
+			if mode == "current" || mode == "partial stack still needed" || mode == "independent owner walks" {
+				if err != nil || !op.GetOpeningTransportWritten() || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGCastSpell {
+					t.Fatal(op, err, f.packets)
+				}
+			} else if op.GetOpeningTransportAttempted() || len(f.packets) != 0 {
+				t.Fatal("expired arrival reached the wire", op, err, f.packets)
+			}
+		})
 	}
 }

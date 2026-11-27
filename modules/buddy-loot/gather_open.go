@@ -2,6 +2,7 @@ package buddyloot
 
 import (
 	"context"
+	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	"sort"
 	"time"
 
@@ -44,7 +45,7 @@ func (s *Service) observeGatherCandidates(w *worldv1.SnapshotResponse, out *loot
 		}
 		entries[object.Entry] = true
 		record, ok := s.catalog.Container(object.Entry)
-		if !ok || record.Type != 3 || record.Action != "open_and_loot" || !ordinaryOpeningSpell(record.OpenSpell) {
+		if !ok || !record.OrdinaryQuestOpening() {
 			continue
 		}
 		for _, relation := range record.QuestItems {
@@ -109,7 +110,7 @@ func (s *Service) exactGatherCurrent(r *lootv1.OpenGatherRequest, w *worldv1.Sna
 	for _, known := range s.harvestRecipes(recipe.objectEntry) {
 		allowed = allowed || known == recipe
 	}
-	if !allowed || w.GetSelf().GetGuid() != r.SelfGuid || a.GetSessionId() != r.SessionId ||
+	if !allowed || !gatherArrivalCurrent(r, w, a) || w.GetSelf().GetGuid() != r.SelfGuid || a.GetSessionId() != r.SessionId ||
 		w.VisitRevision != r.VisitId || w.SelfQuestLogRevision != r.ExpectedQuestLogRevision ||
 		!w.InventoryKnown || w.InventoryRevision != r.ExpectedInventoryRevision || !w.GetSelf().GetPositionKnown() ||
 		a.GetPosition().GetRevision() != r.ExpectedPositionRevision || !recipe.context(w, a, r.SelfGuid, true) ||
@@ -126,13 +127,30 @@ func (s *Service) exactGatherCurrent(r *lootv1.OpenGatherRequest, w *worldv1.Sna
 		}
 	}
 	rangeLimit := 4.5
-	if r.Approach {
+	if r.ApproachWorldRevision != 0 {
+		container, ok := s.catalog.Container(recipe.objectEntry)
+		if !ok || !harvestguard.ActiveContainerObjective(w, r.SelfGuid, container, r.QuestId, r.ItemId) {
+			return nil, harvestRecipe{}
+		}
+		rangeLimit = 3
+	} else if r.Approach {
 		rangeLimit = 12 // Existing finite mechanical reach; Lua may choose less.
 	}
 	if selected == nil || selected.PositionRevision != r.ExpectedObjectRevision || !recipe.objectWithin(a.Position, selected, rangeLimit) {
 		return nil, harvestRecipe{}
 	}
 	return selected, recipe
+}
+
+func gatherArrivalCurrent(r *lootv1.OpenGatherRequest, w *worldv1.SnapshotResponse, a *actionsv1.State) bool {
+	if r.GetApproachWorldRevision() == 0 {
+		return true
+	}
+	m := a.GetTargetMovement()
+	return harvestguard.QuestArrivalPartyCurrent(w, r.SelfGuid, m.GetQuestArrivalGuardGuids(), m.GetQuestArrivalOwnerGuid(), m.GetQuestArrivalOwnerPositionRevision()) &&
+		!r.Approach && !a.GetMoving() && !a.GetMotionUnconfirmed() && w.GetSelf().GetPositionRevision() == r.ApproachWorldRevision &&
+		a.GetPosition().GetRevision() == r.ExpectedPositionRevision && m.GetTargetGuid() == r.SourceGuid && m.GetVisitId() == r.VisitId &&
+		m.GetReady() && m.GetPhase() == "in_position" && m.GetQuestArrivalWorldRevision() == r.ApproachWorldRevision
 }
 
 // OpenGather never searches for a target or recipe. Repeated IDs only read the
@@ -212,7 +230,9 @@ func (s *Service) OpenGather(ctx context.Context, r *lootv1.OpenGatherRequest) (
 	// STOP publishes its own new position revision; validate the selected source
 	// against that exact owned stopped pose rather than the superseded estimate.
 	stopped := proto.Clone(r).(*lootv1.OpenGatherRequest)
-	stopped.ExpectedPositionRevision = lease.State.GetPosition().GetRevision()
+	if r.ApproachWorldRevision == 0 {
+		stopped.ExpectedPositionRevision = lease.State.GetPosition().GetRevision()
+	}
 	current, currentRecipe := s.exactGatherCurrent(stopped, fresh, lease.State)
 	if stopped.ExpectedPositionRevision == 0 || current == nil || currentRecipe != recipe || !ownKnownFreeSlot(fresh, s.selfGUID) || ctx.Err() != nil {
 		s.releaseLease(ctx)

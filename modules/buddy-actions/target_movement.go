@@ -8,6 +8,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
@@ -23,6 +24,7 @@ type targetMovementIntent struct {
 	until            time.Time
 	nav              followNavigation
 	constraintTarget position
+	quest            *questObjectRoute
 }
 
 func (s *Service) targetMovementSnapshotLocked() *actionsv1.TargetMovementState {
@@ -30,6 +32,17 @@ func (s *Service) targetMovementSnapshotLocked() *actionsv1.TargetMovementState 
 		return nil
 	}
 	out := proto.Clone(&s.targetMovement.view).(*actionsv1.TargetMovementState)
+	if b := s.targetMovement.quest; b != nil && out.Ready && out.QuestArrivalWorldRevision != 0 {
+		w := s.lastWorld
+		g := observedQuestObject(w, b.guid)
+		pose := s.clientPositionLocked()
+		if g == nil || w.GetVisitRevision() != b.visit || !pose.Known || s.state.Moving || s.state.MotionUnconfirmed ||
+			w.Self.PositionRevision != b.selfRevision || pose.Revision != b.arrivalPositionRevision || s.movementSequence != b.moveSequence ||
+			g.PositionRevision != b.objectRevision || w.SelfQuestLogRevision != b.questRevision || w.InventoryRevision != b.inventoryRevision ||
+			s.followRevision != b.followRevision || !harvestguard.QuestArrivalPartyCurrent(w, s.selfGUID, out.QuestArrivalGuardGuids, out.QuestArrivalOwnerGuid, out.QuestArrivalOwnerPositionRevision) {
+			out.Ready, out.Phase, out.QuestArrivalWorldRevision = false, "quest_object_replanning", 0
+		}
+	}
 	if !s.now().Before(s.targetMovement.until) && !out.Ready {
 		out.Phase = "awaiting_movement_decision"
 	}
@@ -68,13 +81,28 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 	if err != nil || !s.matchesCurrentEncounterVisitLocked(w) || r.VisitId != s.encounterVisit.revision || !s.admitsPolicyEncounterLocked(ctx, w) {
 		return nil, status.Error(codes.FailedPrecondition, "current observed visit and its Lua writer required")
 	}
-	if safeSelfCombat(w, s.selfGUID) != "" || s.clientControlLost || s.clientControlRestoring || !s.refreshPositionLocked(w) || s.state.MotionUnconfirmed {
+	if safeSelfCombat(w, s.selfGUID) != "" || s.clientControlLost || s.clientControlRestoring {
+		return nil, status.Error(codes.FailedPrecondition, "current controllable own ground position required")
+	}
+	if !s.refreshPositionLocked(w) || s.state.MotionUnconfirmed {
+		if b := s.targetMovement.quest; !s.state.MotionUnconfirmed && b != nil && !r.Stop && b.guid == r.TargetGuid && b.visit == r.VisitId {
+			s.targetMovement.nav.Reset()
+			s.targetMovement.view.Ready = false
+			s.targetMovement.view.Phase = "quest_object_replanning"
+			return s.stateLocked(), nil
+		}
 		return nil, status.Error(codes.FailedPrecondition, "current controllable own ground position required")
 	}
 	ctx = modcb.ForwardPolicySpell(ctx)
 	s.targetMovementExecuting = true
 	defer func() { s.targetMovementExecuting = false }()
 	movement := &s.targetMovement
+	if r.Stop && r.TargetGuid>>48 == 0xf110 && (!movement.quest.matches(r) || !movement.quest.ownsMotion(s)) {
+		return s.stateLocked(), nil
+	}
+	if r.Stop || movement.view.TargetGuid != r.TargetGuid || !s.now().Before(movement.until) {
+		movement.quest = nil
+	}
 	if movement.view.TargetGuid != r.TargetGuid || movement.view.VisitId != r.VisitId || movement.view.RangeYards != r.RangeYards || movement.view.Behind != r.Behind || movement.view.RequireLos != r.RequireLos || movement.view.MinRangeYards != r.MinRangeYards || movement.view.ClearanceYards != r.ClearanceYards || !sameClearanceTargets(movement.view.ClearanceTargetGuids, r.ClearanceTargetGuids) ||
 		movement.nav.selfRevision != s.positionRevision || movement.nav.mapID != s.posMap {
 		movement.nav.Reset()
@@ -91,6 +119,10 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 		movement.view.Phase = "movement_occupied"
 		return s.stateLocked(), nil
 	}
+	if r.TargetGuid>>48 == 0xf110 {
+		return s.stepToQuestObjectLocked(ctx, r, w), nil
+	}
+	movement.quest = nil
 	target, known := targetMovementPosition(w, r.TargetGuid, s.posMap)
 	if !known {
 		movement.view.Phase = "target_position_unavailable"
