@@ -171,6 +171,8 @@ type Service struct {
 	followRevision                       uint64
 	followMount                          followMountState
 	followNav                            followNavigation
+	followGround                         groundedFollow
+	planFollowCorridor                   followCorridorPlanner
 	followPortal                         dungeonPortalFollow
 	portalGoal                           portalCatchupGoal
 	portalGoalRevision                   uint64
@@ -200,7 +202,7 @@ type Service struct {
 }
 
 func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
-	s := &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planRecoveryPath: planRecoveryNavigation, planLegPath: planLegNavigation, planColdridgePath: planColdridgeNavigation, planColdridge182Path: planColdridge182Navigation}
+	s := &Service{planFollowCorridor: openFollowCorridor, session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planRecoveryPath: planRecoveryNavigation, planLegPath: planLegNavigation, planColdridgePath: planColdridgeNavigation, planColdridge182Path: planColdridge182Navigation}
 	if len(sessionID) == 1 && len(sessionID[0]) <= 128 {
 		s.sessionID = sessionID[0]
 	}

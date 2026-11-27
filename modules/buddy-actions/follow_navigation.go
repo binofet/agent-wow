@@ -310,6 +310,13 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	if s.state.MotionUnconfirmed {
 		return fail("motion_unconfirmed_explicit_stop_required", errors.New("movement stop is unconfirmed"))
 	}
+	if len(ownerFallback) == 1 && s.planFollowCorridor != nil {
+		var last *destinationOwner
+		if bound, ok := ctx.Value(destinationOwnerKey{}).(destinationOwner); ok && bound.lastSeen {
+			last = &bound
+		}
+		return s.stepOnFollowCorridorLocked(ctx, now, target, stopDistance, ownerFallback[0], last, fail, arrived)
+	}
 	if f.legVisit != 0 && (distance(f.target, target) > 1.5 || len(ownerFallback) != 1 || distance(f.legOwner, ownerFallback[0]) > 1.5) {
 		// A leg belongs to its planned owner/slot, not whichever owner pose
 		// happens to be visible on a later tick inside the replan throttle.
@@ -449,6 +456,11 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			return w, allowed
 		}))
 	}
+	return s.advanceFormationGroundLocked(ctx, now, ownerFallback, continuePrefix, fail, arrived)
+}
+
+func (s *Service) advanceFormationGroundLocked(ctx context.Context, now time.Time, ownerFallback []position, continuePrefix bool, fail func(string, error) bool, arrived func() bool) bool {
+	f := &s.followNav
 	for f.index < len(f.path) && distance(s.pos, f.path[f.index]) <= 0.005 {
 		f.index++
 	}
@@ -480,6 +492,9 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			}
 		}
 		if changedRoute {
+			if _, retained := ctx.Value(followCorridorMovementKey{}).(followCorridor); retained {
+				s.state.NavReason = "client_ground_hazard_detour"
+			}
 			f.path, f.index, f.pointDetour = adjusted, 0, true
 			f.pointEscape = pointClearance(s.pos, s.currentMovementPointsLocked()) < 0
 			for f.index < len(f.path) && distance(s.pos, f.path[f.index]) <= .005 {
@@ -561,7 +576,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	}
 	f.index, f.expected = index, s.pos
 	s.state.Reason = "following_formation"
-	arrival = f.arrival
+	arrival := f.arrival
 	if f.ownerArrival && len(ownerFallback) == 1 {
 		arrival = ownerFallback[0]
 	}
