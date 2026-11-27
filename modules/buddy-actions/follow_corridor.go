@@ -124,7 +124,7 @@ func (s *Service) stepOnFollowCorridorLocked(ctx context.Context, now time.Time,
 		}
 		f.target, f.arrival, f.arrivalStop, f.arrivalKnown = slot, destination, stop, true
 		f.expected, f.selfRevision, f.mapID, f.index = s.pos, s.positionRevision, s.posMap, 0
-		f.ownerArrival, f.intermediateLeg, f.pointEscape, f.pointDetour, f.legVisit = realOwner, false, false, false, 0
+		f.ownerArrival, f.pointEscape, f.pointDetour = realOwner, false, false
 	}
 	s.state.NavAvailable = true
 	switch {
@@ -169,7 +169,7 @@ func (s *Service) stepOnFollowCorridorLocked(ctx context.Context, now time.Time,
 		return fresh, allowed
 	})
 	ctx = context.WithValue(ctx, followCorridorMovementKey{}, g.corridor)
-	return s.advanceFormationGroundLocked(ctx, now, []position{f.arrival}, false, fail, arrived)
+	return s.advanceFormationGroundLocked(ctx, now, true, fail, arrived)
 }
 
 func followGroundPrefix(path []buddynav.Point, from buddynav.Point) bool {

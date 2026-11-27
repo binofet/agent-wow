@@ -16,6 +16,10 @@ func TestFollowCrossesDeepWaterAndReturnsToGround(t *testing.T) {
 	ctx := context.Background()
 	s, f, advance := rig(t)
 	s.SetNavigationDataDir("/client-data")
+	f.world.VisitRevision = 1
+	s.planFollowCorridor = func(context.Context, string, uint32, buddynav.Point, buddynav.Point) (followCorridor, error) {
+		return nil, errors.New("navigation water depth exceeds shallow wading limit")
+	}
 	s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
 		return nil, errors.New("navigation water depth exceeds shallow wading limit")
 	}

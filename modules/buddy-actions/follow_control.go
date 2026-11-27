@@ -18,17 +18,6 @@ func (s *Service) followFormationLocked(ctx context.Context, world *worldv1.Snap
 		s.state.Reason = reason
 	}
 	owner := playerPosition(world.Owner)
-	// A complete verified ground route can include stairs between floors.
-	// The observed-owner catch-up bound leaves room for a verified detour
-	// inside the planner's independent 240-yard route budget.
-	if s.planFollowCorridor == nil && distance(s.pos, owner) > 200 && owner.z < s.pos.z && followHorizontalDistance(s.pos, owner) <= 200 && waterMovementAllowed(world) {
-		s.swimFollowTickLocked(ctx, owner, now)
-		return
-	}
-	if s.planFollowCorridor == nil && distance(s.pos, owner) > 200 {
-		pause("formation_owner_outside_supported_range")
-		return
-	}
 	if observedRunSpeed(world.Self) == 0 {
 		pause("normal_run_speed_unknown")
 		return
