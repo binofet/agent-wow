@@ -17,10 +17,12 @@ func TestRequestAndDecodeBuild12340Template(t *testing.T) {
 	tail := make([]byte, 77)
 	binary.LittleEndian.PutUint32(tail, 4)
 	binary.LittleEndian.PutUint32(tail[4:], 7)
+	binary.LittleEndian.PutUint32(tail[8:], 21)
+	binary.LittleEndian.PutUint32(tail[12:], 2)
 	binary.LittleEndian.PutUint32(tail[40:], math.Float32bits(1))
 	binary.LittleEndian.PutUint32(tail[44:], math.Float32bits(1))
 	packet := append(prefix, tail...)
-	want := Template{Entry: 555, Name: "Creature", TypeFlags: 4, CreatureType: 7}
+	want := Template{Entry: 555, Name: "Creature", SubName: "Subname", TypeFlags: 4, CreatureType: 7, Family: 21, Rank: 2}
 	if got, err := Decode(packet); err != nil || got != want {
 		t.Fatalf("template = %+v, err = %v, want %+v", got, err, want)
 	}

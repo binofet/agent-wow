@@ -790,6 +790,8 @@ message EncounterObservationResponse {
   SummoningObservation summoning = 33;
   repeated warcraftbuddy.world.v1.GameObjectState summoning_objects = 34;
   FlightpathObservationResponse flightpath = 35;
+  // Decimal NPC entry keys. Only received public tooltip replies for current targets.
+  map<string, EncounterCreatureTemplate> creature_templates = 36;
 }
 message BodyMovementRequest {
   string session_id = 1;
@@ -952,6 +954,16 @@ message EncounterPlayer {
   optional uint64 selected_target_guid = 42;
   bool swimming = 43;
 }
+// Static tooltip facts from SMSG_CREATURE_QUERY_RESPONSE, never a sighting or a level.
+message EncounterCreatureTemplate {
+  uint32 entry = 1;
+  string name = 2;
+  string sub_name = 3;
+  uint32 creature_type = 4;
+  optional uint32 type_flags = 5;
+  optional uint32 family = 6;
+  optional uint32 rank = 7;
+}
 message EncounterCreature {
   uint64 guid = 1;
   uint32 entry = 2;
@@ -987,6 +999,21 @@ message EncounterCreature {
   // Observed unit field in yards, including large creature hitboxes.
   optional float combat_reach = 27;
   EncounterFlightmaster flightmaster = 28;
+  bool level_known = 29;
+  optional uint32 level = 30;
+  warcraftbuddy.world.v1.CreatureCast active_cast = 31;
+  optional uint32 npc_flags = 32;
+  optional uint32 unit_flags_2 = 33;
+  optional uint32 dynamic_flags = 34;
+  optional uint32 movement_flags = 35;
+  optional uint64 position_age_ms = 36;
+  uint64 observation_age_ms = 37;
+  // Distances from the last observed server poses, not the client's moved body.
+  optional float distance_to_self_observed = 38;
+  optional float distance_to_owner_observed = 39;
+  bool faction_template_known = 40;
+  // Exact entry key into creature_templates when this GUID and its observed entry agree.
+  optional uint32 template_entry = 41;
 }
 message EncounterFlightmaster {
   bool stationary_position_known = 1;

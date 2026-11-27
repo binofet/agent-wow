@@ -510,6 +510,10 @@ message CreatureState {
   CreatureCast active_cast = 41;
   // For flightmasters, the last position came from a stationary spawn or stop.
   bool stationary_position_known = 42;
+  bool npc_flags_known = 43;
+  bool faction_template_known = 44;
+  bool unit_flags_2_known = 45;
+  bool movement_flags_known = 46;
 }
 
 // A cast observed in a normal server spell-start event. An expired cast or
@@ -713,6 +717,9 @@ message SnapshotResponse {
   repeated GameObjectState summoning_objects = 65;
   // The exact requested creature has a still-valid, explicitly stationary world-space pose.
   bool requested_creature_stationary_position_known = 66;
+  // Own selected NPC if it fell outside nearby_creatures and is not owner_target.
+  // This extra exact row never implies that the surrounding creature list is complete.
+  CreatureState selected_creature_outside_nearby = 67;
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.

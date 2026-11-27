@@ -79,7 +79,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ú¯
+§²
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -476,7 +476,7 @@ flagsKnown
 stateKnown
 state (RstateD
 creator_selected_target_guid (H RcreatorSelectedTargetGuidˆB
-_creator_selected_target_guid"à
+_creator_selected_target_guid"
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -529,7 +529,11 @@ levelKnown
 dynamic_flags_known( (RdynamicFlagsKnownE
 active_cast) (2$.warcraftbuddy.world.v1.CreatureCastR
 activeCast:
-stationary_position_known* (RstationaryPositionKnown"¨
+stationary_position_known* (RstationaryPositionKnown&
+npc_flags_known+ (RnpcFlagsKnown4
+faction_template_known, (RfactionTemplateKnown+
+unit_flags_2_known- (RunitFlags2Known0
+movement_flags_known. (RmovementFlagsKnown"¨
 CreatureCast
 spell_id (RspellId
 
@@ -599,7 +603,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"Ž!
+permanent_bonus (RpermanentBonus"þ!
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -671,7 +675,8 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 ground_effects_overflow? (RgroundEffectsOverflow:
 nearby_creatures_complete@ (RnearbyCreaturesCompleteT
 summoning_objectsA (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjects^
-,requested_creature_stationary_position_knownB (R(requestedCreatureStationaryPositionKnown"q
+,requested_creature_stationary_position_knownB (R(requestedCreatureStationaryPositionKnownn
+ selected_creature_outside_nearbyC (2%.warcraftbuddy.world.v1.CreatureStateRselectedCreatureOutsideNearby"q
 CombatEventsRequest
 
 session_id (	R	sessionId%
@@ -815,7 +820,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-­È
+¾Ò
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1630,7 +1635,7 @@ session_id (	R	sessionId
 threat (2(.warcraftbuddy.actions.v1.SelfManaThreatRthreat?
 spells (2'.warcraftbuddy.actions.v1.SelfManaSpellRspells
 
-host_owned (R	hostOwned"Û
+host_owned (R	hostOwned"Ô
 EncounterObservationResponse
 
 session_id (	R	sessionId
@@ -1676,7 +1681,8 @@ navigation`
 summoning_objects" (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjectsW
 
 flightpath# (27.warcraftbuddy.actions.v1.FlightpathObservationResponseR
-flightpathe
+flightpath|
+creature_templates$ (2M.warcraftbuddy.actions.v1.EncounterObservationResponse.CreatureTemplatesEntryRcreatureTemplatese
 PlayersEntry
 key (	Rkey?
 value (2).warcraftbuddy.actions.v1.EncounterPlayerRvalue:8g
@@ -1688,7 +1694,10 @@ flightpathe
 value (2-.warcraftbuddy.actions.v1.EncounterEngagementRvalue:8c
 SpellsEntry
 key (	Rkey>
-value (2(.warcraftbuddy.actions.v1.EncounterSpellRvalue:8B	
+value (2(.warcraftbuddy.actions.v1.EncounterSpellRvalue:8y
+CreatureTemplatesEntry
+key (	RkeyI
+value (23.warcraftbuddy.actions.v1.EncounterCreatureTemplateRvalue:8B	
 _map_idB
 _host_ownedB
 _host_requested"¤
@@ -1862,7 +1871,19 @@ comboKnown*
 _map_idB
 _aliveB
 _ground_run_speedB
-_selected_target_guid"»
+_selected_target_guid"‚
+EncounterCreatureTemplate
+entry (Rentry
+name (	Rname
+sub_name (	RsubName#
+creature_type (RcreatureType"
+
+type_flags (H R	typeFlagsˆ
+family (HRfamilyˆ
+rank (HRrankˆB
+_type_flagsB	
+_familyB
+_rank"Î
 EncounterCreature
 guid (Rguid
 entry (Rentry
@@ -1900,10 +1921,37 @@ meleeReady.
 orientation (Rorientationc
 attack_observation (24.warcraftbuddy.actions.v1.EncounterAttackObservationRattackObservation&
 combat_reach (HRcombatReachˆS
-flightmaster (2/.warcraftbuddy.actions.v1.EncounterFlightmasterRflightmasterB	
+flightmaster (2/.warcraftbuddy.actions.v1.EncounterFlightmasterRflightmaster
+level_known (R
+levelKnown
+level (HRlevelˆE
+active_cast (2$.warcraftbuddy.world.v1.CreatureCastR
+activeCast 
+	npc_flags  (HRnpcFlagsˆ%
+unit_flags_2! (HR
+unitFlags2ˆ(
+dynamic_flags" (HRdynamicFlagsˆ*
+movement_flags# (HRmovementFlagsˆ+
+position_age_ms$ (HRpositionAgeMsˆ,
+observation_age_ms% (RobservationAgeMs>
+distance_to_self_observed& (H	RdistanceToSelfObservedˆ@
+distance_to_owner_observed' (H
+RdistanceToOwnerObservedˆ4
+faction_template_known( (RfactionTemplateKnown*
+template_entry) (HRtemplateEntryˆB	
 _map_idB
 _aliveB
-_combat_reach"Œ
+_combat_reachB
+_levelB
+
+_npc_flagsB
+_unit_flags_2B
+_dynamic_flagsB
+_movement_flagsB
+_position_age_msB
+_distance_to_self_observedB
+_distance_to_owner_observedB
+_template_entry"Œ
 EncounterFlightmaster:
 stationary_position_known (RstationaryPositionKnown&
 position_age_ms (RpositionAgeMs,

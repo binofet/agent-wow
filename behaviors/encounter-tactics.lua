@@ -112,7 +112,9 @@ local function combat_queue(input)
         local row = candidates[target]
         if not row or added[target] then return end
         added[target] = true
-        result.queue[#result.queue+1] = {targetGuid=target, engaged=row.engaged, protected=row.protected,
+        result.queue[#result.queue+1] = {targetGuid=target,
+                                      level=row.npc.levelKnown == true and row.npc.level or nil,
+                                      engaged=row.engaged, protected=row.protected,
                                       encounterScope=row.engaged and "active_encounter" or "future_pull", pullRequested=row.pullRequested,
                                       reason=row.reason, burstIntent=row.burstIntent}
         if not result.focusGuid and (row.engaged or row.pullRequested) and not row.protected then

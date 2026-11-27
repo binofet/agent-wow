@@ -79,7 +79,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-˙Ø
+ß≤
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -476,7 +476,7 @@ flagsKnown
 stateKnown
 state (RstateD
 creator_selected_target_guid (H RcreatorSelectedTargetGuidàB
-_creator_selected_target_guid"‡
+_creator_selected_target_guid"ù
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -529,7 +529,11 @@ levelKnown
 dynamic_flags_known( (RdynamicFlagsKnownE
 active_cast) (2$.warcraftbuddy.world.v1.CreatureCastR
 activeCast:
-stationary_position_known* (RstationaryPositionKnown"®
+stationary_position_known* (RstationaryPositionKnown&
+npc_flags_known+ (RnpcFlagsKnown4
+faction_template_known, (RfactionTemplateKnown+
+unit_flags_2_known- (RunitFlags2Known0
+movement_flags_known. (RmovementFlagsKnown"®
 CreatureCast
 spell_id (RspellId
 
@@ -599,7 +603,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"é!
+permanent_bonus (RpermanentBonus"˛!
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -671,7 +675,8 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 ground_effects_overflow? (RgroundEffectsOverflow:
 nearby_creatures_complete@ (RnearbyCreaturesCompleteT
 summoning_objectsA (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjects^
-,requested_creature_stationary_position_knownB (R(requestedCreatureStationaryPositionKnown"q
+,requested_creature_stationary_position_knownB (R(requestedCreatureStationaryPositionKnownn
+ selected_creature_outside_nearbyC (2%.warcraftbuddy.world.v1.CreatureStateRselectedCreatureOutsideNearby"q
 CombatEventsRequest
 
 session_id (	R	sessionId%

@@ -95,6 +95,7 @@ type Service struct {
 	engage                                     engageIntent
 	crowdControlSight                          func(context.Context, string, uint32, position, position) (bool, error)
 	controlTemplates                           map[uint32]controlTemplate
+	creatureTooltips                           encounterCreatureTooltips
 	targetProtection                           targetProtection
 	targetMovement                             targetMovementIntent
 	targetMovementExecuting                    bool
@@ -1632,7 +1633,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 	}
 	s.expireCrowdControlLocked()
 	if packet.Opcode == opcode.SMSGCreatureQueryResponse {
-		s.observeControlTemplateLocked(p)
+		s.observeCreatureTemplateLocked(p)
 		return &emptypb.Empty{}, nil
 	}
 	malformed := false

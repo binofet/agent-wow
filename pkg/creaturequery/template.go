@@ -9,8 +9,8 @@ import (
 )
 
 type Template struct {
-	Entry, TypeFlags, CreatureType uint32
-	Name                           string
+	Entry, TypeFlags, CreatureType, Family, Rank uint32
+	Name, SubName                                string
 }
 
 func Request(entry uint32, guid uint64) []byte {
@@ -40,6 +40,8 @@ func Decode(p []byte) (Template, error) {
 			}
 			m.Name = string(p[:n])
 			n += 3 // Unused alternative names.
+		} else if i == 1 {
+			m.SubName = string(p[:n])
 		}
 		p = p[n+1:]
 	}
@@ -49,6 +51,7 @@ func Decode(p []byte) (Template, error) {
 		return Template{}, bad
 	}
 	m.TypeFlags, m.CreatureType = binary.LittleEndian.Uint32(p), binary.LittleEndian.Uint32(p[4:])
+	m.Family, m.Rank = binary.LittleEndian.Uint32(p[8:]), binary.LittleEndian.Uint32(p[12:])
 	if m.CreatureType == 0 || m.CreatureType > 13 {
 		return Template{}, bad
 	}

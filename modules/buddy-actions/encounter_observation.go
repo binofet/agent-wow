@@ -300,7 +300,11 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, out *actionsv1
 	// This advertises admission to start autoattack, not physical hit readiness.
 	// Current positions/orientations remain available to Lua for approach/chase.
 	meleeCaster := out.MeleeKnown && s.exactMeleeCasterObservedLocked(w)
-	for _, rows := range [][]*worldv1.CreatureState{w.NearbyCreatures, {w.OwnerTarget}} {
+	extra := []*worldv1.CreatureState{w.OwnerTarget}
+	if selected := w.SelectedCreatureOutsideNearby; selected != nil && w.GetSelf().GetTargetKnown() && selected.Guid == w.GetSelf().GetTargetGuid() {
+		extra = append(extra, selected)
+	}
+	for _, rows := range [][]*worldv1.CreatureState{w.NearbyCreatures, extra} {
 		for _, c := range rows {
 			if c == nil || !c.Present {
 				continue
@@ -324,12 +328,42 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, out *actionsv1
 				UnitFlagsKnown: c.UnitFlagsKnown, UnitFlags: c.UnitFlags, FactionTemplate: c.FactionTemplate,
 				AttackObservation: &actionsv1.EncounterAttackObservation{VictimKnown: c.AttackVictimKnown,
 					VictimGuid: c.AttackVictimGuid, AgeMs: c.AttackAgeMs, TargetKnown: c.TargetKnown, TargetGuid: c.TargetGuid},
-				PositionKnown:     c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}),
-				Trajectory:        c.Trajectory,
+				PositionKnown: c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}),
+				Trajectory:    c.Trajectory, ActiveCast: c.ActiveCast, LevelKnown: c.LevelKnown,
+				ObservationAgeMs: c.ObservationAgeMs, FactionTemplateKnown: c.FactionTemplateKnown,
 				OwnDamageFamilies: s.encounterOwnDamageFamilies(c.Guid),
 			}
 			if view.PositionKnown {
 				view.X, view.Y, view.Z, view.Orientation, view.PositionRevision = c.X, c.Y, c.Z, c.Orientation, c.PositionRevision
+				view.PositionAgeMs = proto.Uint64(c.PositionAgeMs)
+			}
+			if c.LevelKnown {
+				view.Level = proto.Uint32(c.Level)
+			}
+			if c.NpcFlagsKnown {
+				view.NpcFlags = proto.Uint32(c.NpcFlags)
+			}
+			if c.UnitFlags_2Known {
+				view.UnitFlags_2 = proto.Uint32(c.UnitFlags_2)
+			}
+			if c.DynamicFlagsKnown {
+				view.DynamicFlags = proto.Uint32(c.DynamicFlags)
+			}
+			if c.MovementFlagsKnown {
+				view.MovementFlags = proto.Uint32(c.MovementFlags)
+			}
+			if c.DistanceToSelfObservedKnown {
+				view.DistanceToSelfObserved = proto.Float32(c.DistanceToSelfObserved)
+			}
+			if c.DistanceToOwnerObservedKnown {
+				view.DistanceToOwnerObserved = proto.Float32(c.DistanceToOwnerObserved)
+			}
+			if tooltip := s.creatureTooltips.entries[c.Entry]; tooltip != nil && uint32(c.Guid>>24)&0xffffff == c.Entry {
+				if out.CreatureTemplates == nil {
+					out.CreatureTemplates = make(map[string]*actionsv1.EncounterCreatureTemplate)
+				}
+				view.TemplateEntry = proto.Uint32(c.Entry)
+				out.CreatureTemplates[strconv.FormatUint(uint64(c.Entry), 10)] = tooltip
 			}
 			if c.NpcFlags&0x2000 != 0 {
 				view.Flightmaster = &actionsv1.EncounterFlightmaster{StationaryPositionKnown: c.StationaryPositionKnown,

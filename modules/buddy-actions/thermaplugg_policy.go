@@ -11,6 +11,7 @@ import (
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 const thermapluggSelection = "thermaplugg_buttons"
@@ -57,12 +58,39 @@ func thermapluggCreatures(w *worldv1.SnapshotResponse) []any {
 	creatures := []any{}
 	for _, creature := range append([]*worldv1.CreatureState{w.OwnerTarget}, w.NearbyCreatures...) {
 		if creature != nil {
-			if raw, ok := starterJSON(creature); ok {
+			if raw, ok := thermapluggCreatureInput(creature); ok {
 				creatures = append(creatures, raw)
 			}
 		}
 	}
 	return creatures
+}
+
+// This editable, standalone room selector has a 32 KiB input contract. Keep
+// its original 42 raw fields, including zero defaults, for every ordered row.
+// Later encounter-only additions can include entire collections and belong to
+// the normal encounter feed. Copy only the original populated field references.
+func thermapluggCreatureInput(c *worldv1.CreatureState) (map[string]any, bool) {
+	const lastRoomField = 42 // CreatureState.stationary_position_known
+	source := c.ProtoReflect()
+	room := source.New()
+	source.Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {
+		if field.Number() <= lastRoomField {
+			room.Set(field, value)
+		}
+		return true
+	})
+	raw, ok := starterJSON(room.Interface())
+	if ok {
+		fields := source.Descriptor().Fields()
+		for i := range fields.Len() {
+			field := fields.Get(i)
+			if field.Number() > lastRoomField {
+				delete(raw, field.JSONName())
+			}
+		}
+	}
+	return raw, ok
 }
 
 // Observation ages advance while identical cached facts are read. They are

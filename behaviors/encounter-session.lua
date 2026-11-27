@@ -175,13 +175,10 @@ local function import_state(checkpoint)
 end
 
 local function copy_target(target, engaged, protected)
-    return {
-        present=target.present, aliveKnown=target.aliveKnown, alive=target.alive,
-        attackable=target.attackable, health=target.healthKnown and target.health or nil,
-        maxHealth=target.healthKnown and target.maxHealth or nil,
-        killSeconds=target.killSeconds, incomingDPS=target.incomingDPS, inCombat=engaged,
-        engaged=engaged, protected=protected,
-    }
+    local row = {}
+    for key, value in pairs(target) do row[key] = value end
+    row.inCombat, row.engaged, row.protected = engaged, engaged, protected
+    return row
 end
 
 local function same_map(unit, map)
@@ -361,11 +358,19 @@ local function observe_targets(obs, members)
             -- engagement. Losing/changing the victim alone never ends it.
             if npc.aliveKnown == true and npc.alive == false or reset then state.engaged[target] = nil end
             local engaged = state.engaged[target] == true
-            targets[target] = copy_target(npc, engaged, reserved)
             local row = {}
             for key, value in pairs(npc) do row[key] = value end
             row.engaged, row.protected = engaged, reserved
+            if npc.healthKnown == true then
+                row.health, row.maxHealth = npc.health or 0, npc.maxHealth or 0
+            else
+                row.health, row.maxHealth = nil, nil
+            end
+            if npc.templateEntry and npc.templateEntry == npc.entry then
+                row.template = (obs.creatureTemplates or {})[tostring(npc.templateEntry)]
+            end
             classified.targets[target] = row
+            targets[target] = copy_target(row, engaged, reserved)
             if witnessed then
                 local attack = type(npc.attackObservation) == "table" and npc.attackObservation or (obs.engagement or {})[target]
                 classified.engagement[target] = {victimGuid=attack.victimGuid,ageMs=attack.ageMs or "0"}
