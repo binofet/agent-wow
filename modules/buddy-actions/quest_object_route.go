@@ -9,7 +9,6 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/harvestguard"
-	"github.com/agent-wow/agent-wow/pkg/movementflags"
 )
 
 // One short, ground-only detour under the normal movement writer. A new Lua
@@ -44,13 +43,6 @@ func observedQuestObject(w *worldv1.SnapshotResponse, guid uint64) *worldv1.Game
 	return found
 }
 
-func stationaryQuestOwner(w *worldv1.SnapshotResponse, guid uint64) bool {
-	p := w.GetOwner()
-	return p.GetGuid() == guid && p.GetPresent() && p.MapKnown && p.MapId == w.GetSelf().GetMapId() &&
-		p.AliveKnown && p.Alive && p.UnitFlagsKnown && p.UnitFlags&0x80000 == 0 && p.PositionKnown && !p.PositionInferred &&
-		p.MovementFlagsKnown && movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) && p.MovementFlags&0xff == 0 && finite(playerPosition(p))
-}
-
 func (b *questObjectRoute) matches(r *actionsv1.ApproachTargetRequest) bool {
 	return b != nil && b.guid == r.TargetGuid && b.visit == r.VisitId && b.questID == r.QuestId && b.itemID == r.QuestItemId &&
 		b.objectRevision == r.QuestObjectRevision && b.questRevision == r.QuestLogRevision && b.inventoryRevision == r.QuestInventoryRevision &&
@@ -73,7 +65,7 @@ func (s *Service) questObjectRouteCurrent(w *worldv1.SnapshotResponse, b *questO
 		return false
 	}
 	if b.ownerGUID != 0 {
-		return !s.independent && stationaryQuestOwner(w, b.ownerGUID) && distance(playerPosition(w.Owner), b.owner) <= 1.5
+		return !s.independent && harvestguard.StationaryQuestOwner(w, b.ownerGUID) && distance(playerPosition(w.Owner), b.owner) <= 1.5
 	}
 	return !s.state.Following && (s.independent || w.GetOwner().GetGuid() == 0)
 }
@@ -104,7 +96,7 @@ func (s *Service) stepToQuestObjectLocked(ctx context.Context, r *actionsv1.Appr
 			questID: r.QuestId, itemID: r.QuestItemId, ownerGUID: r.QuestOwnerGuid,
 			target: position{g.X, g.Y, g.Z, g.Orientation}}
 		if b.ownerGUID != 0 {
-			if !stationaryQuestOwner(w, b.ownerGUID) {
+			if !harvestguard.StationaryQuestOwner(w, b.ownerGUID) {
 				return refuse("quest_object_group_moved")
 			}
 			b.owner = playerPosition(w.Owner)
@@ -169,13 +161,18 @@ func (s *Service) stepToQuestObjectLocked(ctx context.Context, r *actionsv1.Appr
 			return s.stateLocked()
 		}
 		fresh, err := s.snapshot(ctx)
-		if err != nil || !s.questObjectRouteCurrent(fresh, b) {
+		if err != nil || !s.questObjectRouteCurrent(fresh, b) || harvestguard.WorldReason(fresh, s.selfGUID, protected) != "" {
 			return refuse("quest_object_observation_changed")
 		}
 		m.view.Phase, m.view.Ready = "in_position", true
 		b.moving = false
 		b.moveSequence, b.arrivalPositionRevision = s.movementSequence, s.posRevision
 		m.view.QuestArrivalWorldRevision = b.selfRevision
+		m.view.QuestArrivalGuardGuids = protected
+		m.view.QuestArrivalOwnerGuid = b.ownerGUID
+		if b.ownerGUID != 0 {
+			m.view.QuestArrivalOwnerPositionRevision = fresh.Owner.PositionRevision
+		}
 		return s.stateLocked()
 	}
 	if remaining <= .25 {

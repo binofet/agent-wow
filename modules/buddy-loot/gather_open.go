@@ -147,7 +147,8 @@ func gatherArrivalCurrent(r *lootv1.OpenGatherRequest, w *worldv1.SnapshotRespon
 		return true
 	}
 	m := a.GetTargetMovement()
-	return !r.Approach && !a.GetMoving() && !a.GetMotionUnconfirmed() && w.GetSelf().GetPositionRevision() == r.ApproachWorldRevision &&
+	return harvestguard.QuestArrivalPartyCurrent(w, r.SelfGuid, m.GetQuestArrivalGuardGuids(), m.GetQuestArrivalOwnerGuid(), m.GetQuestArrivalOwnerPositionRevision()) &&
+		!r.Approach && !a.GetMoving() && !a.GetMotionUnconfirmed() && w.GetSelf().GetPositionRevision() == r.ApproachWorldRevision &&
 		a.GetPosition().GetRevision() == r.ExpectedPositionRevision && m.GetTargetGuid() == r.SourceGuid && m.GetVisitId() == r.VisitId &&
 		m.GetReady() && m.GetPhase() == "in_position" && m.GetQuestArrivalWorldRevision() == r.ApproachWorldRevision
 }

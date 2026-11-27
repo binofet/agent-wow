@@ -10260,8 +10260,12 @@ type TargetMovementState struct {
 	ClearanceYards       float32                `protobuf:"fixed32,10,opt,name=clearance_yards,json=clearanceYards,proto3" json:"clearance_yards,omitempty"`
 	// Own World position revision at a still-current stopped quest arrival.
 	QuestArrivalWorldRevision uint64 `protobuf:"varint,11,opt,name=quest_arrival_world_revision,json=questArrivalWorldRevision,proto3" json:"quest_arrival_world_revision,omitempty"`
-	unknownFields             protoimpl.UnknownFields
-	sizeCache                 protoimpl.SizeCache
+	// Current party observations protected by this stopped detour, including self.
+	QuestArrivalGuardGuids            []uint64 `protobuf:"varint,12,rep,packed,name=quest_arrival_guard_guids,json=questArrivalGuardGuids,proto3" json:"quest_arrival_guard_guids,omitempty"`
+	QuestArrivalOwnerGuid             uint64   `protobuf:"varint,13,opt,name=quest_arrival_owner_guid,json=questArrivalOwnerGuid,proto3" json:"quest_arrival_owner_guid,omitempty"`
+	QuestArrivalOwnerPositionRevision uint64   `protobuf:"varint,14,opt,name=quest_arrival_owner_position_revision,json=questArrivalOwnerPositionRevision,proto3" json:"quest_arrival_owner_position_revision,omitempty"`
+	unknownFields                     protoimpl.UnknownFields
+	sizeCache                         protoimpl.SizeCache
 }
 
 func (x *TargetMovementState) Reset() {
@@ -10367,6 +10371,27 @@ func (x *TargetMovementState) GetClearanceYards() float32 {
 func (x *TargetMovementState) GetQuestArrivalWorldRevision() uint64 {
 	if x != nil {
 		return x.QuestArrivalWorldRevision
+	}
+	return 0
+}
+
+func (x *TargetMovementState) GetQuestArrivalGuardGuids() []uint64 {
+	if x != nil {
+		return x.QuestArrivalGuardGuids
+	}
+	return nil
+}
+
+func (x *TargetMovementState) GetQuestArrivalOwnerGuid() uint64 {
+	if x != nil {
+		return x.QuestArrivalOwnerGuid
+	}
+	return 0
+}
+
+func (x *TargetMovementState) GetQuestArrivalOwnerPositionRevision() uint64 {
+	if x != nil {
+		return x.QuestArrivalOwnerPositionRevision
 	}
 	return 0
 }
@@ -16026,7 +16051,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x12quest_log_revision\x18\x0f \x01(\x04R\x10questLogRevision\x128\n" +
 	"\x18quest_inventory_revision\x18\x10 \x01(\x04R\x16questInventoryRevision\x122\n" +
 	"\x15quest_follow_revision\x18\x11 \x01(\x04R\x13questFollowRevision\x12(\n" +
-	"\x10quest_owner_guid\x18\x12 \x01(\x04R\x0equestOwnerGuid\"\x9f\x03\n" +
+	"\x10quest_owner_guid\x18\x12 \x01(\x04R\x0equestOwnerGuid\"\xe5\x04\n" +
 	"\x13TargetMovementState\x12\x1f\n" +
 	"\vtarget_guid\x18\x01 \x01(\x04R\n" +
 	"targetGuid\x12\x19\n" +
@@ -16042,7 +16067,10 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x16clearance_target_guids\x18\t \x03(\x04R\x14clearanceTargetGuids\x12'\n" +
 	"\x0fclearance_yards\x18\n" +
 	" \x01(\x02R\x0eclearanceYards\x12?\n" +
-	"\x1cquest_arrival_world_revision\x18\v \x01(\x04R\x19questArrivalWorldRevision\"\xcc\x04\n" +
+	"\x1cquest_arrival_world_revision\x18\v \x01(\x04R\x19questArrivalWorldRevision\x129\n" +
+	"\x19quest_arrival_guard_guids\x18\f \x03(\x04R\x16questArrivalGuardGuids\x127\n" +
+	"\x18quest_arrival_owner_guid\x18\r \x01(\x04R\x15questArrivalOwnerGuid\x12P\n" +
+	"%quest_arrival_owner_position_revision\x18\x0e \x01(\x04R!questArrivalOwnerPositionRevision\"\xcc\x04\n" +
 	"\x10EncounterSupport\x12(\n" +
 	"\x10caster_in_combat\x18\x01 \x01(\bR\x0ecasterInCombat\x12R\n" +
 	"\rresurrections\x18\x02 \x03(\v2,.warcraftbuddy.actions.v1.ResurrectionOptionR\rresurrections\x12I\n" +

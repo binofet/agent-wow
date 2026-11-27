@@ -815,7 +815,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-§Ë
+íÌ
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -2006,7 +2006,7 @@ requireLos
 quest_log_revision (RquestLogRevision8
 quest_inventory_revision (RquestInventoryRevision2
 quest_follow_revision (RquestFollowRevision(
-quest_owner_guid (RquestOwnerGuid"Ÿ
+quest_owner_guid (RquestOwnerGuid"å
 TargetMovementState
 target_guid (R
 targetGuid
@@ -2022,7 +2022,10 @@ requireLos
 clearance_target_guids	 (RclearanceTargetGuids'
 clearance_yards
  (RclearanceYards?
-quest_arrival_world_revision (RquestArrivalWorldRevision"Ì
+quest_arrival_world_revision (RquestArrivalWorldRevision9
+quest_arrival_guard_guids (RquestArrivalGuardGuids7
+quest_arrival_owner_guid (RquestArrivalOwnerGuidP
+%quest_arrival_owner_position_revision (R!questArrivalOwnerPositionRevision"Ì
 EncounterSupport(
 caster_in_combat (RcasterInCombatR
 resurrections (2,.warcraftbuddy.actions.v1.ResurrectionOptionRresurrectionsI

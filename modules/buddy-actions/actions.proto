@@ -1110,6 +1110,10 @@ message TargetMovementState {
   float clearance_yards = 10;
   // Own World position revision at a still-current stopped quest arrival.
   uint64 quest_arrival_world_revision = 11;
+  // Current party observations protected by this stopped detour, including self.
+  repeated uint64 quest_arrival_guard_guids = 12;
+  uint64 quest_arrival_owner_guid = 13;
+  uint64 quest_arrival_owner_position_revision = 14;
 }
 message EncounterSupport {
   bool caster_in_combat = 1;

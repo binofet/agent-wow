@@ -8,6 +8,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
@@ -38,7 +39,7 @@ func (s *Service) targetMovementSnapshotLocked() *actionsv1.TargetMovementState 
 		if g == nil || w.GetVisitRevision() != b.visit || !pose.Known || s.state.Moving || s.state.MotionUnconfirmed ||
 			w.Self.PositionRevision != b.selfRevision || pose.Revision != b.arrivalPositionRevision || s.movementSequence != b.moveSequence ||
 			g.PositionRevision != b.objectRevision || w.SelfQuestLogRevision != b.questRevision || w.InventoryRevision != b.inventoryRevision ||
-			s.followRevision != b.followRevision || b.ownerGUID != 0 && (!stationaryQuestOwner(w, b.ownerGUID) || distance(b.owner, playerPosition(w.Owner)) > 1.5) {
+			s.followRevision != b.followRevision || !harvestguard.QuestArrivalPartyCurrent(w, s.selfGUID, out.QuestArrivalGuardGuids, out.QuestArrivalOwnerGuid, out.QuestArrivalOwnerPositionRevision) {
 			out.Ready, out.Phase, out.QuestArrivalWorldRevision = false, "quest_object_replanning", 0
 		}
 	}
