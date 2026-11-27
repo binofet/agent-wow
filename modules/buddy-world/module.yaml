@@ -45,6 +45,8 @@ packets:
   SMSG_SPELL_GO: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_SPELL_FAILURE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_SPELL_FAILED_OTHER: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_AURA_UPDATE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_AURA_UPDATE_ALL: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   MSG_MOVE_TELEPORT_ACK: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_FORCE_MOVE_ROOT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_FORCE_MOVE_UNROOT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket

@@ -61,6 +61,7 @@ type observations struct {
 	discovery             clientDiscoveryAnchor
 	discoverySequence     uint64
 	castRevision          uint64
+	auraRevision          uint64
 	ownMovement           ownMovementObservation
 	ownSpline             ownSplineObservation
 }
@@ -133,6 +134,12 @@ func (s *observations) remove(guid uint64, now time.Time) {
 		s.corpses = make(map[uint64]*observed)
 		s.groundEffects = nil
 		s.groundEffectsOverflow = false
+		// Reacquiring the observing body cannot refresh the old aura lists.
+		for id, p := range s.creatures {
+			if p.auras != nil {
+				s.target(id).auras = nil
+			}
+		}
 	}
 	if s.items[guid] != nil {
 		delete(s.items, guid)
@@ -291,6 +298,9 @@ func creatureSnapshot(p *observed, s *observations, now time.Time) *worldv1.Crea
 	r.LevelKnown = p.known[0x36] && r.Level > 0 && r.Level <= math.MaxUint8
 	if r.Alive && sameCreatureCastMap(p, &s.players[0]) {
 		r.ActiveCast = p.cast.snapshot(now)
+	}
+	if p.auras != nil && sameCreatureCastMap(p, &s.players[0]) {
+		r.VisibleAuras = p.auras.snapshot(now)
 	}
 	if t := p.trajectory; t.known {
 		r.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: t.duration, AgeMs: uint64(t.elapsed) + age(now, t.at), DestinationKnown: t.destinationKnown, DestinationX: t.destination[0], DestinationY: t.destination[1], DestinationZ: t.destination[2], Cyclic: t.cyclic, TransportRelative: t.relative, TransportGuid: t.transport, TransportSeat: int32(t.seat), Stopped: t.stopped, Flags: t.flags}

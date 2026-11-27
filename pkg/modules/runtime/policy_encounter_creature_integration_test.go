@@ -70,6 +70,14 @@ func TestPackagedEncounterCreatureFactsReachActualScheduledLua(t *testing.T) {
 			3: 555, 0x18: 735, 0x20: 735, 0x36: uint32(51 + i), 0x37: 14, 0x42: math.Float32bits(2.75)})...)
 	}
 	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGUpdateObject, blocks)
+	// A normal, self-cast enemy buff and another creature's debuff share the visible list.
+	auras := binary.LittleEndian.AppendUint32(append(spellFixturePackedGUID(victim), 7), 8269)
+	auras = append(auras, 0x19, 48, 0)
+	auras = binary.LittleEndian.AppendUint32(append(auras, 12), 18173)
+	auras = append(auras, 0xa1, 46, 3)
+	auras = append(auras, spellFixturePackedGUID(policyWolfGUID)...)
+	auras = binary.LittleEndian.AppendUint32(auras, 60000)
+	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGAuraUpdateAll, binary.LittleEndian.AppendUint32(auras, 60000))
 	name := binary.LittleEndian.AppendUint32(nil, 555)
 	name = append(name, "Test Beast\x00\x00\x00\x00Watcher\x00\x00"...)
 	tail := make([]byte, 77)
@@ -131,6 +139,16 @@ func TestPackagedEncounterCreatureFactsReachActualScheduledLua(t *testing.T) {
 	}
 	targets := obs["targets"].(map[string]any)
 	selected := targets[id].(map[string]any)
+	visible, _ := selected["visibleAuras"].(map[string]any)
+	slots, _ := visible["slots"].([]any)
+	if visible["complete"] != true || len(slots) != 2 {
+		t.Fatalf("selected creature's normal visible aura list missing: %v", visible)
+	}
+	buff, debuff := slots[0].(map[string]any), slots[1].(map[string]any)
+	if buff["spellId"] != float64(8269) || buff["casterGuid"] != id || buff["positive"] != true || buff["remainingMs"] != nil ||
+		debuff["spellId"] != float64(18173) || debuff["stacksOrCharges"] != float64(3) || debuff["negative"] != true || debuff["casterGuid"] != strconv.FormatUint(policyWolfGUID, 10) || debuff["maxDurationMs"] != float64(60000) {
+		t.Fatal("visible spell, count, timer or source changed in the ordinary policy feed", slots)
+	}
 	templates := obs["creatureTemplates"].(map[string]any)
 	tooltip := templates["555"].(map[string]any)
 	self := obs["players"].(map[string]any)[strconv.FormatUint(policyMageGUID, 10)].(map[string]any)

@@ -14,11 +14,12 @@ import (
 func TestEncounterConsumersKeepSparseHealthAndExactTooltip(t *testing.T) {
 	probe := fmt.Sprintf(`
 local inspect_key="%d"
-local classified_health
+local classified_health, classified_auras
 local queue_intent=encounter_commands.queue_intent
 encounter_commands.queue_intent=function(obs)
   local target=obs.targets[inspect_key]
   classified_health=target and target.health
+  classified_auras=target and target.visibleAuras
   return queue_intent(obs)
 end
 local prior=encounter_tactics.decide
@@ -27,7 +28,9 @@ encounter_tactics.decide=function(input)
   if input.kind=="combat_queue" then
     local npc=input.targets[inspect_key]
     out.queue[#out.queue+1]={targetGuid=inspect_key, classifiedHealth=classified_health, tacticsHealth=npc.health,
-        level=npc.level, typeFlags=npc.template and npc.template.typeFlags, rank=npc.template and npc.template.rank}
+        level=npc.level, typeFlags=npc.template and npc.template.typeFlags, rank=npc.template and npc.template.rank,
+        visibleSpell=classified_auras and classified_auras.slots[1].spellId,
+        stacks=npc.visibleAuras and npc.visibleAuras.slots[1].stacksOrCharges}
   end
   return out
 end
@@ -58,6 +61,9 @@ end
 			if tc.qualified {
 				row["templateEntry"] = 11319
 			}
+			if tc.known {
+				row["visibleAuras"] = map[string]any{"complete": false, "slots": []any{map[string]any{"spellId": 18173, "stacksOrCharges": 3}}}
+			}
 			input := map[string]any{"selfGuid": fallbackGUID(fallbackSelf), "sessionId": fallbackSession, "visitId": "1", "mapId": 0, "worldObservationRevision": "1", "hostOwned": true,
 				"players":           map[string]any{fallbackGUID(fallbackSelf): map[string]any{"present": true, "aliveKnown": true, "alive": true, "mapKnown": true, "mapId": 0}},
 				"targets":           map[string]any{fallbackGUID(fallbackNPC): row},
@@ -70,6 +76,10 @@ end
 			last := decision.Output["queue"].([]any)[0].(map[string]any)
 			if last["level"] != float64(39) {
 				t.Fatal("numeric level", last)
+			}
+			if tc.known && (last["visibleSpell"] != float64(18173) || last["stacks"] != float64(3)) ||
+				!tc.known && (last["visibleSpell"] != nil || last["stacks"] != nil) {
+				t.Fatal("encounter command or tactics lost per-creature aura evidence", last)
 			}
 			for _, key := range []string{"classifiedHealth", "tacticsHealth"} {
 				v, present := last[key]

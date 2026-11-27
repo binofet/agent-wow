@@ -218,6 +218,8 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		return true, updates(c, state, now)
 	case opcode.SMSGSpellStart, opcode.SMSGSpellGo, opcode.SMSGSpellFailure, opcode.SMSGSpellFailedOther:
 		return state.observeCreatureCast(op, c, now)
+	case opcode.SMSGAuraUpdate, opcode.SMSGAuraUpdateAll:
+		return state.observeCreatureAuras(op, payload, now)
 	case opcode.SMSGCompressedUpdateObject:
 		declared := c.u32()
 		if c.err != nil {

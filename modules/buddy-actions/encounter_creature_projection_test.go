@@ -27,6 +27,7 @@ func TestEncounterCreatureProjectsEveryWorldFact(t *testing.T) {
 		Trajectory:       &worldv1.CreatureTrajectory{Known: true, DurationMs: 490, Cyclic: true},
 		CombatReachKnown: true, CombatReach: 2.75, LevelKnown: true, Level: 48, UnitFlagsKnown: true, DynamicFlagsKnown: true,
 		ActiveCast:              &worldv1.CreatureCast{SpellId: 2054, CastCount: 2, RemainingMs: 717, TargetGuid: 83, Revision: 17},
+		VisibleAuras:            &worldv1.VisibleCreatureAuras{Complete: true, Revision: 8, Slots: []*worldv1.VisibleCreatureAura{{Slot: 2, SpellId: 8269, StacksOrCharges: 2}}},
 		StationaryPositionKnown: true, NpcFlagsKnown: true, FactionTemplateKnown: true, UnitFlags_2Known: true, MovementFlagsKnown: true}
 	f.world.NearbyCreatures = []*worldv1.CreatureState{c}
 	projected := encounterTestRead(t, s, f).Targets[encounterGUID(c.Guid)]

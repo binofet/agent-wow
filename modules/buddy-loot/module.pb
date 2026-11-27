@@ -79,7 +79,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-§²
+ƒ¸
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -476,7 +476,7 @@ flagsKnown
 stateKnown
 state (RstateD
 creator_selected_target_guid (H RcreatorSelectedTargetGuidˆB
-_creator_selected_target_guid"
+_creator_selected_target_guid"ð
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -533,7 +533,31 @@ activeCast:
 npc_flags_known+ (RnpcFlagsKnown4
 faction_template_known, (RfactionTemplateKnown+
 unit_flags_2_known- (RunitFlags2Known0
-movement_flags_known. (RmovementFlagsKnown"¨
+movement_flags_known. (RmovementFlagsKnownQ
+visible_auras/ (2,.warcraftbuddy.world.v1.VisibleCreatureAurasRvisibleAuras"ò
+VisibleCreatureAuras
+complete (Rcomplete
+revision (RrevisionA
+slots (2+.warcraftbuddy.world.v1.VisibleCreatureAuraRslots#
+cleared_slots (RclearedSlots(
+full_revision (H RfullRevisionˆB
+_full_revision"‘
+VisibleCreatureAura
+slot (Rslot
+spell_id (RspellId
+flags (Rflags!
+caster_level (RcasterLevel*
+stacks_or_charges (RstacksOrCharges$
+caster_guid (H R
+casterGuidˆ+
+max_duration_ms (HRmaxDurationMsˆ&
+remaining_ms (HRremainingMsˆ
+positive	 (Rpositive
+negative
+ (RnegativeB
+_caster_guidB
+_max_duration_msB
+_remaining_ms"¨
 CreatureCast
 spell_id (RspellId
 
@@ -820,7 +844,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-¾Ò
+‘Ó
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1883,7 +1907,7 @@ type_flags (H R	typeFlagsˆ
 rank (HRrankˆB
 _type_flagsB	
 _familyB
-_rank"Î
+_rank"¡
 EncounterCreature
 guid (Rguid
 entry (Rentry
@@ -1938,7 +1962,8 @@ unitFlags2ˆ(
 distance_to_owner_observed' (H
 RdistanceToOwnerObservedˆ4
 faction_template_known( (RfactionTemplateKnown*
-template_entry) (HRtemplateEntryˆB	
+template_entry) (HRtemplateEntryˆQ
+visible_auras* (2,.warcraftbuddy.world.v1.VisibleCreatureAurasRvisibleAurasB	
 _map_idB
 _aliveB
 _combat_reachB
