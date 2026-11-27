@@ -3046,13 +3046,18 @@ class DirectBrain(AgentBrain):
         record["promptMetrics"] = dict(contextBytes=len(encode(prompt_state)),
             historyBytes=len(encode(history)), fullCapturedContextBytes=len(encode(full_context)))
         archive = {}
-        def archive_read(reference, content):
+        def publish_archive():
             # Separate host-history namespace; captured World/current authority
-            # stays unchanged. Only the bound conversation's historical tool results enter.
-            archive[str(reference['transcriptMessage'])] = dict(reference=reference, content=content,
-                semantics='Original historical tool result. Its receipt and authority belong to the original call.')
+            # stays unchanged. Only the bound conversation's visible history enters.
             full_context['conversationArchive'] = archive
             if tools is not None: tools.context['conversationArchive'] = archive
+        def archive_history(history):
+            archive.update(history)
+            publish_archive()
+        def archive_read(reference, content):
+            archive[str(reference['transcriptMessage'])] = dict(reference=reference, content=content,
+                semantics='Original historical tool result. Its receipt and authority belong to the original call.')
+            publish_archive()
         def dispatch(name, arguments):
             if interrupted():
                 raise OwnerInputPending("Fresh owner input is waiting")
@@ -3144,6 +3149,8 @@ class DirectBrain(AgentBrain):
                 natural=True, transcript_path=transcript_path, conversation_key=conversation_key,
                 assistant_text=getattr(self, "_assistant_text", None),
                 **(dict(archive_read=archive_read) if self.client.provider=='local' and
+                    (self.client.local_prompt_budget_bytes is not None or self.client.local_prompt_token_limit is not None) else {}),
+                **(dict(archive_history=archive_history) if gm_authorised() and self.client.provider=='local' and
                     (self.client.local_prompt_budget_bytes is not None or self.client.local_prompt_token_limit is not None) else {}),
                 read_only_tools={"policy_show", "context_read", "chat_read", "session_catalog", "read_observation", "spell_inspect", "find_usable_items", "check_gear_upgrade",
                     "workspace_read", "lua_evaluate", "gm_task_status", "gm_current_task", "gm_inspect"})

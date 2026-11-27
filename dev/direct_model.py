@@ -279,6 +279,152 @@ def protected_read_evidence(value):
     return _read_custody(value) or _receipt_evidence(value)
 
 
+def _gm_request_spans(messages, start, requests, limit):
+    """Recover old input boundaries from the actual hashes, including consecutive independent whispers."""
+    known, legacy = {}, {}
+    for key, row in requests.items():
+        if not isinstance(row, dict): continue
+        first = row.get("firstMessage")
+        if type(first) is int:
+            if 0 <= first < start:
+                known[first] = (key, row)
+        elif isinstance(row.get("inputSHA256"), str):
+            legacy.setdefault(row["inputSHA256"], []).append(key)
+    boundaries = dict(known)
+    i = 0
+    while i < start:
+        if i in known:
+            end = known[i][1].get("endMessage")
+            if type(end) is int and i < end <= start:
+                i = end
+                continue
+        if messages[i].get("role") != "user" or i in known:
+            i += 1
+            continue
+        end = i+1
+        while end < start and end not in known and messages[end].get("role") == "user": end += 1
+        # A run may be several independent requests which received no answer, or a single
+        # request with several USER messages. Only the unique complete hash segmentation binds them.
+        raw = [_packed(row,limit) for row in messages[i:end]]
+        ways, edges = {end:1}, {}
+        for first in reversed(range(i,end)):
+            digest = hashlib.sha256(b"[")
+            for last in range(first,end):
+                if last != first: digest.update(b",")
+                digest.update(raw[last-i])
+                completed = digest.copy()
+                completed.update(b"]")
+                identities = legacy.get(completed.hexdigest())
+                if identities and ways.get(last+1):
+                    ways[first] = min(2, ways.get(first,0) + ways[last+1])
+                    edges[first] = (last+1,identities)
+        if ways.get(i) == 1:
+            pos = i
+            while pos < end:
+                following, identities = edges[pos]
+                boundaries[pos] = (identities[0] if len(identities)==1 else None, {})
+                pos = following
+        else:
+            # Leave all unmatched/ambiguous owner rows in the working prompt.
+            for pos in range(i,end): boundaries[pos] = (None,None)
+        i = end
+    starts = sorted(boundaries)
+    return [(first, end, *boundaries[first]) for first, end in zip(starts,starts[1:]+[start])]
+
+
+def _gm_returned_batch(messages, first, end, read_only, unknown, limit):
+    """Describe writes only when all results match this exact assistant tool batch."""
+    try:
+        calls = {}
+        for call in messages[first]["tool_calls"]:
+            call_id, fn = call["id"], call["function"]
+            args = _decode(fn["arguments"])
+            if (not isinstance(call_id,str) or not call_id or call_id in calls or
+                    not isinstance(fn["name"],str) or not isinstance(args,dict)): return None
+            calls[call_id] = (fn["name"],args)
+        if not calls or len(calls) != end-first-1: return None
+        issued = []
+        for i in range(first+1,end):
+            row = messages[i]
+            call_id = row["tool_call_id"]
+            name, args = calls.pop(call_id)
+            value = _decode(row["content"])
+            fingerprint = hashlib.sha256(_packed([name,args],limit)).hexdigest()
+            if fingerprint in unknown or _read_custody(value): return None
+            if name == "gm_execute":
+                if not _pageable_gm_selection(value,args): return None
+                result = value["result"]
+                feedback = result.get("feedback")
+                if (not isinstance(feedback,dict) or feedback.get("error") or feedback.get("cursorLost")
+                        or feedback.get("status") not in ("observed","no_reply_yet")): return None
+                if any(item for key,item in result.items() if key.lower().endswith(("error","failure","unknown"))):
+                    return None
+                issued.append(dict(toolCallId=call_id,message=i,**{key:result[key] for key in
+                    ("command","commandSHA256","selectedGuid","sessionId","operationId","transportWritten",
+                     "selectionTransportWritten","commandTransportWritten","gameEffectClaimed","completion")}))
+            elif not DirectModel._read_only_call(name,args,read_only) or protected_read_evidence(value):
+                return None
+        return issued
+    except (ValueError,TypeError,KeyError,RecursionError,UnicodeError,ModelError):
+        return None
+
+
+def _gm_history_window(messages, start, requests, read_only, unknown, incoming, limit):
+    """Keep current intent, last real evidence and every unsafe older tool pair in its original role."""
+    spans = _gm_request_spans(messages,start,requests,limit)
+    current_text = [row["content"] for row in incoming if row.get("role") == "user"]
+    matching = next((first for first,end,_,_ in reversed(spans) if current_text and
+        [row.get("content") for row in messages[first:end] if row.get("role")=="user"] == current_text),None)
+    recent_batches = [i for i in range(start) if messages[i].get("role")=="assistant" and messages[i].get("tool_calls")][-2:]
+    turns, archived, hidden = {}, {}, set()
+    issued = 0
+    for first,end,identity,record in spans:
+        owners, written, eligible = [], [], []
+        safe = True
+        i = first
+        while i < end:
+            row = messages[i]
+            if row.get("role") == "user":
+                owners.append(i)
+            elif row.get("role") == "assistant" and row.get("tool_calls"):
+                batch_end = i+1
+                while batch_end < end and messages[batch_end].get("role") == "tool": batch_end += 1
+                batch = _gm_returned_batch(messages,i,batch_end,read_only,unknown,limit)
+                if batch is None or i in recent_batches: safe = False
+                else:
+                    written.extend(batch)
+                    eligible.extend(range(i,batch_end))
+                i = batch_end
+                continue
+            elif row.get("role") != "assistant":
+                safe = False
+            i += 1
+        if not owners: continue
+        final = messages[end-1]
+        replied = (final.get("role")=="assistant" and not final.get("tool_calls") and
+            isinstance(final.get("content"),str) and bool(final["content"]))
+        closed = end < start and safe and replied and record is not None and (
+            "firstMessage" not in record or record.get("endMessage")==end)
+        if not closed and not eligible: continue
+        turn = dict(firstMessage=first,lastMessage=end-1,ownerMessages=owners,issuedCommands=written,
+            wholeTurnPaged=closed)
+        if replied and record is not None: turn["assistantReply"] = end-1
+        if identity is not None: turn["requestId"] = identity
+        issued += len(written)
+        turns[str(first)] = turn
+        hidden.update(range(first,end) if closed else eligible)
+        for i in range(first,end):
+            archived[str(i)] = {key:value for key,value in messages[i].items()
+                if key not in ("reasoning","reasoning_content")}
+    if not turns: return None
+    archive = dict(turns=turns,messages=archived)
+    note = dict(archivedOwnerTurns=len(turns),issuedCommandReceipts=issued,
+        turnsPath=["conversationArchive","turns"],messagesPath=["conversationArchive","messages"])
+    if str(matching) in turns and turns[str(matching)]["wholeTurnPaged"]:
+        note["lastIdenticalOwnerTextTurn"] = ["conversationArchive","turns",str(matching)]
+    return [i for i in range(start) if i not in hidden],archive,note
+
+
 def _decode(raw):
     def unique(pairs):
         result = {}
@@ -669,7 +815,7 @@ class DirectModel:
                     if assistant_index is not None: protected.add(assistant_index)
         return protected
 
-    def _active_conversation(self, conversation, read_only_tools, unknown, pending, *, protect_local=False):
+    def _active_conversation(self, conversation, read_only_tools, unknown, pending, *, protect_local=False, transcript_indices=None):
         """Supersede only repeated, completed pure-read bodies in the API copy.
 
         The original calls/results, human messages and action custody remain in
@@ -744,9 +890,11 @@ class DirectModel:
             index, path, name, call_id, original = row
             raw = original.encode() if isinstance(original, str) else _packed(original, self.max_request_bytes)
             marker = dict(historicalRead=True, tool=name,
-                original=dict(transcriptMessage=index, toolCallId=call_id, resultPath=list(path)),
+                original=dict(transcriptMessage=transcript_indices[index] if transcript_indices is not None else index,
+                    toolCallId=call_id, resultPath=list(path)),
                 resultSHA256=hashlib.sha256(raw).hexdigest(), resultBytes=len(raw),
-                supersededBy=dict(transcriptMessage=latest[key][0], toolCallId=latest[key][3]),
+                supersededBy=dict(transcriptMessage=transcript_indices[latest[key][0]] if transcript_indices is not None
+                    else latest[key][0], toolCallId=latest[key][3]),
                 note="Full result remains in the durable transcript. The newer recorded result is not proof of current state; refresh this read for current facts.")
             replacement = _packed(marker, self.max_request_bytes)
             if len(replacement) >= len(raw): continue
@@ -760,7 +908,7 @@ class DirectModel:
         return active
 
     def _local_prompt(self, system, active, tools, read_only_tools, unknown, pending, *, canonical,
-                      aggressive=False, archive_read=None):
+                      aggressive=False, archive_read=None, transcript_indices=None, archived_turns=None):
         """Page historical reads and redundant selection observations on the outgoing copy.
 
         Byte limits are transport limits, not token estimates. An optional trusted
@@ -772,6 +920,7 @@ class DirectModel:
         for index in protected:
             projected[index] = copy.deepcopy(canonical[index])
         auxiliary = []
+        positions = range(len(canonical)) if transcript_indices is None else transcript_indices
         for index, message in enumerate(projected):
             # Auxiliary provider thinking is not visible content or tool custody.
             # Restore protected semantics first, then omit these API-only keys
@@ -780,7 +929,7 @@ class DirectModel:
             for key in ('reasoning_content','reasoning'):
                 if isinstance(message.get(key),str):
                     raw=message.pop(key).encode()
-                    auxiliary.append(dict(transcriptMessage=index,field=key,bytes=len(raw),
+                    auxiliary.append(dict(transcriptMessage=positions[index],field=key,bytes=len(raw),
                         sha256=hashlib.sha256(raw).hexdigest()))
         def payload(): return self._payload(system, projected, tools, natural=True)
         def measure():
@@ -852,9 +1001,9 @@ class DirectModel:
                             continue
                     except (KeyError, TypeError, ValueError, RecursionError, UnicodeError): continue
                     raw = full.encode()
-                    reference = dict(transcriptMessage=index, toolCallId=call_id,
+                    reference = dict(transcriptMessage=positions[index], toolCallId=call_id,
                         resultSHA256=hashlib.sha256(raw).hexdigest(), resultBytes=len(raw))
-                    path = ['conversationArchive', str(index), 'content']
+                    path = ['conversationArchive', str(positions[index]), 'content']
                     if page_selection:
                         selection = result["result"]["selection"]
                         raw_self = selection["rawSelf"]
@@ -887,13 +1036,46 @@ class DirectModel:
                 projected[index]["content"] = replacement
             archived_selections += len(current_selections)
             size, tokens = measure()
+        lookup_count = 0
+        if page_selections and not pending and (aggressive or not fits(size, tokens)):
+            from gm_lookup_context import project_lookup_feedback
+            for group in groups:
+                results = group["results"]
+                if (len(results) != len(group["calls"]) or
+                        {row.get("tool_call_id") for _,row in results} != set(group["calls"])): continue
+                for index,row in results:
+                    call_id = row["tool_call_id"]
+                    function = group["calls"][call_id].get("function",{})
+                    if function.get("name") != "gm_execute": continue
+                    try:
+                        args = _decode(function["arguments"])
+                        if not isinstance(args,dict) or not str(args.get("command","")).lower().startswith(".lookup "): continue
+                        if hashlib.sha256(_packed(["gm_execute",args], self.max_request_bytes)).hexdigest() in unknown: continue
+                        full = canonical[index]["content"]
+                        if not _pageable_gm_selection(_decode(full),args): continue
+                        raw = full.encode()
+                        pos = positions[index]
+                        reference = dict(transcriptMessage=pos,toolCallId=call_id,resultSHA256=hashlib.sha256(raw).hexdigest(),
+                            resultBytes=len(raw),contextPath=["conversationArchive",str(pos),"content"])
+                        existing = projected[index]["content"]
+                        view = project_lookup_feedback(_decode(existing),args,reference)
+                        if view is None: continue
+                        replacement = _packed(view,self.max_request_bytes*8).decode()
+                        if len(replacement.encode()) >= len(existing.encode()): continue
+                    except (KeyError,TypeError,ValueError,UnicodeError,RecursionError): continue
+                    archive_read(reference, full)
+                    projected[index]["content"] = replacement
+                    lookup_count += 1
+            if lookup_count: size, tokens = measure()
         audit = dict(reason="context_overflow" if aggressive else "configured_budget",
             canonicalMessagesUnchanged=True, archivedReadResults=changed, archivedSelectionSnapshotCount=archived_selections,
+            pagedItemLookupCount=lookup_count,
             archivedAssistantReasoning=auxiliary,
             beforeBytes=before_bytes, afterBytes=size, byteLimit=self.local_prompt_budget_bytes,
             beforeTokens=before_tokens, afterTokens=tokens, tokenLimit=self.local_prompt_token_limit,
             tokenCountKnown=tokens is not None, exactPayloadSHA256=hashlib.sha256(
                 _packed(payload(), self.max_request_bytes*8)).hexdigest())
+        if archived_turns is not None: audit["priorOwnerTurns"] = archived_turns
         if isinstance(self.local_token_counter, LMStudioPromptCounter):
             audit['meter'] = copy.deepcopy(self.local_token_counter.last_measurement)
         self.last_receipt["promptBudget"] = copy.deepcopy(audit)
@@ -912,7 +1094,8 @@ class DirectModel:
             re.search(r"\bcontext (?:size |length |window )?(?:has been )?exceeded\b", message) is not None)
 
     def _generate_natural(self, system, messages, reply_schema, tools, dispatch, *, cancelled,
-                          request_id, progress, transcript_path, conversation_key, assistant_text, read_only_tools, archive_read):
+                          request_id, progress, transcript_path, conversation_key, assistant_text, read_only_tools, archive_read,
+                          archive_history=None):
         identifier = request_id or uuid.uuid4().hex
         self.last_receipt = dict(requestId=identifier, execution="direct_api", provider=self.provider,
             requestedModel=self.model, baseURL=self.base_url, outcome="in_progress", httpRequests=0,
@@ -920,7 +1103,8 @@ class DirectModel:
         deadline = None if self.timeout is None else time.monotonic()+self.timeout
         try:
             if (not isinstance(system, str) or not isinstance(messages, list) or not isinstance(tools, list)
-                    or len(tools)>64 or not callable(dispatch) or archive_read is not None and not callable(archive_read)):
+                    or len(tools)>64 or not callable(dispatch) or archive_read is not None and not callable(archive_read)
+                    or archive_history is not None and not callable(archive_history)):
                 raise ModelError("invalid_generation_input")
             if (self.provider == "local" and (self.local_prompt_budget_bytes is not None or
                     self.local_prompt_token_limit is not None) and transcript_path is None):
@@ -984,24 +1168,41 @@ class DirectModel:
                 if prior is not None:
                     if prior["inputSHA256"] != digest: raise ModelError("conversation_request_identity_changed")
                     raise ModelError("conversation_request_already_entered")
-                state["requests"][identifier] = dict(inputSHA256=digest)
+                owner_turn_start = len(conversation)
+                state["requests"][identifier] = dict(inputSHA256=digest,firstMessage=owner_turn_start)
                 conversation.extend(incoming)
                 state["seen"][identifier] = {}
                 seen = state["seen"][identifier]
                 journal.save()
+                local_window = None
+                archived_turns = None
+                enabled = self.provider == "local" and (self.local_prompt_budget_bytes is not None or
+                    self.local_prompt_token_limit is not None)
+                if (enabled and archive_history is not None and archive_read is not None and "gm_execute" in functions
+                        and "context_read" in functions and "context_read" in read_only_tools and not state["pending"]):
+                    plan = _gm_history_window(conversation,owner_turn_start,state["requests"],read_only_tools,
+                        state["unknown"],incoming,self.max_request_bytes)
+                    if plan is not None:
+                        local_window, history, archived_turns = plan
+                        archive_history(history)
+                        system = ("Host conversation archive. Earlier messages and original native command receipts "
+                            "are available through context_read. Each turn identifies any observed reply and each write retains its "
+                            "transport and effect evidence. Use the current owner instruction for new actions. " +
+                            json.dumps(archived_turns,separators=(",",":")) + "\n" + system)
                 index = 0
                 while self.natural_tool_rounds is None or index < self.natural_tool_rounds:
                     self._check(cancelled, deadline)
-                    enabled = self.provider == "local" and (self.local_prompt_budget_bytes is not None or
-                        self.local_prompt_token_limit is not None)
-                    active = self._active_conversation(conversation, read_only_tools, state["unknown"], state["pending"], protect_local=enabled)
+                    positions = None if local_window is None else local_window + list(range(owner_turn_start,len(conversation)))
+                    window = conversation if positions is None else [conversation[i] for i in positions]
+                    active = self._active_conversation(window, read_only_tools, state["unknown"], state["pending"],
+                        protect_local=enabled,transcript_indices=positions)
                     def prepare(aggressive=False):
                         self.last_receipt.pop("promptBudget", None)
                         try:
                             retained = state.get("compactHistoricalReads") is True and not aggressive
                             prepared, audit = self._local_prompt(system, active, list(functions.values()), read_only_tools,
-                                state["unknown"], state["pending"], canonical=conversation, aggressive=aggressive or retained,
-                                archive_read=archive_read)
+                                state["unknown"], state["pending"], canonical=window, aggressive=aggressive or retained,
+                                archive_read=archive_read,transcript_indices=positions,archived_turns=archived_turns)
                             if retained:
                                 audit["reason"] = "retained_overflow_projection"
                                 self.last_receipt["promptBudget"] = audit
@@ -1042,6 +1243,7 @@ class DirectModel:
                         text = self._text(native)
                         if not text: raise ModelError("provider_empty_reply")
                         conversation.append(native)
+                        state["requests"][identifier]["endMessage"] = len(conversation)
                         journal.save()
                         self.last_receipt["outcome"] = "completed"
                         return dict(text=text, emote="NONE", action="NONE")
@@ -1060,6 +1262,7 @@ class DirectModel:
                         if len(calls)!=1: raise ModelError("mixed_final_reply")
                         conversation.append(native)
                         self._append_results(conversation, None, [(calls[0], dict(replyReturned=True))], append_native=False)
+                        state["requests"][identifier]["endMessage"] = len(conversation)
                         journal.save()
                         self.last_receipt["outcome"] = "completed"
                         return copy.deepcopy(calls[0]["arguments"])
@@ -1122,11 +1325,12 @@ class DirectModel:
 
     def generate(self, system, messages, reply_schema, tools, dispatch, *, cancelled=None, request_id=None, progress=None,
                  natural=False, transcript_path=None, conversation_key=None, assistant_text=None, read_only_tools=None,
-                 archive_read=None):
+                 archive_read=None, archive_history=None):
         if natural:
             return self._generate_natural(system, messages, reply_schema, tools, dispatch, cancelled=cancelled,
                 request_id=request_id, progress=progress, transcript_path=transcript_path, conversation_key=conversation_key,
-                assistant_text=assistant_text, read_only_tools=read_only_tools, archive_read=archive_read)
+                assistant_text=assistant_text, read_only_tools=read_only_tools, archive_read=archive_read,
+                archive_history=archive_history)
         identifier = request_id or uuid.uuid4().hex
         self.last_receipt = dict(requestId=identifier,execution="direct_api",provider=self.provider,
             requestedModel=self.model,baseURL=self.base_url,outcome="in_progress",httpRequests=0,

@@ -112,7 +112,10 @@ class RawGMContextTests(unittest.TestCase):
             self.assertEqual(last['fresh']['result']['value'],'1')
             self.assertFalse(last['grant']['result']['gameEffectClaimed'])
             self.assertEqual(last['grant']['result']['feedback']['messages'],[])
-            self.assertIn('hostArchivedSelection',last['lookup'])
+            if 'hostArchivedSelection' not in last['lookup']:
+                # Paging previous orders can now leave the complete current lookup inexpensive.
+                self.assertEqual(last['lookup']['result']['selection']['rawSelf']['observationAgeMs'],'70')
+            self.assertGreater(brain.client.last_receipt['promptBudget']['priorOwnerTurns']['issuedCommandReceipts'],0)
             self.assertNotIn('hostArchivedSelection',last['bag-5'])
             self.assertEqual(last['bag-5']['result']['feedback']['systemMessages'][0]['text'],'Bag 5: [Synthetic item] x 3')
             self.assertEqual(saved['messages'],json.loads(transcript.read_text())['messages'][:len(saved['messages'])])
@@ -123,6 +126,8 @@ class RawGMContextTests(unittest.TestCase):
                 view = json.loads(full['messages'][0]['content'].split(prefix,1)[1])
                 view.update(journal=state['journal'],inventory=inventory)
                 full['messages'][0]['content'] = system+prefix+encode(view).decode()
+                start=max(i for i,row in enumerate(full['messages']) if row==dict(role='user',content=user))
+                full['messages'][1:start]=saved['messages']
                 old_sizes.append(meter(full))
                 self.assertLessEqual(meter(payload),40960)
             self.assertGreater(max(old_sizes),40960)
