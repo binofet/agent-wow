@@ -147,6 +147,7 @@ type Service struct {
 	lootApproachGuard                    func(context.Context, *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool)
 	approachDelay                        func(context.Context, time.Duration) error
 	navDataDir                           string
+	flightFactions                       flightFactionTemplates
 	planPath                             func(context.Context, string, position, position) ([]position, error)
 	planMapPath                          func(context.Context, string, uint32, position, position) ([]position, error)
 	planRecoveryPath                     func(context.Context, string, uint32, position, position, float64) ([]position, error)

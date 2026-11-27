@@ -79,7 +79,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-¾¯
+ú¯
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -476,7 +476,7 @@ flagsKnown
 stateKnown
 state (RstateD
 creator_selected_target_guid (H RcreatorSelectedTargetGuidˆB
-_creator_selected_target_guid"¤
+_creator_selected_target_guid"à
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -528,7 +528,8 @@ levelKnown
 unit_flags_known' (RunitFlagsKnown.
 dynamic_flags_known( (RdynamicFlagsKnownE
 active_cast) (2$.warcraftbuddy.world.v1.CreatureCastR
-activeCast"¨
+activeCast:
+stationary_position_known* (RstationaryPositionKnown"¨
 CreatureCast
 spell_id (RspellId
 

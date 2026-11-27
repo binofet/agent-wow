@@ -61,6 +61,16 @@ func (s *Service) flightpathOperationCurrentLocked(op *actionsv1.FlightpathOpera
 		s.encounterVisit.bound && op.VisitId != 0 && op.VisitId == s.encounterVisit.revision
 }
 
+func (s *Service) flightpathQueryBodyReasonLocked(r *actionsv1.FlightpathQueryRequest, w *worldv1.SnapshotResponse) string {
+	flags := w.GetSelf().GetUnitFlags()
+	if r.Opportunity != nil && (r.Mode == "status" || r.Mode == "discover") {
+		// A stationary ordinary rider can speak to a currently witnessed
+		// flightmaster. Paid flight and its arrival use their original guards.
+		flags = s.groundTravelUnitFlags(w.GetSelf())
+	}
+	return safeQuestCharacterFlags(w, r.SelfGuid, movementflags.GroundCompatible, flags)
+}
+
 func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.FlightpathQueryRequest, w *worldv1.SnapshotResponse, now time.Time, stop *modv1.WorldPacket) string {
 	if ctx.Err() != nil {
 		return "flightpath_query_canceled"
@@ -83,7 +93,7 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 		s.state.Practicing || s.fargodeep.active || s.recovery.state.Active {
 		return "flightpath_other_body_action_pending"
 	}
-	if reason := safeQuestCharacter(w, s.selfGUID); reason != "" {
+	if reason := s.flightpathQueryBodyReasonLocked(r, w); reason != "" {
 		return "flightpath_" + reason
 	}
 	self := w.Self
@@ -142,11 +152,13 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 }
 
 func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.FlightpathQueryRequest) (*actionsv1.FlightpathObservationResponse, error) {
+	ctx = modcb.ForwardPolicySpell(ctx)
 	if request == nil || request.SessionId == "" || len(request.SessionId) > 128 || request.SelfGuid == 0 || request.VisitId == 0 ||
 		request.Token == "" || len(request.Token) > 128 || request.NpcGuid>>48 != 0xf130 || request.NpcGuid&0xffffff == 0 ||
 		(request.Mode != "status" && request.Mode != "discover" && request.Mode != "arrival") ||
 		(request.Mode == "arrival" && (request.ActivationRevision == 0 || request.CompletionRevision == 0)) ||
-		(request.Mode != "arrival" && (request.ActivationRevision != 0 || request.CompletionRevision != 0)) {
+		(request.Mode != "arrival" && (request.ActivationRevision != 0 || request.CompletionRevision != 0)) ||
+		request.Opportunity != nil && (request.Mode == "arrival" || request.Opportunity.Guid != request.NpcGuid || request.Opportunity.PositionRevision == 0) {
 		return nil, status.Error(codes.InvalidArgument, "exact session body visit exploration token flightmaster and query mode required")
 	}
 	if err := ctx.Err(); err != nil {
@@ -239,8 +251,11 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 		ctx = modcb.WithFlightpathWorldPackets(ctx, n)
 		sendScope = stop.TransportScope
 	}
-	if reason := safeQuestCharacter(w, r.SelfGuid); reason != "" {
+	if reason := s.flightpathQueryBodyReasonLocked(r, w); reason != "" {
 		return refuse("flightpath_" + reason)
+	}
+	if r.Opportunity != nil && !s.currentFlightmasterLocked(w, r.Opportunity) {
+		return refuse("observed_flightmaster_or_owner_intent_changed")
 	}
 	if !s.refreshPositionLocked(w) {
 		return refuse("flightpath_client_position_changed")

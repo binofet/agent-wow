@@ -79,7 +79,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-¾¯
+ú¯
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -476,7 +476,7 @@ flagsKnown
 stateKnown
 state (RstateD
 creator_selected_target_guid (H RcreatorSelectedTargetGuidˆB
-_creator_selected_target_guid"¤
+_creator_selected_target_guid"à
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -528,7 +528,8 @@ levelKnown
 unit_flags_known' (RunitFlagsKnown.
 dynamic_flags_known( (RdynamicFlagsKnownE
 active_cast) (2$.warcraftbuddy.world.v1.CreatureCastR
-activeCast"¨
+activeCast:
+stationary_position_known* (RstationaryPositionKnown"¨
 CreatureCast
 spell_id (RspellId
 
@@ -814,7 +815,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-ÓÁ
+­È
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1041,14 +1042,15 @@ corpseGuid(
 game_object_guid (RgameObjectGuid"G
 ApproachQuestRequest
 token (	Rtoken
-npc_guid (RnpcGuid"“
+npc_guid (RnpcGuid"å
 TravelToRequest
 token (	Rtoken
 map_id (RmapId
 x (Rx
 y (Ry
 z (Rz)
-arrival_distance (RarrivalDistance"Ð
+arrival_distance (RarrivalDistanceP
+flightmaster (2,.warcraftbuddy.actions.v1.FlightmasterTargetRflightmaster"Ð
 PlanRouteLegRequest
 
 session_id (	R	sessionId
@@ -1628,7 +1630,7 @@ session_id (	R	sessionId
 threat (2(.warcraftbuddy.actions.v1.SelfManaThreatRthreat?
 spells (2'.warcraftbuddy.actions.v1.SelfManaSpellRspells
 
-host_owned (R	hostOwned"‚
+host_owned (R	hostOwned"Û
 EncounterObservationResponse
 
 session_id (	R	sessionId
@@ -1671,7 +1673,10 @@ navigation`
 ground_effects_overflow (RgroundEffectsOverflow:
 nearby_creatures_complete  (RnearbyCreaturesCompleteL
 	summoning! (2..warcraftbuddy.actions.v1.SummoningObservationR	summoningT
-summoning_objects" (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjectse
+summoning_objects" (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjectsW
+
+flightpath# (27.warcraftbuddy.actions.v1.FlightpathObservationResponseR
+flightpathe
 PlayersEntry
 key (	Rkey?
 value (2).warcraftbuddy.actions.v1.EncounterPlayerRvalue:8g
@@ -1730,7 +1735,7 @@ owner_guid (R	ownerGuid6
 ready (Rready
 hold (Rhold'
 follow_revision (RfollowRevision
-phase (	Rphase"£	
+phase (	Rphase"Å	
 NavigationObservation6
 body_movement_supported (RbodyMovementSupported
 	following (R	following
@@ -1757,7 +1762,8 @@ goal_known (R	goalKnown
 movement_points_supported (RmovementPointsSupportedV
 movement_points (2-.warcraftbuddy.actions.v1.MovementPointsStateRmovementPoints4
 body_landing_supported (RbodyLandingSupportedS
-ground_mount (20.warcraftbuddy.actions.v1.FollowMountObservationRgroundMount"7
+ground_mount (20.warcraftbuddy.actions.v1.FollowMountObservationRgroundMount 
+independent (Rindependent"7
 PortalPoint
 x (Rx
 y (Ry
@@ -1856,7 +1862,7 @@ comboKnown*
 _map_idB
 _aliveB
 _ground_run_speedB
-_selected_target_guid"æ
+_selected_target_guid"»
 EncounterCreature
 guid (Rguid
 entry (Rentry
@@ -1893,10 +1899,23 @@ meleeReady.
 own_damage_families (RownDamageFamilies 
 orientation (Rorientationc
 attack_observation (24.warcraftbuddy.actions.v1.EncounterAttackObservationRattackObservation&
-combat_reach (HRcombatReachˆB	
+combat_reach (HRcombatReachˆS
+flightmaster (2/.warcraftbuddy.actions.v1.EncounterFlightmasterRflightmasterB	
 _map_idB
 _aliveB
-_combat_reach"»
+_combat_reach"Œ
+EncounterFlightmaster:
+stationary_position_known (RstationaryPositionKnown&
+position_age_ms (RpositionAgeMs,
+observation_age_ms (RobservationAgeMs%
+movement_flags (RmovementFlags:
+faction_template_friendly (RfactionTemplateFriendly"Ö
+FlightmasterTarget
+guid (Rguid+
+position_revision (RpositionRevision'
+follow_revision (RfollowRevision*
+follow_owner_guid (RfollowOwnerGuid*
+owner_range_yards (RownerRangeYards"»
 EncounterAttackObservation!
 victim_known (RvictimKnown
 victim_guid (R
@@ -2109,7 +2128,7 @@ targetGuid"€
 mode (	Rmode
 stage (	Rstage'
 source_revision (	RsourceRevision
-error (	Rerror"Ã
+error (	Rerror"“
 FlightpathQueryRequest
 
 session_id (	R	sessionId
@@ -2120,7 +2139,9 @@ session_id (	R	sessionId
 mode (	Rmode+
 expected_revision (RexpectedRevision/
 activation_revision (RactivationRevision/
-completion_revision	 (RcompletionRevision"ý
+completion_revision	 (RcompletionRevisionN
+opportunity
+ (2,.warcraftbuddy.actions.v1.FlightmasterTargetRopportunity"ý
 FlightpathOperation
 revision (Rrevision
 

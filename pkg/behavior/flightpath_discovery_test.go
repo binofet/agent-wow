@@ -222,6 +222,19 @@ func TestFlightpathDiscoveryKnownNodeNeedsExplicitMenuAndCleanup(t *testing.T) {
 	}
 }
 
+func TestFlightpathDiscoveryConsidersStationarySpawnAtClientGroundArrival(t *testing.T) {
+	f := newDiscoveryFixture(t)
+	w := f.observation("world")
+	w["self"].(map[string]any)["x"] = float64(-200)
+	npc := w["nearbyCreatures"].([]any)[0].(map[string]any)
+	npc["positionAgeMs"], npc["observationAgeMs"] = "105000", "105000"
+	npc["stationaryPositionKnown"] = true
+	f.observation("actions")["position"] = map[string]any{"known": true, "mapKnown": true, "estimated": true, "revision": "3"}
+	if got := f.acquire()["params"].(map[string]any)["npcGuid"]; got != discoveryNPC {
+		t.Fatal("the free child did not query the observed stationary flightmaster", got)
+	}
+}
+
 func TestFlightpathDiscoveryLearningNoticeNeedsStatusThenSeparateMenu(t *testing.T) {
 	f := newDiscoveryFixture(t)
 	status := f.acquire()

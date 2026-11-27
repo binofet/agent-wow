@@ -13,11 +13,14 @@ import (
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func (s *Service) ownsExploration(token string) bool {
 	return !s.closed && s.state.InteractionOwner == "exploration" && subtle.ConstantTimeCompare([]byte(token), []byte(s.interactionToken)) == 1
 }
+
+type flightmasterApproachKey struct{}
 
 // Idle-only leases remain bound to the body/visit which admitted them. Legacy
 // acquisition has no such binding and keeps its existing behavior.
@@ -52,7 +55,8 @@ func (s *Service) explorationContextLocked(ctx context.Context, token string, ma
 		}
 		s.state.HarvestGuardGuids, s.harvestGuardAt = guids, s.now()
 	}
-	w, err := s.snapshot(ctx)
+	target, _ := ctx.Value(flightmasterApproachKey{}).(*actionsv1.FlightmasterTarget)
+	w, err := s.snapshot(ctx, target.GetGuid())
 	if err != nil {
 		return "exploration_observations_unavailable"
 	}
@@ -78,6 +82,9 @@ func (s *Service) explorationContextLocked(ctx context.Context, token string, ma
 	if !s.explorationIdleBindingCurrentLocked(token, w) {
 		return "exploration_idle_body_or_visit_changed"
 	}
+	if target != nil && (!movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) || !s.currentFlightmasterLocked(w, target)) {
+		return "exploration_flightmaster_or_owner_intent_changed"
+	}
 	return ""
 }
 
@@ -102,6 +109,13 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 	// Capture the movement-only request once. Concurrent caller mutation cannot
 	// replace the destination, map or lease token during a route.
 	token, mapID, to := r.Token, r.MapId, position{x: r.X, y: r.Y, z: r.Z}
+	if r.Flightmaster != nil {
+		r = proto.Clone(r).(*actionsv1.TravelToRequest)
+		if r.Flightmaster.Guid>>48 != 0xf130 || r.Flightmaster.PositionRevision == 0 {
+			return nil, status.Error(codes.InvalidArgument, "exact observed flightmaster position required")
+		}
+		ctx = context.WithValue(ctx, flightmasterApproachKey{}, r.Flightmaster)
+	}
 	s.mu.Lock()
 	s.expireInteractionLocked()
 	if !s.ownsExploration(token) || s.questApproaching {
@@ -160,7 +174,16 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		call = context.WithValue(call, idleMotionScopeKey{}, scope)
 	}
 	from, revision, root := s.pos, s.positionRevision, s.navDataDir
-	swimming, allowWater := s.swimming, !s.state.InteractionHarvest && root != "" && s.lastWorld.GetSelf().GetUnitFlags()&movementflags.Mounted == 0 && waterMovementAllowed(s.lastWorld)
+	swimming, allowWater := s.swimming, r.Flightmaster == nil && !s.state.InteractionHarvest && root != "" && s.lastWorld.GetSelf().GetUnitFlags()&movementflags.Mounted == 0 && waterMovementAllowed(s.lastWorld)
+	if r.Flightmaster != nil {
+		npc := s.lastWorld.GetRequestedCreature()
+		if s.idleInteraction.token != token || swimming || distance(from, to) > 16 || npc.GetGuid() != r.Flightmaster.Guid ||
+			distance(to, position{npc.X, npc.Y, npc.Z, npc.Orientation}) > .05 {
+			s.state.Reason = "exploration_flightmaster_ground_approach_unavailable"
+			s.mu.Unlock()
+			return nil, nil
+		}
+	}
 	// Navmesh geometry is speed-independent. Retain the observed speed across
 	// its unlocked planning interval; every following checkpoint refreshes it.
 	intervalSpeed := observedRunSpeed(s.lastWorld.GetSelf())
@@ -212,6 +235,11 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		}
 		return nil, nil
 	}
+	if r.Flightmaster != nil && routeRemaining(from, path, 0) > 20 {
+		s.state.Reason = "exploration_flightmaster_route_too_long"
+		s.mu.Unlock()
+		return nil, nil
+	}
 	// The planner can normalize the destination onto validated ground. A
 	// precise request must fit that actual endpoint; never append caller Z or
 	// bypass the physical route to manufacture a closer arrival.
@@ -259,6 +287,12 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		}
 		if why == "" && (s.posMap != mapID || s.positionRevision != revision || distance(s.pos, expected) > .05) {
 			why = "exploration_position_changed_after_planning"
+		}
+		// Hand control back to the everyday policy after a short ordinary
+		// ground input. The next leg requires another observed target and
+		// owner decision. The existing deferred STOP retires this input.
+		if why == "" && r.Flightmaster != nil && step > 0 && (distance(from, s.pos) >= 1.5 || step >= 3) {
+			why = "exploration_flightmaster_checkpoint_reached"
 		}
 		if why == "" && (mixed == nil || mixed.drop == nil) && distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
 			why = "exploration_within_distance"

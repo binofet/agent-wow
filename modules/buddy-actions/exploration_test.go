@@ -391,8 +391,18 @@ func TestExplorationRegistryAliasAndGeneratedMovementOnlyRequest(t *testing.T) {
 		t.Fatal(method, ok)
 	}
 	request := method.Descriptor().Input()
-	if request.FullName() != "warcraftbuddy.actions.v1.TravelToRequest" || request.Fields().Len() != 6 || request.Fields().ByName("npc_guid") != nil {
+	if request.FullName() != "warcraftbuddy.actions.v1.TravelToRequest" || request.Fields().Len() != 7 || request.Fields().ByName("npc_guid") != nil {
 		t.Fatal("wrong movement contract", request)
+	}
+	guard := request.Fields().ByName("flightmaster")
+	if guard == nil || guard.Number() != 7 || !guard.HasPresence() || guard.Kind() != protoreflect.MessageKind ||
+		guard.Message().FullName() != "warcraftbuddy.actions.v1.FlightmasterTarget" || guard.Message().Fields().Len() != 5 {
+		t.Fatal("movement requires an optional exact flightmaster guard", guard)
+	}
+	for i, name := range []protoreflect.Name{"guid", "position_revision", "follow_revision", "follow_owner_guid", "owner_range_yards"} {
+		if field := guard.Message().Fields().ByNumber(protoreflect.FieldNumber(i + 1)); field == nil || field.Name() != name {
+			t.Fatal("unexpected flightmaster movement guard field", name)
+		}
 	}
 	for _, name := range []string{"token", "map_id", "x", "y", "z", "arrival_distance"} {
 		if request.Fields().ByName(protoreflect.Name(name)) == nil {

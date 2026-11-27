@@ -22,6 +22,7 @@ local movement = encounter_movement
 local commands = encounter_commands
 local spell_invocation = encounter_spell_invocation
 local transient_tasks = encounter_tasks
+local flightpoint = encounter_flightpoint
 local intent = encounter_intent or {}
 if encounter_priors and encounter_priors.set_role then encounter_priors.set_role(intent.role) end
 local state = {bindings={}, defeated={}, controls={}, engaged={}}
@@ -67,6 +68,7 @@ local function on_event(event)
     if movement and not movement.on_event(event) then return false end
     if commands and not commands.on_event(event) then return false end
     if transient_tasks and not transient_tasks.on_event(event) then return false end
+    if flightpoint then flightpoint.on_event(event) end
     if healing and not healing.on_event(event) then return false end
     if self_mana and not self_mana.on_event(event) then return false end
     if support_policy and support_policy.on_event and not support_policy.on_event(event) then return false end
@@ -124,6 +126,7 @@ local function export_state()
     return {version=1, data={warrior=warrior and warrior.export_state(),controlRecovery=control_recovery and control_recovery.export_state(),encounter=state,deathRecovery=death_recovery and death_recovery.export_state(),buffs=buffs and buffs.export_state(), healing=healing and healing.export_state(),
                             selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
                             tasks=transient_tasks and transient_tasks.export_state(),
+                            flightpoint=flightpoint and flightpoint.export_state(),
                             spellInvocation=spell_invocation and spell_invocation.export_state(),
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
                             autoEquipment=auto_equipment and auto_equipment.export_state(),
@@ -155,6 +158,7 @@ local function import_state(checkpoint)
     })) then return false end
     if checkpoint.data.commands and (not commands or not commands.import_state(checkpoint.data.commands)) then return false end
     if checkpoint.data.tasks and (not transient_tasks or not transient_tasks.import_state(checkpoint.data.tasks)) then return false end
+    if checkpoint.data.flightpoint and (not flightpoint or not flightpoint.import_state(checkpoint.data.flightpoint)) then return false end
     if checkpoint.data.spellInvocation and (not spell_invocation or not spell_invocation.import_state(checkpoint.data.spellInvocation)) then return false end
     if checkpoint.data.controlRecovery and (not control_recovery or not control_recovery.import_state(checkpoint.data.controlRecovery)) then return false end
     if checkpoint.data.support and (not support_policy or not support_policy.import_state or not support_policy.import_state(checkpoint.data.support)) then return false end
@@ -1080,7 +1084,7 @@ local function decide(frame)
                 ownMovement,task_support_action or protectedMovement or task_view and (task_view.hold or task_view.action) or out.consumable and out.consumable.hold)
         end
     end
-    if out.encounterOwnership and movement and movement.follow_mount and current and current_visit(current) and
+    if (not flightpoint or not flightpoint.active()) and out.encounterOwnership and movement and movement.follow_mount and current and current_visit(current) and
        current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and
        state.settledAt~=state.sequence and #frame.pending==0 and not out.action and not out.focusGuid and
        not (task_view and task_view.hold) and not (out.consumable and out.consumable.hold) then
@@ -1088,6 +1092,17 @@ local function decide(frame)
         if riding then out.action=riding;out.followFormation=nil;out.portalCatchup=nil end
     end
     if movement and movement.commit_follow_mount then movement.commit_follow_mount(out.action) end
+    if flightpoint and current and current.hostOwned==true and current.sessionId==frame.session_id and
+       frame.input.kind=="encounter" and frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence then
+        local available=out.action==nil and #frame.pending==0
+        local quiet=available and not out.focusGuid and not task_support_action and not out.portalCatchup and
+            not (task_view and (task_view.task or task_view.hold)) and not (out.consumable and out.consumable.hold) and
+            not (out.corpseLoot and out.corpseLoot.corpseGuid) and not (spell_invocation and spell_invocation.pending())
+        local defaultFollow=movement and movement.follow_owner_by_default==true and (current.navigation or {}).followFormationSupported==true
+        local proposal,request=flightpoint.decide(frame,current,quiet,available,defaultFollow)
+        if proposal then out.action,out.actionRequestId=proposal,request end
+        if quiet and flightpoint.active() then out.followFormation=nil end
+    end
     if shot_proposal and shot_proposal.action==out.action then state.pulseShot={key=shot_proposal.key,target=shot_proposal.target} end
     if commands and commands.ranged_finish then commands.ranged_finish(out.action) end
     if transient_tasks and task_view and task_view.action==out.action then
