@@ -105,8 +105,17 @@ func TestRouteLegAllowsFreshMovementAndCapturesRequestValues(t *testing.T) {
 	}
 }
 
+func TestRouteLegAcceptsDistantDestinationWithLocalStep(t *testing.T) {
+	s, f, req := routeLegRig(t)
+	req.X = f.world.Self.X + 8000
+	out, err := s.PlanRouteLeg(context.Background(), req)
+	if err != nil || out.GoalReached || out.Endpoint.X != f.world.Self.X+150 || len(f.packets) != 0 {
+		t.Fatal(out, err)
+	}
+}
+
 func TestRouteLegRejectsStaleOrUnknownBindingsBeforePlanner(t *testing.T) {
-	for _, mode := range []string{"nil", "sid", "guid", "revision", "map", "unknown", "motion_unknown", "moving_stale", "nan", "budget", "closing", "world_error"} {
+	for _, mode := range []string{"nil", "sid", "guid", "revision", "map", "unknown", "motion_unknown", "moving_stale", "nan", "closing", "world_error"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, req := routeLegRig(t)
 			calls := 0
@@ -133,8 +142,6 @@ func TestRouteLegRejectsStaleOrUnknownBindingsBeforePlanner(t *testing.T) {
 				f.world.Self.MovementFlags, f.world.Self.PositionAgeMs = 1, 2001
 			case "nan":
 				req.Z = float32(math.NaN())
-			case "budget":
-				req.X = f.world.Self.X + 1201
 			case "closing":
 				s.closed = true
 			case "world_error":

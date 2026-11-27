@@ -46,10 +46,6 @@ func (s *Service) PlanRouteLeg(ctx context.Context, req *actionsv1.PlanRouteLegR
 		return nil, status.Error(codes.FailedPrecondition, "route position revision changed")
 	}
 	from := position{x: start.X, y: start.Y, z: start.Z}
-	if distance(from, goal) > buddynav.LegMaxTargetDistance {
-		s.mu.Unlock()
-		return nil, status.Error(codes.InvalidArgument, "route destination exceeds 1200yd budget")
-	}
 	planner, root := s.planLegPath, s.navDataDir
 	s.mu.Unlock()
 	if planner == nil {

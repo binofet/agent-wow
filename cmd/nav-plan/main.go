@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 )
@@ -69,6 +70,7 @@ func run(args []string, input io.Reader, output io.Writer, plan planner) int {
 	flags := flag.NewFlagSet("nav-plan", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	dir := flags.String("data-dir", "", "absolute directory of copied client maps, mmaps and vmaps")
+	fullCorridor := flags.Bool("corridor", false, "return the complete same-map dry-ground polygon corridor and its steering corners")
 	if err := flags.Parse(args); err != nil {
 		return failure(output, "invalid_arguments", err)
 	}
@@ -101,6 +103,18 @@ func run(args []string, input io.Reader, output io.Writer, plan planner) int {
 	goal, err := point(r.Goal)
 	if err != nil {
 		return failure(output, "invalid_input", err)
+	}
+	if *fullCorridor {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		route, err := buddynav.PlanGroundCorridorContext(ctx, filepath.Clean(*dir), *r.MapID, start, goal)
+		if err != nil {
+			return failure(output, "route_unavailable", err)
+		}
+		if err := json.NewEncoder(output).Encode(map[string]any{"ok": true, "mapId": *r.MapID, "corridor": route}); err != nil {
+			return 1
+		}
+		return 0
 	}
 	// The planner owns its unchanged one-second budget and all physical checks.
 	points, err := plan(context.Background(), filepath.Clean(*dir), *r.MapID, start, goal)
