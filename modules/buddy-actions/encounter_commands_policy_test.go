@@ -151,6 +151,55 @@ func TestAutomaticLuaPolymorphMaintainsHealthyAddWithoutACommandOrHealthPressure
 	}
 }
 
+func TestAutomaticPolymorphRespondsToPartyPressure(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		health, class   uint32
+		explicit, sheep bool
+	}{
+		{"comfortable tank", 100, 1, false, false},
+		{"tank above threshold", 76, 1, false, false},
+		{"tank at threshold", 75, 1, false, true},
+		{"two mobs on a priest", 100, 5, false, true},
+		{"explicit moon on easy pull", 100, 1, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host, err := behavior.NewSession(context.Background(), "commands-body", commandPolicySource(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(host.Close)
+			obs := commandObservation()
+			obs.Party.Group.Members = []*partyv1.Member{{Guid: 1, Online: true}, {Guid: 3, Online: true}}
+			victim := proto.Clone(obs.Players["1"]).(*actionsv1.EncounterPlayer)
+			victim.Guid, victim.HealthKnown, victim.Health, victim.MaxHealth = 3, true, tc.health, 100
+			victim.ClassKnown, victim.ClassId = true, tc.class
+			obs.Players["3"] = victim
+			target := encounterGUID(sheepTarget)
+			add := obs.Targets[target]
+			add.X, add.Engaged, add.HealthKnown, add.Health, add.MaxHealth = 10, true, true, 100, 100
+			focus := proto.Clone(add).(*actionsv1.EncounterCreature)
+			focus.Guid = sheepTarget + 1
+			kill := encounterGUID(focus.Guid)
+			obs.Targets[kill] = focus
+			obs.Engagement = map[string]*actionsv1.EncounterEngagement{target: {VictimGuid: 3, AgeMs: 100}, kill: {VictimGuid: 3, AgeMs: 100}}
+			obs.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: sheepTarget, VisitId: 1, RangeYards: 30, RequireLos: true, Ready: true}
+			if tc.explicit {
+				sendPolicyCommand(t, host, map[string]any{"task": "control", "technique": "polymorph", "mark": "moon"})
+			}
+			out := commandDecision(t, host, observeCommandPolicy(t, host, obs), kill)
+			if tc.sheep {
+				expectControlAction(t, out, "polymorph", target)
+				return
+			}
+			intent := out["intent"].(map[string]any)
+			if out["action"] != nil || len(intent["controlTargets"].(map[string]any)) != 0 {
+				t.Fatal("easy pull reserved or controlled an enemy", out)
+			}
+		})
+	}
+}
+
 func TestGenericLuaControlAndExplicitMarkOverrideDefaultSelection(t *testing.T) {
 	host, err := behavior.NewSession(context.Background(), "commands-body", commandPolicySource(t))
 	if err != nil {

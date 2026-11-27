@@ -261,6 +261,14 @@ local function assign_pull_marks(input)
     return {assignments=assignments}
 end
 
+local peel_health_percent = 75
+local function needs_peel(player, map, attackers)
+    if not alive(player) or player.mapKnown~=true or player.mapId~=map or player.healthKnown~=true or
+       type(player.health)~="number" or type(player.maxHealth)~="number" or player.maxHealth<=0 then return true end
+    local cloth = player.classKnown and (player.classId==5 or player.classId==8 or player.classId==9)
+    return player.health*100<=player.maxHealth*peel_health_percent or cloth and attackers>=2
+end
+
 local function automatic_control(input)
     local group = (input.party or {}).group or {}
     local caster, focus = guid(input.casterGuid), guid(input.focusGuid)
@@ -292,19 +300,36 @@ local function automatic_control(input)
     end
 
     local focused, attempted = input.focusTargets or {}, input.attemptedTargets or {}
-    local threats, choice, choiceHealth, choiceAge = 0, nil, nil, nil
+    local threats, attackers, currentVictim = 0, {}, {}
+    for target,npc in pairs(input.targets or {}) do
+        local age=tonumber(npc.attackAgeMs)
+        if guid(target) and alive(npc) and npc.attackable and not (observed[target] or {}).active and
+           npc.attackVictimKnown and members[npc.attackVictimGuid] and age and age>=0 and age<=5000 then
+            local victim=npc.attackVictimGuid
+            currentVictim[target]=victim
+            attackers[victim]=(attackers[victim] or 0)+1
+            threats=threats+1
+        end
+    end
+    local pressured, partyNeedsPeel = {}, false
+    for victim,count in pairs(attackers) do
+        if needs_peel((input.players or {})[victim],input.mapId,count) then
+            pressured[victim],partyNeedsPeel=true,true
+        end
+    end
+    if threats>0 and not partyNeedsPeel then return wait("automatic_control_party_healthy") end
+    local choice, choiceHealth, choiceAge
     local renew, renewIsThreat = nil, false
     for target, npc in pairs(input.targets or {}) do
         local age = tonumber(npc.attackAgeMs)
         local aura = observed[target]
         if guid(target) and alive(npc) and npc.attackable and not (aura and aura.active) then
-            local threatening = npc.attackVictimKnown and members[npc.attackVictimGuid] and age and age >= 0 and age <= 5000
-            if threatening then threats = threats + 1 end
+            local victim=currentVictim[target]
             local health = tonumber(npc.healthPercent)
             if target ~= focus and not focused[target] and not attempted[target] and npc.inRange and health and health > 25 then
-                if target == preferred then
-                    renew, renewIsThreat = target, threatening
-                elseif threatening and (not choice or health > choiceHealth or
+                if target == preferred and (not victim or pressured[victim]) then
+                    renew, renewIsThreat = target, victim~=nil
+                elseif victim and pressured[victim] and (not choice or health > choiceHealth or
                         health == choiceHealth and (age < choiceAge or age == choiceAge and target < choice)) then
                     choice, choiceHealth, choiceAge = target, health, age
                 end
