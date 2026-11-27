@@ -3,8 +3,10 @@ package buddyquests
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"testing"
+	"time"
 
 	questsv1 "github.com/agent-wow/agent-wow/modules/buddy-quests/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -248,4 +250,48 @@ func TestShatteredNecklaceKnownFullLogRejectionNeedsChangedCapacityAndFreshOffer
 		t.Fatal("used earlier offer after rejection", err)
 	}
 	acceptOwnedStarter(t, s, f, offerOwnedStarter(t, s, f, necklaceGUID, 2198))
+}
+
+func TestOwnedQuestStarterLateRealmRefusalRequiresExactQuestWindowAndVisit(t *testing.T) {
+	for _, mode := range []string{"current", "other quest", "unkeyed", "expired", "new visit", "actual own-log insertion"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f := necklaceRig()
+			now := time.Now()
+			s.now = func() time.Time { return now }
+			r := offerOwnedStarter(t, s, f, necklaceGUID, 2198)
+			f.onSend = func(context.Context, *modv1.SendPacketRequest) error { return errors.New("accept response lost") }
+			if _, err := s.Accept(context.Background(), r); err == nil {
+				t.Fatal("missing write uncertainty")
+			}
+			id := uint32(2198)
+			op := uint32(opcode.SMSGQuestgiverQuestFailed)
+			if mode == "other quest" {
+				id = 2283
+			}
+			payload := binary.LittleEndian.AppendUint32(nil, id)
+			payload = binary.LittleEndian.AppendUint32(payload, 17)
+			if mode == "unkeyed" {
+				op, payload = opcode.SMSGQuestlogFull, nil
+			}
+			if mode == "expired" {
+				now = now.Add(responseTimeout + time.Millisecond)
+			}
+			if mode == "new visit" {
+				f.world.VisitRevision++
+			}
+			packet(t, s, op, payload)
+			expected := questsv1.AcceptanceStatus_WRITE_UNCONFIRMED
+			if mode == "current" {
+				expected = questsv1.AcceptanceStatus_SERVER_REJECTED
+			}
+			if mode == "actual own-log insertion" {
+				f.confirm(2198)
+				expected = questsv1.AcceptanceStatus_CONFIRMED_IN_LOG
+			}
+			a := snapshot(t, s).LastAcceptance
+			if a.Status != expected || a.TransportWritten || mode == "current" && a.ServerReason != 17 {
+				t.Fatal(a)
+			}
+		})
+	}
 }

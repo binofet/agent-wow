@@ -4,6 +4,7 @@ import (
 	"context"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	questsv1 "github.com/agent-wow/agent-wow/modules/buddy-quests/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
@@ -22,8 +23,16 @@ type itemGiverOffer struct {
 }
 
 type itemQuestReservation struct {
-	guid, baselineLogRevision, rejectedFullLogRevision uint64
-	rewarded                                           bool
+	guid, visit, baselineLogRevision, rejectedFullLogRevision uint64
+	rewarded                                                  bool
+}
+
+// A quest-identified realm failure may arrive after the write callback was
+// lost. A World read begun after that packet must still see its original visit.
+type itemQuestFailure struct {
+	acceptance *questsv1.Acceptance
+	visit      uint64
+	reason     uint32
 }
 
 func (s *Service) itemQuestReservedLocked(binding itemGiverBinding) bool {

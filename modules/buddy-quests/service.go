@@ -47,6 +47,7 @@ type Service struct {
 	activeItemGiver                     *itemGiverBinding
 	itemGiverOffer                      *itemGiverOffer
 	reservedItemQuests                  map[uint32]itemQuestReservation
+	pendingItemFailure                  *itemQuestFailure
 }
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
@@ -77,6 +78,9 @@ func (s *Service) invoke(ctx context.Context, module, method string, input, outp
 	return result.Result.UnmarshalTo(output)
 }
 func (s *Service) world(ctx context.Context) (*worldv1.SnapshotResponse, error) {
+	s.mu.Lock()
+	failure := s.pendingItemFailure
+	s.mu.Unlock()
 	result := &worldv1.SnapshotResponse{}
 	if err := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, result); err != nil {
 		return nil, err
@@ -86,6 +90,14 @@ func (s *Service) world(ctx context.Context) (*worldv1.SnapshotResponse, error) 
 	}
 	s.mu.Lock()
 	s.applyLogLocked(result)
+	if failure != nil && failure == s.pendingItemFailure && result.VisitRevision != 0 {
+		s.pendingItemFailure = nil
+		if a := s.state.LastAcceptance; a == failure.acceptance && result.VisitRevision == failure.visit &&
+			(a.Status == questsv1.AcceptanceStatus_WRITE_UNCONFIRMED || a.Status == questsv1.AcceptanceStatus_UNCONFIRMED_TIMEOUT) {
+			a.Status, a.ServerReason, a.Failure = questsv1.AcceptanceStatus_SERVER_REJECTED, failure.reason, "server_quest_failed"
+			s.state.Revision++
+		}
+	}
 	s.applySharedLogLocked()
 	s.applyRewardWorldLocked(result)
 	s.applyExplorationLocked()
@@ -485,7 +497,7 @@ func (s *Service) Accept(ctx context.Context, r *questsv1.QuestRequest) (*quests
 		if s.reservedItemQuests == nil {
 			s.reservedItemQuests = make(map[uint32]itemQuestReservation)
 		}
-		s.reservedItemQuests[r.QuestId] = itemQuestReservation{guid: r.NpcGuid, baselineLogRevision: s.state.QuestLogRevision}
+		s.reservedItemQuests[r.QuestId] = itemQuestReservation{guid: r.NpcGuid, visit: s.activeItemGiver.visit, baselineLogRevision: s.state.QuestLogRevision}
 	}
 	q.AcceptRequested = true
 	s.acceptUntil = s.now().Add(responseTimeout)
@@ -629,15 +641,24 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	} else if failure != "" {
 		s.rejectSharedLocked(failure, reason, failedQuest)
 		s.rejectRewardLocked(failure, reason, failedQuest)
-		if a := s.state.LastAcceptance; a != nil && a.Status == questsv1.AcceptanceStatus_REQUESTED && s.now().Before(s.acceptUntil) && (failedQuest == 0 || failedQuest == a.QuestId) {
-			a.Status = questsv1.AcceptanceStatus_SERVER_REJECTED
-			a.Failure = failure
-			a.ServerReason = reason
-			if prior, ok := s.reservedItemQuests[a.QuestId]; ok && prior.guid == a.NpcGuid && packet.Opcode == opcode.SMSGQuestlogFull {
-				prior.rejectedFullLogRevision = s.state.QuestLogRevision
-				s.reservedItemQuests[a.QuestId] = prior
+		if a := s.state.LastAcceptance; a != nil && s.now().Before(s.acceptUntil) && (failedQuest == 0 || failedQuest == a.QuestId) {
+			prior := s.reservedItemQuests[a.QuestId]
+			switch a.Status {
+			case questsv1.AcceptanceStatus_REQUESTED:
+				a.Status = questsv1.AcceptanceStatus_SERVER_REJECTED
+				a.Failure = failure
+				a.ServerReason = reason
+				if prior.guid == a.NpcGuid && packet.Opcode == opcode.SMSGQuestlogFull {
+					prior.rejectedFullLogRevision = s.state.QuestLogRevision
+					s.reservedItemQuests[a.QuestId] = prior
+				}
+				s.state.Revision++
+			case questsv1.AcceptanceStatus_WRITE_UNCONFIRMED, questsv1.AcceptanceStatus_UNCONFIRMED_TIMEOUT:
+				if s.pendingItemFailure == nil && prior.guid == a.NpcGuid && prior.visit != 0 &&
+					packet.Opcode == opcode.SMSGQuestgiverQuestFailed && failedQuest == a.QuestId {
+					s.pendingItemFailure = &itemQuestFailure{acceptance: a, visit: prior.visit, reason: reason}
+				}
 			}
-			s.state.Revision++
 		}
 	}
 	return &emptypb.Empty{}, nil
