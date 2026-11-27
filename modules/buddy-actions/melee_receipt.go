@@ -17,13 +17,57 @@ type meleeAttempt struct {
 	until time.Time
 }
 
-// A policy swing outlives the receipt for its START. Until the matching STOP
-// or a verified world entry, the native controller may neither adopt it nor
-// start another attack, even if either transport outcome was ambiguous.
+// A policy swing outlives its START receipt. Keep the separate STOP under its
+// original custody even if the target later dies.
 type encounterMeleeSwing struct {
 	target, visit    uint64
 	stopIssued       bool
 	controlStopUntil time.Time
+	otherVictim      uint64
+}
+
+func (s *Service) observeOwnMeleeActivityLocked(target uint64) {
+	swing := &s.encounterSwing
+	swing.controlStopUntil = time.Time{}
+	if swing.target != 0 && target != 0 && target != swing.target {
+		swing.otherVictim = target
+	}
+}
+
+// A body can still see the owner's portal while an attack prevents movement.
+// A fresh exact corpse proves the original victim cannot keep fighting. It
+// never establishes a successful START or resolves a different pending STOP.
+func (s *Service) reconcileEncounterSwingLocked(ctx context.Context) bool {
+	swing, op := s.encounterSwing, s.meleeOp
+	if s.closed {
+		return false
+	}
+	unacknowledged := op != nil && op.view.Enabled && op.view.TransportWritten && op.view.Phase == "outcome_unconfirmed_no_retry" &&
+		op.view.SelfGuid == s.selfGUID && op.view.VisitId == swing.visit && op.view.TargetGuid == swing.target &&
+		s.state.AutoAttackRequested && s.autoTarget == swing.target && s.meleeAcknowledgedVisit == 0 &&
+		!s.state.AutoAttacking && s.state.AutoAttackTargetGuid == 0 && !s.state.AutoAttackUnconfirmed &&
+		!s.autoStopping && !swing.stopIssued && swing.otherVictim == 0
+	now := s.now()
+	if !unacknowledged && !s.legacyPortalIntentLocked(now) && !now.Before(s.followGoal.until) && s.followPortal.witness == 0 {
+		return false
+	}
+	w, err := s.readWorldSnapshot(ctx, swing.target)
+	if err != nil || !s.matchesCurrentEncounterVisitLocked(w) || swing.visit != w.VisitRevision {
+		return false
+	}
+	s.observeDungeonPortalLocked(w, s.now())
+	if !unacknowledged {
+		return false
+	}
+	self, c := w.Self, w.GetRequestedCreature()
+	if !self.AliveKnown || !self.Alive || !self.HealthKnown || self.Health == 0 || !self.UnitFlagsKnown || self.UnitFlags&0x80000 != 0 ||
+		c.GetGuid() != swing.target || !c.GetPresent() || !c.GetMapKnown() || c.GetMapId() != self.MapId ||
+		!c.GetAliveKnown() || c.GetAlive() || !c.GetHealthKnown() || c.GetMaxHealth() == 0 || c.GetHealth() != 0 {
+		return false
+	}
+	s.encounterSwing = encounterMeleeSwing{}
+	s.clearAutoAttackLocked()
+	return true
 }
 
 func (s *Service) stopEncounterMeleeLocked(ctx context.Context) {
@@ -130,10 +174,18 @@ func (s *Service) settleControlMeleeStopLocked() {
 // The caller has already checked the complete frame and the attacker GUID.
 func (s *Service) acceptOwnMeleeAttackLocked(target uint64, enabled bool) bool {
 	if enabled {
-		s.encounterSwing.controlStopUntil = time.Time{}
+		s.observeOwnMeleeActivityLocked(target)
 	}
 	swing := s.encounterSwing
 	if swing.target != 0 {
+		if !enabled && swing.otherVictim != 0 {
+			if target == swing.otherVictim {
+				s.encounterSwing.otherVictim = 0
+			}
+			// The realm can reject a request for A with STOP(A) while its
+			// confirmed own attack on B continues.
+			return false
+		}
 		if target != swing.target || !s.encounterVisit.bound || swing.visit != s.encounterVisit.revision || enabled && swing.stopIssued {
 			return false
 		}
@@ -165,6 +217,7 @@ func (s *Service) acceptOwnMeleeAttackLocked(target uint64, enabled bool) bool {
 	s.meleeAcknowledgedVisit = 0
 	if enabled && !s.closed && s.encounterVisit.bound {
 		s.meleeAcknowledgedVisit = s.encounterVisit.revision
+		s.encounterSwing.otherVictim = 0
 	}
 	return true
 }

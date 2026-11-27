@@ -232,7 +232,9 @@ func TestTradeServicePreparationTuningReloadAndOrdinaryConsentRemainSeparate(t *
 	source := tradeConsentSource(t)
 	r := disposalArmorSemanticRuntime(t, source)
 	frame := tradeServicePreparationFrame()
-	tradeConsentResult(t, r, source, frame, "prepare")
+	// This standalone turn can exhaust its 5ms decision budget without output.
+	// The native callback separately requires prepare on the accepted source.
+	tradeConsentResourceTurnResult(t, r, source, frame, "prepare")
 	tradeConsentResult(t, r, source, tradeConsentFrame(), "accept")
 	const serviceTuning = "local prepare_owner_trade_services = true"
 	disabled := strings.Replace(source, serviceTuning, "local prepare_owner_trade_services = false", 1)
