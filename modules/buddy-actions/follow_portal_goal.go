@@ -103,7 +103,7 @@ func samePortalStart(a, b *actionsv1.ClientPosition) bool {
 
 func (s *Service) portalObservationLocked(w *worldv1.SnapshotResponse) *actionsv1.PortalFollowObservation {
 	f := s.followPortal
-	if f.portal.trigger == 0 || f.sourceVisit == 0 || f.witness == 0 {
+	if f.portal.trigger == 0 || f.sourceVisit == 0 || f.witness == 0 || f.requiresPartyZone && !s.portalSourceWitnessCurrentLocked(w) {
 		return nil
 	}
 	now := s.now()

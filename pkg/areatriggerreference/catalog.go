@@ -43,6 +43,34 @@ func (t Trigger) Contains(mapID uint32, x, y, z, margin float64) bool {
 		math.Abs(localX) <= t.Length/2-margin && math.Abs(localY) <= t.Width/2-margin && math.Abs(dz) <= t.Height/2-margin
 }
 
+// InteriorApproach proposes the near side of the volume at the observed
+// approach elevation. The caller must still measure a walkable route and the
+// actual footprint at arrival, including when the surface slopes.
+func (t Trigger) InteriorApproach(x, y, z float64) (float64, float64, bool) {
+	if !t.valid() || !finite(x, y, z) {
+		return 0, 0, false
+	}
+	dx, dy, dz := x-t.X, y-t.Y, z-t.Z
+	var scale float64
+	if t.Radius > 0 {
+		r := t.Radius - math.Min(2, t.Radius/4)
+		if math.Abs(dz) >= r {
+			return 0, 0, false
+		}
+		scale = math.Sqrt(r*r-dz*dz) / math.Hypot(dx, dy)
+	} else {
+		if math.Abs(dz) >= t.Height/2 {
+			return 0, 0, false
+		}
+		c, s := math.Cos(t.Orientation), math.Sin(t.Orientation)
+		l, w := t.Length/2, t.Width/2
+		scale = 1 / math.Max(math.Abs(dx*c+dy*s)/(l-math.Min(2, l/4)), math.Abs(-dx*s+dy*c)/(w-math.Min(2, w/4)))
+	}
+	scale = math.Min(1, scale)
+	gx, gy := t.X+scale*dx, t.Y+scale*dy
+	return gx, gy, t.Contains(t.SourceMap, gx, gy, z, .03)
+}
+
 func finite(values ...float64) bool {
 	for _, v := range values {
 		if math.IsNaN(v) || math.IsInf(v, 0) {

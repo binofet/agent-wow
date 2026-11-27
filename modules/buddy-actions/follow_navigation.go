@@ -350,7 +350,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	if needsPlan && !now.Before(f.nextPlanAt) {
 		f.path = nil
 		f.nextPlanAt = now.Add(750 * time.Millisecond)
-		planCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+		planCtx, cancel := context.WithTimeout(ctx, s.followPlanBudget(s.followPortal.movementInProgress))
 		path, arrival, arrivalStop, ownerArrival, err := s.formationNavigationPath(planCtx, target, stopDistance, ownerFallback...)
 		if err != nil && len(ownerFallback) == 1 && ownerFallback[0].z < s.pos.z && followRouteLengthExceeded(err) && waterMovementAllowed(s.lastWorld) {
 			// Try a complete lower route before following a prefix of a long

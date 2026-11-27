@@ -9,6 +9,12 @@ import (
 	"strconv"
 )
 
+// DungeonMapForZone resolves the numeric party zone using its AreaTable map.
+func DungeonMapForZone(zone uint32) (uint32, bool) {
+	id, found := dungeonZoneMaps[zone]
+	return id, found
+}
+
 // IsDungeon reports whether Map.dbc classifies a map as a party or raid
 // instance. World maps, battlegrounds, arenas and unknown IDs return false.
 func IsDungeon(id uint32) bool {

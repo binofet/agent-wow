@@ -131,13 +131,22 @@ func (s *Service) prepareAreaTriggerLocked(ctx context.Context, w *worldv1.Snaps
 	stopScope := clonePortalScope(p.worldScope)
 	needsPriorPose := s.posEstimated && !s.state.Moving || w.GetSelf().GetPositionInferred()
 	previous, reportErr := modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
-	if reportErr == nil {
+	if status.Code(reportErr) == codes.FailedPrecondition && needsPriorPose && !s.state.Moving {
+		// An earlier known STOP can still establish the exact stationary body
+		// for a new entry decision. The new STOP reserves the freshly observed
+		// source; the final trigger requires its own exact physical receipt.
+		if settled, err := modcb.ReadSettledBodySource(ctx, s.session, s.sessionID, s.selfGUID); err == nil && settledPortalPose(settled, stopScope, p.pose) {
+			reportErr = nil
+			previous = nil
+		}
+	}
+	if reportErr == nil && previous != nil {
 		if !areaTriggerReportWorldMatches(p, w, previous) || needsPriorPose &&
 			!portalMovementReportMatches(previous, s.selfGUID, p.mapID, p.pose, false) {
 			return refuse("follow_instance_movement_report_unavailable")
 		}
 		stopScope = clonePortalScope(previous.TransportScope)
-	} else if status.Code(reportErr) != codes.FailedPrecondition || needsPriorPose {
+	} else if reportErr != nil && (status.Code(reportErr) != codes.FailedPrecondition || needsPriorPose) {
 		return refuse("follow_instance_movement_report_unavailable")
 	}
 	guard := portalStopGuard(func(w *worldv1.SnapshotResponse, stop position) bool {
@@ -174,6 +183,11 @@ func (s *Service) prepareAreaTriggerLocked(ctx context.Context, w *worldv1.Snaps
 	return report, nil
 }
 
+func settledPortalPose(report *modv1.WorldPacket, current *modv1.TransportScope, pose position) bool {
+	return samePortalCoreVisit(report.GetTransportScope(), current) && report.TransportScope.MotionRevision <= current.MotionRevision &&
+		portalStopReportMatches(report, current.SelfGuid, current.MapId, pose)
+}
+
 // Automatic following supplies its actual owner witness and Lua eligibility;
 // explicit destination intent uses the same physical executor without either.
 func (s *Service) enterWitnessedPortalLocked(ctx context.Context, w *worldv1.SnapshotResponse, intent portalIntent) {
@@ -185,7 +199,7 @@ func (s *Service) enterWitnessedPortalLocked(ctx context.Context, w *worldv1.Sna
 	})
 	qualify := func(w *worldv1.SnapshotResponse) bool {
 		policy := s.portalPolicyLocked(w, s.now())
-		return policy.Valid && policy.Eligible && policy.Ready
+		return policy.Valid && policy.Eligible && policy.Ready && (!s.followPortal.requiresPartyZone || s.portalPartyCurrentLocked(ctx))
 	}
 	report, err := s.prepareAreaTriggerLocked(ctx, w, p, current, qualify)
 	if err != nil {
