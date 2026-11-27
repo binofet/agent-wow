@@ -5,12 +5,12 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Capacity is a property of the complete private carried layout. Unknown
 // containers never imply empty slots; specialty bags never imply general space.
-// The initial ordinary-bag scope is the explicitly supported bag41599.
 func ownKnownFreeSlot(w *worldv1.SnapshotResponse, self uint64) bool {
 	return ownKnownFreeSlots(w, self) > 0
 }
@@ -28,6 +28,7 @@ func ownKnownFreeSlots(w *worldv1.SnapshotResponse, self uint64) int {
 			return 0
 		}
 		seenBags[b.Bag] = true
+		general := b.Bag == 0
 		if b.Bag == 0 {
 			if b.ContainerGuid != 0 || b.Entry != 0 || b.MetadataKnown || b.SlotCount != 16 {
 				return 0
@@ -37,9 +38,11 @@ func ownKnownFreeSlots(w *worldv1.SnapshotResponse, self uint64) int {
 				return 0
 			}
 		} else {
-			if !validGUID(b.ContainerGuid) || guids[b.ContainerGuid] || !b.MetadataKnown || b.Entry == 0 || b.SlotCount == 0 || b.Entry == 41599 && b.SlotCount != 20 {
+			catalogSlots := gamecatalog.GeneralBagSlots(b.Entry)
+			if !validGUID(b.ContainerGuid) || guids[b.ContainerGuid] || !b.MetadataKnown || b.Entry == 0 || b.SlotCount == 0 || catalogSlots != 0 && b.SlotCount != catalogSlots {
 				return 0
 			}
+			general = catalogSlots != 0
 			guids[b.ContainerGuid] = true
 		}
 		total += len(b.Slots)
@@ -56,7 +59,7 @@ func ownKnownFreeSlots(w *worldv1.SnapshotResponse, self uint64) int {
 				if item.Entry != 0 || item.StackCount != 0 || item.MetadataKnown {
 					return 0
 				}
-				if b.Bag == 0 || b.Entry == 41599 {
+				if general {
 					free++
 				}
 			} else {

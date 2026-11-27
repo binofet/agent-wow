@@ -51,25 +51,48 @@ var defaultCatalog *Catalog
 //go:embed catalog.json
 var contentCatalog []byte
 
-var questItemsOnce sync.Once
+var contentOnce sync.Once
+var generalBagSlots map[uint32]uint32
 var questItems map[uint32]questObjectives
 
 type questObjectives struct {
 	RequiredItems []QuestItem `json:"requiredItems"`
 }
 
+func loadContent() {
+	var source struct {
+		Quests map[uint32]questObjectives `json:"quests"`
+		Items  map[uint32]struct {
+			ItemClass      uint32 `json:"itemClass"`
+			Subclass       uint32 `json:"subclass"`
+			InventoryType  uint32 `json:"inventoryType"`
+			ContainerSlots uint32 `json:"containerSlots"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(contentCatalog, &source); err != nil {
+		panic("invalid generated content catalog: " + err.Error())
+	}
+	questItems = source.Quests
+	generalBagSlots = make(map[uint32]uint32)
+	for entry, item := range source.Items {
+		// Wrath ordinary bag subclass, equipped in a bag slot.
+		if item.ItemClass == 1 && item.Subclass == 0 && item.InventoryType == 18 && item.ContainerSlots > 0 {
+			generalBagSlots[entry] = item.ContainerSlots
+		}
+	}
+}
+
+// GeneralBagSlots reports the pinned size of an ordinary carried bag.
+// Zero means the entry cannot certify general inventory capacity.
+func GeneralBagSlots(entry uint32) uint32 {
+	contentOnce.Do(loadContent)
+	return generalBagSlots[entry]
+}
+
 // RequiredQuestItems lists the item objectives in the pinned quest data. A
 // caller must observe the quest and its progress in the character's own log.
 func RequiredQuestItems(questID uint32) []QuestItem {
-	questItemsOnce.Do(func() {
-		var source struct {
-			Quests map[uint32]questObjectives `json:"quests"`
-		}
-		if err := json.Unmarshal(contentCatalog, &source); err != nil {
-			panic("invalid generated quest catalog: " + err.Error())
-		}
-		questItems = source.Quests
-	})
+	contentOnce.Do(loadContent)
 	return append([]QuestItem(nil), questItems[questID].RequiredItems...)
 }
 
