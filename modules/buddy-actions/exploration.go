@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"context"
 	"crypto/subtle"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"math"
 	"time"
 
@@ -66,7 +67,7 @@ func (s *Service) explorationContextLocked(ctx context.Context, token string, ma
 		}
 	}
 	d, _ := ctx.Value(destinationOwnerKey{}).(destinationOwner)
-	if reason := safeQuestCharacterMode(w, s.selfGUID, func(f, x uint32) bool { return destinationSelfMode(w, f, x) || d.gravity.current(w) }); reason != "" {
+	if reason := safeQuestCharacterFlags(w, s.selfGUID, func(f, x uint32) bool { return destinationSelfMode(w, f, x) || d.gravity.current(w) }, s.groundTravelUnitFlags(w.Self)); reason != "" {
 		return "exploration_" + reason
 	}
 	if w.Self.MapId != mapID {
@@ -81,7 +82,7 @@ func (s *Service) explorationContextLocked(ctx context.Context, token string, ma
 	if !s.explorationIdleBindingCurrentLocked(token, w) {
 		return "exploration_idle_body_or_visit_changed"
 	}
-	if target != nil && (safeQuestCharacter(w, s.selfGUID) != "" || !s.currentFlightmasterLocked(w, target)) {
+	if target != nil && (!movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) || !s.currentFlightmasterLocked(w, target)) {
 		return "exploration_flightmaster_or_owner_intent_changed"
 	}
 	return ""
@@ -173,7 +174,7 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		call = context.WithValue(call, idleMotionScopeKey{}, scope)
 	}
 	from, revision, root := s.pos, s.positionRevision, s.navDataDir
-	swimming, allowWater := s.swimming, r.Flightmaster == nil && !s.state.InteractionHarvest && root != "" && waterMovementAllowed(s.lastWorld)
+	swimming, allowWater := s.swimming, r.Flightmaster == nil && !s.state.InteractionHarvest && root != "" && s.lastWorld.GetSelf().GetUnitFlags()&movementflags.Mounted == 0 && waterMovementAllowed(s.lastWorld)
 	if r.Flightmaster != nil {
 		npc := s.lastWorld.GetRequestedCreature()
 		if s.idleInteraction.token != token || swimming || distance(from, to) > 16 || npc.GetGuid() != r.Flightmaster.Guid ||

@@ -339,9 +339,10 @@ func (s Spell) Capability() Capability {
 
 type span struct{ start, end int }
 type Catalog struct {
-	data        []byte
-	index       map[uint32]span
-	dispelTypes map[uint32]DispelType
+	data         []byte
+	index        map[uint32]span
+	dispelTypes  map[uint32]DispelType
+	groundMounts map[uint32]uint32
 }
 
 // New indexes compact line records once. Individual records are decoded on
@@ -394,6 +395,18 @@ func (c *Catalog) Lookup(id uint32) (Spell, bool) {
 	return s, true
 }
 
+// GroundMountSpeed returns the base percent increase of a learned-list ground
+// mount with a non-vehicle template. Actual travel uses the observed run speed.
+func (c *Catalog) GroundMountSpeed(id uint32) uint32 {
+	if c == nil {
+		return 0
+	}
+	return c.groundMounts[id]
+}
+
+//go:embed ground-mounts.json
+var groundMounts []byte
+
 //go:embed spells.jsonl
 var records []byte
 
@@ -408,6 +421,9 @@ func Default() *Catalog {
 		var err error
 		defaultCatalog, err = New(records)
 		if err != nil {
+			panic(err)
+		}
+		if err := json.Unmarshal(groundMounts, &defaultCatalog.groundMounts); err != nil {
 			panic(err)
 		}
 		if err := json.Unmarshal(dispelTypes, &defaultCatalog.dispelTypes); err != nil {

@@ -40,6 +40,8 @@ message CastSpellRequest {
   uint32 spell_id = 4;
   SpellCastTargets targets = 5;
   SpellCastTrajectory trajectory = 6;
+  // Optional current owner-follow dependency for a Lua-selected ground mount.
+  FollowMountGuard follow_mount = 7;
 }
 message CancelSpellRequest {
   string session_id = 1;
@@ -98,6 +100,9 @@ message MovementOwnerRequest {
   string owner = 3;
   string token = 4; // exact token renews this owner; empty acquires a new lease
   uint32 lease_ms = 5; // caller chooses a positive finite TTL
+  FollowMountGuard follow_mount = 6; // finite preparatory STOP for a selected ordinary mount
+  uint64 visit_id = 7;
+  uint32 spell_id = 8;
 }
 message MovementOwnerRelease {
   string session_id = 1;
@@ -858,6 +863,7 @@ message NavigationObservation {
   bool movement_points_supported = 20;
   MovementPointsState movement_points = 21;
   bool body_landing_supported = 22;
+  FollowMountObservation ground_mount = 23;
   // Independent sessions have no followed owner, even with a default Lua formation.
   bool independent = 24;
 }
@@ -1054,6 +1060,7 @@ message EncounterSpell {
   uint32 family_set = 34;
   repeated uint32 family_flags = 35;
   repeated EncounterAuraEffect aura_effects = 36;
+  uint32 ground_mount_speed_percent = 37;
 }
 // Raw catalog effect facts, without class-specific preference or ranking.
 message EncounterAuraEffect {
@@ -1476,6 +1483,7 @@ service BuddyActions {
   rpc TalentState(TalentStateRequest) returns (TalentStateResponse);
   rpc LearnTalent(LearnTalentRequest) returns (TalentStateResponse);
   rpc CastSpell(CastSpellRequest) returns (State);
+  rpc DismountGround(DismountGroundRequest) returns (State);
   rpc CancelSpell(CancelSpellRequest) returns (State);
   rpc FlightpathReference(FlightpathReferenceRequest) returns (FlightpathReferenceResponse);
   rpc FlightpathObservation(google.protobuf.Empty) returns (FlightpathObservationResponse);
@@ -1617,4 +1625,33 @@ message RespondToSummonRequest {
   optional bool accept = 6;
   // Optional caller-selected roster precondition, checked before responding.
   uint64 expected_group_guid = 7;
+}
+
+message FollowMountGuard {
+  uint64 owner_guid = 1;
+  uint64 follow_revision = 2;
+  uint64 owner_mount_revision = 3;
+}
+message DismountGroundRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint32 spell_id = 4;
+  FollowMountGuard follow_mount = 5;
+}
+message FollowMountObservation {
+  optional bool self_mounted = 1;
+  optional bool owner_mounted = 2;
+  uint32 self_ground_spell = 3;
+  uint32 owner_ground_spell = 4;
+  uint64 owner_mount_revision = 5;
+  bool owner_dismounted = 6;
+  optional float self_run_speed = 7;
+  optional float owner_run_speed = 8;
+  bool ready = 9;
+  bool follow_moving = 10;
+  string last_phase = 11;
+  bool attempted_for_owner_state = 12;
+  bool transport_written = 13;
+  bool effect_observed = 14;
 }

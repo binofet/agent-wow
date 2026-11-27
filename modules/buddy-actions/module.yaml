@@ -17,6 +17,7 @@ rpc:
   talent_state: /warcraftbuddy.actions.v1.BuddyActions/TalentState
   learn_talent: /warcraftbuddy.actions.v1.BuddyActions/LearnTalent
   cast_spell: /warcraftbuddy.actions.v1.BuddyActions/CastSpell
+  dismount_ground: /warcraftbuddy.actions.v1.BuddyActions/DismountGround
   cancel_spell: /warcraftbuddy.actions.v1.BuddyActions/CancelSpell
   flightpath_reference: /warcraftbuddy.actions.v1.BuddyActions/FlightpathReference
   flightpath_observation: /warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation
@@ -131,6 +132,7 @@ script_api:
   talent_state: {effect: read, description: Read complete normal player talent free-points/spec/rank/glyph facts and exact attempt receipts for the current body}
   learn_talent: {effect: mutation, description: Spend one caller-selected normal talent/rank request against an exact current body/spec/revision; acknowledgement does not prove the rank was learned}
   cast_spell: {effect: mutation, description: 'Issue one normal cast of any exact learned spell with composable current-visit targets; server validates spell requirements and effects remain unverified'}
+  dismount_ground: {effect: mutation, description: Release the exact current ordinary ground mount after an observed followed owner dismount.}
   cancel_spell: {effect: mutation, description: 'Cancel only the exact current owned cast or channel operation; an unknown cancellation is never replayed'}
   flightpath_reference: {effect: read, description: Read exact pinned node and outgoing path references; labels base prices and coordinates prove no live route fare or arrival}
   flightpath_observation: {effect: read, description: Observe bound flightmaster queries and activation custody; accepted activation proves no flight start fare or arrival}

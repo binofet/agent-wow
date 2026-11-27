@@ -219,7 +219,7 @@ func (op *supportAttempt) reportPolicySpellEffect(ctx context.Context, castPendi
 		if castPending {
 			return
 		}
-	case "server_rejected_no_replay", "server_cast_go_no_target_hit",
+	case "server_rejected_no_replay", "server_cast_go_no_target_hit", "observed_ground_mount_state",
 		"outcome_unconfirmed_no_retry", "channel_ended_effect_unverified", "world_transfer_outcome_unconfirmed",
 		"map_changed_outcome_unconfirmed", "target_lost_outcome_unconfirmed", "observed_alive_without_cast_confirmation", "observed_control_clear_effect_unverified":
 	default:

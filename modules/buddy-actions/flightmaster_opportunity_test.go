@@ -11,12 +11,13 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestFlightmasterOpportunityRequiresCurrentSpawnAndOwnPhysicalArrival(t *testing.T) {
-	for _, mode := range []string{"qualified", "lost_stationarity", "new_follow_intent", "different_faction", "replaced_spawn_pose", "missing_ground_stop"} {
+	for _, mode := range []string{"qualified", "ground_mount", "vehicle", "flying_mount", "swimming", "unbound_mount", "lost_stationarity", "new_follow_intent", "different_faction", "replaced_spawn_pose", "missing_ground_stop"} {
 		t.Run(mode, func(t *testing.T) {
 			x := walkedToFlightmaster(t)
 			npc := x.f.lookupCreatures[x.npc]
@@ -24,6 +25,21 @@ func TestFlightmasterOpportunityRequiresCurrentSpawnAndOwnPhysicalArrival(t *tes
 			r := x.request(t, "status")
 			r.Opportunity = &actionsv1.FlightmasterTarget{Guid: npc.Guid, PositionRevision: npc.PositionRevision, FollowRevision: x.s.followRevision}
 			switch mode {
+			case "ground_mount", "vehicle", "flying_mount", "swimming", "unbound_mount":
+				spell := uint32(23238)
+				if mode == "vehicle" {
+					spell = 60424
+				}
+				if mode == "flying_mount" {
+					spell = 32235
+				}
+				mountForTravel(t, x.s, x.f.world.Self, spell)
+				if mode == "swimming" {
+					x.f.world.Self.MovementFlags = 0x200000
+				}
+				if mode == "unbound_mount" {
+					r.Opportunity = nil
+				}
 			case "lost_stationarity":
 				x.f.world.RequestedCreatureStationaryPositionKnown = false
 			case "new_follow_intent":
@@ -39,23 +55,40 @@ func TestFlightmasterOpportunityRequiresCurrentSpawnAndOwnPhysicalArrival(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := mode == "qualified"
+			want := mode == "qualified" || mode == "ground_mount"
 			if view.Operation.TransportWritten != want || (len(x.f.packets) == 1) != want || !want && view.Operation.Phase != "not_dispatched" {
 				t.Fatal(view, x.f.packets)
 			}
 			if want && (x.f.packets[0].Opcode != opcode.CMSGTaxinodeStatusQuery || x.f.packets[0].TransportScope == nil) {
 				t.Fatal(x.f.packets[0])
 			}
+			if mode == "ground_mount" {
+				x.packet(t, opcode.SMSGTaxinodeStatus, flightpathStatusPayload(x.npc, 0))
+				next := x.request(t, "discover")
+				next.Opportunity = r.Opportunity
+				menu, err := x.s.QueryFlightpath(context.Background(), next)
+				if err != nil || !menu.GetOperation().GetTransportWritten() || len(x.f.packets) != 2 || x.f.packets[1].Opcode != opcode.CMSGTaxiqueryavailablenodes {
+					t.Fatal(menu, err, x.f.packets)
+				}
+				x.packet(t, opcode.SMSGNewTaxiPath, nil)
+				x.packet(t, opcode.SMSGTaxinodeStatus, flightpathStatusPayload(x.npc, 1))
+				if !x.observation(t).GetOperation().GetLearned() || x.f.world.Self.UnitFlags&movementflags.Mounted == 0 {
+					t.Fatal(x.observation(t))
+				}
+			}
 		})
 	}
 }
 
 func TestFlightmasterApproachFollowsShortCheckedGroundLegAndStops(t *testing.T) {
-	for _, mode := range []string{"short_leg", "unrelated_destination", "diverted_before_input", "lost_after_start", "lost_at_heartbeat_clock", "long_detour", "no_safe_geometry"} {
+	for _, mode := range []string{"short_leg", "mounted_short_leg", "unrelated_destination", "diverted_before_input", "lost_after_start", "lost_at_heartbeat_clock", "long_detour", "no_safe_geometry"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, advance, r := instanceEntryIdleTravelFixture(t)
 			self := f.world.Self
 			self.FactionTemplate = 1
+			if mode == "mounted_short_leg" {
+				mountForTravel(t, s, self, 23238)
+			}
 			const guid = uint64(0xf130000625000001)
 			r.X, r.Y, r.Z = self.X+9, self.Y, self.Z
 			npc := &worldv1.CreatureState{Guid: guid, Entry: 1573, NpcFlags: 0x2000, Present: true, MapKnown: true, MapId: r.MapId, PositionKnown: true, PositionRevision: 6, X: r.X, Y: r.Y, Z: r.Z,
@@ -107,7 +140,7 @@ func TestFlightmasterApproachFollowsShortCheckedGroundLegAndStops(t *testing.T) 
 				t.Fatal(out)
 			}
 			switch mode {
-			case "short_leg":
+			case "short_leg", "mounted_short_leg":
 				if out.Reason != "exploration_flightmaster_checkpoint_reached" || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 ||
 					distance(playerPosition(self), s.pos) <= 0 || distance(playerPosition(self), s.pos) > 3 {
 					t.Fatal(out, f.packets, s.pos)

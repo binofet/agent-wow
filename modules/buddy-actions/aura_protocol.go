@@ -166,6 +166,11 @@ func (s *Service) applyBuffAurasLocked(guid uint64, updates []auraDelta, all boo
 	s.confirmBuffLocked()
 	s.confirmCleanseLocked()
 	if guid == s.selfGUID {
+		if release := s.followMount.releaseSpell; release != 0 {
+			if current, _ := s.groundMountAuraLocked(guid); current != release {
+				s.followMount.releaseSpell = 0
+			}
+		}
 		s.retireControlBreaksLocked()
 	}
 }

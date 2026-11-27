@@ -30,6 +30,9 @@ func (p *SessionPolicy) resolveMovementOwner(action map[string]any) (PolicyDispa
 			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "positive finite integer leaseMs and exact renewal token required")
 		}
 		params["leaseMs"] = uint32(ms)
+		if current, ok := action["followMount"]; ok {
+			params["followMount"], params["visitId"], params["spellId"] = current, action["visitId"], action["spellId"]
+		}
 	case "release":
 		if token == "" {
 			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact movement owner token required")

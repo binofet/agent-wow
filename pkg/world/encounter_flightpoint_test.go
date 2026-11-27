@@ -207,3 +207,31 @@ func TestOrdinaryFlightpointYieldsWhenTargetOrIntentChanges(t *testing.T) {
 		})
 	}
 }
+
+func TestCompanionMountsBeforeNewFlightpointAndCompletesExistingDiscovery(t *testing.T) {
+	p, o, _ := flightpointEncounter(t)
+	ride := &actionsv1.FollowMountObservation{SelfMounted: proto.Bool(false), OwnerMounted: proto.Bool(true), OwnerGroundSpell: 458, OwnerMountRevision: 1, Ready: true}
+	o.Navigation.GroundMount = ride
+	o.Spells["23238"] = &actionsv1.EncounterSpell{Known: true, Available: true, GroundMountSpeedPercent: 100}
+	d := flightpointDecision(t, p, o, "cast_spell")
+	if a := d.Output["action"].(map[string]any); a["spellId"] != float64(23238) || a["followMount"] == nil {
+		t.Fatal(a)
+	}
+	ride.SelfMounted, ride.SelfGroundSpell = proto.Bool(true), 23238
+	acquireFlightpoint(t, p, o)
+	// A newly witnessed owner dismount cannot replace the flightmaster's
+	// already acquired writer or the query it must reconcile.
+	ride.OwnerMounted, ride.OwnerGroundSpell, ride.OwnerDismounted, ride.OwnerMountRevision = proto.Bool(false), 0, true, 2
+	status := flightpointDecision(t, p, o, "query_flightpath")
+	if a := status.Output["action"].(map[string]any); a["mode"] != "status" {
+		t.Fatal(a)
+	}
+	settleFlightpointDecision(t, p, status, behavior.ActionSettledUnverified, nil)
+	o.Flightpath.Revision = 1
+	o.Flightpath.Operation = &actionsv1.FlightpathOperation{Revision: 1, SessionId: fallbackSession, SelfGuid: 4, VisitId: 1, NpcGuid: fallbackNPC, Mode: "status", Phase: "status_observed", TransportWritten: true, StatusKnown: true, NodeKnown: true}
+	release := flightpointDecision(t, p, o, "release_interaction")
+	settleFlightpointDecision(t, p, release, behavior.ActionSettledUnverified, nil)
+	o.Interaction = &actionsv1.InteractionObservation{}
+	flightpointDecision(t, p, o, "")
+	flightpointDecision(t, p, o, "dismount_ground")
+}

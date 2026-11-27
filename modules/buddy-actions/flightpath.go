@@ -61,6 +61,16 @@ func (s *Service) flightpathOperationCurrentLocked(op *actionsv1.FlightpathOpera
 		s.encounterVisit.bound && op.VisitId != 0 && op.VisitId == s.encounterVisit.revision
 }
 
+func (s *Service) flightpathQueryBodyReasonLocked(r *actionsv1.FlightpathQueryRequest, w *worldv1.SnapshotResponse) string {
+	flags := w.GetSelf().GetUnitFlags()
+	if r.Opportunity != nil && (r.Mode == "status" || r.Mode == "discover") {
+		// A stationary ordinary rider can speak to a currently witnessed
+		// flightmaster. Paid flight and its arrival use their original guards.
+		flags = s.groundTravelUnitFlags(w.GetSelf())
+	}
+	return safeQuestCharacterFlags(w, r.SelfGuid, movementflags.GroundCompatible, flags)
+}
+
 func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.FlightpathQueryRequest, w *worldv1.SnapshotResponse, now time.Time, stop *modv1.WorldPacket) string {
 	if ctx.Err() != nil {
 		return "flightpath_query_canceled"
@@ -83,7 +93,7 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 		s.state.Practicing || s.fargodeep.active || s.recovery.state.Active {
 		return "flightpath_other_body_action_pending"
 	}
-	if reason := safeQuestCharacter(w, s.selfGUID); reason != "" {
+	if reason := s.flightpathQueryBodyReasonLocked(r, w); reason != "" {
 		return "flightpath_" + reason
 	}
 	self := w.Self
@@ -241,7 +251,7 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 		ctx = modcb.WithFlightpathWorldPackets(ctx, n)
 		sendScope = stop.TransportScope
 	}
-	if reason := safeQuestCharacter(w, r.SelfGuid); reason != "" {
+	if reason := s.flightpathQueryBodyReasonLocked(r, w); reason != "" {
 		return refuse("flightpath_" + reason)
 	}
 	if r.Opportunity != nil && !s.currentFlightmasterLocked(w, r.Opportunity) {

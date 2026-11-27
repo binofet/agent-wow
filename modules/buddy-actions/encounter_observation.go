@@ -175,6 +175,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		out.Navigation.BodyMovement = proto.Clone(s.state.BodyMovement).(*actionsv1.BodyMovementState)
 	}
 	out.Navigation.Portal = s.portalObservationLocked(w)
+	out.Navigation.GroundMount = s.followMountObservationLocked(ctx, w)
 	out.MeleeKnown = s.spellbookKnown && s.state.KnownAutoAttack && s.weaponReady(w.Self)
 	if s.state.AutoAttacking && !s.state.AutoAttackUnconfirmed && s.meleeAcknowledgedVisit == w.VisitRevision {
 		out.ActiveMeleeTargetGuid = s.state.AutoAttackTargetGuid
@@ -385,6 +386,7 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 	polyReady, sapReady := false, false
 	for id, spell := range contracts {
 		view := encounterSpellMechanics(spell, self)
+		view.GroundMountSpeedPercent = s.spellCatalogLocked().GroundMountSpeed(id)
 		view.SelfAuraKnown, view.SelfAuraActive = s.encounterSelfAura(spell.Family)
 		switch spell.Capability().Kind {
 		case spellcatalog.Buff:

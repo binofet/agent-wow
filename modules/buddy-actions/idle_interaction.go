@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
@@ -74,7 +75,11 @@ func (s *Service) AcquireIdleInteraction(ctx context.Context, request *actionsv1
 	if !s.matchesCurrentEncounterVisitLocked(w) || w.VisitRevision != r.VisitId {
 		return nil, status.Error(codes.FailedPrecondition, "current observed body and visit required")
 	}
-	if reason := safeQuestCharacter(w, r.SelfGuid); reason != "" {
+	flags := w.GetSelf().GetUnitFlags()
+	if r.Owner == "exploration" {
+		flags = s.groundTravelUnitFlags(w.Self)
+	}
+	if reason := safeQuestCharacterFlags(w, r.SelfGuid, movementflags.GroundCompatible, flags); reason != "" {
 		return nil, status.Error(codes.FailedPrecondition, reason)
 	}
 	self := w.Self

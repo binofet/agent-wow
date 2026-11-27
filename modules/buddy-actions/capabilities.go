@@ -8,10 +8,14 @@ import (
 	"time"
 )
 
-func (s *Service) learnedContractsLocked() map[uint32]spellcatalog.Spell {
+func (s *Service) spellCatalogLocked() *spellcatalog.Catalog {
 	if s.spellData == nil {
 		s.spellData = spellcatalog.Default()
 	}
+	return s.spellData
+}
+func (s *Service) learnedContractsLocked() map[uint32]spellcatalog.Spell {
+	s.spellCatalogLocked()
 	if s.capabilityCatalog == s.spellData && s.capabilityRevision == s.spellbookRevision && s.capabilities != nil {
 		return s.capabilities
 	}

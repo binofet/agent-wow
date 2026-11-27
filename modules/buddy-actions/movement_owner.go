@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
+
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -59,6 +61,15 @@ func (s *Service) AcquireMovement(ctx context.Context, r *actionsv1.MovementOwne
 	}
 	if s.closed || s.session == nil || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID {
 		return nil, status.Error(codes.FailedPrecondition, "current connected body required")
+	}
+	if r.FollowMount != nil || r.Owner == "ground_mount_follow" {
+		w, err := s.readWorldSnapshot(ctx)
+		if err != nil || r.Owner != "ground_mount_follow" || r.Token != "" || r.VisitId == 0 || w.GetVisitRevision() != r.VisitId {
+			return nil, status.Error(codes.FailedPrecondition, "current observed mount transition required for preparatory stop")
+		}
+		if err = s.admitFollowMountLocked(ctx, w, r.FollowMount, r.SpellId, w.GetSelf().GetUnitFlags()&movementflags.Mounted != 0, true); err != nil {
+			return nil, err
+		}
 	}
 	s.expireMovementOwnerLocked()
 	if s.movementOwner.owner != "" {

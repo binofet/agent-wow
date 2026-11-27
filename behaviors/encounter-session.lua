@@ -253,10 +253,14 @@ local function owns_current_observation(obs, frame, self)
        not host_can_decide(obs) or obs.spellbookKnown ~= true or not alive(self) or
        not same_map(self, obs.mapId) then return false end
     if obs.meleeKnown == true then return true end
+    local nav=obs.navigation or {}
+    if (nav.groundMount or {}).ready == true then return true end
     if spell_invocation and spell_invocation.pending() then return true end
     if control_recovery and #(((obs.support or {}).controlRecovery or {}).options or {})>0 then return true end
     for _, spell in pairs(obs.spells or {}) do
-        if spell.known == true and (spell.capability == "offense" or healing and spell.capability == "heal") then return true end
+        if spell.known == true and (spell.capability == "offense" or healing and spell.capability == "heal" or
+            (spell.groundMountSpeedPercent or 0)>0 and movement and (nav.following==true or
+             movement.follow_owner_by_default==true and nav.followRevision=="0")) then return true end
     end
     return false
 end
@@ -1080,6 +1084,14 @@ local function decide(frame)
                 ownMovement,task_support_action or protectedMovement or task_view and (task_view.hold or task_view.action) or out.consumable and out.consumable.hold)
         end
     end
+    if (not flightpoint or not flightpoint.active()) and out.encounterOwnership and movement and movement.follow_mount and current and current_visit(current) and
+       current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and
+       state.settledAt~=state.sequence and #frame.pending==0 and not out.action and not out.focusGuid and
+       not (task_view and task_view.hold) and not (out.consumable and out.consumable.hold) then
+        local riding=movement.follow_mount(current,state.sequence)
+        if riding then out.action=riding;out.followFormation=nil;out.portalCatchup=nil end
+    end
+    if movement and movement.commit_follow_mount then movement.commit_follow_mount(out.action) end
     if flightpoint and current and current.hostOwned==true and current.sessionId==frame.session_id and
        frame.input.kind=="encounter" and frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence then
         local available=out.action==nil and #frame.pending==0

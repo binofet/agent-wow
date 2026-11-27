@@ -301,7 +301,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		legVisit := uint64(0)
 		if err != nil && len(ownerFallback) == 1 && followRouteLengthExceeded(err) &&
 			finite(ownerFallback[0]) && distance(s.pos, ownerFallback[0]) <= 200 && s.planLegPath != nil && planCtx.Err() == nil &&
-			s.lastWorld.GetVisitRevision() != 0 && safeFollowPlayers(s.lastWorld, s.selfGUID, true) == "" {
+			s.lastWorld.GetVisitRevision() != 0 && s.safeFollowPlayers(s.lastWorld, s.selfGUID, true) == "" {
 			// Only ordinary observed-owner following supplies this argument.
 			// Reuse the complete-corridor planner, never a straight-line prefix
 			// or a partial result from the failed normal route.
@@ -372,7 +372,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			}
 			allowed := !s.closed && !s.independent && s.sessionID == sid && s.selfGUID == guid && s.followRevision == revision &&
 				(s.state.Following || s.followGoalExecuting != nil && s.currentFollowFormationGoalLocked(*s.followGoalExecuting, w)) &&
-				w.GetVisitRevision() == visit && safeFollowPlayers(w, guid, true) == "" && speed != 0 && observedRunSpeed(w.GetSelf()) == speed && !s.state.MotionUnconfirmed &&
+				w.GetVisitRevision() == visit && s.safeFollowPlayers(w, guid, true) == "" && speed != 0 && observedRunSpeed(w.GetSelf()) == speed && !s.state.MotionUnconfirmed &&
 				distance(playerPosition(w.GetOwner()), owner) <= 1.5 && !s.state.CastPending && s.state.InteractionOwner == "" && !s.recovery.state.Active
 			if !allowed {
 				s.state.Reason = "follow_route_leg_context_changed"
