@@ -19,6 +19,7 @@ type surfaceBodyInput struct {
 	view          *actionsv1.BodyMovementState
 	localBearing  float64
 	ownerRevision uint64
+	dockWalk      bool
 }
 
 func (s *Service) explicitSurfaceCurrentLocked(ctx context.Context, w *worldv1.SnapshotResponse, in *surfaceMotionSource) bool {
@@ -59,13 +60,31 @@ func (s *Service) planExplicitSurface(ctx context.Context, w *worldv1.SnapshotRe
 		return nil, false, errors.New("passenger input crosses a map transfer")
 	}
 	if !r.Jump && last.FallTime == 0 && !last.Swimming {
-		for _, row := range rows {
+		firstGround := len(rows)
+		for i, row := range rows {
 			supported, e := hullFoot(ctx, mesh.Collision(), tr.Local(row.Point))
-			if e != nil || !supported {
-				return nil, false, errors.New("selected forward input leaves measured deck support")
+			if e != nil {
+				return nil, false, e
+			}
+			if !supported && i < firstGround {
+				firstGround = i
+			} else if supported && i > firstGround {
+				return nil, false, errors.New("selected walk crosses back onto the hull")
 			}
 		}
-		return rows, true, nil
+		if firstGround == len(rows) {
+			return rows, true, nil
+		}
+		if !dockInput(path, clock, last.At) {
+			return nil, false, errors.New("selected walk leaves the deck outside its measured dock dwell")
+		}
+		// These grounded samples already have static floor and body clearance
+		// from PlanSurfaceBodyContext. Exclude a submerged floor before the
+		// ordinary writer clears ONTRANSPORT at the actual edge.
+		if err := buddynav.VerifyDryGroundContacts(ctx, s.navDataDir, w.Self.MapId, rows[firstGround:]); err != nil {
+			return nil, false, err
+		}
+		return rows, false, nil
 	}
 	if last.Swimming && (r.Landing != "ground_or_water" || w.Self.UnitFlags&movementflags.CannotSwim != 0) {
 		return nil, false, errors.New("selected passenger cannot enter this water")
@@ -137,7 +156,9 @@ func (s *Service) moveSurfaceBodyLocked(ctx context.Context, r *actionsv1.BodyMo
 		reject("local_physics_refused", navigationDiagnostic(err, s.navDataDir))
 		return
 	}
-	end := rows[len(rows)-1].At
+	last := rows[len(rows)-1]
+	body.dockWalk = !local && !r.Jump && !last.Swimming && last.FallTime == 0
+	end := last.At
 	if deadline, bounded := ctx.Deadline(); bounded && time.Until(deadline) < end {
 		reject("body_scope_not_dispatched", "remaining RPC deadline cannot cover the measured passenger input")
 		return
@@ -164,6 +185,10 @@ func (s *Service) moveSurfaceBodyLocked(ctx context.Context, r *actionsv1.BodyMo
 		}
 		tr, clock, err = s.surfacePoseLocked(ctx, w, h)
 		if err != nil {
+			break
+		}
+		if body.dockWalk && !sf.dockWalkCurrent(path, tr, clock, s.now()) {
+			s.surfaceHold("surface_dock_dwell_changed", nil)
 			break
 		}
 		own, _, err = s.surfaceMotionSourceLocked(ctx, w)

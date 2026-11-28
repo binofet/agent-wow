@@ -201,6 +201,42 @@ func verifyDryImpulseContact(q Point, water bodyWater, clear bodyClear) error {
 	return errors.New("overlapping liquid layers exceed the impulse contact query")
 }
 
+// VerifyDryGroundContacts checks the liquid column over measured static
+// footsteps. A submerged lakebed is solid but cannot support a dry walk.
+func VerifyDryGroundContacts(ctx context.Context, dir string, mapID uint32, steps []BodyMotionSample) error {
+	if len(steps) == 0 {
+		return errors.New("dry ground check requires measured footsteps")
+	}
+	w, err := newMapWindow(mapID, steps[0].Point, steps[len(steps)-1].Point)
+	if err != nil {
+		return err
+	}
+	dir, err = mapDataDirectory(dir)
+	if err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-currentMapPlanners.gate:
+	}
+	defer func() { currentMapPlanners.gate <- struct{}{} }()
+	p, err := cachedMapPlannerMode(ctx, dir, w, true)
+	if err != nil {
+		return err
+	}
+	water := func(q Point, top, bottom float32) (float32, bool, error) {
+		return p.deepWaterBetween(ctx, q, top, bottom)
+	}
+	clear := func(a, b Point) (bool, error) { return p.floors.lineOfSight(ctx, a, b) }
+	for _, step := range steps {
+		if err := verifyDryImpulseContact(step.Point, water, clear); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Lower pools can overlap an entirely separate shallow upper layer at the
 // same XY. Inspect only the swept band, using the exact water polygon and
 // the same floor/depth rules as the normal swim planner.

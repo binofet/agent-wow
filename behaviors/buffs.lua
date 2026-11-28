@@ -68,11 +68,16 @@ local function healthy(p,fraction)
 end
 -- Optional party buffs must not pull against an active owner-follow route.
 -- Filter each recipient before preference so nearby/self alternatives survive.
-local function follow_range_ok(obs,self,target,p,spell)
-    if target==obs.selfGuid or (obs.navigation or {}).following~=true then return true end
+local function follow_range_ok(following,self,self_target,p,spell)
+    if self_target or not following then return true end
     local d=(self.x or 0)-(p.x or 0);local e=(self.y or 0)-(p.y or 0);local f=(self.z or 0)-(p.z or 0)
     local distance=math.sqrt(d*d+e*e+f*f)
     return distance==distance and distance<= (spell.maxRange or 0) and distance>= (spell.minRange or 0)
+end
+local function observed_recipient(obs,target)
+    local p=(obs.players or {})[target]
+    if alive(p) and p.mapKnown==true and p.mapId==obs.mapId and p.positionKnown==true and
+       p.positionInferred~=true and (target==obs.selfGuid or p.positionEstimated~=true) then return p end
 end
 local function prefer_rank(a,b)
     if not b then return true end
@@ -93,15 +98,22 @@ function M.on_event(event)
     -- cannot create an off state or bypass ordinary healing/combat priority.
     if event.kind=='buff_request' then state.ensureRequested=true end
     if event.kind=='encounter_observation' and type(event.value)=='table' then
-        if state.session and state.session~=event.value.sessionId then state={blocked={}} end
-        state.session=event.value.sessionId
+        local obs=event.value
+        if state.session and state.session~=obs.sessionId then state={blocked={}} end
+        state.session=obs.sessionId
     end
     local receipt=event.receipt
     if receipt and (receipt.payload or {}).capability=='buff' then
         local p=receipt.payload
         if state.last and p.target_guid==state.last.target and p.spell_id==state.last.spell then
             local key=state.last.target..':'..tostring(state.last.family)
-            if receipt.outcome=='not_dispatched' then state.blocked[key]=nil
+            if receipt.outcome=='not_dispatched' then
+                state.blocked[key]=nil
+                if p.phase=='admission_rejected' and p.grpc_status=='FailedPrecondition' and
+                   p.grpc_message=='current living observed friendly target required' then
+                    state.refusedTargets=state.refusedTargets or {}
+                    state.refusedTargets[state.last.target]={visit=state.last.visit,position=state.last.position}
+                end
             elseif receipt.outcome=='confirmed' then state.blocked[key]=nil
             elseif receipt.outcome=='failed' or receipt.outcome=='unknown' or receipt.outcome=='settled_unverified' then
                 state.blocked[key]={outcome=receipt.outcome}
@@ -110,13 +122,23 @@ function M.on_event(event)
     end
     return true
 end
-function M.choose(obs,frame)
+function M.choose(obs,frame,following)
+    if following==nil then following=(obs.navigation or {}).following==true end
     local self=(obs.players or {})[obs.selfGuid]
     if (obs.hostOwned~=true and obs.hostRequested~=true) or obs.spellbookKnown~=true or not alive(self) or
        self.mapKnown~=true or self.mapId~=obs.mapId or self.positionKnown~=true or self.combatKnown~=true or self.inCombat==true then return end
     for _,npc in pairs(obs.targets or {}) do if alive(npc) and npc.engaged==true then return end end
     local now=frame.clock and frame.clock.monotonicMs
     if type(now)~='number' then return end
+    -- A definite native refusal has no outstanding cast. Reconsider on a
+    -- new sighting or the existing retry interval: friendship can change in place.
+    for target,refusal in pairs(state.refusedTargets or {}) do
+        local p=observed_recipient(obs,target)
+        refusal.retryAt=refusal.retryAt or now+M.tuning.retry_ms
+        if not p or obs.visitId~=refusal.visit or p.positionRevision~=refusal.position or now>=refusal.retryAt then
+            state.refusedTargets[target]=nil
+        end
+    end
     -- This is a transient check request, not evidence of a cast or aura.
     state.ensureRequested=nil
     local group=members(obs)
@@ -147,15 +169,15 @@ function M.choose(obs,frame)
         end
         if not suppressed and context and self.powerKnown==true and self.powerType==s.powerType then
             for target in pairs(group) do
-                local p=(obs.players or {})[target]
+                local p=observed_recipient(obs,target)
                 local key=target..':'..tostring(s.familyId)
                 local retry=state.blocked[key]
                 if retry and not retry.at then retry.at=now+M.tuning.retry_ms end
                 local mana_ok=not effect(s,29,3) or p and p.powerKnown==true and p.powerType==0
                 local reserve=wet and 0 or (self.maxPower or 0)*(target==obs.selfGuid and self_reserve or reserve_fraction)
                 if (self.power or 0)>=(s.cost or 0)+reserve and
-                   alive(p) and p.positionKnown==true and p.mapKnown==true and p.mapId==obs.mapId and
-                   (target==obs.selfGuid or s.targetRule=='ally') and mana_ok and follow_range_ok(obs,self,target,p,s) and
+                   p and not (state.refusedTargets and state.refusedTargets[target]) and
+                   (target==obs.selfGuid or s.targetRule=='ally') and mana_ok and follow_range_ok(following,self,target==obs.selfGuid,p,s) and
                    (not retry or now>=retry.at) and not observed_buff(obs,target,s) then
                     local candidate={target=target,spell=s,water=wet,selfOnly=s.targetRule=='self',selfTarget=target==obs.selfGuid}
                     if prefer(candidate,best) then best=candidate end
@@ -165,8 +187,8 @@ function M.choose(obs,frame)
     end
     if not best then return end
     local s,target=best.spell,best.target
-    state.last={target=target,spell=s.id,family=s.familyId}
     local p=(obs.players or {})[target]
+    state.last={target=target,spell=s.id,family=s.familyId,visit=obs.visitId,position=p.positionRevision}
     local d=(self.x or 0)-(p.x or 0);local e=(self.y or 0)-(p.y or 0);local f=(self.z or 0)-(p.z or 0)
     local distance=math.sqrt(d*d+e*e+f*f)
     return {capability='buff',sessionId=obs.sessionId,selfGuid=obs.selfGuid,targetGuid=target,spellId=s.id,

@@ -126,8 +126,8 @@ local function surface_follow_goal(obs,sequence,owner)
         end
     end
     if not hullKnown then return nil,true end
-    -- Ordinary deck travel is a Lua policy choice. Use a measured jump only
-    -- after a failed walking plan, or to follow a departure into open water.
+    -- Walk between the dock and deck. A water or airborne departure can
+    -- request a jump, which the native path still has to measure.
     local flags=info.flags or 0
     local ownerWater=math.floor(flags/0x200000)%2==1
     local ownerFalling=math.floor(flags/0x1000)%2==1
@@ -136,7 +136,7 @@ local function surface_follow_goal(obs,sequence,owner)
         x=owner.x or 0,y=owner.y or 0,z=owner.z or 0,orientation=owner.orientation or 0,
         startDistance=3,stopDistance=2,ready=false,hold=false,
         surfaceMode=mode,transportGuid=ship,ownerPassengerRevision=passenger.revision,
-        jump=mode=="board" and surface.jumpRequired==true or mode=="leave" and (ownerWater or ownerFalling)},true
+        jump=mode=="leave" and (ownerWater or ownerFalling)},true
 end
 local function portal_age(value)
     if type(value)=="number" or type(value)=="string" then return tonumber(value) end

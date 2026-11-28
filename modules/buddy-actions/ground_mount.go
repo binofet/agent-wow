@@ -17,17 +17,21 @@ import (
 
 // A speed buff or mounted flag alone does not identify a ground mount.
 func (s *Service) groundMountAuraLocked(guid uint64) (uint32, uint64) {
+	_, aura := s.activeGroundMountLocked(guid)
+	return aura.spell, aura.revision
+}
+
+func (s *Service) activeGroundMountLocked(guid uint64) (uint8, observedBuffAura) {
 	set := s.buffAuras[guid]
-	if set == nil {
-		return 0, 0
-	}
-	for _, a := range set.slots {
-		if a.spell != 0 && a.caster == guid && a.positive && !a.negative &&
-			(!a.durationKnown || a.remaining(s.now()) > 0) && s.spellCatalogLocked().GroundMountSpeed(a.spell) > 0 {
-			return a.spell, a.revision
+	if set != nil {
+		for slot, a := range set.slots {
+			if a.spell != 0 && a.caster == guid && a.positive && !a.negative &&
+				(!a.durationKnown || a.remaining(s.now()) > 0) && s.spellCatalogLocked().GroundMountSpeed(a.spell) > 0 {
+				return uint8(slot), a
+			}
 		}
 	}
-	return 0, 0
+	return 0, observedBuffAura{}
 }
 
 func (s *Service) groundTravelUnitFlags(p *worldv1.PlayerState) uint32 {
@@ -48,6 +52,8 @@ func (s *Service) groundTravelUnitFlags(p *worldv1.PlayerState) uint32 {
 type followMountState struct {
 	visit, follow, revision  uint64
 	ownerSpell, releaseSpell uint32
+	ownerAuraSlot            uint8
+	ownerAuraRevision        uint64
 	ownerKnown, dismounted   bool
 	last                     *followMountAttempt
 }
@@ -59,12 +65,12 @@ type followMountAttempt struct {
 	cast                      *supportAttempt
 }
 
-func (s *Service) observedMountLocked(p *worldv1.PlayerState) (*bool, uint32, uint64) {
+func (s *Service) observedMountLocked(p *worldv1.PlayerState) (*bool, uint8, observedBuffAura) {
 	if !p.GetPresent() || !p.GetUnitFlagsKnown() {
-		return nil, 0, 0
+		return nil, 0, observedBuffAura{}
 	}
-	id, rev := s.groundMountAuraLocked(p.Guid)
-	return proto.Bool(p.UnitFlags&movementflags.Mounted != 0), id, rev
+	slot, aura := s.activeGroundMountLocked(p.Guid)
+	return proto.Bool(p.UnitFlags&movementflags.Mounted != 0), slot, aura
 }
 
 func (s *Service) followMountObservationLocked(ctx context.Context, w *worldv1.SnapshotResponse) *actionsv1.FollowMountObservation {
@@ -74,7 +80,8 @@ func (s *Service) followMountObservationLocked(ctx context.Context, w *worldv1.S
 	if !s.matchesCurrentEncounterVisitLocked(w) || !me.GetPresent() || me.Guid != s.selfGUID {
 		return v
 	}
-	own, ownSpell, ownRevision := s.observedMountLocked(me)
+	own, _, ownAura := s.observedMountLocked(me)
+	ownSpell := ownAura.spell
 	v.SelfMounted, v.SelfGroundSpell = own, ownSpell
 	if speed := observedRunSpeed(me); speed > 0 {
 		v.SelfRunSpeed = proto.Float32(float32(speed))
@@ -89,7 +96,7 @@ func (s *Service) followMountObservationLocked(ctx context.Context, w *worldv1.S
 				op.phase = "server_rejected_no_replay"
 			}
 			set := s.buffAuras[me.Guid]
-			changed := !op.dismount && *own && ownSpell == op.spell && ownRevision > op.baseline ||
+			changed := !op.dismount && *own && ownSpell == op.spell && ownAura.revision > op.baseline ||
 				op.dismount && !*own && ownSpell == 0 && set != nil && set.revision > op.baseline
 			if changed && (op.phase == "waiting_for_aura" && op.written || op.phase == "transport_unknown") {
 				// An ambiguous write followed by a compatible state permits a fresh
@@ -108,16 +115,37 @@ func (s *Service) followMountObservationLocked(ctx context.Context, w *worldv1.S
 		owner.GetGuid() != ownerGUID || !owner.GetPresent() || !owner.GetMapKnown() || !me.GetMapKnown() || owner.MapId != me.MapId {
 		return v
 	}
-	theirs, ownerSpell, _ := s.observedMountLocked(owner)
+	theirs, ownerSlot, ownerAura := s.observedMountLocked(owner)
+	ownerSpell := ownerAura.spell
 	v.OwnerMounted, v.OwnerGroundSpell = theirs, ownerSpell
 	if speed := observedRunSpeed(owner); speed > 0 {
 		v.OwnerRunSpeed = proto.Float32(float32(speed))
 	}
+	// A grounded follower can release its mount when the owner dismounts
+	// into water. Mounting up still requires both bodies on ordinary ground.
+	ownerMode := movementflags.GroundCompatible
+	if ownerSpell == 0 && st.ownerKnown && (st.ownerSpell != 0 || st.dismounted) {
+		ownerMode = swimFollowCompatible
+	}
 	if theirs == nil || *theirs != (ownerSpell != 0) || owner.GetPositionInferred() ||
 		!owner.GetAliveKnown() || !owner.GetAlive() || !owner.GetMovementFlagsKnown() ||
-		!movementflags.GroundCompatible(owner.MovementFlags, owner.ExtraMovementFlags) ||
+		!ownerMode(owner.MovementFlags, owner.ExtraMovementFlags) ||
 		owner.UnitFlags_2&movementflags.ForcedOrFeign != 0 || s.groundTravelUnitFlags(owner)&movementflags.UnsafeUnitFlags != 0 {
 		return v
+	}
+	if ownerSpell != 0 {
+		st.ownerAuraSlot, st.ownerAuraRevision = ownerSlot, ownerAura.revision
+	} else if st.ownerKnown && st.ownerSpell != 0 {
+		// Cache loss and elapsed aura duration are not a received removal.
+		set := s.buffAuras[owner.Guid]
+		if set == nil {
+			return v
+		}
+		slot := set.slots[st.ownerAuraSlot]
+		if slot.spell == st.ownerSpell && slot.caster == owner.Guid ||
+			max(slot.revision, set.fullRevision) <= st.ownerAuraRevision {
+			return v
+		}
 	}
 	if own == nil || !*own || ownSpell != st.releaseSpell {
 		st.releaseSpell = 0
@@ -151,7 +179,7 @@ func (s *Service) followMountObservationLocked(ctx context.Context, w *worldv1.S
 	}
 	if len(w.NearbyCreatures) > 32 || s.hasObservedSelfAttackerLocked(w) || me.GetPositionInferred() || s.state.MotionUnconfirmed || s.traversalOccupiedForMountLocked() || s.clientControlLost || s.clientControlRestoring ||
 		(me.UnitFlags|owner.UnitFlags)&0x80000 != 0 || (me.UnitFlags_2|owner.UnitFlags_2)&movementflags.ForcedOrFeign != 0 ||
-		safePlayerMovementFlags(w, s.selfGUID, movementflags.GroundCompatible, movementflags.GroundCompatible, s.groundTravelUnitFlags) != "" ||
+		safePlayerMovementFlags(w, s.selfGUID, movementflags.GroundCompatible, ownerMode, s.groundTravelUnitFlags) != "" ||
 		v.SelfRunSpeed == nil || v.OwnerRunSpeed == nil || !me.HealthKnown || me.Health == 0 || !channelstate.Idle(me) {
 		return v
 	}

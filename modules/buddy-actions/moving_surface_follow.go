@@ -36,7 +36,6 @@ type movingSurfaceFollow struct {
 	until           time.Time
 	hostEpoch       uint64
 	phase           string
-	jumpRequired    bool
 	body            *movingSurfaceBody
 	meshes          map[uint32]*buddynav.SurfaceMesh
 	paths           map[uint64]*buddynav.TransportPath
@@ -92,7 +91,7 @@ func (s *Service) surfaceObservationLocked(ctx context.Context, w *worldv1.Snaps
 	known, guid, written, writtenGUID := s.surfaceOwnFrameLocked(ctx, w)
 	view := &actionsv1.MovingSurfaceObservation{Supported: true, SelfAttachmentKnown: known,
 		SelfTransportGuid: guid, SelfWriteKnown: written, SelfWrittenTransportGuid: writtenGUID,
-		Phase: s.surfaceFollow.phase, JumpRequired: s.surfaceFollow.jumpRequired}
+		Phase: s.surfaceFollow.phase}
 	if p, ok := receivedPassenger(w.GetSelf(), w.VisitRevision); ok {
 		view.Self = proto.Clone(p).(*worldv1.PassengerMovementFacts)
 	}

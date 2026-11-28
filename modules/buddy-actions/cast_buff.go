@@ -27,6 +27,14 @@ func (s *Service) buffRankAvailableLocked(self *worldv1.PlayerState, spell spell
 		s.encounterRankResourcesAvailable(spell, self)
 }
 
+// Friendly stat and breathing buffs target the player's GUID. Only the
+// caster has to be able to act. A mount or ship does not invalidate the ally.
+func observedBuffRecipient(p *worldv1.PlayerState, mapID uint32) bool {
+	return p.GetGuid() != 0 && p.Guid>>48 == 0 && p.Present && p.MapKnown && p.MapId == mapID &&
+		p.AliveKnown && p.Alive && p.PlayerFlags&0x10 == 0 && p.DynamicFlags&0x20 == 0 &&
+		p.PositionKnown && !p.PositionInferred && finite(playerPosition(p))
+}
+
 // CastBuff executes exactly the selected learned friendly aura spell. Lua owns
 // recipient, rank, usefulness, stronger-aura, mana-reserve and refresh decisions.
 func (s *Service) CastBuff(ctx context.Context, r *actionsv1.CastBuffRequest) (*actionsv1.State, error) {
@@ -47,7 +55,7 @@ func (s *Service) CastBuff(ctx context.Context, r *actionsv1.CastBuffRequest) (*
 	}
 	s.buffTimeoutLocked()
 	s.expireInteractionLocked()
-	online := s.healingPartyLocked(ctx)
+	online := s.currentHealPartyLocked(ctx)
 	w, err := s.snapshot(ctx)
 	spell, learned := s.learnedContractsLocked()[r.SpellId]
 	if err != nil || !s.spellbookKnown || !learned || !s.buffCasterAvailableLocked(w, spell) ||
@@ -56,7 +64,7 @@ func (s *Service) CastBuff(ctx context.Context, r *actionsv1.CastBuffRequest) (*
 	}
 	target := observedHealingPlayer(w, r.TargetGuid)
 	sameTeam := observedPlayerTeam(w.Self) != 0 && observedPlayerTeam(w.Self) == observedPlayerTeam(target)
-	if !waterBreathPlayer(target, w.Self.MapId) || r.TargetGuid != s.selfGUID &&
+	if !observedBuffRecipient(target, w.Self.MapId) || r.TargetGuid != s.selfGUID &&
 		(spell.Capability().Target != "ally" || !online[r.TargetGuid] && !sameTeam) {
 		return nil, status.Error(codes.FailedPrecondition, "current living observed friendly target required")
 	}

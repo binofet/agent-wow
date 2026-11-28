@@ -251,3 +251,30 @@ func TestSelectedPassengerBodyRetainsPriorIdleLease(t *testing.T) {
 		t.Fatal(e, out.GetBodyMovement(), out.GetInteractionOwner())
 	}
 }
+
+// A caller facing out through the Menethil hull opening holds forward. The
+// same selected input starts as a passenger and ends on the physical quay.
+func TestSelectedPassengerWalksOntoDryDock(t *testing.T) {
+	lip := buddynav.Point{X: -4.803566, Y: 12.63272, Z: 5.785715}
+	r, req, ctx := explicitDeckFixture(t, 40000, lip, float32(math.Atan2(.99956775, -.029399151)), false)
+	req.DurationMs = 500
+	out, err := r.s.MoveBody(ctx, req)
+	if err != nil || out.GetBodyMovement().GetPhase() != "body_input_written" || !out.GetBodyMovement().GetTransportWritten() || out.GetMotionUnconfirmed() || out.GetMoving() || len(r.packets) < 3 {
+		t.Fatalf("grounded forward input: %v, %v, written frames %d", err, out.GetBodyMovement(), len(r.packets))
+	}
+	first, last := r.frame(0), r.frame(len(r.packets)-1)
+	if !first.TransportPresent || first.Transport.GUID != r.ship || r.packets[0].Opcode != opcode.MSGMoveStartForward || r.packets[len(r.packets)-1].Opcode != opcode.MSGMoveStop ||
+		last.TransportPresent || last.Flags != 0 || countPackets(r.fakeSession, opcode.MSGMoveJump) != 0 || countPackets(r.fakeSession, opcode.MSGMoveStartSwim) != 0 {
+		t.Fatal("incorrect deck-to-quay frames", first, last)
+	}
+	dock := r.tr.Local(surfaceInfoPoint(last))
+	if surfaceDistance(dock, buddynav.Point{X: -4.90656, Y: 16.13127, Z: 5.50983}) > .025 {
+		t.Fatalf("wrong physical dock contact: %v", dock)
+	}
+	n := len(r.packets)
+	_, _ = r.s.MoveBody(ctx, req)
+	if len(r.packets) != n {
+		t.Fatal("repeated the completed input")
+	}
+	t.Logf("%d physical forward/heartbeat/STOP frames, dock contact %+v", n, dock)
+}
