@@ -314,6 +314,19 @@ func TestOwnDockStopSurvivesOnlyClassifiedInterleavedOwnerTraffic(t *testing.T) 
 			if conn.writes != 1 {
 				t.Fatal("reading the STOP wrote another movement frame", conn.writes)
 			}
+			// The same original ground STOP can qualify an independently
+			// current flightmaster query, all the way to the physical socket.
+			ctx = modsession.WithFlightpathWorldCheck(context.Background(), func() bool { return true })
+			payload := binary.LittleEndian.AppendUint64(nil, flightmasterTestGUID)
+			_, _, err = c.e.writeContext(ctx, opcode.CMSGTaxinodeStatusQuery, payload, original.TransportScope)
+			if ownDeath {
+				if !modcb.PacketWasNotDispatched(err) || conn.writes != 1 {
+					t.Fatal("query used a revoked shore STOP", err, conn.writes)
+				}
+			} else if err != nil || conn.writes != 2 {
+				t.Fatal("free query did not reach physical transport", err, conn.writes)
+			}
+
 		})
 	}
 }

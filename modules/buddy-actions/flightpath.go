@@ -70,7 +70,7 @@ func (s *Service) flightpathQueryBodyReasonLocked(r *actionsv1.FlightpathQueryRe
 		return ""
 	}
 	flags := w.GetSelf().GetUnitFlags()
-	if r.Opportunity != nil && (r.Mode == "status" || r.Mode == "discover") {
+	if r.Mode == "status" || r.Mode == "discover" {
 		// A stationary ordinary rider can speak to a currently witnessed
 		// flightmaster. Paid departures still require an ordinary unmounted body.
 		flags = s.groundTravelUnitFlags(w.GetSelf())
@@ -170,18 +170,36 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 // spawn. A departure can use the body's last written STOP and a final World
 // read of that exact NPC. Arrival settlement has its own observed spline proof.
 func (s *Service) flightpathGroundObservationLocked(ctx context.Context, r *actionsv1.FlightpathQueryRequest, w *worldv1.SnapshotResponse) (context.Context, *worldv1.SnapshotResponse, *modv1.WorldPacket, string) {
-	npc := w.GetRequestedCreature()
-	if r.Mode == "arrival" || npc.GetGuid() != r.NpcGuid || !w.GetRequestedCreatureStationaryPositionKnown() ||
-		w.GetSelf().GetPositionAgeMs() <= 2000 && npc.PositionAgeMs <= 2000 && npc.ObservationAgeMs <= 2000 {
+	if r.Mode == "arrival" {
 		return ctx, w, nil, ""
 	}
-	stop, err := modcb.ReadSettledBodySource(ctx, s.session, r.SessionId, r.SelfGuid)
+	npc := w.GetRequestedCreature()
+	surface := s.hasSurfaceBodyAt(w)
+	if npc.GetGuid() != r.NpcGuid || !w.GetRequestedCreatureStationaryPositionKnown() {
+		if surface {
+			return ctx, nil, nil, "flightpath_ground_arrival_or_flightmaster_changed"
+		}
+		return ctx, w, nil, ""
+	}
+	if !surface && w.GetSelf().GetPositionAgeMs() <= 2000 && npc.PositionAgeMs <= 2000 && npc.ObservationAgeMs <= 2000 {
+		return ctx, w, nil, ""
+	}
+	var stop *modv1.WorldPacket
+	var err error
+	if surface {
+		stop, err = s.currentSurfaceReportLocked(ctx, w)
+	} else {
+		stop, err = modcb.ReadSettledBodySource(ctx, s.session, r.SessionId, r.SelfGuid)
+	}
 	if err != nil {
 		return ctx, nil, nil, "flightpath_written_ground_stop_unavailable"
 	}
 	final, err := s.snapshot(ctx, r.NpcGuid)
 	if err != nil {
 		return ctx, nil, nil, "flightpath final world observation unavailable"
+	}
+	if surface && !s.surfaceInteractionStopMatches(final, stop) {
+		return ctx, nil, nil, "flightpath_written_ground_stop_does_not_match_client_position"
 	}
 	ctx, reason := flightpathCountedWorld(ctx, final)
 	return ctx, final, stop, reason
