@@ -5,16 +5,85 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"os"
 	"testing"
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
+
+func TestMountedBodyInputAtMenethil(t *testing.T) {
+	dir := os.Getenv("BUDDY_NAV_SURFACE_TEST_DATA_DIR")
+	if dir == "" {
+		t.Skip("set BUDDY_NAV_SURFACE_TEST_DATA_DIR for the copied Menethil map")
+	}
+	s, f, r, ctx, _ := idleBodyFixture(t, false)
+	s.navDataDir, s.bodyMotionPlan = dir, nil
+	p := f.world.Self
+	p.X, p.Y, p.Z, p.UnitFlags = -3841.9614, -745.749, 8.514998, 8
+	mountForTravel(t, s, p, 23161)
+	r.DurationMs, r.BearingRadians = 100, .25
+	out, err := s.MoveBody(ctx, r)
+	if err != nil || out.GetBodyMovement().GetPhase() != "body_input_written" ||
+		countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 {
+		t.Fatalf("mounted forward input: %v, %v, frames=%d", err, out.GetBodyMovement(), len(f.packets))
+	}
+	last, ok := movementinfo.OwnFrame(f.packets[len(f.packets)-1].Payload, s.selfGUID)
+	bearing := float64(p.Orientation + r.BearingRadians)
+	if !ok || last.TransportPresent || math.Abs(float64(last.Orientation)-bearing) > .001 ||
+		math.Abs(float64(last.X-p.X)-1.4*math.Cos(bearing)) > .02 || math.Abs(float64(last.Y-p.Y)-1.4*math.Sin(bearing)) > .02 ||
+		p.UnitFlags != 134217736 || out.MotionUnconfirmed {
+		t.Fatal("measured mounted stride or original raw flags changed", last, p.UnitFlags, out.MotionUnconfirmed)
+	}
+}
+
+func TestMountedBodyInputRechecksPaceBeforeGroundWrite(t *testing.T) {
+	for _, change := range []string{"unchanged_lease", "slowed_after_start", "aura_removed", "stunned"} {
+		t.Run(change, func(t *testing.T) {
+			s, f, r, ctx, _ := idleBodyFixture(t, change == "unchanged_lease")
+			mountForTravel(t, s, f.world.Self, 23161)
+			checked := false
+			f.onClock = func() {
+				checked = true
+				switch change {
+				case "slowed_after_start":
+					if len(f.packets) >= 2 {
+						f.world.Self.RunSpeed = 7
+					}
+				case "aura_removed":
+					delete(s.buffAuras, s.selfGUID)
+				case "stunned":
+					f.world.Self.UnitFlags |= 0x00040000
+				}
+			}
+			out, err := s.MoveBody(ctx, r)
+			if err != nil || !checked {
+				t.Fatal("did not reach packet-boundary observation", err, out.GetBodyMovement())
+			}
+			if change == "unchanged_lease" {
+				if out.GetBodyMovement().GetPhase() != "body_input_written" || countPackets(f, opcode.MSGMoveStop) != 1 || s.interactionToken != r.IdleToken {
+					t.Fatal("mounted step lost its existing custody", out.GetBodyMovement())
+				}
+			} else if change == "slowed_after_start" {
+				if len(f.packets) != 2 || f.packets[1].Opcode != opcode.MSGMoveStartForward || !out.MotionUnconfirmed {
+					t.Fatal("continued at stale mounted speed or lost the outstanding START", out, f.packets)
+				}
+				_, _ = s.MoveBody(ctx, r)
+				if len(f.packets) != 2 {
+					t.Fatal("unresolved mounted movement replayed", f.packets)
+				}
+			} else if len(f.packets) != 0 || out.GetBodyMovement().GetTransportWritten() {
+				t.Fatal("invalidated mounted input wrote movement", f.packets)
+			}
+		})
+	}
+}
 
 func TestBodyMovementUsesIndependentProbeAndNormalJumpFrames(t *testing.T) {
 	for _, mode := range []string{"step", "jump", "slow_plan_hop", "revoke", "correction", "foreign_body", "foreign_visit"} {

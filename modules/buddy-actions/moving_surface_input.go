@@ -20,6 +20,7 @@ type surfaceBodyInput struct {
 	localBearing  float64
 	ownerRevision uint64
 	dockWalk      bool
+	pace          bodyInputPace
 }
 
 func (s *Service) explicitSurfaceCurrentLocked(ctx context.Context, w *worldv1.SnapshotResponse, in *surfaceMotionSource) bool {
@@ -29,7 +30,8 @@ func (s *Service) explicitSurfaceCurrentLocked(ctx context.Context, w *worldv1.S
 		!s.surfaceOwnMotionAllowed(w) || !s.matchesCurrentEncounterVisitLocked(w) || s.sessionID != r.SessionId || r.SelfGuid != w.Self.Guid ||
 		r.VisitId != w.VisitRevision || w.Self.PositionRevision != in.rawRevision || in.hostEpoch != s.hostEncounterEpoch || !s.admitsPolicyEncounterLocked(ctx, w) ||
 		s.movementOwner.owner != "" || s.movementOwner.revision != body.ownerRevision || w.Self.DynamicFlags&0x20 != 0 || w.Self.PlayerFlags&ghostFlag != 0 ||
-		!w.Self.HealthKnown || w.Self.Health == 0 || w.Self.UnitFlags&movementflags.UnsafeUnitFlags != 0 || s.paidTaxiBodyHeld(w) {
+		!w.Self.HealthKnown || w.Self.Health == 0 || s.bodyInputPaceLocked(w.Self) != body.pace ||
+		body.pace.mountSpell != 0 && !movementflags.GroundCompatible(w.Self.MovementFlags&^passengerFlag, w.Self.ExtraMovementFlags) || s.paidTaxiBodyHeld(w) {
 		return false
 	}
 	if r.IdleToken != "" {
@@ -108,7 +110,7 @@ func (s *Service) planExplicitSurface(ctx context.Context, w *worldv1.SnapshotRe
 // Execute the caller's relative bearing on the current, positively observed
 // passenger body. The plan is synchronous under the original Lua dispatch.
 // Each actual frame and terminal STOP share the native surface writer.
-func (s *Service) moveSurfaceBodyLocked(ctx context.Context, r *actionsv1.BodyMovementRequest, w *worldv1.SnapshotResponse, speed float64, view *actionsv1.BodyMovementState, extend func(time.Duration)) {
+func (s *Service) moveSurfaceBodyLocked(ctx context.Context, r *actionsv1.BodyMovementRequest, w *worldv1.SnapshotResponse, pace bodyInputPace, view *actionsv1.BodyMovementState, extend func(time.Duration)) {
 	sf := &s.surfaceFollow
 	reject := func(phase, detail string) { view.Phase = phase; view.Detail = boundedPolicyDiagnostic(detail, 240) }
 	if sf.planSource != nil || s.state.Moving || s.movementOwner.owner != "" || r.DurationMs > 500 || r.Landing == "follow_water" {
@@ -142,7 +144,8 @@ func (s *Service) moveSurfaceBodyLocked(ctx context.Context, r *actionsv1.BodyMo
 		reject("local_physics_refused", err.Error())
 		return
 	}
-	body := &surfaceBodyInput{request: r, view: view, localBearing: float64(own.Transport.Orientation) + float64(r.BearingRadians), ownerRevision: s.movementOwner.revision}
+	speed := pace.run
+	body := &surfaceBodyInput{request: r, view: view, pace: pace, localBearing: float64(own.Transport.Orientation) + float64(r.BearingRadians), ownerRevision: s.movementOwner.revision}
 	in := &surfaceMotionSource{body: body, ship: h.Guid, rawRevision: w.Self.PositionRevision, objectRevision: h.MovingTransport.ObjectRevision, hostEpoch: s.hostEncounterEpoch, progress: clock, firstProgress: clock, lastTransform: tr}
 	ctx = context.WithValue(ctx, explicitSurfaceInputKey{}, body)
 	if !s.explicitSurfaceCurrentLocked(ctx, w, in) {

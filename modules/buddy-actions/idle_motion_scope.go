@@ -25,6 +25,7 @@ type idleMotionScopeKey struct{}
 // controller or operation ledger. Only actual known-written reports advance it.
 type idleMotionScope struct {
 	destination                                      *destinationOwner
+	inputPace                                        *bodyInputPace
 	binding                                          idleInteractionBinding
 	initial, current                                 *modv1.TransportScope
 	rawPose, pose                                    position
@@ -120,7 +121,12 @@ func (s *Service) idleMotionCurrentFailureLocked(b *idleMotionScope, w *worldv1.
 		}
 	}
 	flags := w.GetSelf().GetUnitFlags()
-	if !b.landing && s.state.Traveling && s.state.InteractionOwner == "exploration" && !s.state.InteractionHarvest {
+	if b.inputPace != nil {
+		if s.bodyInputPaceLocked(w.Self) != *b.inputPace {
+			return "observed_body_pace_changed"
+		}
+		flags = b.inputPace.unitFlags(w.Self)
+	} else if !b.landing && s.state.Traveling && s.state.InteractionOwner == "exploration" && !s.state.InteractionHarvest {
 		flags = s.groundTravelUnitFlags(w.Self)
 	}
 	if why := safeSelfMovementFlags(w, s.selfGUID, compatible, flags); why != "" {
@@ -138,7 +144,7 @@ func (s *Service) idleMotionCurrentLocked(b *idleMotionScope, w *worldv1.Snapsho
 }
 
 func (s *Service) newIdleMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly bool) (*idleMotionScope, error) {
-	return s.newBodyMotionScopeLocked(ctx, token, w, cleanupOnly, "")
+	return s.newBodyMotionScopeLocked(ctx, token, w, cleanupOnly, "", nil)
 }
 
 // Finite landings pin every successful frame to the attempt that wrote it.
@@ -150,9 +156,9 @@ func (s *Service) readBodyMotionReport(ctx context.Context, b *idleMotionScope) 
 	return modcb.ReadOwnMovementReport(ctx, s.session, s.sessionID, s.selfGUID)
 }
 
-func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly bool, landingMode string) (*idleMotionScope, error) {
+func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w *worldv1.SnapshotResponse, cleanupOnly bool, landingMode string, pace *bodyInputPace) (*idleMotionScope, error) {
 	landing := landingMode != ""
-	b := &idleMotionScope{binding: s.idleInteraction, initial: clonePortalScope(portalObservedWorldScope(w, s.selfGUID)),
+	b := &idleMotionScope{binding: s.idleInteraction, inputPace: pace, initial: clonePortalScope(portalObservedWorldScope(w, s.selfGUID)),
 		rawPose: playerPosition(w.GetSelf()), pose: s.pos, rawRevision: s.positionRevision, clientRevision: s.posRevision,
 		rawMovementRevision: w.GetSelfMovementFacts().GetRevision(), mapID: s.posMap, cleanupOnly: cleanupOnly, landing: landing, selfOnly: landingMode == "ground_or_water"}
 	if landing && token == "" {

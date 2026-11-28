@@ -34,6 +34,29 @@ func (s *Service) activeGroundMountLocked(guid uint64) (uint8, observedBuffAura)
 	return 0, observedBuffAura{}
 }
 
+// A finite physical input uses the observed run speed of the body it was
+// planned for. Only a current, self-cast ground mount identifies Mounted.
+type bodyInputPace struct {
+	run        float64
+	mountSpell uint32
+}
+
+func (s *Service) bodyInputPaceLocked(p *worldv1.PlayerState) bodyInputPace {
+	pace := bodyInputPace{run: observedRunSpeed(p)}
+	if p.GetUnitFlags()&movementflags.Mounted != 0 {
+		pace.mountSpell, _ = s.groundMountAuraLocked(p.GetGuid())
+	}
+	return pace
+}
+
+func (pace bodyInputPace) unitFlags(p *worldv1.PlayerState) uint32 {
+	flags := p.GetUnitFlags()
+	if pace.mountSpell != 0 {
+		return flags &^ movementflags.Mounted
+	}
+	return flags
+}
+
 func (s *Service) groundTravelUnitFlags(p *worldv1.PlayerState) uint32 {
 	flags := p.GetUnitFlags()
 	if flags&movementflags.Mounted == 0 || !p.GetUnitFlagsKnown() || !p.GetMovementFlagsKnown() ||
@@ -41,10 +64,7 @@ func (s *Service) groundTravelUnitFlags(p *worldv1.PlayerState) uint32 {
 		p.UnitFlags_2&movementflags.ForcedOrFeign != 0 || observedRunSpeed(p) == 0 {
 		return flags
 	}
-	if id, _ := s.groundMountAuraLocked(p.Guid); id != 0 {
-		return flags &^ movementflags.Mounted
-	}
-	return flags
+	return s.bodyInputPaceLocked(p).unitFlags(p)
 }
 
 // A revision represents an observed change of the owner's actual mount, not an

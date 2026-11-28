@@ -68,8 +68,9 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	if passenger {
 		compatible = func(f, x uint32) bool { return f == passengerFlag && x == 0 }
 	}
+	pace := s.bodyInputPaceLocked(w.GetSelf())
 	if err != nil || s.paidTaxiBodyHeld(w) || !s.matchesCurrentEncounterVisitLocked(w) || r.VisitId != s.encounterVisit.revision || !s.admitsPolicyEncounterLocked(ctx, w) ||
-		safeSelfMovement(w, s.selfGUID, compatible) != "" || !s.refreshPositionLocked(w) || s.clientControlLost || s.clientControlRestoring || s.state.MotionUnconfirmed ||
+		safeSelfMovementFlags(w, s.selfGUID, compatible, pace.unitFlags(w.GetSelf())) != "" || !s.refreshPositionLocked(w) || s.clientControlLost || s.clientControlRestoring || s.state.MotionUnconfirmed ||
 		s.state.CastPending || s.state.Traveling || r.IdleToken == "" && s.state.InteractionOwner != "" ||
 		r.IdleToken != "" && !s.bodyIdleLeaseCurrentLocked(r, s.now()) || s.recovery.state.Active ||
 		!w.Self.MovementFlagsKnown || !compatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) ||
@@ -79,7 +80,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	if old := s.state.BodyMovement; old != nil && old.SequenceId == r.SequenceId && old.VisitId == r.VisitId {
 		return s.stateLocked(), nil
 	}
-	speed := observedRunSpeed(w.Self)
+	speed := pace.run
 	if speed == 0 {
 		return nil, status.Error(codes.FailedPrecondition, "observed normal movement speed required")
 	}
@@ -102,8 +103,16 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		if !owner.GetPresent() {
 			return landingStarted
 		}
-		if !landingStarted && (safePlayerMovement(fresh, s.selfGUID, true) != "" || distance(followedPosition, playerPosition(owner)) > 1.5) {
-			return false
+		if !landingStarted {
+			unitFlags := func(p *worldv1.PlayerState) uint32 {
+				if p == fresh.Self {
+					return s.groundTravelUnitFlags(p)
+				}
+				return p.GetUnitFlags()
+			}
+			if safePlayerMovementFlags(fresh, s.selfGUID, swimFollowCompatible, swimFollowCompatible, unitFlags) != "" || distance(followedPosition, playerPosition(owner)) > 1.5 {
+				return false
+			}
 		}
 		return owner.GetGuid() == followedGUID && owner.GetAliveKnown() && owner.GetAlive() &&
 			owner.GetMapKnown() && owner.GetMapId() == mapID && owner.GetPositionKnown() && !owner.GetPositionInferred() && finite(playerPosition(owner)) &&
@@ -120,7 +129,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	var motion *idleMotionScope
 	if !passenger && (r.IdleToken != "" || r.Landing != "") {
 		ctx = modcb.ForwardPolicySpell(ctx)
-		motion, err = s.newBodyMotionScopeLocked(ctx, r.IdleToken, w, false, r.Landing)
+		motion, err = s.newBodyMotionScopeLocked(ctx, r.IdleToken, w, false, r.Landing, &pace)
 		if err != nil {
 			view.Phase, view.Detail = "body_scope_not_dispatched", boundedPolicyDiagnostic(err.Error(), 240)
 			return s.stateLocked(), nil
@@ -160,7 +169,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		}
 	}
 	if passenger {
-		s.moveSurfaceBodyLocked(ctx, r, w, speed, view, extendLanding)
+		s.moveSurfaceBodyLocked(ctx, r, w, pace, view, extendLanding)
 		return s.stateLocked(), nil
 	}
 	dataDir := s.navDataDir
@@ -263,7 +272,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		if e != nil || s.closed || !owner || !leaseCurrent || !allowsInput(fresh.GetSelf()) || r.Landing == "follow_water" && !followWaterCurrent(fresh, landingStarted) || r.Landing != "" && fresh.GetSelf().GetMovementFlags()&movementflags.PassiveModifiers != 0 ||
 			!s.matchesCurrentEncounterVisitLocked(fresh) || fresh.VisitRevision != r.VisitId ||
 			fresh.Self.PositionRevision != revision || fresh.Self.MapId != mapID ||
-			safeSelfMovement(fresh, s.selfGUID, compatible) != "" || s.clientControlLost || s.clientControlRestoring {
+			s.bodyInputPaceLocked(fresh.Self) != pace || safeSelfMovementFlags(fresh, s.selfGUID, compatible, pace.unitFlags(fresh.Self)) != "" || s.clientControlLost || s.clientControlRestoring {
 			if s.state.Moving && (e != nil || fresh.GetSelf().GetPositionRevision() == revision) {
 				s.state.MotionUnconfirmed = true
 			}
