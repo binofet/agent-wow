@@ -400,9 +400,13 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 		return modcb.PacketNotDispatchedError("invalid policy spell callback")
 	}
 	op.attempted = true
+	origin := op.origin
+	if op.movement != nil && module == actionsModule && op.matchesMovementPacket(code, payload) {
+		origin.MovementAttempt = modcb.IncomingMovementAttempt(ctx)
+	}
 	spells.mu.Unlock()
 
-	err := m.session.SendPacket(modsession.WithWriteOrigin(ctx, op.origin), code, payload)
+	err := m.session.SendPacket(modsession.WithWriteOrigin(ctx, origin), code, payload)
 	spells.mu.Lock()
 	if (op.genericRequest != nil || op.cancelRequest != nil || op.gather != nil) && modcb.PacketWasNotDispatched(err) {
 		op.attempted = false
