@@ -69,10 +69,14 @@ func (s *Service) measureDockWalk(ctx context.Context, w *worldv1.SnapshotRespon
 		}
 		if onDeck == board {
 			if board {
-				_, err = mesh.Route(ctx, tr.Local(last.Point), surfaceOwnerPoint(w))
+				// DepartureRoute proved this edge belongs to the owner's
+				// connected component. Join the first actual foot to that edge.
+				_, err = mesh.Route(ctx, tr.Local(last.Point), tr.Local(toward))
 			} else {
 				// The landing must join the actual owner's static shore.
-				_, err = buddynav.PlanLegContext(ctx, s.navDataDir, w.Self.MapId, last.Point, surfaceOwnerPoint(w))
+				if _, err = s.straightDockGround(ctx, w, g, mesh, tr, progress, last.Point, surfaceOwnerPoint(w), speed); err != nil {
+					_, err = dockGroundRoute(ctx, s.navDataDir, w.Self.MapId, last.Point, surfaceOwnerPoint(w))
+				}
 			}
 			if err != nil {
 				return nil, err
@@ -85,6 +89,53 @@ func (s *Service) measureDockWalk(ctx context.Context, w *worldv1.SnapshotRespon
 		}
 		start = last.Point
 	}
+}
+
+// Verify the short straight part of the quay with the already loaded
+// body collision window. It must stay on dry static support up to the
+// selected point. The map corridor can supply turns if the line is blocked.
+func (s *Service) straightDockGround(ctx context.Context, w *worldv1.SnapshotResponse, g *actionsv1.FollowFormationRequest,
+	mesh *buddynav.SurfaceMesh, tr buddynav.SurfaceTransform, progress uint32, start, end buddynav.Point, speed float64) ([]buddynav.BodyMotionSample, error) {
+	if surfaceDistance(start, end) > buddynav.MaxRouteLength {
+		return nil, errors.New("shore approach requires a ground corridor")
+	}
+	var first []buddynav.BodyMotionSample
+	for {
+		gap := math.Hypot(float64(end.X-start.X), float64(end.Y-start.Y))
+		if gap < .01 {
+			if surfaceDistance(start, end) > buddynav.EndpointTolerance {
+				return nil, errors.New("shore endpoint is on another floor")
+			}
+			return first, nil
+		}
+		rows, err := s.measureSurfaceCrossing(ctx, w, g, mesh, tr, progress, start, end, speed, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows[1:] {
+			hit, e := hullFoot(ctx, mesh.Collision(), tr.Local(row.Point))
+			if e != nil {
+				return nil, e
+			}
+			if hit || row.Swimming || row.FallTime > 0 {
+				return nil, errors.New("approach leaves the static dock")
+			}
+		}
+		if first == nil {
+			first = rows
+		}
+		start = rows[len(rows)-1].Point
+		if math.Hypot(float64(end.X-start.X), float64(end.Y-start.Y)) >= gap-.001 {
+			return nil, errors.New("no progress on static dock")
+		}
+	}
+}
+
+func dockGroundRoute(ctx context.Context, directory string, mapID uint32, start, end buddynav.Point) ([]buddynav.Point, error) {
+	if surfaceDistance(start, end) > buddynav.MaxRouteLength {
+		return buddynav.PlanLegContext(ctx, directory, mapID, start, end)
+	}
+	return buddynav.PlanMapContext(ctx, directory, mapID, start, end)
 }
 
 // A shore approach can have a turn at the gangway. Find a real landing
@@ -112,7 +163,10 @@ func (s *Service) approachDockOpening(ctx context.Context, w *worldv1.SnapshotRe
 	if _, err = s.measureDockWalk(ctx, w, g, mesh, tr, progress, stage, edge, speed); err != nil {
 		return nil, 0, err
 	}
-	path, err := buddynav.PlanLegContext(ctx, s.navDataDir, w.Self.MapId, shore, stage)
+	if step, e := s.straightDockGround(ctx, w, g, mesh, tr, progress, shore, stage, speed); e == nil && len(step) > 1 {
+		return step, surfaceBearing(shore, stage), nil
+	}
+	path, err := dockGroundRoute(ctx, s.navDataDir, w.Self.MapId, shore, stage)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -128,7 +182,7 @@ func (s *Service) approachDockOpening(ctx context.Context, w *worldv1.SnapshotRe
 		}
 		target = q
 	}
-	step, err := s.measureSurfaceCrossing(ctx, w, g, mesh, tr, progress, shore, target, speed, false)
+	step, err := s.straightDockGround(ctx, w, g, mesh, tr, progress, shore, target, speed)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -146,11 +200,21 @@ func (s *Service) planSurfaceDockWalk(ctx context.Context, w *worldv1.SnapshotRe
 	}
 	search, cancel := context.WithTimeout(ctx, actionsTickBudget/2)
 	defer cancel()
+	deckStart := tr.Local(deck)
+	if board {
+		// Begin at the shore-facing edge of the owner's connected component.
+		// The first actual contact is still routed to the passenger below.
+		var err error
+		deckStart, err = mesh.BoardingEntry(search, tr.Local(shore), deckStart)
+		if err != nil {
+			return nil, 0, false, err
+		}
+	}
 	var firstFailure error
 	var input []buddynav.BodyMotionSample
 	var heading float64
 	var crossingFromBody bool
-	route, err := mesh.DepartureRoute(search, tr.Local(deck), tr.Local(shore), func(edge, normal buddynav.Point, length float64) bool {
+	route, err := mesh.DepartureRoute(search, deckStart, tr.Local(shore), func(edge, normal buddynav.Point, length float64) bool {
 		from, to := tr.World(edge), shore
 		at := progress
 		if board {
@@ -165,6 +229,13 @@ func (s *Service) planSurfaceDockWalk(ctx context.Context, w *worldv1.SnapshotRe
 			}
 			at += uint32(approach / time.Millisecond)
 		}
+		crossingFromBody = board
+		if !board && surfaceDistance(start, from) <= .45 {
+			if rows, e := s.measureDockWalk(search, w, g, mesh, tr, progress, start, to, speed); e == nil {
+				input, heading, crossingFromBody = rows, surfaceBearing(start, to), true
+				return true
+			}
+		}
 		rows, e := s.measureDockWalk(search, w, g, mesh, tr, at, from, to, speed)
 		bearing := surfaceBearing(from, to)
 		if board && e != nil {
@@ -175,7 +246,6 @@ func (s *Service) planSurfaceDockWalk(ctx context.Context, w *worldv1.SnapshotRe
 			rows, e = s.measureDockWalk(search, w, g, mesh, tr, at, from, to, speed)
 			bearing = surfaceBearing(from, to)
 		}
-		crossingFromBody = board
 		if !board && e == nil && surfaceDistance(start, from) <= .45 {
 			bodyRows, bodyErr := s.measureDockWalk(search, w, g, mesh, tr, progress, start, to, speed)
 			if bodyErr == nil {
