@@ -65,8 +65,16 @@ func (s *Session) recordTaxiBodyOrigin(scope *modv1.TransportScope, data []byte)
 
 func (e *engine) taxiBodyFrameCurrent(payload []byte) bool {
 	g, current := &e.taxiBody, e.transport.scope
-	if g.pending || !g.boarded || !current.GetVisitBound() || current.GetSelfGuid() == 0 || g.booking == nil ||
+	if !g.active() || !current.GetVisitBound() || current.GetSelfGuid() == 0 || g.booking == nil ||
 		g.booking.ConnectionId != current.ConnectionId || g.booking.SelfGuid != current.SelfGuid || current.MotionRevision <= g.booking.MotionRevision {
+		return false
+	}
+	// The separate body of a later visit can be restored from its actual
+	// settled raw image. In the booked visit require a flying source newer
+	// than this fare; an old receipt cannot authorize a second departure.
+	laterGround := current.VisitRevision > g.booking.VisitRevision && !current.SplineActive
+	if !laterGround && (!g.boarded || g.pending || !current.SplineIdKnown || current.SplineSourceRevision <= g.booking.MotionRevision ||
+		current.SplineSourceOpcode != opcode.SMSGMonsterMove && current.SplineSourceOpcode != opcode.SMSGMonsterMoveTransport) {
 		return false
 	}
 	i, ok := movementinfo.OwnFrame(payload, current.SelfGuid)

@@ -9,6 +9,53 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func TestTaxiReplacedVisitRequiresItsOwnCurrentStationaryImage(t *testing.T) {
+	for _, mode := range []string{"own ground", "entry only", "other mover", "own moving", "still taxi", "still falling"} {
+		t.Run(mode, func(t *testing.T) {
+			x := newCompletionRig(t)
+			x.scope.VisitRevision++
+			x.scope.SplineActive, x.scope.SplineIdKnown = false, false
+			x.scope.SplineSourceRevision, x.scope.SplineSourceOpcode = 0, 0
+			got := x.deliver(t, opcode.SMSGNewWorld, login())
+			if got.SelfMotionAuthority.GetTaxiBodyOriginMotionRevision() != 0 {
+				t.Fatal("entry coordinates reused without a new body")
+			}
+			flags := uint32(8)
+			if mode == "still taxi" {
+				flags |= 0x100000
+			}
+			got = x.deliver(t, opcode.SMSGUpdateObject, deltaFixture(1, map[int]uint32{unitFlags: flags}))
+			if mode != "entry only" {
+				id := uint64(1)
+				raw := movementinfo.Info{X: 52, Y: -99, Z: 17, Orientation: 1}
+				if mode == "other mover" {
+					id = 2
+				}
+				if mode == "own moving" {
+					raw.Flags = 1
+				}
+				if mode == "still falling" {
+					raw.FallTime = 90
+				}
+				wire, err := movementinfo.Encode(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got = x.deliver(t, opcode.MSGMoveHeartbeat, ownMovementMessage(id, wire))
+			}
+			rev := got.SelfMotionAuthority.GetTaxiBodyOriginMotionRevision()
+			if mode == "own ground" {
+				if rev == 0 || rev != got.SelfMovementFacts.GetTransportScope().GetMotionRevision() || got.Self.PositionInferred || got.Self.X != 52 ||
+					got.SelfMotionAuthority.NaturalTaxiLandingRevision != 0 {
+					t.Fatal("fresh direct replacement body or fare bounds lost", got.Self, got.SelfMotionAuthority)
+				}
+			} else if rev != 0 {
+				t.Fatal("unqualified replacement body", rev)
+			}
+		})
+	}
+}
+
 func TestPaidTaxiBodyUsesMatureOwnSplineThenYieldsToNewReceivedPose(t *testing.T) {
 	for _, event := range []string{"mature", "early clear", "expired alone", "foreign clear", "damaged batch", "after clear correction", "new own spline", "same map reentry", "different in-flight coordinate"} {
 		t.Run(event, func(t *testing.T) {

@@ -36,12 +36,38 @@ func (s *Service) taxiBodyOriginRevision(p *observed, scope *modv1.TransportScop
 func (s *Service) observeTaxiBodyOrigin(ctx context.Context, packet *modv1.WorldPacket, received observed, next *observations, now time.Time) {
 	b, m, p, scope := &s.taxiBody, &s.motion, &next.players[0], packet.TransportScope
 	f := &m.naturalTaxi
-	if b.source == nil && (f.source == nil || f.taxiOn == 0) {
+	newVisitRaw := next.visitRevision > 1 && !scope.GetSplineActive() && received.receivedMovement
+	if !newVisitRaw && b.source == nil && (f.source == nil || f.taxiOn == 0) {
 		return
 	}
+	defer func() {
+		if origin := s.taxiBodyOriginRevision(p, scope); origin != 0 {
+			wire := binary.LittleEndian.AppendUint64(nil, origin)
+			for _, v := range []float32{p.x, p.y, p.z} {
+				wire = binary.LittleEndian.AppendUint32(wire, math.Float32bits(v))
+			}
+			_ = grpc.SetTrailer(ctx, metadata.Pairs(modcb.TaxiBodyOriginTrailer, string(wire)))
+		}
+	}()
 	if !scopeMatchesSelf(scope, received, next.visitRevision) || !snapshot(received, now).GetAlive() || received.receivedMotionInvalid {
 		*b = taxiBodyObservation{}
 		return
+	}
+	// A separate World entry can interrupt a ride. Keep only a genuine
+	// stationary image newly received in that visit, with current unit
+	// state. A coordinate in NEW_WORLD or an old raw image is insufficient.
+	// Core separately compares this visit against its physical booking.
+	if newVisitRaw {
+		*b = taxiBodyObservation{}
+		i := received.receivedMovementInfo
+		if received.positionKnown && !received.positionInferred && received.movementKnown && m.unitFlagsKnown && m.unitFlags&movementflags.UnsafeUnitFlags == 0 &&
+			movementflags.GroundCompatible(i.Flags, uint32(i.ExtraFlags)) && i.Flags&0x1ff == 0 && i.FallTime == 0 && !i.TransportPresent {
+			*b = taxiBodyObservation{source: cloneMotionScope(scope), origin: scope.MotionRevision, revision: received.positionRevision}
+		}
+		return
+	}
+	if b.source != nil && !b.source.SplineActive && (scope.SplineActive || !m.unitFlagsKnown || m.unitFlags&movementflags.UnsafeUnitFlags != 0) {
+		*b = taxiBodyObservation{}
 	}
 	if f.source != nil && f.taxiOn != 0 && !sameMotionSource(b.source, f.source) {
 		raw := next.ownMovement
@@ -101,12 +127,5 @@ func (s *Service) observeTaxiBodyOrigin(ctx context.Context, packet *modv1.World
 			p.positionRevision++
 			b.origin, b.revision = scope.MotionRevision, p.positionRevision
 		}
-	}
-	if origin := s.taxiBodyOriginRevision(p, scope); origin != 0 {
-		wire := binary.LittleEndian.AppendUint64(nil, origin)
-		for _, v := range []float32{p.x, p.y, p.z} {
-			wire = binary.LittleEndian.AppendUint32(wire, math.Float32bits(v))
-		}
-		_ = grpc.SetTrailer(ctx, metadata.Pairs(modcb.TaxiBodyOriginTrailer, string(wire)))
 	}
 }

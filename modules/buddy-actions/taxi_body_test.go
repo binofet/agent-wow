@@ -44,6 +44,59 @@ func TestNormalBodyTapSettlesElevatedTaxiEndpointThenJumps(t *testing.T) {
 	}
 }
 
+func TestTaxiFreshOwnGroundInNewVisitRestoresOnlyBodyControl(t *testing.T) {
+	for _, mode := range []string{"accepted", "unanswered", "wrong body", "old Core visit", "missing raw", "inferred", "taxi still active"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, _, _ := targetMovementFixture(t)
+			p, w := f.world.Self, f.world
+			w.VisitRevision++
+			s.encounterVisit.revision = w.VisitRevision
+			p.X, p.Y, p.Z = 13, 22, 7
+			p.PositionRevision++
+			old := &modv1.TransportScope{ConnectionId: "original", SelfGuid: s.selfGUID, VisitBound: true, VisitRevision: 9, MapId: p.MapId, MotionRevision: 21}
+			next := cloneFlightpathScope(old)
+			next.VisitRevision++
+			next.MotionRevision = 32
+			a := &actionsv1.FlightpathActivationOperation{SessionId: s.sessionID, SelfGuid: s.selfGUID, VisitId: w.VisitRevision - 1,
+				ActivationAccepted: true, ReplyKnown: true, Pending: true, TransportWritten: true, AcceptanceScope: old}
+			if mode == "unanswered" {
+				a.TransportUnknown, a.TransportWritten, a.ActivationAccepted, a.ReplyKnown, a.AcceptanceScope = true, false, false, false, nil
+			}
+			s.flightpathActivation.operation = a
+			w.SelfMotionAuthority = &worldv1.OwnMotionAuthority{SelfGuid: s.selfGUID, VisitRevision: w.VisitRevision, TransportScope: next, TaxiBodyOriginMotionRevision: next.MotionRevision}
+			w.SelfMovementFacts = &worldv1.OwnMovementFacts{SelfGuid: s.selfGUID, VisitRevision: w.VisitRevision, Known: true, MapKnown: true, MapId: p.MapId,
+				Info: &worldv1.MovementInfoFacts{X: p.X, Y: p.Y, Z: p.Z, Orientation: p.Orientation}, TransportScope: cloneFlightpathScope(next)}
+			switch mode {
+			case "wrong body":
+				w.SelfMovementFacts.SelfGuid++
+			case "old Core visit":
+				next.VisitRevision = old.VisitRevision
+				w.SelfMovementFacts.TransportScope.VisitRevision = old.VisitRevision
+			case "missing raw":
+				w.SelfMovementFacts.Known = false
+			case "inferred":
+				p.PositionInferred = true
+			case "taxi still active":
+				p.UnitFlags |= 0x100000
+			}
+			s.lastWorld = w
+			s.refreshPositionLocked(w)
+			s.state.Moving = true
+			_, err := s.BeforeLogout(context.Background(), nil)
+			want := mode == "accepted" || mode == "unanswered"
+			if err != nil || (countPackets(f, opcode.MSGMoveStop) == 1) != want || a.ArrivalKnown || a.FlightStartedKnown || !a.Pending {
+				t.Fatal("wrong body disposition or paid receipt", err, mode, a, f.packets)
+			}
+			if want {
+				i, ok := movementinfo.OwnFrame(f.packets[0].Payload, s.selfGUID)
+				if !ok || i.X != p.X || i.Y != p.Y || i.Z != p.Z {
+					t.Fatal("wrote the wrong body", i)
+				}
+			}
+		})
+	}
+}
+
 func TestFollowAndBeforeLogoutUseOnlyCurrentPostTaxiBody(t *testing.T) {
 	root := os.Getenv("BUDDY_NAV_POOL_TEST_DATA_DIR")
 	if root == "" {
@@ -57,6 +110,8 @@ func TestFollowAndBeforeLogoutUseOnlyCurrentPostTaxiBody(t *testing.T) {
 			origin := &modv1.TransportScope{ConnectionId: "paid-flight", SelfGuid: s.selfGUID, MapId: p.MapId, VisitBound: true, VisitRevision: 7, MotionRevision: 30}
 			s.flightpathActivation.operation = &actionsv1.FlightpathActivationOperation{SelfGuid: s.selfGUID, SessionId: s.sessionID, VisitId: f.world.VisitRevision, ActivationAccepted: true, ReplyKnown: true, TransportWritten: true, AcceptanceScope: cloneFlightpathScope(origin)}
 			origin.MotionRevision = 69
+			origin.SplineActive, origin.SplineIdKnown, origin.SplineId = true, true, 27
+			origin.SplineSourceOpcode, origin.SplineSourceRevision = opcode.SMSGMonsterMove, 40
 			f.world.SelfMotionAuthority = &worldv1.OwnMotionAuthority{SelfGuid: s.selfGUID, VisitRevision: f.world.VisitRevision, TransportScope: origin, UnitFlagsKnown: true, UnitFlags: p.UnitFlags}
 			p.X, p.Y, p.Z = 120, 130, 10
 			f.world.Owner.X, f.world.Owner.Y, f.world.Owner.Z = -5424, -2934, 347

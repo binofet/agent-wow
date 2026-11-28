@@ -109,3 +109,46 @@ func TestPaidTaxiAmbiguousGroundStartRequiresNewActualOrigin(t *testing.T) {
 		t.Fatal("new own observation refused", err)
 	}
 }
+
+func TestTaxiSocketUsesGroundProofOfLaterVisitWithoutCreditingFare(t *testing.T) {
+	for _, mode := range []string{"accepted new visit", "unanswered new visit", "same visit", "missing current proof", "wrong new origin"} {
+		t.Run(mode, func(t *testing.T) {
+			c := &scopeWriteConn{}
+			e := scopedBodyEngine(t, c)
+			fare := binary.LittleEndian.AppendUint64(nil, flightmasterTestGUID)
+			fare = binary.LittleEndian.AppendUint32(fare, 6)
+			fare = binary.LittleEndian.AppendUint32(fare, 8)
+			if err := e.write(opcode.CMSGActivatetaxi, fare); err != nil {
+				t.Fatal(err)
+			}
+			if mode != "unanswered new visit" {
+				e.observeTransportScope(opcode.SMSGActivatetaxireply, []byte{0, 0, 0, 0})
+			}
+			if mode != "same visit" {
+				e.observeTransportScope(opcode.SMSGNewWorld, positionBody(0, 7, 13, 19, 0.5))
+			}
+			body := ownReportPacket(t, 0)
+			i, _ := movementinfo.OwnFrame(body, e.transport.scope.SelfGuid)
+			i.X, i.Y, i.Z = 7, 13, 19
+			body, _ = movementinfo.MoverFrame(e.transport.scope.SelfGuid, i)
+			e.observeTransportScope(opcode.MSGMoveHeartbeat, body)
+			if mode != "missing current proof" {
+				w := binary.LittleEndian.AppendUint64(nil, e.transport.scope.MotionRevision)
+				for _, n := range []float32{i.X, i.Y, i.Z} {
+					w = binary.LittleEndian.AppendUint32(w, math.Float32bits(n))
+				}
+				e.s.recordTaxiBodyOrigin(e.transport.snapshot(), w)
+			}
+			if mode == "wrong new origin" {
+				i.X++
+				body, _ = movementinfo.MoverFrame(e.transport.scope.SelfGuid, i)
+			}
+			before := c.writes
+			err := e.write(opcode.MSGMoveStop, body)
+			want := mode == "accepted new visit" || mode == "unanswered new visit"
+			if want && (err != nil || c.writes != before+1 || e.taxiBody.active()) || !want && (!modcb.PacketWasNotDispatched(err) || c.writes != before) {
+				t.Fatal(mode, err, c.writes-before)
+			}
+		})
+	}
+}
