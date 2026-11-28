@@ -48,10 +48,56 @@ local function cancel(value, stop_movement)
     state.requests = requests
 end
 
+-- One explicit forward input. The host binds the session; the caller names its
+-- observed body and visit. Bearing is relative to current facing, in radians.
+local function valid_body_input(v)
+    local pi=3.141592653589793
+    return type(v)=="table" and type(v.id)=="string" and #v.id>0 and #v.id<=80 and
+        guid(v.selfGuid) and guid(v.visitId) and type(v.bearingRadians)=="number" and
+        v.bearingRadians>=-pi and v.bearingRadians<=pi and
+        type(v.durationMs)=="number" and v.durationMs>=1 and v.durationMs<=500 and v.durationMs%1==0 and
+        (v.jump==nil or v.jump==false)
+end
+
+local function body_input(frame,obs,out,other_task)
+    local r=state.bodyInput
+    if not r or r.phase~="requested" or frame.input.kind~="encounter" or not obs or
+       frame.input.observationSequence~=state.sequence then return end
+    if r.sessionId~=frame.session_id or r.sessionId~=obs.sessionId or r.selfGuid~=obs.selfGuid or r.visitId~=obs.visitId then
+        r.phase="scope_changed";return
+    end
+    local nav,own=obs.navigation or {},out.encounterOwnership
+    local self=(obs.players or {})[r.selfGuid]
+    local ground,hold=state.rangedGround,state.rangedHold
+    if not own or own.visitId~=r.visitId or own.observationSequence~=state.sequence or obs.hostOwned~=true or
+       nav.bodyMovementSupported~=true or nav.motionUnconfirmed or (nav.movementOwner or {}).active or
+       not self or self.combatKnown~=true or self.inCombat or (obs.recovery or {}).active or
+       (obs.interaction or {}).owner and obs.interaction.owner~="" or #frame.pending~=0 or state.settledAt==state.sequence or
+       ground and (ground.operation or ground.uncertain or ground.awaiting) or hold and (hold.operation or hold.uncertain) or
+       out.task and out.task.id and out.task.phase~="complete" or
+       out.action or out.actionRequestId or out.focusGuid or out.portalCatchup or other_task or (out.consumable or {}).hold then
+        r.phase="not_selected_busy";return
+    end
+    r.phase,r.sequence="selected",state.sequence
+    out.followFormation=nil
+    out.actionRequestId="move_body:"..r.id
+    out.action={capability="move_body",sessionId=r.sessionId,selfGuid=r.selfGuid,visitId=r.visitId,
+                observationSequence=r.sequence,sequenceId=r.sequence,bearingRadians=r.bearingRadians,durationMs=r.durationMs,jump=false}
+end
+
 local function on_event(event)
     if event.receipt and terminal[event.receipt.outcome] then state.settledAt = state.sequence end
     if event.receipt then
         local payload, outcome = event.receipt.payload or {}, event.receipt.outcome
+        local r=state.bodyInput
+        if r and r.sequence and payload.capability=="move_body" and payload.policy_request_id=="move_body:"..r.id and
+           guid(event.receipt.action_id) and (not r.receipt or r.receipt.action_id==event.receipt.action_id) and
+           (payload.self_guid==r.selfGuid and payload.visit_id==r.visitId and payload.sequence_id==r.sequence or
+            outcome=="not_dispatched" and payload.admissionRejected==true and payload.transport_written==false) then
+            r.receipt,r.phase=event.receipt,outcome
+            r.unresolved=not terminal[outcome] or payload.reconciliationRequired==true or
+                outcome=="settled_unverified" and payload.transport_written~=true
+        end
         if state.stopping and payload.capability=="stop_movement" and payload.target_guid==state.stopping.targetGuid and
            (outcome=="failed" or outcome=="not_dispatched") then state.stopping.sent=nil end
         if outcome == "failed" or outcome == "not_dispatched" then
@@ -120,6 +166,18 @@ local function on_event(event)
     end
     if event.kind ~= "command" or type(event.value) ~= "table" then return true end
     local value = event.value
+    if value.task=="move_body" then
+        if not valid_body_input(value) or value.selfGuid~=state.selfGuid or value.visitId~=state.visitId or not state.session then return true end
+        state.bodyInputSeen=state.bodyInputSeen or {}
+        if state.bodyInputSeen[value.id] then return true end
+        state.bodyInputSeen[value.id]=true
+        local prev=state.bodyInput
+        if prev and (prev.phase=="selected" or prev.unresolved) then return true end
+        state.bodyInput={id=value.id,sessionId=state.session,selfGuid=value.selfGuid,visitId=value.visitId,
+            bearingRadians=value.bearingRadians,durationMs=value.durationMs,phase="requested"}
+        return true
+    end
+    if state.bodyInput and state.bodyInput.phase=="requested" then state.bodyInput.phase="superseded" end
     if value.task == "ranged_only" then
         if type(value.id)~="string" or #value.id==0 or #value.id>80 then return true end
         if value.cancel==true or value.enabled==false then
@@ -490,6 +548,11 @@ end
 local function import_state(saved)
     if saved.version ~= 1 or type(saved.data) ~= "table" or type(saved.data.requests) ~= "table" or
        #saved.data.requests > 8 then return false end
+    local body=saved.data.bodyInput
+    if saved.data.bodyInputSeen~=nil and type(saved.data.bodyInputSeen)~="table" or body and
+       (not valid_body_input(body) or type(body.sessionId)~="string" or type(body.phase)~="string" or
+        not (saved.data.bodyInputSeen or {})[body.id] or body.sequence~=nil and not guid(body.sequence) or
+        body.receipt~=nil and type(body.receipt)~="table") then return false end
     for _, row in ipairs(saved.data.requests) do
         if type(row) ~= "table" or type(row.id) ~= "string" or #row.id == 0 or #row.id > 80 or
            (row.technique ~= "polymorph" and row.technique ~= "sap") or not selector(row) or
@@ -1392,5 +1455,5 @@ local function ranged_finish(selected)
     ranged_control_proposal=nil
 end
 
-return {on_event=on_event, export_state=export_state, import_state=import_state,
+return {on_event=on_event, export_state=export_state, import_state=import_state, body_input=body_input,
         queue_intent=queue_intent, control_action=control_action, ranged_stance=ranged_stance, ranged_options=ranged_options, ranged_travel_safe=ranged_travel_safe,ranged_filter=ranged_filter, ranged_finish=ranged_finish, cloud_point_step=cloud_point_step, movement_point_owner=movement_point_owner}
