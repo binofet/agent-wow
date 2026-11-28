@@ -17,14 +17,14 @@ local function successor(v)
     end
     return carry==1 and "1"..out or out
 end
-local function quiet(context)
+local function quiet(context,natural)
     local a=context.observations.actions or {};local self=(context.observations.world or {}).self or {}
     for _,key in ipairs({"moving","castPending","motionUnconfirmed","autoAttacking","autoAttackRequested",
                         "autoAttackUnconfirmed","practicing","traveling"}) do if a[key]==true then return false end end
     local flags,movement=self.unitFlags or 0,self.movementFlags or 0
     return (a.recovery or {}).active~=true and self.present==true and self.aliveKnown==true and self.alive==true and
-        self.positionKnown==true and self.positionInferred~=true and self.mapKnown==true and self.unitFlagsKnown==true and
-        uint(flags) and math.floor(flags/0x80000)%2==0 and self.movementFlagsKnown==true and uint(movement) and movement%256==0 and
+        (natural or self.positionKnown==true and self.positionInferred~=true and self.movementFlagsKnown==true and uint(movement) and movement%256==0) and
+        self.mapKnown==true and self.unitFlagsKnown==true and uint(flags) and math.floor(flags/0x80000)%2==0 and math.floor(flags/0x100000)%2==0 and
         self.channelSpellKnown==true and self.channelObjectKnown==true and (self.channelSpellId or 0)==0 and revision(self.channelObjectGuid)=="0"
 end
 local function wallet(context)
@@ -90,6 +90,17 @@ local function source(a,b)
     return a.visitBound==true and b.visitBound==true and (a.mapId or 0)==(b.mapId or 0) and
         a.splineIdKnown==true and b.splineIdKnown==true and (a.splineId or 0)==(b.splineId or 0)
 end
+function M.natural_landing(w,booking)
+    local a=w.selfMotionAuthority or {};local s=a.transportScope or {};local accepted=booking.acceptanceScope or {}
+    local completion=(w.splineCompletion or {}).operation
+    if completion and source(completion.transportScope,s) and (completion.pending==true or completion.transportWritten==true or
+       completion.transportUnknown==true or completion.phase~="not_dispatched") then return end
+    if booking.currentSegment or booking.activationAccepted~=true or booking.replyKnown~=true or (booking.replyCode or 0)~=0 or
+       booking.selfGuid~=(w.self or {}).guid or booking.visitId~=w.visitRevision or a.visitRevision~=w.visitRevision or
+       s.connectionId~=accepted.connectionId or not s.connectionId or s.visitRevision~=accepted.visitRevision or
+       not newer(s.splineSourceRevision,accepted.motionRevision) or not newer(a.taxiOnMotionRevision,accepted.motionRevision) then return end
+    return identifier(a.naturalTaxiLandingRevision)
+end
 local function complete_match(op,request,expected)
     if not op or op.revision~=expected or not request or not same(op.transportScope,request.transportScope) then return false end
     for _,key in ipairs({"selfGuid","visitRevision","authorityRevision","movementRevision","splineRevision"}) do
@@ -120,15 +131,29 @@ local function world_binding(w)
     return {selfGuid=(w.self or {}).guid,visitRevision=w.visitRevision,authorityRevision=a.revision,
         movementRevision=(w.selfMovementFacts or {}).revision,unitFlagsRevision=a.unitFlagsRevision,transportScope=a.transportScope}
 end
-local function flightmaster(w)
+local function flightmaster(w,natural)
     local p=w.self or {};local best,distance
+    local x,y,z=p.x or 0,p.y or 0,p.z or 0
+    if natural then
+        local a=w.selfMotionAuthority or {};local endpoint=a.naturalTaxiEndpoint;local raw=w.selfMovementFacts or {};local scope=a.transportScope
+        if not endpoint then return end
+        if not (raw.known==true and source(raw.transportScope,scope) and newer(raw.transportScope.motionRevision,scope.splineSourceRevision)
+                and p.positionKnown==true and p.positionInferred~=true) then
+            x,y,z=endpoint.x or 0,endpoint.y or 0,endpoint.z or 0
+        end
+    end
     for _,npc in ipairs(w.nearbyCreatures or {}) do
         if identifier(npc.guid) and npc.present==true and npc.aliveKnown==true and npc.alive==true and
            npc.positionKnown==true and npc.mapKnown==true and (npc.mapId or 0)==(p.mapId or 0) and
            uint(npc.npcFlags or 0) and math.floor((npc.npcFlags or 0)/0x2000)%2==1 then
-            local x,y,z=(npc.x or 0)-(p.x or 0),(npc.y or 0)-(p.y or 0),(npc.z or 0)-(p.z or 0)
-            local d=x*x+y*y+z*z
-            if d<=25 and math.abs(z)<=2.5 and (not distance or d<distance) then best,distance=npc.guid,d end
+            local dx,dy,dz=(npc.x or 0)-x,(npc.y or 0)-y,(npc.z or 0)-z
+            local d=dx*dx+dy*dy+dz*dz
+            local reach=5
+            if natural then reach=reach+(p.combatReachKnown and p.combatReach or 0)+(npc.combatReachKnown and npc.combatReach or 0) end
+            if d<=reach*reach and (natural and npc.stationaryPositionKnown or not natural and math.abs(dz)<=2.5) then
+                if not distance or d<distance then best,distance=npc.guid,d
+                elseif natural and d==distance and npc.guid~=best then best=nil end
+            end
         end
     end
     return best
@@ -210,6 +235,12 @@ local function progress(context,frame,flight,op)
         if frame.waiting then return tasks.await(context,"waiting_for_previous_flight_effect") end
         return propose_adoption(context,frame,op,w)
     end
+    local natural=M.natural_landing(w,op)
+    if M.tuning.complete_hops==true and natural and not frame.currentSource and not frame.waiting and
+       (frame.stage=="flight" or frame.stage=="ground" and proof.phase=="not_dispatched" and
+        complete_match(proof,frame.completion,frame.completionRevision)) then
+        frame.naturalLandingRevision=natural;frame.stage="probe"
+    end
     if frame.stage=="flight" then
         local acceptance=frame.currentSource or op.acceptanceScope
         if M.tuning.complete_hops~=true or a.known~=true or not a.transportScope or
@@ -238,8 +269,10 @@ local function progress(context,frame,flight,op)
         else return tasks.await(context,"actual_landing_evidence_unavailable") end
     end
     if frame.stage=="probe" then
-        local params=context.state.goal.params or {};local npc=flightmaster(w);local age=revision((w.self or {}).positionAgeMs)
-        if c.retirementCurrent~=true or not quiet(context) or not age or newer(age,"2000") or not npc or not valid_token(params.explorationToken) or
+        local received=frame.naturalLandingRevision and frame.naturalLandingRevision==natural
+        local params=context.state.goal.params or {};local npc=flightmaster(w,received);local age=revision((w.self or {}).positionAgeMs)
+        if (frame.naturalLandingRevision and not received) or not received and (c.retirementCurrent~=true or not age or newer(age,"2000")) or
+           not quiet(context,received) or not npc or not valid_token(params.explorationToken) or
            (context.observations.actions or {}).interactionOwner~="exploration" then return tasks.await(context,"waiting_for_arrival_menu_authority") end
         if frame.currentVisitId and params.explorationToken==frame.parentToken then
             return tasks.await(context,"fresh_parent_visit_lease_required")
@@ -247,6 +280,7 @@ local function progress(context,frame,flight,op)
         local request={sessionId=frame.request.sessionId,selfGuid=frame.request.selfGuid,visitId=frame.currentVisitId or frame.request.visitId,
             token=params.explorationToken,npcGuid=npc,mode="arrival",expectedRevision=revision(flight.revision),
             activationRevision=frame.request.revision,completionRevision=c.revision}
+        if received then request.completionRevision=nil;request.naturalLandingRevision=natural end
         issue(frame,"probe",request,successor(request.expectedRevision));return
     end
     if frame.stage=="menu" then
@@ -256,10 +290,13 @@ local function progress(context,frame,flight,op)
             return tasks.await(context,"arrival_query_not_dispatched")
         end
         if menu.revision~=e.revision or menu.npcGuid~=e.params.npcGuid or menu.activationRevision~=frame.request.revision or
-           menu.completionRevision~=c.revision or menu.menuKnown~=true or menu.pending==true or
+           menu.naturalLandingRevision~=frame.naturalLandingRevision or
+           (frame.naturalLandingRevision and natural~=frame.naturalLandingRevision or not frame.naturalLandingRevision and menu.completionRevision~=c.revision) or
+           menu.menuKnown~=true or menu.pending==true or
            menu.sourceNode~=frame.hop then return tasks.await(context,"waiting_for_actual_destination_menu") end
         binding.visitId=binding.visitRevision;binding.visitRevision=nil;binding.sessionId=frame.request.sessionId
         binding.activationRevision=frame.request.revision;binding.menuRevision=menu.revision;binding.completionRevision=c.revision
+        if frame.naturalLandingRevision then binding.completionRevision=nil;binding.naturalLandingRevision=natural end
         issue(frame,"settle",binding,frame.request.revision);return
     end
     if frame.stage=="settled" then
@@ -293,11 +330,13 @@ local function effect_receipt(context,frame)
     if e.kind=="probe" then
         op=f.operation
         if op and op.revision==e.revision and op.npcGuid==e.params.npcGuid and op.mode=="arrival" and
-           op.activationRevision==e.params.activationRevision and op.completionRevision==e.params.completionRevision and
+           op.activationRevision==e.params.activationRevision and op.completionRevision==e.params.completionRevision and op.naturalLandingRevision==e.params.naturalLandingRevision and
            (op.transportWritten==true or op.transportUnknown==true or op.phase=="not_dispatched") then return "flightpath","operation",op end
     end
     if e.kind=="settle" and matches(f.activation,frame.request) and f.activation.arrivalKnown==true and f.activation.pending~=true and
-       (f.operation or {}).revision==e.params.menuRevision and c.revision==e.params.completionRevision then return "flightpath","activation",f.activation end
+       (f.operation or {}).revision==e.params.menuRevision and
+       (e.params.naturalLandingRevision and (f.operation or {}).naturalLandingRevision==e.params.naturalLandingRevision or
+        not e.params.naturalLandingRevision and c.revision==e.params.completionRevision) then return "flightpath","activation",f.activation end
 end
 local function effect_parameters(params,expected)
     if type(params)~="table" then return false end

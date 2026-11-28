@@ -74,6 +74,7 @@ func (s observations) clone() observations {
 		s.players[i].receivedMovementWireLen = 0
 		s.players[i].receivedSpline = false
 		s.players[i].receivedUnitFlags = false
+		s.players[i].receivedTaxiBarrier = false
 		s.players[i].receivedOwnCreate = false
 		s.players[i].receivedMotionInvalid = false
 		s.players[i].receivedPosition = false

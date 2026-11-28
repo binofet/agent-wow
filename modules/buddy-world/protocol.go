@@ -1044,7 +1044,14 @@ func values(c *cursor, p *observed, now time.Time, create bool, restricted *obse
 					p.ammo = v
 				}
 				if field == unitFlags {
+					// Preserve intermediate reversals in a single atomic batch.
+					if p.receivedUnitFlags && (p.fields[unitFlags]^v)&0x100000 != 0 || v&0x80000 != 0 {
+						p.receivedTaxiBarrier = true
+					}
 					p.receivedUnitFlags = true
+				}
+				if field == unitHealth && v == 0 || field == unitDynamicFlags && v&0x20 != 0 || field == playerFlags && v&0x10 != 0 {
+					p.receivedTaxiBarrier = true
 				}
 				if field >= playerEquipmentFirst && field < playerEquipmentFirst+equipmentSlots*2 {
 					slot, shift := (field-playerEquipmentFirst)/2, uint((field-playerEquipmentFirst)%2*32)

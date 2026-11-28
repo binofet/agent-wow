@@ -28,15 +28,16 @@ local function retired(w)
     return c.retirementCurrent==true and c.selfGuid==(w.self or {}).guid and c.visitRevision==w.visitRevision and
         op.retired==true and op.pending~=true and op.visitRevision==w.visitRevision
 end
-local function quiet(a,w)
+local function quiet(a,w,natural)
     for _,key in ipairs({"moving","castPending","motionUnconfirmed","autoAttacking","autoAttackRequested",
                         "autoAttackUnconfirmed","practicing","traveling"}) do if a[key]==true then return false end end
     local s=w.self or {};local flags,movement=s.unitFlags or 0,s.movementFlags or 0
     return (a.recovery or {}).active~=true and s.present==true and s.aliveKnown==true and s.alive==true and
         s.healthKnown==true and uint(s.health) and uint(s.maxHealth) and s.health>0 and s.health<=s.maxHealth and
-        s.positionKnown==true and s.positionInferred~=true and s.mapKnown==true and planner.identifier(s.positionRevision) and
+        (natural or s.positionKnown==true and s.positionInferred~=true and planner.identifier(s.positionRevision) and
+         s.movementFlagsKnown==true and uint(movement) and movement%256==0) and s.mapKnown==true and
         s.unitFlagsKnown==true and uint(flags) and math.floor(flags/0x80000)%2==0 and math.floor(flags/0x100000)%2==0 and
-        s.movementFlagsKnown==true and uint(movement) and movement%256==0 and s.channelSpellKnown==true and
+        s.channelSpellKnown==true and
         (s.channelSpellId or 0)==0 and s.channelObjectKnown==true and (s.channelObjectGuid==nil or s.channelObjectGuid=="0")
 end
 local function child_state(state,p)
@@ -73,14 +74,14 @@ local function call(context,p,method,request,operation)
     p.callId=p.waiting and p.waiting.id
     return out
 end
-local function custody(context,p,b,w,a)
+local function custody(context,p,b,w,a,natural)
     local owner=a.interactionOwner or "";local ms=remaining(a)
     if not ms then return await(context,p,"flight_parent_lease_observation_unavailable") end
     if p.lease and owner=="" then p.lease.lapsedObserved=true end
     if owner~="" and (owner~="exploration" or not p.lease or p.lease.lapsedObserved) then
         return await(context,p,"flight_parent_foreign_custody")
     end
-    if not quiet(a,w) then return await(context,p,"flight_parent_waiting_for_idle_body") end
+    if not quiet(a,w,natural) then return await(context,p,"flight_parent_waiting_for_idle_body") end
     local request={sessionId=b.sessionId,selfGuid=b.selfGuid,visitId=w.visitRevision,owner="exploration"}
     if owner=="exploration" and p.lease.visitId~=w.visitRevision then
         request.token=p.lease.token
@@ -132,6 +133,7 @@ function M.decide(state)
     end
     local booking=f.activation or {}
     local paid=booking.pending==true
+    local natural=flightpath.natural_landing(w,booking)
     if p.visitId~=w.visitRevision and not paid then
         return await(context,p,"flight_parent_unbooked_visit_replaced")
     end
@@ -156,18 +158,17 @@ function M.decide(state)
     if p.stage=="cleanup" then
         if paid then return await(context,p,"flight_parent_booking_still_pending") end
         if p.lease and (a.interactionOwner or "")=="exploration" and not p.lease.lapsedObserved then
-            if not quiet(a,w) then return await(context,p,"flight_parent_cleanup_waiting_for_idle") end
+            if not quiet(a,w,natural) then return await(context,p,"flight_parent_cleanup_waiting_for_idle") end
             return call(context,p,release,{sessionId=b.sessionId,selfGuid=b.selfGuid,visitId=w.visitRevision,
                 owner="exploration",token=p.lease.token},"release")
         end
         if (a.interactionOwner or "")~="" then return await(context,p,"flight_parent_foreign_custody") end
         p.phase="complete";return {memory=memory,phase="flight_parent_complete",done=true}
     end
-    -- Never renew or carry a lease through flight. A new-visit lease is obtained
-    -- only after the current source has actual retired-ground evidence; native
-    -- admission independently rechecks the complete accepted-booking proof.
-    if not paid or retired(w) then
-        local out=custody(context,p,b,w,a)
+    -- Reacquire custody after the observed landing. Any completion that may
+    -- have reached the realm must retire before the parent can probe arrival.
+    if not paid or retired(w) or natural then
+        local out=custody(context,p,b,w,a,natural)
         if out then return out end
     end
     local childState=child_state(state,p)

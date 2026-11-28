@@ -49,6 +49,9 @@ message TransportScope {
   uint64 summon_offer_sequence = 14;
   // Target-dependent game-object use must still agree with the socket's latest UI selection.
   uint64 meeting_stone_target_guid = 15;
+  // Set only on a natural-landing menu request and a matching menu physically
+  // received after that request was written. Not an acknowledgement of arrival.
+  uint64 taxi_arrival_query_revision = 16;
 }
 
 // Flat owner-ordered protocol observations, not a route or a visit history.

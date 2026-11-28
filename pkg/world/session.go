@@ -297,7 +297,7 @@ func (s *Session) run(ready chan struct{}, timing timings) {
 		for {
 			op, body, err := s.conn.ReadPacket()
 			p := packet{opcode: op, body: body, err: err}
-			if op == opcode.SMSGMoveKnockBack && err == nil {
+			if (op == opcode.SMSGMoveKnockBack || op == opcode.SMSGShowtaxinodes) && err == nil {
 				p.receivedAt = time.Now()
 			}
 			if err == nil {

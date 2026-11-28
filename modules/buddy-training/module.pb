@@ -10,7 +10,7 @@
 EmptyB}
 com.google.protobufB
 EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.Protobuf.WellKnownTypesbproto3
-ÿ
+¾
 api/module/v1/session.protoagentwow.module.v1google/protobuf/any.protogoogle/protobuf/empty.proto"Œ
 WorldPacket
 opcode (Ropcode
@@ -19,7 +19,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacketRequest
 opcode (Ropcode
 payload (RpayloadK
-transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"–
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"Õ
 TransportScope#
 connection_id (	RconnectionId
 	self_guid (RselfGuid
@@ -37,7 +37,8 @@ visitBound%
 spline_source_opcode (RsplineSourceOpcodeP
 world_transfer (2).agentwow.module.v1.ObservedWorldTransferRworldTransfer2
 summon_offer_sequence (RsummonOfferSequence9
-meeting_stone_target_guid (RmeetingStoneTargetGuid" 	
+meeting_stone_target_guid (RmeetingStoneTargetGuid=
+taxi_arrival_query_revision (RtaxiArrivalQueryRevision" 	
 ObservedWorldTransfer
 revision (Rrevision
 phase (	Rphase
@@ -79,7 +80,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ƒ¸
+Ÿº
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -229,7 +230,7 @@ elapsed_ms (R	elapsedMs+
 stopped (Rstopped
 cyclic (Rcyclic
 	map_known (RmapKnown
-map_id (RmapId"“
+map_id (RmapId"î
 OwnMotionAuthority
 known (Rknown
 	self_guid (RselfGuid%
@@ -247,7 +248,14 @@ unit_flags (R	unitFlags.
 unit_flags_revision (RunitFlagsRevision)
 unit_flags_age_ms (RunitFlagsAgeMs7
 unit_flags_source_opcode (RunitFlagsSourceOpcode;
-unit_flags_motion_revision (RunitFlagsMotionRevision"Ú
+unit_flags_motion_revision (RunitFlagsMotionRevisionA
+natural_taxi_landing_revision (RnaturalTaxiLandingRevision5
+taxi_on_motion_revision (RtaxiOnMotionRevision_
+natural_taxi_endpoint (2+.warcraftbuddy.world.v1.NaturalTaxiEndpointRnaturalTaxiEndpoint"?
+NaturalTaxiEndpoint
+x (Rx
+y (Ry
+z (Rz"Ú
 CompleteSplineRequest
 	self_guid (RselfGuid%
 visit_revision (RvisitRevision-

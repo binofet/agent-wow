@@ -133,6 +133,9 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 			return modcb.PacketNotDispatchedError("transport scope is unsupported by this host")
 		}
 		flightmaster := modcb.FlightpathGroundPacket(opcode, payload)
+		if scope.TaxiArrivalQueryRevision != 0 && (module != actionsModule || !modcb.FlightpathMenuPacket(opcode, payload)) {
+			return modcb.PacketNotDispatchedError("natural landing scope is restricted to the free flightmaster menu")
+		}
 		if count, valid, supplied := modcb.IncomingFlightpathWorldPackets(ctx); supplied || flightmaster {
 			if module != actionsModule || !flightmaster || !valid || count == math.MaxUint64 || !routeScopeBound(scope) {
 				return modcb.PacketNotDispatchedError("current native flightmaster observation required")

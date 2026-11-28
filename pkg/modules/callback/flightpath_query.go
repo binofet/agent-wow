@@ -3,6 +3,7 @@ package modcb
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"strconv"
 
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -31,6 +32,29 @@ func FlightpathQueryPacket(op uint32, payload []byte) bool {
 		return false
 	}
 	return flightmasterGUID(binary.LittleEndian.Uint64(payload))
+}
+
+func FlightpathMenuPacket(op uint32, payload []byte) bool {
+	return op == opcode.CMSGTaxiqueryavailablenodes && FlightpathQueryPacket(op, payload)
+}
+
+const FlightpathMaskWords = 14
+
+// FlightpathMenuHeader validates the full build-12340 SHOWTAXINODES shape.
+// A malformed prefix must not consume the one physically correlated response.
+func FlightpathMenuHeader(payload []byte) (uint64, uint32, error) {
+	const size = 16 + FlightpathMaskWords*4
+	if len(payload) != size {
+		return 0, 0, fmt.Errorf("taxi menu requires exactly %d bytes, got %d", size, len(payload))
+	}
+	if binary.LittleEndian.Uint32(payload) != 1 {
+		return 0, 0, fmt.Errorf("taxi menu requires the show tag")
+	}
+	npc, source := binary.LittleEndian.Uint64(payload[4:]), binary.LittleEndian.Uint32(payload[12:])
+	if npc == 0 || source == 0 || source > FlightpathMaskWords*32 {
+		return 0, 0, fmt.Errorf("taxi menu requires a nonzero GUID and source node 1..%d", FlightpathMaskWords*32)
+	}
+	return npc, source, nil
 }
 
 // FlightpathGroundPacket is the set of ordinary flightmaster packets that can

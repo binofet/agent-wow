@@ -32,6 +32,7 @@ type ownMotionAuthority struct {
 	unitFlagsAt           time.Time
 	unitFlagsOpcode       uint32
 	unitFlagsMotion       uint64
+	naturalTaxi           naturalTaxiFlight
 }
 
 type splinePhysicalKey struct {
@@ -123,6 +124,7 @@ func (s *Service) invalidateMalformedMotionLocked(packet *modv1.WorldPacket) {
 	// This must live outside observations' atomic rollback: an undecodable
 	// possible supersession cannot leave the previous completion proof current.
 	if potentialMotionOpcode(packet.Opcode) || packet.GetTransportScope().GetMotionRevision() != s.motion.scope.GetMotionRevision() {
+		s.motion.naturalTaxi = naturalTaxiFlight{}
 		s.blockSplineRetirementLocked()
 		s.invalidateMotionLocked("malformed potential motion packet", true)
 	}
@@ -130,6 +132,7 @@ func (s *Service) invalidateMalformedMotionLocked(packet *modv1.WorldPacket) {
 
 func (s *Service) observeUnsupportedMotionLocked(packet *modv1.WorldPacket) {
 	if potentialMotionOpcode(packet.Opcode) || packet.GetTransportScope().GetMotionRevision() != s.motion.scope.GetMotionRevision() {
+		s.motion.naturalTaxi = naturalTaxiFlight{}
 		s.blockSplineRetirementLocked()
 		s.invalidateMotionLocked("unsupported motion barrier", true)
 	}
@@ -140,6 +143,8 @@ func (s *Service) observeMotionLocked(packet *modv1.WorldPacket, old, current ob
 	scope := packet.GetTransportScope()
 	bound := scopeMatchesSelf(scope, current, next.visitRevision)
 	continuous := bound && sameMotionVisit(m.scope, scope) && scope.MotionRevision >= m.scope.MotionRevision && scope.MotionRevision-m.scope.MotionRevision <= 1
+	previousScope := m.scope
+	defer func() { m.observeNaturalTaxi(packet, previousScope, current, next, continuous) }()
 	s.observeSplineRetirementProofLocked(packet, current, next, bound, continuous)
 	if !continuous {
 		s.invalidateMotionLocked("motion scope gap or replaced visit", true)
@@ -150,7 +155,6 @@ func (s *Service) observeMotionLocked(packet *modv1.WorldPacket, old, current ob
 		return
 	}
 	// The envelope becomes caught up only after the complete packet committed.
-	previousScope := m.scope
 	m.scope = cloneMotionScope(scope)
 	m.revision++
 	if current.receivedUnitFlags {
@@ -190,6 +194,12 @@ func splineRemaining(header observedTrajectory, now time.Time) uint64 {
 func (s *Service) motionSnapshotLocked(now time.Time) *worldv1.OwnMotionAuthority {
 	m, p, raw := &s.motion, s.state.players[0], s.state.ownMovement
 	r := &worldv1.OwnMotionAuthority{SelfGuid: p.guid, VisitRevision: s.state.visitRevision, Revision: m.revision, MovementRevision: raw.revision, SplineRevision: m.splineRevision, TransportScope: cloneMotionScope(m.scope), Reason: m.reason, DurationRemainingMs: splineRemaining(m.header, now), UnitFlagsKnown: m.unitFlagsKnown, UnitFlags: m.unitFlags, UnitFlagsRevision: m.unitFlagsRevision, UnitFlagsAgeMs: age(now, m.unitFlagsAt), UnitFlagsSourceOpcode: m.unitFlagsOpcode, UnitFlagsMotionRevision: m.unitFlagsMotion}
+	if m.naturalTaxi.cleared != 0 {
+		r.NaturalTaxiLandingRevision = m.naturalTaxi.cleared
+		r.TaxiOnMotionRevision = m.naturalTaxi.taxiOn
+		d := m.header.destination
+		r.NaturalTaxiEndpoint = &worldv1.NaturalTaxiEndpoint{X: d[0], Y: d[1], Z: d[2]}
+	}
 	if !m.known {
 		return r
 	}
@@ -206,7 +216,7 @@ func (s *Service) motionSnapshotLocked(now time.Time) *worldv1.OwnMotionAuthorit
 		reason = "actual taxi unit flag unavailable"
 	// Build12340 MoveSplineFlag::Flying is 0x2000; 0x200 is Falling.
 	// This first image excludes final-facing, relative and special modes.
-	case !m.header.known || !m.header.idKnown || m.header.kind != 0 || m.header.stopped || m.header.relative || m.header.cyclic || !m.header.destinationKnown || m.header.duration == 0 || m.header.flags&0x2000 == 0 || m.header.flags&(unsafeEndpointFlags|0x200|0x800|0x200000|0x800000|0x1000000) != 0:
+	case !ordinaryFlyingSpline(m.header):
 		reason = "unsupported standalone spline mode"
 	}
 	r.Known = reason == ""

@@ -11644,8 +11644,11 @@ type FlightpathQueryRequest struct {
 	ActivationRevision uint64                 `protobuf:"varint,8,opt,name=activation_revision,json=activationRevision,proto3" json:"activation_revision,omitempty"`
 	CompletionRevision uint64                 `protobuf:"varint,9,opt,name=completion_revision,json=completionRevision,proto3" json:"completion_revision,omitempty"`
 	Opportunity        *FlightmasterTarget    `protobuf:"bytes,10,opt,name=opportunity,proto3" json:"opportunity,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// For arrival only: exact received taxi-off revision, mutually exclusive
+	// with a retired client completion.
+	NaturalLandingRevision uint64 `protobuf:"varint,11,opt,name=natural_landing_revision,json=naturalLandingRevision,proto3" json:"natural_landing_revision,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *FlightpathQueryRequest) Reset() {
@@ -11748,6 +11751,13 @@ func (x *FlightpathQueryRequest) GetOpportunity() *FlightmasterTarget {
 	return nil
 }
 
+func (x *FlightpathQueryRequest) GetNaturalLandingRevision() uint64 {
+	if x != nil {
+		return x.NaturalLandingRevision
+	}
+	return 0
+}
+
 type FlightpathOperation struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Revision         uint64                 `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
@@ -11768,14 +11778,15 @@ type FlightpathOperation struct {
 	MenuKnown  bool   `protobuf:"varint,14,opt,name=menu_known,json=menuKnown,proto3" json:"menu_known,omitempty"`
 	SourceNode uint32 `protobuf:"varint,15,opt,name=source_node,json=sourceNode,proto3" json:"source_node,omitempty"`
 	// Server mask facts only: no route edges, costs or arrival are implied.
-	KnownNodes         []uint32           `protobuf:"varint,16,rep,packed,name=known_nodes,json=knownNodes,proto3" json:"known_nodes,omitempty"`
-	Phase              string             `protobuf:"bytes,17,opt,name=phase,proto3" json:"phase,omitempty"`
-	Error              string             `protobuf:"bytes,18,opt,name=error,proto3" json:"error,omitempty"`
-	ActivationRevision uint64             `protobuf:"varint,19,opt,name=activation_revision,json=activationRevision,proto3" json:"activation_revision,omitempty"`
-	CompletionRevision uint64             `protobuf:"varint,20,opt,name=completion_revision,json=completionRevision,proto3" json:"completion_revision,omitempty"`
-	TransportScope     *v1.TransportScope `protobuf:"bytes,21,opt,name=transport_scope,json=transportScope,proto3" json:"transport_scope,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	KnownNodes             []uint32           `protobuf:"varint,16,rep,packed,name=known_nodes,json=knownNodes,proto3" json:"known_nodes,omitempty"`
+	Phase                  string             `protobuf:"bytes,17,opt,name=phase,proto3" json:"phase,omitempty"`
+	Error                  string             `protobuf:"bytes,18,opt,name=error,proto3" json:"error,omitempty"`
+	ActivationRevision     uint64             `protobuf:"varint,19,opt,name=activation_revision,json=activationRevision,proto3" json:"activation_revision,omitempty"`
+	CompletionRevision     uint64             `protobuf:"varint,20,opt,name=completion_revision,json=completionRevision,proto3" json:"completion_revision,omitempty"`
+	TransportScope         *v1.TransportScope `protobuf:"bytes,21,opt,name=transport_scope,json=transportScope,proto3" json:"transport_scope,omitempty"`
+	NaturalLandingRevision uint64             `protobuf:"varint,22,opt,name=natural_landing_revision,json=naturalLandingRevision,proto3" json:"natural_landing_revision,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *FlightpathOperation) Reset() {
@@ -11953,6 +11964,13 @@ func (x *FlightpathOperation) GetTransportScope() *v1.TransportScope {
 		return x.TransportScope
 	}
 	return nil
+}
+
+func (x *FlightpathOperation) GetNaturalLandingRevision() uint64 {
+	if x != nil {
+		return x.NaturalLandingRevision
+	}
+	return 0
 }
 
 type FlightpathObservationResponse struct {
@@ -12247,8 +12265,10 @@ type FlightpathActivationOperation struct {
 	// Current segment may advance; all original acceptance/departure fields stay
 	// unchanged. A transfer witness is neither booking causality nor arrival.
 	CurrentSegment *FlightpathCurrentSegment `protobuf:"bytes,25,opt,name=current_segment,json=currentSegment,proto3" json:"current_segment,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Evidence recorded by settlement without altering a completion receipt.
+	ArrivalEvidence string `protobuf:"bytes,26,opt,name=arrival_evidence,json=arrivalEvidence,proto3" json:"arrival_evidence,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *FlightpathActivationOperation) Reset() {
@@ -12454,6 +12474,13 @@ func (x *FlightpathActivationOperation) GetCurrentSegment() *FlightpathCurrentSe
 		return x.CurrentSegment
 	}
 	return nil
+}
+
+func (x *FlightpathActivationOperation) GetArrivalEvidence() string {
+	if x != nil {
+		return x.ArrivalEvidence
+	}
+	return ""
 }
 
 type FlightpathCurrentSegment struct {
@@ -12742,19 +12769,20 @@ func (x *FlightpathTransferAttempt) GetError() string {
 }
 
 type SettleFlightpathRequest struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	SessionId          string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	SelfGuid           uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
-	VisitId            uint64                 `protobuf:"varint,3,opt,name=visit_id,json=visitId,proto3" json:"visit_id,omitempty"`
-	ActivationRevision uint64                 `protobuf:"varint,4,opt,name=activation_revision,json=activationRevision,proto3" json:"activation_revision,omitempty"`
-	MenuRevision       uint64                 `protobuf:"varint,5,opt,name=menu_revision,json=menuRevision,proto3" json:"menu_revision,omitempty"`
-	CompletionRevision uint64                 `protobuf:"varint,6,opt,name=completion_revision,json=completionRevision,proto3" json:"completion_revision,omitempty"`
-	AuthorityRevision  uint64                 `protobuf:"varint,7,opt,name=authority_revision,json=authorityRevision,proto3" json:"authority_revision,omitempty"`
-	MovementRevision   uint64                 `protobuf:"varint,8,opt,name=movement_revision,json=movementRevision,proto3" json:"movement_revision,omitempty"`
-	UnitFlagsRevision  uint64                 `protobuf:"varint,9,opt,name=unit_flags_revision,json=unitFlagsRevision,proto3" json:"unit_flags_revision,omitempty"`
-	TransportScope     *v1.TransportScope     `protobuf:"bytes,10,opt,name=transport_scope,json=transportScope,proto3" json:"transport_scope,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	SessionId              string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid               uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	VisitId                uint64                 `protobuf:"varint,3,opt,name=visit_id,json=visitId,proto3" json:"visit_id,omitempty"`
+	ActivationRevision     uint64                 `protobuf:"varint,4,opt,name=activation_revision,json=activationRevision,proto3" json:"activation_revision,omitempty"`
+	MenuRevision           uint64                 `protobuf:"varint,5,opt,name=menu_revision,json=menuRevision,proto3" json:"menu_revision,omitempty"`
+	CompletionRevision     uint64                 `protobuf:"varint,6,opt,name=completion_revision,json=completionRevision,proto3" json:"completion_revision,omitempty"`
+	AuthorityRevision      uint64                 `protobuf:"varint,7,opt,name=authority_revision,json=authorityRevision,proto3" json:"authority_revision,omitempty"`
+	MovementRevision       uint64                 `protobuf:"varint,8,opt,name=movement_revision,json=movementRevision,proto3" json:"movement_revision,omitempty"`
+	UnitFlagsRevision      uint64                 `protobuf:"varint,9,opt,name=unit_flags_revision,json=unitFlagsRevision,proto3" json:"unit_flags_revision,omitempty"`
+	TransportScope         *v1.TransportScope     `protobuf:"bytes,10,opt,name=transport_scope,json=transportScope,proto3" json:"transport_scope,omitempty"`
+	NaturalLandingRevision uint64                 `protobuf:"varint,11,opt,name=natural_landing_revision,json=naturalLandingRevision,proto3" json:"natural_landing_revision,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *SettleFlightpathRequest) Reset() {
@@ -12855,6 +12883,13 @@ func (x *SettleFlightpathRequest) GetTransportScope() *v1.TransportScope {
 		return x.TransportScope
 	}
 	return nil
+}
+
+func (x *SettleFlightpathRequest) GetNaturalLandingRevision() uint64 {
+	if x != nil {
+		return x.NaturalLandingRevision
+	}
+	return 0
 }
 
 type FlightpathReferenceRequest struct {
@@ -16341,7 +16376,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\x12\x14\n" +
 	"\x05stage\x18\x02 \x01(\tR\x05stage\x12'\n" +
 	"\x0fsource_revision\x18\x03 \x01(\tR\x0esourceRevision\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\x93\x03\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\xcd\x03\n" +
 	"\x16FlightpathQueryRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -16354,7 +16389,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x13activation_revision\x18\b \x01(\x04R\x12activationRevision\x12/\n" +
 	"\x13completion_revision\x18\t \x01(\x04R\x12completionRevision\x12N\n" +
 	"\vopportunity\x18\n" +
-	" \x01(\v2,.warcraftbuddy.actions.v1.FlightmasterTargetR\vopportunity\"\xfd\x05\n" +
+	" \x01(\v2,.warcraftbuddy.actions.v1.FlightmasterTargetR\vopportunity\x128\n" +
+	"\x18natural_landing_revision\x18\v \x01(\x04R\x16naturalLandingRevision\"\xb7\x06\n" +
 	"\x13FlightpathOperation\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12\x1d\n" +
 	"\n" +
@@ -16382,7 +16418,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x05error\x18\x12 \x01(\tR\x05error\x12/\n" +
 	"\x13activation_revision\x18\x13 \x01(\x04R\x12activationRevision\x12/\n" +
 	"\x13completion_revision\x18\x14 \x01(\x04R\x12completionRevision\x12K\n" +
-	"\x0ftransport_scope\x18\x15 \x01(\v2\".agentwow.module.v1.TransportScopeR\x0etransportScope\"\xc2\x04\n" +
+	"\x0ftransport_scope\x18\x15 \x01(\v2\".agentwow.module.v1.TransportScopeR\x0etransportScope\x128\n" +
+	"\x18natural_landing_revision\x18\x16 \x01(\x04R\x16naturalLandingRevision\"\xc2\x04\n" +
 	"\x1dFlightpathObservationResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -16414,7 +16451,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x18expected_copper_revision\x18\n" +
 	" \x01(\x04R\x16expectedCopperRevision\x12'\n" +
 	"\x0fexpected_copper\x18\v \x01(\rR\x0eexpectedCopper\x12.\n" +
-	"\x13accept_unknown_fare\x18\f \x01(\bR\x11acceptUnknownFare\"\x96\b\n" +
+	"\x13accept_unknown_fare\x18\f \x01(\bR\x11acceptUnknownFare\"\xc1\b\n" +
 	"\x1dFlightpathActivationOperation\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12\x1d\n" +
 	"\n" +
@@ -16445,7 +16482,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x14flight_started_known\x18\x16 \x01(\bR\x12flightStartedKnown\x12#\n" +
 	"\rarrival_known\x18\x17 \x01(\bR\farrivalKnown\x12M\n" +
 	"\x10acceptance_scope\x18\x18 \x01(\v2\".agentwow.module.v1.TransportScopeR\x0facceptanceScope\x12[\n" +
-	"\x0fcurrent_segment\x18\x19 \x01(\v22.warcraftbuddy.actions.v1.FlightpathCurrentSegmentR\x0ecurrentSegment\"\xd6\x02\n" +
+	"\x0fcurrent_segment\x18\x19 \x01(\v22.warcraftbuddy.actions.v1.FlightpathCurrentSegmentR\x0ecurrentSegment\x12)\n" +
+	"\x10arrival_evidence\x18\x1a \x01(\tR\x0farrivalEvidence\"\xd6\x02\n" +
 	"\x18FlightpathCurrentSegment\x12\x19\n" +
 	"\bvisit_id\x18\x01 \x01(\x04R\avisitId\x12E\n" +
 	"\fsource_scope\x18\x02 \x01(\v2\".agentwow.module.v1.TransportScopeR\vsourceScope\x126\n" +
@@ -16472,7 +16510,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\arequest\x18\x01 \x01(\v28.warcraftbuddy.actions.v1.AdoptFlightpathTransferRequestR\arequest\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12#\n" +
 	"\rworld_invoked\x18\x03 \x01(\bR\fworldInvoked\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\xd0\x03\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\x8a\x04\n" +
 	"\x17SettleFlightpathRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -16485,7 +16523,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x11movement_revision\x18\b \x01(\x04R\x10movementRevision\x12.\n" +
 	"\x13unit_flags_revision\x18\t \x01(\x04R\x11unitFlagsRevision\x12K\n" +
 	"\x0ftransport_scope\x18\n" +
-	" \x01(\v2\".agentwow.module.v1.TransportScopeR\x0etransportScope\"5\n" +
+	" \x01(\v2\".agentwow.module.v1.TransportScopeR\x0etransportScope\x128\n" +
+	"\x18natural_landing_revision\x18\v \x01(\x04R\x16naturalLandingRevision\"5\n" +
 	"\x1aFlightpathReferenceRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\rR\x06nodeId\"\xb7\x01\n" +
 	"\x17FlightpathReferenceNode\x12\x17\n" +

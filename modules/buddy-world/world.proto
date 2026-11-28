@@ -188,6 +188,17 @@ message OwnMotionAuthority {
   uint64 unit_flags_age_ms = 13;
   uint32 unit_flags_source_opcode = 14;
   uint64 unit_flags_motion_revision = 15;
+  // Current positive own taxi-on -> taxi-off transition observed on the same
+  // uninterrupted flying spline. Neither field is an observed landing XYZ.
+  uint64 natural_taxi_landing_revision = 16;
+  uint64 taxi_on_motion_revision = 17;
+  // Advertised endpoint of the positively matched spline, for choosing a
+  // destination flightmaster when the passenger has no later movement image.
+  NaturalTaxiEndpoint natural_taxi_endpoint = 18;
+}
+
+message NaturalTaxiEndpoint {
+  float x = 1; float y = 2; float z = 3;
 }
 
 message CompleteSplineRequest {

@@ -31,6 +31,7 @@ type flightpathTracker struct {
 	expectLearning               bool
 	arrivalReplyScope            *modv1.TransportScope
 	certifiedArrivalMenuRevision uint64
+	naturalNpcRevision           uint64
 }
 
 func (s *Service) flightpathObservationLocked() *actionsv1.FlightpathObservationResponse {
@@ -62,6 +63,12 @@ func (s *Service) flightpathOperationCurrentLocked(op *actionsv1.FlightpathOpera
 }
 
 func (s *Service) flightpathQueryBodyReasonLocked(r *actionsv1.FlightpathQueryRequest, w *worldv1.SnapshotResponse) string {
+	if r.NaturalLandingRevision != 0 {
+		if !s.naturalTaxiLandingLocked(r.ActivationRevision, r.NaturalLandingRevision, w) {
+			return "natural_taxi_landing_changed"
+		}
+		return ""
+	}
 	flags := w.GetSelf().GetUnitFlags()
 	if r.Opportunity != nil && (r.Mode == "status" || r.Mode == "discover") {
 		// A stationary ordinary rider can speak to a currently witnessed
@@ -78,7 +85,7 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 	if s.sessionID != r.SessionId || s.selfGUID != r.SelfGuid || !s.matchesCurrentEncounterVisitLocked(w) || w.VisitRevision != r.VisitId {
 		return "flightpath_body_or_visit_changed"
 	}
-	if !s.ownsExploration(r.Token) || s.interactionUntil.Sub(now) < time.Second {
+	if !s.ownsFlightpathQuery(r) || s.interactionUntil.Sub(now) < time.Second {
 		return "flightpath_exploration_lease_changed_or_expiring"
 	}
 	if r.Mode == "arrival" && s.flightpathActivation.operation.GetCurrentSegment() != nil {
@@ -97,11 +104,12 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 		return "flightpath_" + reason
 	}
 	self := w.Self
-	if stop == nil && self.PositionAgeMs > 2000 || self.MovementFlags&0xff != 0 || !self.ChannelSpellKnown ||
+	natural := r.NaturalLandingRevision != 0
+	if !natural && (stop == nil && self.PositionAgeMs > 2000 || self.MovementFlags&0xff != 0) || !self.ChannelSpellKnown ||
 		!self.ChannelObjectKnown || self.ChannelSpellId != 0 || self.ChannelObjectGuid != 0 {
 		return "flightpath_stationary_current_unchanneled_body_required"
 	}
-	if !s.posKnown || !finite(s.pos) || s.posMap != self.MapId || s.positionRevision != self.PositionRevision {
+	if !natural && (!s.posKnown || !finite(s.pos) || s.posMap != self.MapId || s.positionRevision != self.PositionRevision) {
 		return "flightpath_client_position_changed"
 	}
 	if stop != nil {
@@ -129,13 +137,17 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 			}
 			p := position{npc.X, npc.Y, npc.Z, npc.Orientation}
 			if npc.Entry != entry || !npc.Present || !npc.MapKnown || npc.MapId != self.MapId || !npc.PositionKnown ||
-				stop == nil && (npc.PositionAgeMs > 2000 || npc.ObservationAgeMs > 2000) || npc.PositionRevision == 0 || !finite(p) ||
+				!natural && stop == nil && (npc.PositionAgeMs > 2000 || npc.ObservationAgeMs > 2000) || npc.PositionRevision == 0 || !finite(p) ||
 				!npc.AliveKnown || !npc.Alive || !npc.HealthKnown || npc.Health == 0 || !npc.UnitFlagsKnown ||
 				npc.NpcFlags&0x2000 == 0 || npc.UnitFlags&0x80000 != 0 || npc.MovementFlags&0x080000ff != 0 ||
 				npc.Trajectory != nil && npc.Trajectory.Known && (!npc.Trajectory.Stopped || npc.Trajectory.TransportRelative) {
 				return "flightpath_actual_stationary_flightmaster_required"
 			}
-			if !(distance(s.pos, p) <= 5 && math.Abs(float64(s.pos.z-p.z)) <= 2.5) {
+			if natural {
+				if !npc.StationaryPositionKnown || !(distance(naturalTaxiReference(w), p) <= naturalTaxiInteractionRange(w, npc)) {
+					return "flightpath_natural_landing_flightmaster_out_of_range"
+				}
+			} else if !(distance(s.pos, p) <= 5 && math.Abs(float64(s.pos.z-p.z)) <= 2.5) {
 				return "flightpath_flightmaster_out_of_range"
 			}
 			if seen != nil && (seen.PositionRevision != npc.PositionRevision ||
@@ -147,6 +159,9 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 	}
 	if seen == nil {
 		return "flightpath_flightmaster_not_observed"
+	}
+	if natural {
+		s.flightpath.naturalNpcRevision = seen.PositionRevision
 	}
 	return ""
 }
@@ -168,12 +183,17 @@ func (s *Service) flightpathGroundObservationLocked(ctx context.Context, r *acti
 	if err != nil {
 		return ctx, nil, nil, "flightpath final world observation unavailable"
 	}
+	ctx, reason := flightpathCountedWorld(ctx, final)
+	return ctx, final, stop, reason
+}
+
+func flightpathCountedWorld(ctx context.Context, final *worldv1.SnapshotResponse) (context.Context, string) {
 	n, overflow := bits.Add64(final.ObservedPackets, final.IgnoredPackets, 0)
 	n, overflow2 := bits.Add64(n, final.MalformedPackets, 0)
 	if overflow != 0 || overflow2 != 0 || n == 0 || n == math.MaxUint64 {
-		return ctx, nil, nil, "flightpath_world_packet_sequence_unavailable"
+		return ctx, "flightpath_world_packet_sequence_unavailable"
 	}
-	return modcb.WithFlightpathWorldPackets(ctx, n), final, stop, ""
+	return modcb.WithFlightpathWorldPackets(ctx, n), ""
 }
 
 func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.FlightpathQueryRequest) (*actionsv1.FlightpathObservationResponse, error) {
@@ -181,8 +201,8 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	if request == nil || request.SessionId == "" || len(request.SessionId) > 128 || request.SelfGuid == 0 || request.VisitId == 0 ||
 		request.Token == "" || len(request.Token) > 128 || request.NpcGuid>>48 != 0xf130 || request.NpcGuid&0xffffff == 0 ||
 		(request.Mode != "status" && request.Mode != "discover" && request.Mode != "arrival") ||
-		(request.Mode == "arrival" && (request.ActivationRevision == 0 || request.CompletionRevision == 0)) ||
-		(request.Mode != "arrival" && (request.ActivationRevision != 0 || request.CompletionRevision != 0)) ||
+		(request.Mode == "arrival" && (request.ActivationRevision == 0 || (request.CompletionRevision == 0) == (request.NaturalLandingRevision == 0))) ||
+		(request.Mode != "arrival" && (request.ActivationRevision != 0 || request.CompletionRevision != 0 || request.NaturalLandingRevision != 0)) ||
 		request.Opportunity != nil && (request.Mode == "arrival" || request.Opportunity.Guid != request.NpcGuid || request.Opportunity.PositionRevision == 0) {
 		return nil, status.Error(codes.InvalidArgument, "exact session body visit exploration token flightmaster and query mode required")
 	}
@@ -203,6 +223,10 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 		if !s.flightpathAcceptedCurrentLocked(r.ActivationRevision) {
 			return nil, status.Error(codes.FailedPrecondition, "current accepted activation and actual acceptance scope required")
 		}
+		if r.NaturalLandingRevision != 0 && f.operation.GetActivationRevision() == r.ActivationRevision &&
+			f.operation.GetNaturalLandingRevision() == r.NaturalLandingRevision && (f.operation.TransportWritten || f.operation.TransportUnknown) {
+			return nil, status.Error(codes.FailedPrecondition, "natural landing menu already attempted")
+		}
 	} else if s.flightpathActivation.operation.GetPending() {
 		return nil, status.Error(codes.FailedPrecondition, "flightpath activation remains unsettled; its menu custody is retained")
 	}
@@ -213,7 +237,7 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 		return nil, status.Error(codes.ResourceExhausted, "flightpath revision exhausted")
 	}
 	if r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID || !s.encounterVisit.bound ||
-		r.VisitId != s.encounterVisit.revision || !s.ownsExploration(r.Token) {
+		r.VisitId != s.encounterVisit.revision || !s.ownsFlightpathQuery(r) {
 		return nil, status.Error(codes.FailedPrecondition, "current body visit and owned exploration token required")
 	}
 	expectLearning := false
@@ -236,10 +260,11 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	f.revision++
 	f.request, f.expectLearning = r, expectLearning
 	f.arrivalReplyScope = nil
+	f.naturalNpcRevision = 0
 	f.operation = &actionsv1.FlightpathOperation{Revision: f.revision, SessionId: r.SessionId, SelfGuid: r.SelfGuid,
 		VisitId: r.VisitId, NpcGuid: r.NpcGuid, Mode: r.Mode, Pending: true, Phase: "reserved"}
 	if r.Mode == "arrival" {
-		f.operation.ActivationRevision, f.operation.CompletionRevision = r.ActivationRevision, r.CompletionRevision
+		f.operation.ActivationRevision, f.operation.CompletionRevision, f.operation.NaturalLandingRevision = r.ActivationRevision, r.CompletionRevision, r.NaturalLandingRevision
 	}
 	op := f.operation
 	refuse := func(reason string) (*actionsv1.FlightpathObservationResponse, error) {
@@ -262,7 +287,7 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	if r.Opportunity != nil && !s.currentFlightmasterLocked(w, r.Opportunity) {
 		return refuse("observed_flightmaster_or_owner_intent_changed")
 	}
-	if !s.refreshPositionLocked(w) {
+	if r.NaturalLandingRevision == 0 && !s.refreshPositionLocked(w) {
 		return refuse("flightpath_client_position_changed")
 	}
 	now := s.now()
@@ -270,8 +295,15 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 		return refuse(reason)
 	}
 	if r.Mode == "arrival" {
-		if reason := s.flightpathRetiredWorldReasonLocked(r.ActivationRevision, r.CompletionRevision, w); reason != "" {
-			return refuse(reason)
+		if r.NaturalLandingRevision == 0 {
+			if reason := s.flightpathRetiredWorldReasonLocked(r.ActivationRevision, r.CompletionRevision, w); reason != "" {
+				return refuse(reason)
+			}
+		} else {
+			ctx, reason = flightpathCountedWorld(ctx, w)
+			if reason != "" {
+				return refuse(reason)
+			}
 		}
 		if s.flightpathActivation.operation != activation || !proto.Equal(activation, baselineActivation) {
 			return refuse("flightpath_arrival_activation_changed")
@@ -288,7 +320,12 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	if r.Mode == "discover" || r.Mode == "arrival" {
 		opcodeID = opcode.CMSGTaxiqueryavailablenodes
 	}
-	if err := s.sendPacketLocked(ctx, opcodeID, payload, stop.GetTransportScope()); err != nil {
+	packetScope := stop.GetTransportScope()
+	if r.NaturalLandingRevision != 0 {
+		packetScope = cloneFlightpathScope(op.TransportScope)
+		packetScope.TaxiArrivalQueryRevision = op.Revision
+	}
+	if err := s.sendPacketLocked(ctx, opcodeID, payload, packetScope); err != nil {
 		op.Error = boundedPolicyDiagnostic(err.Error(), 240)
 		if modcb.PacketWasNotDispatched(err) {
 			op.Pending = false

@@ -17,6 +17,11 @@ func TestTransportScopePacketDescriptorAcceptsLegacyAndRejectsShadowedContracts(
 		ok   bool
 	}{
 		{"current", func(_, _ *descriptorpb.DescriptorProto) {}, true},
+		{"preceding selection scope", func(_, s *descriptorpb.DescriptorProto) { s.Field = s.Field[:15] }, true},
+		{"noncanonical selection scope", func(_, s *descriptorpb.DescriptorProto) {
+			s.Field = s.Field[:15]
+			s.Field[14].Name = proto.String("wrong_selection_revision")
+		}, false},
 		{"legacy", func(p, _ *descriptorpb.DescriptorProto) { p.Field = p.Field[:2] }, true},
 		{"extra field", func(p, _ *descriptorpb.DescriptorProto) {
 			p.Field = append(p.Field, &descriptorpb.FieldDescriptorProto{Name: proto.String("extra"), Number: proto.Int32(4), Type: descriptorpb.FieldDescriptorProto_TYPE_UINT32.Enum()})

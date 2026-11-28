@@ -17,6 +17,10 @@ import (
 )
 
 func (s *Service) ownsExploration(token string) bool {
+	return token != s.flightpathActivation.naturalMenuToken && s.hasExplorationToken(token)
+}
+
+func (s *Service) hasExplorationToken(token string) bool {
 	return !s.closed && s.state.InteractionOwner == "exploration" && subtle.ConstantTimeCompare([]byte(token), []byte(s.interactionToken)) == 1
 }
 
