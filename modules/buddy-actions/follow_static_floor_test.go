@@ -27,6 +27,7 @@ func TestFollowMeasuredStaticDock(t *testing.T) {
 		{"clear floor", clearDock},
 		{"mesh turns around cargo", position{x: -3925.4214, y: -621.6484, z: 5.1416316}},
 		{"owner lost before first write", clearDock},
+		{"owner on another level", position{x: -3925.4214, y: -621.6484, z: 5.1416316}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, f, req, host, advance := followGoalFixture(t)
@@ -41,8 +42,11 @@ func TestFollowMeasuredStaticDock(t *testing.T) {
 			self.X, self.Y, self.Z = tc.from.x, tc.from.y, tc.from.z
 			self.PositionRevision++
 			owner.X, owner.Y, owner.Z = goal.x, goal.y, goal.z
+			if tc.name == "owner on another level" {
+				owner.Z += 1.8
+			}
 			owner.PositionRevision++
-			req.X, req.Y, req.Z, req.OwnerPositionRevision = goal.x, goal.y, goal.z, owner.PositionRevision
+			req.X, req.Y, req.Z, req.OwnerPositionRevision = owner.X, owner.Y, owner.Z, owner.PositionRevision
 			ctx := context.Background()
 			if tc.name == "mesh turns around cargo" {
 				_, err := buddynav.PlanStaticWalkContext(ctx, dir, 0, surfacePoint(tc.from), surfacePoint(goal))
@@ -75,6 +79,12 @@ func TestFollowMeasuredStaticDock(t *testing.T) {
 			}
 			if !missingFormationEndpoint(meshErr) {
 				t.Fatalf("expected an uncovered mesh endpoint: %v", meshErr)
+			}
+			if tc.name == "owner on another level" {
+				if len(f.packets) != 0 || s.state.Moving || !strings.Contains(s.state.NavReason, "outside the requested formation slot") {
+					t.Fatal(s.state.Reason, s.state.NavReason, f.packets)
+				}
+				return
 			}
 			if tc.name == "owner lost before first write" {
 				if len(f.packets) != 0 || s.state.Moving || !withdrewOwner {

@@ -388,10 +388,12 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			points, accessErr := buddynav.PlanMapWithGroundAccessContext(planCtx, s.navDataDir, s.posMap, surfacePoint(s.pos), surfacePoint(target))
 			if accessErr != nil {
 				err = errors.Join(err, accessErr)
+			} else if !followAtTarget(surfacePosition(points[len(points)-1], 0), target, stopDistance) {
+				err = errors.Join(err, errors.New("physical route ends outside the requested formation slot"))
 			} else {
 				path = make([]position, len(points))
 				for i, p := range points {
-					path[i] = position{x: p.X, y: p.Y, z: p.Z}
+					path[i] = surfacePosition(p, 0)
 				}
 				arrival, arrivalStop, ownerArrival = path[len(path)-1], stopDistance, false
 				legVisit, groundAccess, err = s.lastWorld.GetVisitRevision(), true, nil

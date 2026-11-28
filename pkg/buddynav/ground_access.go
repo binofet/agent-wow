@@ -11,43 +11,61 @@ import (
 // An eroded mesh boundary can be near a real walkable floor without
 // containing the observed body. Projection chooses an A* endpoint only.
 // The caller must still walk the entire connection on measured ground.
-func (p *planner) groundAccessPoint(q Point) (Point, error) {
-	_, _, err := p.groundRef(q)
+func (p *planner) groundAccessPoint(q Point) (Point, detour.DtPolyRef, error) {
+	ref, _, err := p.groundRef(q)
 	if err == nil {
-		return q, nil
+		return q, ref, nil
 	}
 	if !errors.Is(err, errNoGroundPolygon) && !errors.Is(err, errOutsideGroundPolygon) {
-		return Point{}, err
+		return Point{}, 0, err
 	}
 	v := recast(q)
 	extent := [3]float32{EndpointTolerance, EndpointTolerance, EndpointTolerance}
 	dry := *p.filter
 	dry.SetExcludeFlags(dry.GetExcludeFlags() | 8)
-	var ref detour.DtPolyRef
 	var nearest [3]float32
 	if st := p.query.FindNearestPoly(v[:], extent[:], &dry, &ref, nearest[:]); st != detour.DT_SUCCESS || ref == 0 {
-		return Point{}, err
+		return Point{}, 0, err
 	}
 	var flags uint16
 	anchor := Point{nearest[2], nearest[0], nearest[1]}
 	if p.mesh.GetPolyFlags(ref, &flags) != detour.DT_SUCCESS || flags != 1 || !worldPoint(anchor) || distance(q, anchor) > EndpointTolerance {
-		return Point{}, err
+		return Point{}, 0, err
 	}
-	return anchor, nil
+	return anchor, ref, nil
 }
 
 func (p *planner) groundAccessRoute(ctx context.Context, w mapWindow, name string, start, dest Point) ([]Point, error) {
-	from, err := p.groundAccessPoint(start)
+	from, fromRef, err := p.groundAccessPoint(start)
 	if err != nil {
 		return nil, fmt.Errorf("ground access at start: %w", err)
 	}
-	to, err := p.groundAccessPoint(dest)
+	to, toRef, err := p.groundAccessPoint(dest)
 	if err != nil {
 		return nil, fmt.Errorf("ground access at destination: %w", err)
 	}
-	route, err := p.groundRoute(ctx, w.contains, name, from, to)
-	if err != nil || start == from && dest == to {
-		return route, err
+	var route []Point
+	if fromRef == toRef && from.X == to.X && from.Y == to.Y && (start != from || dest != to) {
+		// Both physical connections meet the same point on one polygon.
+		// The Detour funnel has no interior segment in this case.
+		anchor := from
+		if dest != to {
+			anchor = to
+		}
+		floor, known, err := p.floors.heightContext(ctx, anchor, anchor.Z, .5, 2.5)
+		if err != nil {
+			return nil, err
+		}
+		if !known {
+			return nil, errNoPhysicalFloor
+		}
+		anchor.Z = floor
+		route = []Point{anchor}
+	} else {
+		route, err = p.groundRoute(ctx, w.contains, name, from, to)
+		if err != nil || start == from && dest == to {
+			return route, err
+		}
 	}
 	// Check the body on the actual funnel segments, including each corner.
 	clearRay := func(a, b Point) (bool, error) { return p.floors.lineOfSight(ctx, a, b) }

@@ -79,6 +79,7 @@ func TestGroundAccessUsesConnectedMeshAndPhysicalEndpoints(t *testing.T) {
 		refusal string
 	}{
 		{"both endpoints outside", start, otherEdge, ""},
+		{"one shared polygon vertex", Point{-3922.8474, -625.0641, 5.0096607}, Point{-3922.829, -625.74976, 4.9919868}, ""},
 		{"walk off the corridor to the target", inside, start, ""},
 		{"blocked connection", Point{-3922.5977, -625.57, 4.9921136}, inside, "physical start connector: body probe corridor intersects static collision"},
 		{"wrong start height", Point{inside.X, inside.Y, inside.Z + 1}, start, "body is not on the corridor's starting floor"},
