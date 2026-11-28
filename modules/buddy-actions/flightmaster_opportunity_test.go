@@ -17,7 +17,7 @@ import (
 )
 
 func TestFlightmasterOpportunityRequiresCurrentSpawnAndOwnPhysicalArrival(t *testing.T) {
-	for _, mode := range []string{"qualified", "ground_mount", "vehicle", "flying_mount", "swimming", "unbound_mount", "lost_stationarity", "new_follow_intent", "different_faction", "replaced_spawn_pose", "missing_ground_stop"} {
+	for _, mode := range []string{"qualified", "ground_mount", "vehicle", "flying_mount", "swimming", "explicit_ground_mount", "explicit_unproven_mount", "lost_stationarity", "new_follow_intent", "different_faction", "replaced_spawn_pose", "missing_ground_stop"} {
 		t.Run(mode, func(t *testing.T) {
 			x := walkedToFlightmaster(t)
 			npc := x.f.lookupCreatures[x.npc]
@@ -25,7 +25,7 @@ func TestFlightmasterOpportunityRequiresCurrentSpawnAndOwnPhysicalArrival(t *tes
 			r := x.request(t, "status")
 			r.Opportunity = &actionsv1.FlightmasterTarget{Guid: npc.Guid, PositionRevision: npc.PositionRevision, FollowRevision: x.s.followRevision}
 			switch mode {
-			case "ground_mount", "vehicle", "flying_mount", "swimming", "unbound_mount":
+			case "ground_mount", "vehicle", "flying_mount", "swimming", "explicit_ground_mount":
 				spell := uint32(23238)
 				if mode == "vehicle" {
 					spell = 60424
@@ -37,9 +37,13 @@ func TestFlightmasterOpportunityRequiresCurrentSpawnAndOwnPhysicalArrival(t *tes
 				if mode == "swimming" {
 					x.f.world.Self.MovementFlags = 0x200000
 				}
-				if mode == "unbound_mount" {
+				if mode == "explicit_ground_mount" {
 					r.Opportunity = nil
 				}
+			case "explicit_unproven_mount":
+				r.Opportunity = nil
+				x.f.world.Self.UnitFlags |= movementflags.Mounted
+				x.f.world.Self.RunSpeed = 14 // No received ordinary ground mount aura.
 			case "lost_stationarity":
 				x.f.world.RequestedCreatureStationaryPositionKnown = false
 			case "new_follow_intent":
@@ -55,14 +59,14 @@ func TestFlightmasterOpportunityRequiresCurrentSpawnAndOwnPhysicalArrival(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := mode == "qualified" || mode == "ground_mount"
+			want := mode == "qualified" || mode == "ground_mount" || mode == "explicit_ground_mount"
 			if view.Operation.TransportWritten != want || (len(x.f.packets) == 1) != want || !want && view.Operation.Phase != "not_dispatched" {
 				t.Fatal(view, x.f.packets)
 			}
 			if want && (x.f.packets[0].Opcode != opcode.CMSGTaxinodeStatusQuery || x.f.packets[0].TransportScope == nil) {
 				t.Fatal(x.f.packets[0])
 			}
-			if mode == "ground_mount" {
+			if mode == "ground_mount" || mode == "explicit_ground_mount" {
 				x.packet(t, opcode.SMSGTaxinodeStatus, flightpathStatusPayload(x.npc, 0))
 				next := x.request(t, "discover")
 				next.Opportunity = r.Opportunity

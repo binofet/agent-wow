@@ -60,7 +60,7 @@ func (s *Service) AcquireIdleInteraction(ctx context.Context, request *actionsv1
 		}
 		token = hex.EncodeToString(random[:])
 	}
-	// This is the last dependency. Unlike snapshot(), the read does not update
+	// Unlike snapshot(), these factual reads do not update
 	// recovery, navigation, class, receipt or movement bookkeeping on refusal.
 	w, err := s.readWorldSnapshot(ctx)
 	if err != nil {
@@ -74,6 +74,14 @@ func (s *Service) AcquireIdleInteraction(ctx context.Context, request *actionsv1
 	}
 	if !s.matchesCurrentEncounterVisitLocked(w) || w.VisitRevision != r.VisitId {
 		return nil, status.Error(codes.FailedPrecondition, "current observed body and visit required")
+	}
+	// Pending taxi arrivals are admitted only by their own authoritative landing path.
+	if !s.flightpathActivation.operation.GetPending() && s.hasSurfaceBodyAt(w) {
+		stop, err := s.currentSurfaceReportLocked(ctx, w)
+		if err != nil || !s.surfaceInteractionStopMatches(w, stop) {
+			return nil, status.Error(codes.FailedPrecondition, "current written stationary ground body required")
+		}
+		w = surfaceMovementView(w, s.surfaceFollow.body.info)
 	}
 	flags := w.GetSelf().GetUnitFlags()
 	if r.Owner == "exploration" {

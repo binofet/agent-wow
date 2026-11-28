@@ -9,6 +9,7 @@ import (
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -63,22 +64,41 @@ func (s *Service) recordSurfaceFrameLocked(ctx context.Context, w *worldv1.Snaps
 	return nil
 }
 
+func (s *Service) hasSurfaceBodyAt(w *worldv1.SnapshotResponse) bool {
+	b := s.surfaceFollow.body
+	return b != nil && w.GetSelf() != nil && b.visit != 0 && b.visit == w.VisitRevision && b.rawPositionRevision != 0 && b.rawPositionRevision == w.Self.PositionRevision
+}
+
+// A local interaction may use the last body input only after a written dry
+// STOP at the exact current client pose. A face turn or LAND is not an idle STOP.
+func (s *Service) surfaceInteractionStopMatches(w *worldv1.SnapshotResponse, stop *modv1.WorldPacket) bool {
+	b := s.surfaceFollow.body
+	return s.hasSurfaceBodyAt(w) && !b.uncertain && b.packet.GetOpcode() == opcode.MSGMoveStop && !b.info.TransportPresent && !b.info.JumpPresent && b.info.FallTime == 0 &&
+		!w.Self.PositionInferred && w.Self.PositionKnown && w.Self.MapKnown && s.posKnown && s.posMap == w.Self.MapId && s.positionRevision == w.Self.PositionRevision &&
+		bytes.Equal(stop.GetPayload(), b.packet.Payload) && samePortalCoreVisit(stop.GetTransportScope(), portalObservedWorldScope(w, s.selfGUID)) &&
+		portalStopReportMatches(stop, s.selfGUID, s.posMap, s.pos)
+}
+
 func (s *Service) surfaceMovementWorldLocked(ctx context.Context, raw *worldv1.SnapshotResponse) *worldv1.SnapshotResponse {
 	b := s.surfaceFollow.body
-	if b == nil || b.uncertain || raw.GetSelf().GetPositionRevision() != b.rawPositionRevision || raw.VisitRevision != b.visit ||
-		raw.GetSelf().GetMovementFlags() == b.info.Flags && raw.GetSelf().GetExtraMovementFlags() == uint32(b.info.ExtraFlags) {
+	if !s.hasSurfaceBodyAt(raw) || b.uncertain ||
+		raw.Self.MovementFlags == b.info.Flags && raw.Self.ExtraMovementFlags == uint32(b.info.ExtraFlags) {
 		return raw
 	}
 	if _, err := s.currentSurfaceReportLocked(ctx, raw); err != nil {
 		return raw
 	}
+	return surfaceMovementView(raw, b.info)
+}
+
+func surfaceMovementView(raw *worldv1.SnapshotResponse, info movementinfo.Info) *worldv1.SnapshotResponse {
 	// Native movement admission sees the verified flags it actually wrote.
 	// Raw coordinates, ages, revisions, unit flags, passenger observations and
 	// the public buddy-world snapshot all retain their received provenance.
 	result := proto.Clone(raw).(*worldv1.SnapshotResponse)
 	result.Self.MovementFlagsKnown = true
-	result.Self.MovementFlags, result.Self.ExtraMovementFlags = b.info.Flags, uint32(b.info.ExtraFlags)
-	result.Self.MovementTime = b.info.Time
+	result.Self.MovementFlags, result.Self.ExtraMovementFlags = info.Flags, uint32(info.ExtraFlags)
+	result.Self.MovementTime = info.Time
 	return result
 }
 

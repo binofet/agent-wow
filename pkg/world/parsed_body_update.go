@@ -189,6 +189,13 @@ func (s *Session) bodyProofLocked(ctx context.Context, before, current *modv1.Tr
 	if same && u.through == current.MotionRevision && r.from <= before.MotionRevision {
 		return "", false
 	}
+	// World can deliver an earlier harmless object update after the socket
+	// classified a later owner heartbeat. The counted receipts still cover
+	// every revision since this exact physical STOP, including at NPC prewrite.
+	if modsession.IsSettledBodySource(ctx) && s.ownMovementReportSnapshot.GetOpcode() == opcode.MSGMoveStop &&
+		proto.Equal(s.ownMovementReportSnapshot.GetTransportScope(), before) && u.ownHarmless == current.MotionRevision-before.MotionRevision {
+		return "", false
+	}
 	if u.pending == current.MotionRevision && (!same || u.through < current.MotionRevision) {
 		return modcb.BodyUpdateMissing, true
 	}
