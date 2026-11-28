@@ -9,6 +9,11 @@ import (
 
 const maxGroundCandidates = 128
 
+var (
+	errNoGroundPolygon      = errors.New("no nearby ground polygon")
+	errOutsideGroundPolygon = errors.New("sample is outside ground polygon")
+)
+
 // Detour's nearest-poly metric includes vertical distance. In a sloped cave it
 // can prefer a nearby edge over the polygon actually containing the player's
 // XY, because the navmesh and independently measured floor differ slightly.
@@ -21,7 +26,7 @@ func (p *planner) groundRef(q Point) (detour.DtPolyRef, float32, error) {
 	ext := [3]float32{0.5, 2, 0.5}
 	var ref detour.DtPolyRef
 	var nearest [3]float32
-	primary := errors.New("no nearby ground polygon")
+	primary := errNoGroundPolygon
 	if st := p.query.FindNearestPoly(v[:], ext[:], p.filter, &ref, nearest[:]); !detour.DtStatusFailed(st) && ref != 0 {
 		h, err := p.groundHeightAt(ref, q)
 		if err == nil {
@@ -59,8 +64,11 @@ func (p *planner) groundHeightAt(ref detour.DtPolyRef, q Point) (float32, error)
 	v := recast(q)
 	var nearest [3]float32
 	var over bool
-	if st := p.query.ClosestPointOnPoly(ref, v[:], nearest[:], &over); detour.DtStatusFailed(st) || (!over && math.Hypot(float64(nearest[0]-v[0]), float64(nearest[2]-v[2])) > 0.02) {
-		return 0, errors.New("sample is outside ground polygon")
+	if st := p.query.ClosestPointOnPoly(ref, v[:], nearest[:], &over); detour.DtStatusFailed(st) {
+		return 0, errors.New("ground polygon closest point is unavailable")
+	}
+	if !over && math.Hypot(float64(nearest[0]-v[0]), float64(nearest[2]-v[2])) > 0.02 {
+		return 0, errOutsideGroundPolygon
 	}
 	var height float32
 	if st := p.query.GetPolyHeight(ref, nearest[:], &height); detour.DtStatusFailed(st) {

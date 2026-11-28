@@ -204,7 +204,18 @@ func init() { currentMapPlanners.gate <- struct{}{} }
 // layer, shallow-water and cancellation checks. Missing data fails closed.
 // At most two map/window planners are cached, each with a 24MiB encoded-mesh
 // budget, nine terrain/spawn grids and a 32MiB decoded collision-model LRU.
-func PlanMapContext(ctx context.Context, dataDir string, mapID uint32, start, dest Point) (points []Point, err error) {
+func PlanMapContext(ctx context.Context, dataDir string, mapID uint32, start, dest Point) ([]Point, error) {
+	return planMapContext(ctx, dataDir, mapID, start, dest, false)
+}
+
+// PlanMapWithGroundAccessContext also permits a short, physically walked
+// connection from a supported endpoint to the edge of a dry Detour polygon.
+// The route between the two mesh endpoints still requires a complete A* path.
+func PlanMapWithGroundAccessContext(ctx context.Context, dataDir string, mapID uint32, start, dest Point) ([]Point, error) {
+	return planMapContext(ctx, dataDir, mapID, start, dest, true)
+}
+
+func planMapContext(ctx context.Context, dataDir string, mapID uint32, start, dest Point, groundAccess bool) (points []Point, err error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	defer func() {
@@ -234,7 +245,11 @@ func PlanMapContext(ctx context.Context, dataDir string, mapID uint32, start, de
 	if err != nil {
 		return nil, err
 	}
-	return p.groundRoute(ctx, w.contains, fmt.Sprintf("map %d tile window", mapID), start, dest)
+	name := fmt.Sprintf("map %d tile window", mapID)
+	if groundAccess {
+		return p.groundAccessRoute(ctx, w, name, start, dest)
+	}
+	return p.groundRoute(ctx, w.contains, name, start, dest)
 }
 
 func mapDataDirectory(root string) (string, error) {
