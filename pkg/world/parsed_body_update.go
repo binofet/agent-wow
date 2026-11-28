@@ -23,6 +23,11 @@ type parsedBodyUpdates struct {
 	changed               chan struct{}
 	ownerBarrier          uint64
 	ownerPositions        []observedOwnerPosition
+
+	// Since the last physical own write, count revisions positively
+	// classified as harmless to that body. The World object worker and the
+	// socket reader each process their own packets in order, independently.
+	ownHarmless, lastObject uint64
 }
 
 type observedOwnerPosition struct {
@@ -62,11 +67,24 @@ func (u *parsedBodyUpdates) signal() {
 }
 
 func (s *Session) recordParsedBodyUpdate(scope *modv1.TransportScope, result string, positions ...movementinfo.FollowPosition) {
+	s.recordBodyUpdate(scope, result, true, positions...)
+}
+
+func (s *Session) recordBodyUpdate(scope *modv1.TransportScope, result string, objectUpdate bool, positions ...movementinfo.FollowPosition) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, current := &s.bodyUpdates, s.transportScopeSnapshot
 	if !sameBodyScope(scope, current) || scope.MotionRevision == 0 || scope.MotionRevision > current.MotionRevision {
 		return
+	}
+	if report := s.ownMovementReportSnapshot; report != nil && scope.MotionRevision > report.TransportScope.MotionRevision &&
+		(!objectUpdate || scope.MotionRevision > u.lastObject) {
+		if objectUpdate {
+			u.lastObject = scope.MotionRevision
+		}
+		if result == modcb.BodyUpdateHarmless || modcb.BodyUpdateIsOwnerOnly(result) {
+			u.ownHarmless++
+		}
 	}
 	same := sameBodyScope(u.scope, scope)
 	if same && scope.MotionRevision <= u.through {
@@ -174,8 +192,10 @@ func (s *Session) bodyProofLocked(ctx context.Context, before, current *modv1.Tr
 	if u.pending == current.MotionRevision && (!same || u.through < current.MotionRevision) {
 		return modcb.BodyUpdateMissing, true
 	}
-	return "intervening_motion_or_unobserved_update", false
+	return unobservedBodyUpdate, false
 }
+
+const unobservedBodyUpdate = "intervening_motion_or_unobserved_update"
 
 func (s *Session) bodyProof(ctx context.Context, before, current *modv1.TransportScope) string {
 	s.mu.RLock()
@@ -232,6 +252,14 @@ func (s *Session) bodyInputReport(ctx context.Context, id string) (*modv1.WorldP
 			}
 		}
 		reason, pending := s.bodyProofLocked(ctx, report.TransportScope, scope)
+		// Factual reads by the original writer can recover after the socket
+		// classified an owner's heartbeat ahead of an earlier World callback.
+		// Every intervening revision must have independently cleared self.
+		// New movement still goes through its ordinary dispatch checks.
+		if reason == unobservedBodyUpdate && id != "" && modsession.IsSelfBodyInput(ctx) &&
+			s.bodyUpdates.ownHarmless == scope.MotionRevision-report.TransportScope.MotionRevision {
+			reason = ""
+		}
 		if reason == "" {
 			packet := proto.Clone(report).(*modv1.WorldPacket)
 			s.mu.RUnlock()
