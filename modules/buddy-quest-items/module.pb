@@ -80,7 +80,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-¶Ã
+ÛË
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"‚
 PlayerState
 guid (Rguid
@@ -492,7 +492,7 @@ stateKnown
 state (RstateD
 creator_selected_target_guid (H RcreatorSelectedTargetGuidˆW
 moving_transport (2,.warcraftbuddy.world.v1.MovingTransportFactsRmovingTransportB
-_creator_selected_target_guid"­
+_creator_selected_target_guid"Õ
 MovingTransportFacts"
 
 display_id (H R	displayIdˆ
@@ -508,14 +508,44 @@ display_id (H R	displayIdˆ
  (HRpathFractionˆ4
 path_fraction_revision (RpathFractionRevision/
 path_fraction_age_ms (RpathFractionAgeMs=
-path_fraction_source_opcode (RpathFractionSourceOpcodeB
+path_fraction_source_opcode (RpathFractionSourceOpcodeK
+template (2/.warcraftbuddy.world.v1.MovingTransportTemplateRtemplate'
+object_revision (RobjectRevision0
+template_query_phase (	RtemplateQueryPhaseB
 _display_idB
 _scaleB
 
 _period_msB
 _path_progress_msB
 _packed_rotationB
-_path_fraction"ð
+_path_fraction"Ç
+MovingTransportTemplate 
+taxi_path_id (R
+taxiPathId
+
+move_speed (R	moveSpeed+
+acceleration_rate (RaccelerationRate
+
+display_id (R	displayId
+entry (Rentry
+guid (Rguid
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision
+revision	 (Rrevision
+age_ms
+ (RageMs"Û
+#QueryMovingTransportTemplateRequest
+
+session_id (	R	sessionId
+guid (Rguid
+entry (Rentry
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision'
+object_revision (RobjectRevision"¶
+$QueryMovingTransportTemplateResponse
+phase (	Rphase+
+transport_written (RtransportWrittenK
+template (2/.warcraftbuddy.world.v1.MovingTransportTemplateRtemplate"ð
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -778,9 +808,10 @@ session_id (	R	sessionId
 next_sequence (RnextSequence
 has_more (RhasMore;
 events (2#.warcraftbuddy.world.v1.CombatEventRevents:
-gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2ø
+gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2”
 
-BuddyWorld„
+BuddyWorld™
+QueryMovingTransportTemplate;.warcraftbuddy.world.v1.QueryMovingTransportTemplateRequest<.warcraftbuddy.world.v1.QueryMovingTransportTemplateResponse„
 RetireSplineCompletion5.warcraftbuddy.world.v1.RetireSplineCompletionRequest3.warcraftbuddy.world.v1.SplineCompletionObservation~
 AdoptSplineTransfer2.warcraftbuddy.world.v1.AdoptSplineTransferRequest3.warcraftbuddy.world.v1.SplineCompletionObservationt
 CompleteSpline-.warcraftbuddy.world.v1.CompleteSplineRequest3.warcraftbuddy.world.v1.SplineCompletionObservationi

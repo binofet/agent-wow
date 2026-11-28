@@ -500,6 +500,40 @@ message MovingTransportFacts {
   uint64 path_fraction_revision = 11;
   uint64 path_fraction_age_ms = 12;
   uint32 path_fraction_source_opcode = 13;
+  MovingTransportTemplate template = 14;
+  // Stable across motion and scalar updates for this one received CREATE.
+  uint64 object_revision = 15;
+  string template_query_phase = 16;
+}
+
+// Static type-15 metadata. The wire reply identifies the template entry;
+// the query and current observed object supply the instance binding.
+message MovingTransportTemplate {
+  uint32 taxi_path_id = 1;
+  uint32 move_speed = 2;
+  uint32 acceleration_rate = 3;
+  uint32 display_id = 4;
+  uint32 entry = 5;
+  uint64 guid = 6;
+  uint64 self_guid = 7;
+  uint64 visit_revision = 8;
+  uint64 revision = 9;
+  uint64 age_ms = 10;
+}
+
+message QueryMovingTransportTemplateRequest {
+  string session_id = 1;
+  uint64 guid = 2;
+  uint32 entry = 3;
+  uint64 self_guid = 4;
+  uint64 visit_revision = 5;
+  uint64 object_revision = 6;
+}
+
+message QueryMovingTransportTemplateResponse {
+  string phase = 1;
+  bool transport_written = 2;
+  MovingTransportTemplate template = 3;
 }
 
 // Public, server-observed creature state. No database lookup or invented name.
@@ -839,6 +873,7 @@ message CombatEventsResponse {
 }
 
 service BuddyWorld {
+  rpc QueryMovingTransportTemplate(QueryMovingTransportTemplateRequest) returns (QueryMovingTransportTemplateResponse);
   rpc RetireSplineCompletion(RetireSplineCompletionRequest) returns (SplineCompletionObservation);
   rpc AdoptSplineTransfer(AdoptSplineTransferRequest) returns (SplineCompletionObservation);
   rpc CompleteSpline(CompleteSplineRequest) returns (SplineCompletionObservation);

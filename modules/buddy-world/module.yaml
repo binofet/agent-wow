@@ -9,6 +9,7 @@ grpc:
 rpc:
   combat_events: /warcraftbuddy.world.v1.BuddyWorld/CombatEvents
   snapshot: /warcraftbuddy.world.v1.BuddyWorld/Snapshot
+  query_moving_transport_template: /warcraftbuddy.world.v1.BuddyWorld/QueryMovingTransportTemplate
   observe_client_movement: /warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement
   complete_spline: /warcraftbuddy.world.v1.BuddyWorld/CompleteSpline
   retire_spline_completion: /warcraftbuddy.world.v1.BuddyWorld/RetireSplineCompletion
@@ -20,6 +21,7 @@ packets:
   SMSG_UPDATE_OBJECT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_COMPRESSED_UPDATE_OBJECT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_DESTROY_OBJECT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_GAMEOBJECT_QUERY_RESPONSE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_PARTY_MEMBER_STATS: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_PARTY_MEMBER_STATS_FULL: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_GROUP_LIST: /warcraftbuddy.world.v1.BuddyWorld/OnPacket

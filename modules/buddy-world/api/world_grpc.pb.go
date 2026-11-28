@@ -21,19 +21,21 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyWorld_RetireSplineCompletion_FullMethodName = "/warcraftbuddy.world.v1.BuddyWorld/RetireSplineCompletion"
-	BuddyWorld_AdoptSplineTransfer_FullMethodName    = "/warcraftbuddy.world.v1.BuddyWorld/AdoptSplineTransfer"
-	BuddyWorld_CompleteSpline_FullMethodName         = "/warcraftbuddy.world.v1.BuddyWorld/CompleteSpline"
-	BuddyWorld_CombatEvents_FullMethodName           = "/warcraftbuddy.world.v1.BuddyWorld/CombatEvents"
-	BuddyWorld_Snapshot_FullMethodName               = "/warcraftbuddy.world.v1.BuddyWorld/Snapshot"
-	BuddyWorld_ObserveClientMovement_FullMethodName  = "/warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement"
-	BuddyWorld_OnPacket_FullMethodName               = "/warcraftbuddy.world.v1.BuddyWorld/OnPacket"
+	BuddyWorld_QueryMovingTransportTemplate_FullMethodName = "/warcraftbuddy.world.v1.BuddyWorld/QueryMovingTransportTemplate"
+	BuddyWorld_RetireSplineCompletion_FullMethodName       = "/warcraftbuddy.world.v1.BuddyWorld/RetireSplineCompletion"
+	BuddyWorld_AdoptSplineTransfer_FullMethodName          = "/warcraftbuddy.world.v1.BuddyWorld/AdoptSplineTransfer"
+	BuddyWorld_CompleteSpline_FullMethodName               = "/warcraftbuddy.world.v1.BuddyWorld/CompleteSpline"
+	BuddyWorld_CombatEvents_FullMethodName                 = "/warcraftbuddy.world.v1.BuddyWorld/CombatEvents"
+	BuddyWorld_Snapshot_FullMethodName                     = "/warcraftbuddy.world.v1.BuddyWorld/Snapshot"
+	BuddyWorld_ObserveClientMovement_FullMethodName        = "/warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement"
+	BuddyWorld_OnPacket_FullMethodName                     = "/warcraftbuddy.world.v1.BuddyWorld/OnPacket"
 )
 
 // BuddyWorldClient is the client API for BuddyWorld service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyWorldClient interface {
+	QueryMovingTransportTemplate(ctx context.Context, in *QueryMovingTransportTemplateRequest, opts ...grpc.CallOption) (*QueryMovingTransportTemplateResponse, error)
 	RetireSplineCompletion(ctx context.Context, in *RetireSplineCompletionRequest, opts ...grpc.CallOption) (*SplineCompletionObservation, error)
 	AdoptSplineTransfer(ctx context.Context, in *AdoptSplineTransferRequest, opts ...grpc.CallOption) (*SplineCompletionObservation, error)
 	CompleteSpline(ctx context.Context, in *CompleteSplineRequest, opts ...grpc.CallOption) (*SplineCompletionObservation, error)
@@ -49,6 +51,16 @@ type buddyWorldClient struct {
 
 func NewBuddyWorldClient(cc grpc.ClientConnInterface) BuddyWorldClient {
 	return &buddyWorldClient{cc}
+}
+
+func (c *buddyWorldClient) QueryMovingTransportTemplate(ctx context.Context, in *QueryMovingTransportTemplateRequest, opts ...grpc.CallOption) (*QueryMovingTransportTemplateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(QueryMovingTransportTemplateResponse)
+	err := c.cc.Invoke(ctx, BuddyWorld_QueryMovingTransportTemplate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *buddyWorldClient) RetireSplineCompletion(ctx context.Context, in *RetireSplineCompletionRequest, opts ...grpc.CallOption) (*SplineCompletionObservation, error) {
@@ -125,6 +137,7 @@ func (c *buddyWorldClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opt
 // All implementations must embed UnimplementedBuddyWorldServer
 // for forward compatibility.
 type BuddyWorldServer interface {
+	QueryMovingTransportTemplate(context.Context, *QueryMovingTransportTemplateRequest) (*QueryMovingTransportTemplateResponse, error)
 	RetireSplineCompletion(context.Context, *RetireSplineCompletionRequest) (*SplineCompletionObservation, error)
 	AdoptSplineTransfer(context.Context, *AdoptSplineTransferRequest) (*SplineCompletionObservation, error)
 	CompleteSpline(context.Context, *CompleteSplineRequest) (*SplineCompletionObservation, error)
@@ -142,6 +155,9 @@ type BuddyWorldServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBuddyWorldServer struct{}
 
+func (UnimplementedBuddyWorldServer) QueryMovingTransportTemplate(context.Context, *QueryMovingTransportTemplateRequest) (*QueryMovingTransportTemplateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method QueryMovingTransportTemplate not implemented")
+}
 func (UnimplementedBuddyWorldServer) RetireSplineCompletion(context.Context, *RetireSplineCompletionRequest) (*SplineCompletionObservation, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RetireSplineCompletion not implemented")
 }
@@ -182,6 +198,24 @@ func RegisterBuddyWorldServer(s grpc.ServiceRegistrar, srv BuddyWorldServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&BuddyWorld_ServiceDesc, srv)
+}
+
+func _BuddyWorld_QueryMovingTransportTemplate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMovingTransportTemplateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyWorldServer).QueryMovingTransportTemplate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyWorld_QueryMovingTransportTemplate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyWorldServer).QueryMovingTransportTemplate(ctx, req.(*QueryMovingTransportTemplateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BuddyWorld_RetireSplineCompletion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -317,6 +351,10 @@ var BuddyWorld_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "warcraftbuddy.world.v1.BuddyWorld",
 	HandlerType: (*BuddyWorldServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "QueryMovingTransportTemplate",
+			Handler:    _BuddyWorld_QueryMovingTransportTemplate_Handler,
+		},
 		{
 			MethodName: "RetireSplineCompletion",
 			Handler:    _BuddyWorld_RetireSplineCompletion_Handler,
