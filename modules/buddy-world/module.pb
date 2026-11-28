@@ -80,7 +80,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ÔÁ
+¶Ã
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"‚
 PlayerState
 guid (Rguid
@@ -492,7 +492,7 @@ stateKnown
 state (RstateD
 creator_selected_target_guid (H RcreatorSelectedTargetGuidˆW
 moving_transport (2,.warcraftbuddy.world.v1.MovingTransportFactsRmovingTransportB
-_creator_selected_target_guid"Ë
+_creator_selected_target_guid"­
 MovingTransportFacts"
 
 display_id (H R	displayIdˆ
@@ -503,13 +503,19 @@ display_id (H R	displayIdˆ
 movement_revision (RmovementRevision&
 movement_age_ms (RmovementAgeMs#
 source_opcode (RsourceOpcode+
-position_revision	 (RpositionRevisionB
+position_revision	 (RpositionRevision(
+path_fraction
+ (HRpathFractionˆ4
+path_fraction_revision (RpathFractionRevision/
+path_fraction_age_ms (RpathFractionAgeMs=
+path_fraction_source_opcode (RpathFractionSourceOpcodeB
 _display_idB
 _scaleB
 
 _period_msB
 _path_progress_msB
-_packed_rotation"ð
+_packed_rotationB
+_path_fraction"ð
 CreatureState
 guid (Rguid
 entry (Rentry

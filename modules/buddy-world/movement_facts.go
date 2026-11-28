@@ -79,21 +79,25 @@ func (m ownMovementObservation) snapshot(now time.Time) *worldv1.OwnMovementFact
 	if !m.known {
 		return r
 	}
-	i := m.info
-	r.Info = &worldv1.MovementInfoFacts{Flags: i.Flags, ExtraFlags: uint32(i.ExtraFlags), Time: i.Time,
+	r.Info = movementFacts(m.info)
+	r.WireImage = append([]byte(nil), m.wire...)
+	r.TransportScope = cloneMotionScope(m.scope)
+	return r
+}
+
+func movementFacts(i movementinfo.Info) *worldv1.MovementInfoFacts {
+	r := &worldv1.MovementInfoFacts{Flags: i.Flags, ExtraFlags: uint32(i.ExtraFlags), Time: i.Time,
 		X: i.X, Y: i.Y, Z: i.Z, Orientation: i.Orientation, PitchKnown: i.PitchPresent, Pitch: i.Pitch,
 		FallTime: i.FallTime, SplineElevationKnown: i.SplineElevationPresent, SplineElevation: i.SplineElevation}
 	if i.TransportPresent {
 		t := i.Transport
-		r.Info.Transport = &worldv1.MovementTransportFacts{Guid: t.GUID, X: t.X, Y: t.Y, Z: t.Z,
+		r.Transport = &worldv1.MovementTransportFacts{Guid: t.GUID, X: t.X, Y: t.Y, Z: t.Z,
 			Orientation: t.Orientation, Time: t.Time, Seat: int32(t.Seat), Time2Known: t.Time2Present, Time2: t.Time2}
 	}
 	if i.JumpPresent {
 		j := i.Jump
-		r.Info.Jump = &worldv1.MovementJumpFacts{Velocity: j.Velocity, SinAngle: j.SinAngle, CosAngle: j.CosAngle, XySpeed: j.XYSpeed}
+		r.Jump = &worldv1.MovementJumpFacts{Velocity: j.Velocity, SinAngle: j.SinAngle, CosAngle: j.CosAngle, XySpeed: j.XYSpeed}
 	}
-	r.WireImage = append([]byte(nil), m.wire...)
-	r.TransportScope = cloneMotionScope(m.scope)
 	return r
 }
 

@@ -48,13 +48,13 @@ func summoningObject(p *observed) bool {
 		uint64(p.fields[objectEntry]) == p.guid>>24&0xffffff && (t == 18 || t == 23)
 }
 func importantGameObject(p *observed) bool {
-	return mailbox(p) || questContainer(p) || lostGuardQuestGiver(p) || spellFocus(p) || fishingBobber(p) || summoningObject(p)
+	return movingTransport(p) || mailbox(p) || questContainer(p) || lostGuardQuestGiver(p) || spellFocus(p) || fishingBobber(p) || summoningObject(p)
 }
 func gameObjectPriority(p *observed, self uint64) int {
 	if ownFishingBobber(p, self) {
 		return 3
 	}
-	if mailbox(p) || questContainer(p) || lostGuardQuestGiver(p) || spellFocus(p) || summoningObject(p) {
+	if movingTransport(p) || mailbox(p) || questContainer(p) || lostGuardQuestGiver(p) || spellFocus(p) || summoningObject(p) {
 		if questContainer(p) {
 			r, known := gamecatalog.Default().Container(p.fields[objectEntry])
 			if !known || len(r.QuestItems) == 0 {
@@ -103,8 +103,13 @@ func (s *observations) appendGameObjects(r *worldv1.SnapshotResponse, now time.T
 		if !p.present || !p.known[objectEntry] || p.fields[objectEntry] == 0 || !importantGameObject(p) {
 			continue
 		}
+		if movingTransport(p) && (!p.mapKnown || !s.players[0].mapKnown || !s.players[0].present || p.mapID != s.players[0].mapID) {
+			continue
+		}
 		v := s.gameObjectSnapshot(p, now)
-		if summoningObject(p) {
+		if movingTransport(p) {
+			r.MovingTransports = append(r.MovingTransports, v)
+		} else if summoningObject(p) {
 			r.SummoningObjects = append(r.SummoningObjects, v)
 		} else if mailbox(p) {
 			r.Mailboxes = append(r.Mailboxes, v)
@@ -135,6 +140,7 @@ func (s *observations) appendGameObjects(r *worldv1.SnapshotResponse, now time.T
 		})
 	}
 	sortObjects(r.SummoningObjects)
+	sortObjects(r.MovingTransports)
 	if len(r.SummoningObjects) > 32 {
 		r.SummoningObjects = r.SummoningObjects[:32]
 	}

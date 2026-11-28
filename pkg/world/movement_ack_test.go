@@ -107,6 +107,59 @@ func TestRootAcknowledgementTransferAndAuthoritativePoseLifecycle(t *testing.T) 
 	}
 }
 
+func TestPassengerWorldportAcknowledgesVisitWithoutUsingLocalPoseForRoot(t *testing.T) {
+	trigger, done := make(chan struct{}), make(chan struct{})
+	c := peerConnection(t, func(p *testPeer) {
+		p.login()
+		<-trigger
+		pending := binary.LittleEndian.AppendUint32(nil, 1)
+		pending = binary.LittleEndian.AppendUint32(pending, 87123)
+		pending = binary.LittleEndian.AppendUint32(pending, 0)
+		p.send(opcode.SMSGTransferPending, pending)
+		p.send(opcode.SMSGNewWorld, positionBody(1, 2, -3, 6, .25))
+		p.expect(opcode.MSGMoveWorldportAck)
+		p.send(opcode.SMSGForceMoveRoot, movementOrder(8))
+		p.send(opcode.SMSGTimeSyncReq, []byte{4, 0, 0, 0})
+		p.expect(opcode.CMSGTimeSyncResp)
+		p.send(opcode.MSGMoveTeleportAck, nearTeleportGolden(t))
+		p.expect(opcode.MSGMoveTeleportAck)
+		p.send(opcode.SMSGForceMoveUnroot, movementOrder(9))
+		body := p.expect(opcode.CMSGForceMoveUnrootAck)
+		if x := math.Float32frombits(binary.LittleEndian.Uint32(body[16:])); x != 1 {
+			t.Errorf("later absolute correction failed to supply its own pose: %v", x)
+		}
+		close(done)
+		p.closed()
+	})
+	s, err := enter(context.Background(), c, Realm{}, Character{99, "Passenger"}, nil, quietTimings(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	close(trigger)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("passenger worldport did not finish")
+	}
+}
+
+func TestPassengerWorldportUncertainSequenceKeepsLocalOriginUnusable(t *testing.T) {
+	for _, malformed := range []bool{false, true} {
+		var m movementControl
+		m.observed(opcode.SMSGTransferPending, make([]byte, 12), 99, 1)
+		if malformed {
+			m.observed(opcode.SMSGNewWorld, []byte{1}, 99, 2)
+		} else {
+			m.observed(opcode.SMSGTransferPending, []byte{1, 0, 0, 0}, 99, 2)
+		}
+		m.observed(opcode.SMSGNewWorld, positionBody(1, -1, 2, 6, .5), 99, 3)
+		if m.info != nil {
+			t.Fatal("incomplete or overlapping passenger transfer released a local offset")
+		}
+	}
+}
+
 func TestSessionAcknowledgesRootBeforeFollowingGraveyardTeleport(t *testing.T) {
 	r := newObserved()
 	trigger, done := make(chan struct{}), make(chan struct{})

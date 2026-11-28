@@ -3740,8 +3740,13 @@ type MovingTransportFacts struct {
 	SourceOpcode     uint32                 `protobuf:"varint,8,opt,name=source_opcode,json=sourceOpcode,proto3" json:"source_opcode,omitempty"`
 	// Positive when that same block contained the hull's world coordinates.
 	PositionRevision uint64 `protobuf:"varint,9,opt,name=position_revision,json=positionRevision,proto3" json:"position_revision,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Upper 16 bits of an explicitly received GAMEOBJECT_DYNAMIC field.
+	PathFraction             *uint32 `protobuf:"varint,10,opt,name=path_fraction,json=pathFraction,proto3,oneof" json:"path_fraction,omitempty"`
+	PathFractionRevision     uint64  `protobuf:"varint,11,opt,name=path_fraction_revision,json=pathFractionRevision,proto3" json:"path_fraction_revision,omitempty"`
+	PathFractionAgeMs        uint64  `protobuf:"varint,12,opt,name=path_fraction_age_ms,json=pathFractionAgeMs,proto3" json:"path_fraction_age_ms,omitempty"`
+	PathFractionSourceOpcode uint32  `protobuf:"varint,13,opt,name=path_fraction_source_opcode,json=pathFractionSourceOpcode,proto3" json:"path_fraction_source_opcode,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *MovingTransportFacts) Reset() {
@@ -3833,6 +3838,34 @@ func (x *MovingTransportFacts) GetSourceOpcode() uint32 {
 func (x *MovingTransportFacts) GetPositionRevision() uint64 {
 	if x != nil {
 		return x.PositionRevision
+	}
+	return 0
+}
+
+func (x *MovingTransportFacts) GetPathFraction() uint32 {
+	if x != nil && x.PathFraction != nil {
+		return *x.PathFraction
+	}
+	return 0
+}
+
+func (x *MovingTransportFacts) GetPathFractionRevision() uint64 {
+	if x != nil {
+		return x.PathFractionRevision
+	}
+	return 0
+}
+
+func (x *MovingTransportFacts) GetPathFractionAgeMs() uint64 {
+	if x != nil {
+		return x.PathFractionAgeMs
+	}
+	return 0
+}
+
+func (x *MovingTransportFacts) GetPathFractionSourceOpcode() uint32 {
+	if x != nil {
+		return x.PathFractionSourceOpcode
 	}
 	return 0
 }
@@ -6523,7 +6556,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05state\x18\x17 \x01(\rR\x05state\x12D\n" +
 	"\x1ccreator_selected_target_guid\x18\x18 \x01(\x04H\x00R\x19creatorSelectedTargetGuid\x88\x01\x01\x12W\n" +
 	"\x10moving_transport\x18\x19 \x01(\v2,.warcraftbuddy.world.v1.MovingTransportFactsR\x0fmovingTransportB\x1f\n" +
-	"\x1d_creator_selected_target_guid\"\xcb\x03\n" +
+	"\x1d_creator_selected_target_guid\"\xad\x05\n" +
 	"\x14MovingTransportFacts\x12\"\n" +
 	"\n" +
 	"display_id\x18\x01 \x01(\rH\x00R\tdisplayId\x88\x01\x01\x12\x19\n" +
@@ -6534,13 +6567,19 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x11movement_revision\x18\x06 \x01(\x04R\x10movementRevision\x12&\n" +
 	"\x0fmovement_age_ms\x18\a \x01(\x04R\rmovementAgeMs\x12#\n" +
 	"\rsource_opcode\x18\b \x01(\rR\fsourceOpcode\x12+\n" +
-	"\x11position_revision\x18\t \x01(\x04R\x10positionRevisionB\r\n" +
+	"\x11position_revision\x18\t \x01(\x04R\x10positionRevision\x12(\n" +
+	"\rpath_fraction\x18\n" +
+	" \x01(\rH\x05R\fpathFraction\x88\x01\x01\x124\n" +
+	"\x16path_fraction_revision\x18\v \x01(\x04R\x14pathFractionRevision\x12/\n" +
+	"\x14path_fraction_age_ms\x18\f \x01(\x04R\x11pathFractionAgeMs\x12=\n" +
+	"\x1bpath_fraction_source_opcode\x18\r \x01(\rR\x18pathFractionSourceOpcodeB\r\n" +
 	"\v_display_idB\b\n" +
 	"\x06_scaleB\f\n" +
 	"\n" +
 	"_period_msB\x13\n" +
 	"\x11_path_progress_msB\x12\n" +
-	"\x10_packed_rotation\"\xf0\x0e\n" +
+	"\x10_packed_rotationB\x10\n" +
+	"\x0e_path_fraction\"\xf0\x0e\n" +
 	"\rCreatureState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x1b\n" +

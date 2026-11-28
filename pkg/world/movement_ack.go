@@ -10,7 +10,10 @@ import (
 // bounded plain-ground MovementInfo from an actual server pose or a successful
 // own movement write. It never supplies a new destination. Unsupported movement
 // modes invalidate it rather than guessing transport, falling or swimming data.
-type movementControl struct{ info []byte }
+type movementControl struct {
+	info                  []byte
+	transportWorldPending bool
+}
 
 const plainMovementFlags = uint32(0x1ff | 0x800 | 0x10000000)
 
@@ -26,9 +29,17 @@ func (m *movementControl) observed(op uint16, body []byte, self uint64, clock ui
 	switch op {
 	case opcode.SMSGTransferPending:
 		m.info = nil
+		// With the ship entry and old map appended, NEW_WORLD gives local
+		// passenger offsets. A malformed pending body also leaves the space unknown.
+		m.transportWorldPending = m.transportWorldPending || len(body) != 4
 	case opcode.SMSGLoginVerifyWorld, opcode.SMSGNewWorld:
 		m.info = nil
 		if _, _, valid := teleportAcknowledgement(opcode.SMSGNewWorld, body, self, clock); !valid {
+			return
+		}
+		local := op == opcode.SMSGNewWorld && m.transportWorldPending
+		m.transportWorldPending = false
+		if local {
 			return
 		}
 		info := make([]byte, 30)

@@ -34,6 +34,9 @@ type observed struct {
 	positionInferred, stationaryPosition                         bool
 	positionAt, vitalsAt, observedAt                             time.Time
 	groundEffectFirstSeen                                        time.Time
+	passenger                                                    *receivedPassenger
+	transport                                                    *receivedHull
+	transportFraction                                            *receivedPathFraction
 	// Only fields up to PLAYER_FLAGS are needed, regardless of nearby population.
 	fields                      [playerFlags + 1]uint32
 	known                       [playerFlags + 1]bool
@@ -127,6 +130,7 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 		PositionKnown: p.positionKnown, PositionInferred: p.positionInferred, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation,
 		PositionAgeMs: age(now, p.positionAt), PositionRevision: p.positionRevision,
 		MovementFlagsKnown: p.movementKnown, MovementFlags: p.movementFlags,
+		PassengerMovement:  p.passengerSnapshot(now),
 		ExtraMovementFlags: p.extraFlags, MovementTime: p.movementTime,
 		Health: p.fields[unitHealth], MaxHealth: p.fields[unitMaxHealth],
 		UnitFlagsKnown: p.known[unitFlags], UnitFlags: p.fields[unitFlags],
@@ -253,6 +257,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 			s.state.players[1].mapKnown = next.players[1].mapKnown
 		}
 		s.state.invalidateCreatureStationarity(packet.Opcode, packet.Payload)
+		s.state.invalidateTransportPacket(packet.Opcode, packet.Payload)
 		s.state.invalidateCreatureAuras(packet.Opcode, packet.Payload)
 		if objectUpdate {
 			_ = grpc.SetTrailer(ctx, metadata.Pairs(modcb.BodyInputBarrierTrailer, modcb.BodyUpdateMalformed))

@@ -39,6 +39,8 @@ type observations struct {
 	bodyOwnerPositions    []movementinfo.FollowPosition
 	players               [2]observed
 	visitRevision         uint64
+	transportRevision     uint64
+	transportWorldPending bool
 	nearbyPlayers         map[uint64]*observed
 	creatures             map[uint64]*observed
 	creatureCoverageLost  bool
@@ -122,6 +124,9 @@ func (s *observations) target(guid uint64) *observed {
 	return p
 }
 func (s *observations) remove(guid uint64, now time.Time) {
+	if movingTransportGUID(guid) {
+		s.clearPassengersOf(guid)
+	}
 	if p := player(&s.players, guid); p != nil {
 		markAbsent(p, now)
 	}
@@ -132,6 +137,7 @@ func (s *observations) remove(guid uint64, now time.Time) {
 	delete(s.groundEffects, guid)
 	delete(s.corpses, guid)
 	if guid == s.players[0].guid {
+		s.forgetTransportScene()
 		s.corpses = make(map[uint64]*observed)
 		s.groundEffects = nil
 		s.groundEffectsOverflow = false

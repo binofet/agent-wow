@@ -495,6 +495,11 @@ message MovingTransportFacts {
   uint32 source_opcode = 8;
   // Positive when that same block contained the hull's world coordinates.
   uint64 position_revision = 9;
+  // Upper 16 bits of an explicitly received GAMEOBJECT_DYNAMIC field.
+  optional uint32 path_fraction = 10;
+  uint64 path_fraction_revision = 11;
+  uint64 path_fraction_age_ms = 12;
+  uint32 path_fraction_source_opcode = 13;
 }
 
 // Public, server-observed creature state. No database lookup or invented name.

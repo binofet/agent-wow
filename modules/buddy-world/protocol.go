@@ -128,6 +128,7 @@ func position(p *observed, x, y, z, o float32, now time.Time) error {
 		return errFloat
 	}
 	if p != nil {
+		p.passenger = nil
 		p.x, p.y, p.z, p.orientation = x, y, z, o
 		p.positionKnown = true
 		p.positionInferred = false
@@ -149,6 +150,7 @@ func markAbsent(p *observed, now time.Time) {
 		return
 	}
 	p.present = false
+	p.passenger = nil
 	p.positionKnown = false
 	p.positionInferred = false
 	p.movementKnown = false
@@ -178,9 +180,18 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			return true, err
 		}
 		p := &players[0]
-		if err := position(p, x, y, z, o, now); err != nil {
+		// Player::TeleportTo sends local offsets in NEW_WORLD when riding.
+		// Only a new absolute observation can place that passenger on the new map.
+		local := op == opcode.SMSGNewWorld && (state.transportWorldPending || p.passenger != nil && p.passenger.info.TransportPresent)
+		if local {
+			if err := position(nil, x, y, z, o, now); err != nil {
+				return true, err
+			}
+			markAbsent(p, now)
+		} else if err := position(p, x, y, z, o, now); err != nil {
 			return true, err
 		}
+		state.transportWorldPending = false
 		clearCastingContext(p)
 		clearInventoryContext(p)
 		clearOwnExperience(p)
@@ -199,9 +210,18 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		state.visitRevision++
 		return true, nil
 	case opcode.SMSGTransferPending:
-		// A transfer has variable transport data. Stop using the old world now.
-		if len(payload) < 4 {
-			return true, errShort
+		// Destination map alone for an ordinary transfer. A passenger carries
+		// a transport entry and the old map, without the ship's runtime GUID.
+		c.u32()
+		if len(payload) == 12 {
+			state.transportWorldPending = true
+			if c.u32() == 0 {
+				return true, errLayout
+			}
+			c.u32()
+		}
+		if err := c.done(); err != nil {
+			return true, err
 		}
 		markAbsent(&players[0], now)
 		markAbsent(&players[1], now)
@@ -215,7 +235,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		state.corpses = make(map[uint64]*observed)
 		return true, nil
 	case opcode.SMSGUpdateObject:
-		return true, updates(c, state, now)
+		return true, updates(c, state, now, op)
 	case opcode.SMSGSpellStart, opcode.SMSGSpellGo, opcode.SMSGSpellFailure, opcode.SMSGSpellFailedOther:
 		return state.observeCreatureCast(op, c, now)
 	case opcode.SMSGAuraUpdate, opcode.SMSGAuraUpdateAll:
@@ -238,7 +258,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		if err != nil || closeErr != nil || len(data) != int(declared) || stream.Len() != 0 {
 			return true, errCompressed
 		}
-		return true, updates(&cursor{b: data}, state, now)
+		return true, updates(&cursor{b: data}, state, now, op)
 	case opcode.SMSGDestroyObject:
 		guid := c.u64()
 		c.u8()
@@ -322,7 +342,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		guid := c.guid()
 		c.skip(4)
 		p := state.target(guid)
-		if err := movement(c, p, now, nil); err != nil {
+		if err := movement(c, p, now, nil, state.nextTransportSource(op)); err != nil {
 			return true, err
 		}
 		if p != nil && p.isSelf {
@@ -386,6 +406,9 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 	case opcode.SMSGMonsterMove, opcode.SMSGMonsterMoveTransport:
 		guid := c.guid()
 		p := state.target(guid)
+		if p != nil {
+			p.passenger = nil
+		}
 		if p != nil && !p.isSelf && !creatureGUID(guid) {
 			// Only the session mover can receive a matching control-return signal.
 			if err := monsterMove(c, nil, op == opcode.SMSGMonsterMoveTransport, now); err != nil {
@@ -403,7 +426,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		// The realm forwards the acknowledging player's MovementInfo to
 		// their peers, followed by sin, cos, horizontal and vertical speeds.
 		p := state.target(c.guid())
-		if err := movement(c, p, now, nil); err != nil {
+		if err := movement(c, p, now, nil, state.nextTransportSource(op)); err != nil {
 			return true, err
 		}
 		for i := 0; i < 4; i++ {
@@ -427,6 +450,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			return true, err
 		}
 		if p := state.target(guid); p != nil {
+			p.passenger = nil
 			p.positionKnown = false
 			p.positionInferred = false
 			p.movementKnown = false
@@ -439,7 +463,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 	if movementOpcode(op) {
 		guid := c.guid()
 		p := state.target(guid)
-		if err := movement(c, p, now, nil); err != nil {
+		if err := movement(c, p, now, nil, state.nextTransportSource(op)); err != nil {
 			return true, err
 		}
 		if err := c.done(); err != nil {
@@ -497,7 +521,7 @@ func movementOpcode(op uint32) bool {
 	return false
 }
 
-func movement(c *cursor, p *observed, now time.Time, received *movementinfo.Info) error {
+func movement(c *cursor, p *observed, now time.Time, received *movementinfo.Info, source transportSource) error {
 	if c.err != nil {
 		return c.err
 	}
@@ -510,8 +534,7 @@ func movement(c *cursor, p *observed, now time.Time, received *movementinfo.Info
 	if received != nil {
 		*received = info
 	}
-	// Preserve the existing World base-pose policy. Optional floats were
-	// previously skipped, so their validity qualifies only the new own facts.
+	hadPassenger := p != nil && p.passenger != nil
 	if err := position(p, info.X, info.Y, info.Z, info.Orientation, now); err != nil {
 		return err
 	}
@@ -521,6 +544,13 @@ func movement(c *cursor, p *observed, now time.Time, received *movementinfo.Info
 		p.extraFlags = uint32(info.ExtraFlags)
 		p.stationaryPosition = info.AllFinite() && movementflags.GroundCompatible(info.Flags, p.extraFlags) && info.Flags&0xff == 0
 		p.movementTime = info.Time
+		if publicPlayerGUID(p.guid) && source.visit != 0 && (info.TransportPresent || hadPassenger) && info.AllFinite() {
+			// A genuine departure has no tail. Unknown/malformed subjects
+			// cannot supply the two-pose binding for a passenger.
+			if !info.TransportPresent || info.Transport.GUID != p.guid && passengerTransportGUID(info.Transport.GUID) {
+				p.passenger = &receivedPassenger{source: source, at: now, info: info}
+			}
+		}
 		if p.isSelf {
 			p.receivedMovement = true
 			p.receivedMovementInfo = info
@@ -532,7 +562,7 @@ func movement(c *cursor, p *observed, now time.Time, received *movementinfo.Info
 	return nil
 }
 
-func updates(c *cursor, state *observations, now time.Time) error {
+func updates(c *cursor, state *observations, now time.Time, op uint32) error {
 	players := &state.players
 	count := c.u32()
 	state.bodyInputBarrier, state.bodyInputFields, state.bodyOwnerPositions = "", nil, nil
@@ -554,6 +584,10 @@ func updates(c *cursor, state *observations, now time.Time) error {
 				state.blockBodyRecord(guid, typ)
 			}
 			p := state.target(guid)
+			var priorShipEntry uint32
+			if p != nil && movingTransportGUID(guid) {
+				priorShipEntry = p.fields[objectEntry]
+			}
 			newCreature, newItem, newGameObject, newPlayer, newCorpse := false, false, false, false, false
 			newGroundEffect := false
 			if typ == 0 || typ == 1 {
@@ -561,6 +595,9 @@ func updates(c *cursor, state *observations, now time.Time) error {
 			}
 			if typ == 2 || typ == 3 {
 				objectType := c.u8()
+				if movingTransportGUID(guid) && objectType != 5 {
+					return errLayout
+				}
 				if objectType > 7 || p != nil && p.publicPlayer && objectType != 4 || state.corpses[guid] != nil && objectType != 7 || state.groundEffects[guid] != nil && objectType != 6 {
 					return errLayout
 				}
@@ -620,10 +657,13 @@ func updates(c *cursor, state *observations, now time.Time) error {
 						p.known[f] = true
 					}
 					newCreature = true
-				} else if objectType == 5 && gameObjectGUID(guid) {
+				} else if objectType == 5 && (gameObjectGUID(guid) || movingTransportGUID(guid)) {
 					revision := uint64(0)
 					if p != nil {
 						revision = p.positionRevision
+						if movingTransportGUID(guid) {
+							state.clearPassengersOf(guid)
+						}
 					}
 					p = &observed{guid: guid, present: true, positionRevision: revision, observedAt: now}
 					setMap(p, players[0])
@@ -675,12 +715,13 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					p = nil
 				}
 			}
+			source := state.nextTransportSource(op)
 			if typ != 0 {
 				var ownerMovement *observations
 				if typ == 1 && guid != 0 && guid == players[1].guid && guid != players[0].guid {
 					ownerMovement = state
 				}
-				if err := movementUpdate(c, p, now, ownerMovement); err != nil {
+				if err := movementUpdate(c, p, now, ownerMovement, source); err != nil {
 					return err
 				}
 			}
@@ -691,11 +732,15 @@ func updates(c *cursor, state *observations, now time.Time) error {
 				if typ == 0 && protected {
 					restricted = state
 				}
-				if err := values(c, p, now, typ == 2 || typ == 3, restricted); err != nil {
+				if err := values(c, p, now, typ == 2 || typ == 3, restricted, source); err != nil {
 					return err
 				}
 				if p != nil && p.cast.spell != 0 && observedCreatureDead(p) {
 					p.cast = observedCreatureCast{}
+				}
+				if typ == 0 && priorShipEntry != 0 && (!movingTransport(p) || p.fields[objectEntry] != priorShipEntry) {
+					state.clearPassengersOf(guid)
+					delete(state.gameObjects, guid)
 				}
 			}
 			if newPlayer {
@@ -718,7 +763,11 @@ func updates(c *cursor, state *observations, now time.Time) error {
 				state.itemRevision++
 			}
 			if newGameObject {
-				state.putGameObject(p)
+				if gameObjectGUID(guid) || movingTransport(p) {
+					state.putGameObject(p)
+				} else {
+					delete(state.gameObjects, guid)
+				}
 			}
 			if newGroundEffect {
 				state.putGroundEffect(p)
@@ -754,20 +803,24 @@ func updates(c *cursor, state *observations, now time.Time) error {
 	return c.done()
 }
 
-func movementUpdate(c *cursor, p *observed, now time.Time, owner *observations) error {
+func movementUpdate(c *cursor, p *observed, now time.Time, owner *observations, source transportSource) error {
 	flags := c.u16()
 	if flags&^uint16(0x3ff) != 0 {
+		return errLayout
+	}
+	if p != nil && movingTransportGUID(p.guid) && flags&(0x20|0x80) != 0 {
 		return errLayout
 	}
 	if owner != nil && (flags&0x20 == 0 || p == nil || !p.present || !p.mapKnown) {
 		owner.blockBody(modcb.BodyUpdateOwnerMovement)
 	}
+	absoluteHullPose := false
 	if flags&0x20 != 0 {
 		if len(c.b)-c.off < 4 {
 			return errShort
 		}
 		var info movementinfo.Info
-		if err := movement(c, p, now, &info); err != nil {
+		if err := movement(c, p, now, &info, source); err != nil {
 			return err
 		}
 		if owner != nil {
@@ -801,7 +854,7 @@ func movementUpdate(c *cursor, p *observed, now time.Time, owner *observations) 
 			}
 		}
 	} else if flags&0x100 != 0 {
-		c.guid()
+		absoluteHullPose = c.guid() == 0
 		x, y, z := c.f32(), c.f32(), c.f32()
 		c.skip(12)
 		o := c.f32()
@@ -810,6 +863,7 @@ func movementUpdate(c *cursor, p *observed, now time.Time, owner *observations) 
 			return err
 		}
 	} else if flags&0x40 != 0 {
+		absoluteHullPose = true
 		if err := position(p, c.f32(), c.f32(), c.f32(), c.f32(), now); err != nil {
 			return err
 		}
@@ -822,19 +876,31 @@ func movementUpdate(c *cursor, p *observed, now time.Time, owner *observations) 
 		c.skip(4)
 	}
 	if flags&0x10 != 0 {
-		c.skip(4)
+		low := c.u32()
+		if p != nil && movingTransportGUID(p.guid) && low != uint32(p.guid) {
+			return errLayout
+		}
 	}
 	if flags&0x4 != 0 {
 		c.guid()
 	}
+	var progress uint32
 	if flags&0x2 != 0 {
-		c.skip(4)
+		progress = c.u32()
 	}
 	if flags&0x80 != 0 {
 		c.skip(8)
 	}
+	var rotation uint64
 	if flags&0x200 != 0 {
-		c.skip(8)
+		rotation = c.u64()
+	}
+	if p != nil && movingTransportGUID(p.guid) {
+		h := &receivedHull{source: source, at: now, flags: flags, progress: progress, rotation: rotation}
+		if absoluteHullPose {
+			h.positionRevision = p.positionRevision
+		}
+		p.transport = h
 	}
 	return c.err
 }
@@ -994,7 +1060,7 @@ func (s *observations) recordBodyField(p *observed, field int, value uint32) {
 	s.bodyInputFields = append(s.bodyInputFields, row)
 }
 
-func values(c *cursor, p *observed, now time.Time, create bool, restricted *observations) error {
+func values(c *cursor, p *observed, now time.Time, create bool, restricted *observations, source transportSource) error {
 	n := int(c.u8())
 	masks := make([]uint32, n)
 	total := 0
@@ -1100,6 +1166,9 @@ func values(c *cursor, p *observed, now time.Time, create bool, restricted *obse
 				}
 			}
 			if p != nil && field < len(p.fields) && (!p.publicPlayer || publicPlayerField(field)) {
+				if field == gameObjectDynamic && movingTransportGUID(p.guid) {
+					p.transportFraction = &receivedPathFraction{source: source, at: now}
+				}
 				p.fields[field] = v
 				p.known[field] = true
 				p.observedAt = now
