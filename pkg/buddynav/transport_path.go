@@ -297,18 +297,27 @@ func (p *TransportPath) Sample(progressMs uint64) (TransportPathSample, error) {
 	i := sort.Search(len(frames), func(i int) bool { return frames[i].arrival > t }) - 1
 	f := &frames[i]
 	sample := TransportPathSample{MapID: f.mapID, Position: f.point, Yaw: f.yaw, Stopped: t < f.departure}
-	if t == f.arrival {
-		// Several zero-duration keyframes can share a transfer timestamp.
-		for k := i; k >= 0 && frames[k].arrival == t; k-- {
-			if frames[(k+len(frames)-1)%len(frames)].jump {
-				sample.Transfer = true
-				break
-			}
+	// MotionTransport relocates when it enters a jump frame. A pause on
+	// that frame takes place at its receiver, even if the clock still says
+	// the nominal departure frame for the entire pause.
+	var receiver *transportFrame
+	if f.jump {
+		receiver = &frames[(i+1)%len(frames)]
+	}
+	for k := i; k >= 0 && frames[k].arrival == t; k-- {
+		if frames[k].jump {
+			receiver = &frames[(k+1)%len(frames)]
+			sample.Transfer = true
+			break
 		}
 	}
+	if t == 0 && !sample.Transfer && frames[len(frames)-1].arrival == p.period {
+		receiver, sample.Transfer = &frames[0], true
+	}
+	if receiver != nil {
+		sample.MapID, sample.Position, sample.Yaw = receiver.mapID, receiver.point, receiver.yaw
+	}
 	if sample.Stopped || sample.Transfer {
-		// At a discontinuity the transport is placed at the receiving
-		// keyframe's declared pose before the next spline update.
 		return sample, nil
 	}
 	if f.jump || !(f.length > 0) {
@@ -330,21 +339,22 @@ func (p *TransportPath) Sample(progressMs uint64) (TransportPathSample, error) {
 	return sample, nil
 }
 
-// CrossesTransfer reports a discontinuity in (fromMs,toMs], including the lap
-// boundary and same-map jumps. An unavailable path or reversed clock cannot
+// CrossesTransfer reports a discontinuity in (fromMs,toMs], including jumps
+// across lap boundaries and same-map jumps. An unavailable path or reversed clock cannot
 // establish continuity. A receiving-side checkpoint can start a new interval.
 func (p *TransportPath) CrossesTransfer(fromMs, toMs uint64) bool {
 	if p == nil || p.period == 0 || toMs < fromMs {
 		return true
 	}
-	period := uint64(p.period)
-	if fromMs/period != toMs/period {
+	period, span := uint64(p.period), toMs-fromMs
+	if span >= period {
 		return true
 	}
-	from, to := uint32(fromMs%period), uint32(toMs%period)
-	for i := 1; i < len(p.frames); i++ {
-		t := p.frames[i].arrival
-		if p.frames[i-1].jump && t > from && t <= to {
+	from := fromMs % period
+	for i := range p.frames {
+		f := &p.frames[i]
+		delta := (uint64(f.arrival) + period - from) % period
+		if f.jump && delta > 0 && delta <= span {
 			return true
 		}
 	}

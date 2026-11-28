@@ -103,6 +103,31 @@ func TestTransportPathSameMapTeleport(t *testing.T) {
 	}
 }
 
+func TestTransportPathWaitsAtTheReceivingDock(t *testing.T) {
+	b := transportPathFixture()
+	// Index 9 is the last retained frame, stored second in this fixture.
+	// The update loop relocates from map 1 to map 0 on entering that
+	// frame, then pauses for five seconds in the receiving map.
+	binary.LittleEndian.PutUint32(b[20+44+28:], 2)
+	binary.LittleEndian.PutUint32(b[20+44+32:], 5)
+	p, err := LoadTransportPath(context.Background(), writeTransportPathFixture(t, b), 7, 12, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Period() != 32441 {
+		t.Fatalf("terminal dwell period %d", p.Period())
+	}
+	checkTransportSample(t, p, 27440, TransportPathSample{1, Point{1010, 400, 53}, 4.6101823, false, false})
+	checkTransportSample(t, p, 27441, TransportPathSample{0, Point{-30, 0, 0}, 3.2247338, true, true})
+	for _, ms := range []uint64{27442, 30000, 32440} {
+		checkTransportSample(t, p, ms, TransportPathSample{0, Point{-30, 0, 0}, 3.2247338, true, false})
+	}
+	checkTransportSample(t, p, 32441, TransportPathSample{0, Point{-30, 0, 0}, 3.3015058, false, false})
+	if !p.CrossesTransfer(27440, 27442) || p.CrossesTransfer(27441, 32442) {
+		t.Fatal("transfer must occur on entry to the dwell, once")
+	}
+}
+
 func TestTransportPathUnknownOrMalformed(t *testing.T) {
 	b := transportPathFixture()
 	dir := writeTransportPathFixture(t, b)
@@ -171,4 +196,16 @@ func TestCopiedTransportPathHarborClocks(t *testing.T) {
 		t.Fatalf("map 0/571 period %d", other.Period())
 	}
 	checkTransportSample(t, other, 210000, TransportPathSample{571, Point{302.28882, -5116.95215, 0}, 2.3943868, false, false})
+	// This same-map terminal pause lasts 30s, with the receiving position
+	// 257 yards away from the nominal last TaxiPathNode.
+	dwell, err := LoadTransportPath(context.Background(), dir, 1834, 30, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dwell.Period() != 184424 {
+		t.Fatalf("terminal-stop period %d", dwell.Period())
+	}
+	checkTransportSample(t, dwell, 154423, TransportPathSample{631, Point{-1303.1754, 2979.5356, 195.58678}, 6.068267, false, false})
+	checkTransportSample(t, dwell, 154424, TransportPathSample{631, Point{-1463.4601, 3018.0479, -1.750571}, 2.4665773, true, true})
+	checkTransportSample(t, dwell, 184423, TransportPathSample{631, Point{-1463.4601, 3018.0479, -1.750571}, 2.4665773, true, false})
 }
