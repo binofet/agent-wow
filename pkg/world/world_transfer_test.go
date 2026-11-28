@@ -9,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	buddyworld "github.com/agent-wow/agent-wow/modules/buddy-world"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/worldconn"
 	"google.golang.org/protobuf/proto"
@@ -156,7 +159,7 @@ func TestWorldTransferKnownGenericEdgeDoesNotInventTaxiReportAndKeepsZeroMap(t *
 }
 
 func TestWorldTransferIncompleteOrSupersededSequenceCannotCertifyButKeepsLegacyAck(t *testing.T) {
-	for _, change := range []string{"missing pending", "short pending", "trailing pending", "transport pending", "overlap", "mismatch", "login", "abort", "source", "stop", "control", "update", "outbound motion", "body", "connection"} {
+	for _, change := range []string{"missing pending", "short pending", "trailing pending", "wrong old ship map", "overlap", "mismatch", "login", "abort", "source", "stop", "control", "update", "outbound motion", "body", "connection"} {
 		t.Run(change, func(t *testing.T) {
 			c := &scopeWriteConn{}
 			e := scopeEngine(t, c)
@@ -166,9 +169,9 @@ func TestWorldTransferIncompleteOrSupersededSequenceCannotCertifyButKeepsLegacyA
 				pending = pending[:3]
 			case "trailing pending":
 				pending = append(pending, 0)
-			case "transport pending":
+			case "wrong old ship map":
 				pending = binary.LittleEndian.AppendUint32(pending, 123)
-				pending = binary.LittleEndian.AppendUint32(pending, 0)
+				pending = binary.LittleEndian.AppendUint32(pending, e.transport.scope.MapId+1)
 			}
 			if change != "missing pending" {
 				e.handle(opcode.SMSGTransferPending, pending)
@@ -217,6 +220,190 @@ func TestWorldTransferIncompleteOrSupersededSequenceCannotCertifyButKeepsLegacyA
 	e.handle(opcode.SMSGClientControlUpdate, []byte{1, 100, 0})
 	e.handle(opcode.SMSGNewWorld, positionBody(1, 10, 20, 30, .5))
 	requireTransferKnown(t, e.transport.scope, from, 1)
+}
+
+func passengerWorldportCreate(t *testing.T, mover uint64, i movementinfo.Info) []byte {
+	t.Helper()
+	wire, err := movementinfo.Encode(i)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := append([]byte{3}, scopePackedGUID(mover)...)
+	b = binary.LittleEndian.AppendUint16(append(b, 4), 0x20)
+	b = append(b, wire...)
+	for _, speed := range []float32{2.5, 7, 4.5, 4.7, 2.5, 7, 4.5, 3.14, 3.14} {
+		b = binary.LittleEndian.AppendUint32(b, math.Float32bits(speed))
+	}
+	b = append(b, 2)
+	for _, value := range []uint32{1 << 0x18, 1 | (1 << (0x3b - 32)), 100, 100, 8} {
+		b = binary.LittleEndian.AppendUint32(b, value)
+	}
+	return compressedBodyUpdates(t, b)
+}
+
+func TestPassengerWorldTransferRequiresParsedGapAndReceivingHull(t *testing.T) {
+	const ship uint64 = 0x1fc0000000000034
+	const template uint32 = 77 // matches the synthetic routeHullCreate
+	for _, scenario := range []string{"both directions", "no update", "own update", "malformed update", "unknown subject", "abort",
+		"wrong pending map", "zero entry", "other template", "other hull", "foreign rider", "missing old hull", "other departure rider hull", "unknown ACK",
+		"stale body envelope", "detach and reboard", "second hull birth", "body death and restore", "batched death and restore", "malformed later pending",
+		"old hull removed", "old hull recreated", "old hull entry changed", "old hull entry unchanged"} {
+		t.Run(scenario, func(t *testing.T) {
+			c := &scopeWriteConn{}
+			e := scopeEngine(t, c)
+			w := buddyworld.NewService(99)
+			observe := func(op uint16, data []byte) *worldv1.SnapshotResponse {
+				t.Helper()
+				_, err := e.handle(op, data)
+				if err != nil && !(op == opcode.SMSGNewWorld && scenario == "unknown ACK") {
+					t.Fatal(err)
+				}
+				scope := e.transport.snapshot()
+				if scenario == "stale body envelope" && op == opcode.SMSGCompressedUpdateObject {
+					scope.VisitRevision--
+				}
+				if _, err = w.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: uint32(op), Payload: data, TransportScope: scope}); err != nil {
+					t.Fatal(err)
+				}
+				v, err := w.Snapshot(context.Background(), &worldv1.SnapshotRequest{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return v
+			}
+			observe(opcode.SMSGLoginVerifyWorld, positionBody(0, 60, 70, 80, .5))
+			observe(opcode.SMSGUpdateObject, bodyPlayerCreate(99, 60, 70, 80, .5))
+			if scenario != "missing old hull" {
+				observe(opcode.SMSGUpdateObject, routeHullCreate(ship))
+			}
+			if scenario == "other departure rider hull" {
+				observe(opcode.SMSGUpdateObject, routeHullCreate(ship+1))
+				observe(opcode.SMSGCompressedUpdateObject, passengerWorldportCreate(t, 99, movementinfo.Info{Flags: 0x200, TransportPresent: true,
+					Transport: movementinfo.Transport{GUID: ship + 1, Seat: -1}}))
+			}
+			cross := func(from, to uint32) {
+				t.Helper()
+				entry, old := template, from
+				switch scenario {
+				case "zero entry":
+					entry = 0
+				case "other template":
+					entry++
+				case "wrong pending map":
+					old++
+				}
+				pending := binary.LittleEndian.AppendUint32(transferPending(to), entry)
+				pending = binary.LittleEndian.AppendUint32(pending, old)
+				pre := observe(opcode.SMSGTransferPending, pending)
+				if pre.WorldTransfer.Known || pre.WorldTransfer.PassengerTransportGuid != 0 || entry != 0 && pre.Self.PositionKnown {
+					t.Fatal("pending supplied an attachment, position or completed edge")
+				}
+				// The field record establishes 12/81/20/0 byte packet sizes
+				// and ordering only. These nine visibility removals are synthetic.
+				visibility := binary.LittleEndian.AppendUint32(nil, 1)
+				visibility = binary.LittleEndian.AppendUint32(append(visibility, 4), 9)
+				for id := uint64(1); id <= 9; id++ {
+					visibility = append(visibility, scopePackedGUID(0x00f130aabbccdd00|id)...)
+				}
+				if len(visibility) != 81 {
+					t.Fatal("synthetic object fixture no longer matches observed length")
+				}
+				switch scenario {
+				case "own update":
+					visibility = append(binary.LittleEndian.AppendUint32(nil, 1), bodyValuesBlock(99, 0x18, 0)...)
+				case "malformed update":
+					visibility = visibility[:80]
+				case "unknown subject":
+					visibility[9] = 0
+				case "old hull removed":
+					visibility = binary.LittleEndian.AppendUint32(nil, 1)
+					visibility = binary.LittleEndian.AppendUint32(append(visibility, 4), 1)
+					visibility = append(visibility, scopePackedGUID(ship)...)
+				case "old hull recreated":
+					visibility = routeHullCreate(ship)
+				case "old hull entry changed", "old hull entry unchanged":
+					entryValue := template
+					if scenario == "old hull entry changed" {
+						entryValue++
+					}
+					visibility = append(binary.LittleEndian.AppendUint32(nil, 1), 0)
+					visibility = append(visibility, scopePackedGUID(ship)...)
+					visibility = binary.LittleEndian.AppendUint32(append(visibility, 1), 1<<3)
+					visibility = binary.LittleEndian.AppendUint32(visibility, entryValue)
+				case "abort":
+					observe(opcode.SMSGTransferAborted, transferPending(to))
+				}
+				if scenario != "no update" {
+					observe(opcode.SMSGUpdateObject, visibility)
+				}
+				c.fail = scenario == "unknown ACK"
+				writes := c.writes
+				v := observe(opcode.SMSGNewWorld, positionBody(to, 1, 2, 3, .25))
+				c.fail = false
+				if c.writes != writes+1 || c.opcodes[writes] != opcode.MSGMoveWorldportAck || v.Self.PositionKnown || v.WorldTransfer.PassengerTransportGuid != 0 {
+					t.Fatal("entry changed ACK or acquired absolute coordinates/ship from deck offset")
+				}
+				mover, receiving := uint64(99), ship
+				if scenario == "foreign rider" {
+					mover = 3
+				}
+				if scenario == "other hull" {
+					receiving++
+				}
+				i := movementinfo.Info{Flags: 0x200, Time: 125, X: 120, Y: 130, Z: 140, Orientation: 2,
+					TransportPresent: true, Transport: movementinfo.Transport{GUID: receiving, X: 1, Y: 2, Z: 3, Orientation: .25, Time: 42, Seat: -1}}
+				observe(opcode.SMSGCompressedUpdateObject, passengerWorldportCreate(t, mover, i))
+				v = observe(opcode.SMSGUpdateObject, routeHullCreate(receiving))
+				wantEdge, wantShip := true, true
+				switch scenario {
+				case "own update", "malformed update", "unknown subject", "abort", "wrong pending map", "zero entry", "unknown ACK":
+					wantEdge, wantShip = false, false
+				case "other template", "other hull", "foreign rider", "missing old hull", "other departure rider hull", "stale body envelope", "old hull removed", "old hull recreated", "old hull entry changed":
+					wantShip = false
+				}
+				f := v.WorldTransfer
+				if f.Known != wantEdge || (f.PassengerTransportGuid == ship) != wantShip || f.ContinuationKnown || f.PredecessorQualified || f.ArrivalKnown ||
+					f.BookingCausalityKnown || wantEdge && (f.PassengerTransportEntry != entry || f.Core.Phase != "passenger_ack_written" || !f.Core.WorldportAckWritten || f.Core.WorldportAckUnknown ||
+					f.Core.EntryMotionRevision != f.Core.PendingMotionRevision+2 && scenario != "no update") {
+					t.Fatalf("generic=%t want %t, ship=%x want %t, World=%q Core=%q/%q", f.Known, wantEdge, f.PassengerTransportGuid, wantShip,
+						f.Reason, e.transport.scope.WorldTransfer.GetPhase(), e.transport.scope.WorldTransfer.GetReason())
+				}
+				if mover == 99 && (!v.Self.PositionKnown || v.Self.X != i.X || v.Self.GetPassengerMovement().GetInfo().GetTransport().GetGuid() != receiving) {
+					t.Fatal("receiving-side actual absolute observation was lost")
+				}
+				switch scenario {
+				case "detach and reboard":
+					observe(opcode.SMSGCompressedUpdateObject, passengerWorldportCreate(t, 99, movementinfo.Info{X: i.X, Y: i.Y, Z: i.Z}))
+				case "second hull birth":
+					observe(opcode.SMSGUpdateObject, routeHullCreate(ship))
+				case "body death and restore":
+					observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, bodyValuesBlock(99, 0x18, 0)))
+				case "batched death and restore":
+					v = observe(opcode.SMSGCompressedUpdateObject, compressedBodyUpdates(t, bodyValuesBlock(99, 0x18, 0), bodyValuesBlock(99, 0x18, 100)))
+					if !v.WorldTransfer.Known || v.WorldTransfer.PassengerTransportGuid != 0 || !v.Self.Alive {
+						t.Fatal("one complete batch hid an actual intervening death")
+					}
+					return
+				case "malformed later pending":
+					v = observe(opcode.SMSGTransferPending, []byte{1, 2, 3})
+					if v.WorldTransfer.Known || v.WorldTransfer.PassengerTransportGuid != 0 {
+						t.Fatal("malformed later boundary preserved the old ship claim")
+					}
+					return
+				default:
+					return
+				}
+				v = observe(opcode.SMSGCompressedUpdateObject, passengerWorldportCreate(t, 99, i))
+				if !v.WorldTransfer.Known || v.WorldTransfer.PassengerTransportGuid != 0 || !v.Self.PositionKnown || v.Self.GetPassengerMovement().GetInfo().GetTransport().GetGuid() != ship {
+					t.Fatal("later receiving body was not independent of the departed or replaced historical ship")
+				}
+			}
+			cross(0, 1)
+			if scenario == "both directions" {
+				cross(1, 0)
+			}
+		})
+	}
 }
 
 type transferDeadlineConn struct {

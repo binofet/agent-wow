@@ -11,6 +11,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -52,6 +53,7 @@ type movingSurfaceFollow struct {
 	planWorldOffset buddynav.Point
 	lastAttempt     string
 	planSource      *surfaceMotionSource
+	exitSearch      buddynav.SurfaceDepartureSearch
 }
 
 type surfacePathKey struct {
@@ -184,6 +186,37 @@ func (s *Service) requestSurfaceTemplateLocked(ctx context.Context, w *worldv1.S
 	return err
 }
 
+func surfaceCheckpointMatches(sample buddynav.TransportPathSample, actual buddynav.SurfaceTransform) bool {
+	return actual.Valid() && surfaceDistance(sample.Position, actual.Origin) <= .02 &&
+		math.Abs(math.Remainder(float64(sample.Yaw)-float64(actual.Yaw), 2*math.Pi)) <= .01
+}
+
+// Find the last discrete relocation before the independently received full
+// hull clock. A passenger CREATE may still carry its departure-map time, but
+// its paired absolute and local poses can witness the exact receiving frame.
+func receivingSurfaceCheckpoint(path *buddynav.TransportPath, clock uint32, fromMap, toMap uint32, actual buddynav.SurfaceTransform) bool {
+	end := uint64(clock)
+	lo, hi := end-min(end, uint64(path.Period())), end
+	if fromMap == toMap || !path.CrossesTransfer(lo, end) {
+		return false
+	}
+	for hi-lo > 1 {
+		mid := lo + (hi-lo)/2
+		if path.CrossesTransfer(mid, end) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	if hi == 0 {
+		return false
+	}
+	before, e1 := path.Sample(hi - 1)
+	arrival, e2 := path.Sample(hi)
+	return e1 == nil && e2 == nil && before.MapID == fromMap && arrival.Transfer && arrival.MapID == toMap &&
+		surfaceCheckpointMatches(arrival, actual)
+}
+
 func (s *Service) surfacePoseLocked(ctx context.Context, w *worldv1.SnapshotResponse, hull *worldv1.GameObjectState) (buddynav.SurfaceTransform, uint32, error) {
 	facts := hull.MovingTransport
 	template := facts.GetTemplate()
@@ -218,6 +251,8 @@ func (s *Service) surfacePoseLocked(ctx context.Context, w *worldv1.SnapshotResp
 	}
 	clock, age := *facts.PathProgressMs, facts.MovementAgeMs
 	witness := buddynav.SurfaceTransform{Origin: buddynav.Point{X: hull.X, Y: hull.Y, Z: hull.Z}, Yaw: hull.Orientation, Scale: 1}
+	hullCheckpoint, hullErr := path.Sample(uint64(clock))
+	hullMatches := hullErr == nil && hullCheckpoint.MapID == hull.MapId && surfaceCheckpointMatches(hullCheckpoint, witness)
 	// The full paired passenger frame supplies another actually received
 	// hull checkpoint. Prefer its newer measurement to extrapolating an old
 	// CREATE for a vessel whose position was not dirtied during the trip.
@@ -227,14 +262,33 @@ func (s *Service) surfacePoseLocked(ctx context.Context, w *worldv1.SnapshotResp
 		frame, known := receivedPassenger(player, w.VisitRevision)
 		info := frame.GetInfo()
 		attachment := info.GetTransport()
-		if !known || attachment.GetGuid() != hull.Guid || frame.AgeMs >= age ||
+		if !known || attachment.GetGuid() != hull.Guid ||
 			!player.GetMapKnown() || player.GetMapId() != hull.MapId || !player.GetPositionKnown() || info.GetFlags()&passengerFlag == 0 {
+			continue
+		}
+		// Older peer frames are not sources for this clock. The actor's own
+		// attached CREATE also supplies the local origin for the next input.
+		if frame.AgeMs >= age && player != w.Self {
 			continue
 		}
 		transform, err := buddynav.PassengerTransform(buddynav.Point{X: info.X, Y: info.Y, Z: info.Z},
 			buddynav.Point{X: attachment.X, Y: attachment.Y, Z: attachment.Z}, info.Orientation, attachment.Orientation)
 		if err != nil {
 			return buddynav.SurfaceTransform{}, 0, err
+		}
+		atPassenger, passengerErr := path.Sample(uint64(attachment.Time))
+		if passengerErr == nil && atPassenger.MapID != hull.MapId {
+			if !hullMatches || (frame.SourceOpcode != opcode.SMSGUpdateObject && frame.SourceOpcode != opcode.SMSGCompressedUpdateObject) ||
+				facts.ObjectRevision == 0 || frame.Revision < facts.ObjectRevision ||
+				!receivingSurfaceCheckpoint(path, *facts.PathProgressMs, atPassenger.MapID, hull.MapId, transform) {
+				return buddynav.SurfaceTransform{}, 0, errors.New("passenger does not match the observed hull's receiving frame")
+			}
+			// The current hull has its own full, spatially checked clock. The
+			// inherited passenger time cannot replace or advance that clock.
+			continue
+		}
+		if frame.AgeMs >= age {
+			continue
 		}
 		clock, age, witness = attachment.Time, frame.AgeMs, transform
 	}
@@ -274,8 +328,7 @@ func (s *Service) surfacePoseLocked(ctx context.Context, w *worldv1.SnapshotResp
 		// that actually received hull pose for the same uninterrupted dwell.
 		return witness, uint32(progress), nil
 	}
-	if distance(surfacePosition(checkpoint.Position, checkpoint.Yaw), surfacePosition(witness.Origin, witness.Yaw)) > .02 ||
-		math.Abs(math.Remainder(float64(checkpoint.Yaw)-float64(witness.Yaw), 2*math.Pi)) > .01 {
+	if !surfaceCheckpointMatches(checkpoint, witness) {
 		return buddynav.SurfaceTransform{}, 0, errors.New("client ship path does not match the received hull checkpoint")
 	}
 	return buddynav.SurfaceTransform{Origin: sample.Position, Yaw: sample.Yaw, Scale: 1}, uint32(progress), nil

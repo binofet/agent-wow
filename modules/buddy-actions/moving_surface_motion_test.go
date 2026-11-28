@@ -32,6 +32,7 @@ var surfaceTestBow = buddynav.Point{X: 36.27977, Y: 2.2660532, Z: 6.094307}
 type surfaceTestSession struct {
 	*fakeSession
 	t        *testing.T
+	ship     uint64
 	now      func() time.Time
 	attempts map[string]bool
 }
@@ -50,8 +51,8 @@ func (f *surfaceTestSession) SendPacket(ctx context.Context, r *modv1.SendPacket
 	id := modcb.IncomingMovementAttempt(in)
 	followsOwner, ok, supplied := modcb.IncomingRouteBodyInput(in)
 	ship, birth, seen, valid, marked := modcb.IncomingRouteHull(in)
-	hull := movingHull(f.world, surfaceTestShip)
-	if !valid || !marked || ship != surfaceTestShip || birth != hull.GetMovingTransport().GetObjectRevision() ||
+	hull := movingHull(f.world, f.ship)
+	if !valid || !marked || ship != f.ship || birth != hull.GetMovingTransport().GetObjectRevision() ||
 		seen != f.world.ObservedPackets+f.world.IgnoredPackets+f.world.MalformedPackets {
 		f.t.Fatalf("missing final World hull or packet sequence on opcode %d: %x, %d, %d", r.Opcode, ship, birth, seen)
 	}
@@ -101,7 +102,7 @@ func newSurfaceTestRig(t *testing.T, progress uint32, own, owner buddynav.Point,
 	f.world.Owner.MapId, f.world.Self.MapId = sample.MapID, sample.MapID
 	f.world.ObservedPackets, f.world.IgnoredPackets, f.world.MalformedPackets = 11, 2, 1
 	seedSyntheticPortalWorldScope(f, 9)
-	r := &surfaceTestRig{surfaceTestSession: &surfaceTestSession{fakeSession: f, t: t, now: s.now, attempts: map[string]bool{}}, s: s, ctx: ctx, request: g, tr: tr, progress: progress, advance: advance}
+	r := &surfaceTestRig{surfaceTestSession: &surfaceTestSession{fakeSession: f, t: t, ship: surfaceTestShip, now: s.now, attempts: map[string]bool{}}, s: s, ctx: ctx, request: g, tr: tr, progress: progress, advance: advance}
 	s.session = r.surfaceTestSession
 	hull := &worldv1.GameObjectState{Guid: surfaceTestShip, Entry: 77, Present: true, MapKnown: true, MapId: sample.MapID, TypeKnown: true, GameObjectType: 15, PositionKnown: true,
 		X: sample.Position.X, Y: sample.Position.Y, Z: sample.Position.Z, Orientation: sample.Yaw,
@@ -120,7 +121,7 @@ func (r *surfaceTestRig) player(p *worldv1.PlayerState, local buddynav.Point, on
 	q := r.tr.World(local)
 	i := movementinfo.Info{Time: uint32(r.now().UnixMilli()), X: q.X, Y: q.Y, Z: q.Z, Orientation: r.tr.Yaw}
 	if onShip {
-		setPassengerFrame(&i, surfaceTestShip, r.tr, r.progress)
+		setPassengerFrame(&i, r.ship, r.tr, r.progress)
 	}
 	wire, err := movementinfo.Encode(i)
 	if err != nil {
@@ -152,7 +153,7 @@ func (r *surfaceTestRig) set(mode string) {
 	}
 }
 
-func (r *surfaceTestRig) tick(elapsed time.Duration) {
+func (r *surfaceTestRig) advanceSurface(elapsed time.Duration) {
 	r.t.Helper()
 	r.advance(elapsed)
 	r.world.MovingTransports[0].MovingTransport.MovementAgeMs += uint64(elapsed / time.Millisecond)
@@ -164,6 +165,10 @@ func (r *surfaceTestRig) tick(elapsed time.Duration) {
 	if _, err := r.s.RenewPolicyEncounterLease(r.ctx, wrapperspb.UInt64(r.world.VisitRevision)); err != nil {
 		r.t.Fatal(err)
 	}
+}
+
+func (r *surfaceTestRig) tick(elapsed time.Duration) {
+	r.advanceSurface(elapsed)
 	r.s.Tick(context.Background())
 }
 

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/protobuf/proto"
@@ -26,6 +27,10 @@ type worldTransferObservation struct {
 	firstSource       *modv1.TransportScope
 	qualifiedSource   *modv1.TransportScope
 	lastScope         *modv1.TransportScope
+	passengerEntry    uint32
+	departureHulls    map[uint64]*observed
+	receivingHull     uint64
+	receivingBirth    uint64
 }
 
 func cloneWorldTransfer(edge *modv1.ObservedWorldTransfer) *modv1.ObservedWorldTransfer {
@@ -60,10 +65,28 @@ func (s *Service) captureWorldTransferBeforeLocked(packet *modv1.WorldPacket, no
 		f.completionBinding = proto.Clone(f.completion).(*worldv1.SplineCompletionOperation)
 	}
 	edge, after := f.core, packet.TransportScope
-	if len(packet.Payload) != 4 || !p.present || !p.mapKnown || s.state.visitRevision == 0 || !scopeMatchesSelf(scope, p, s.state.visitRevision) || !worldTransferFromMatches(edge, scope) || edge.Revision == 0 || !edge.TargetMapKnown || edge.TargetMapId != binary.LittleEndian.Uint32(packet.Payload) || scope.MotionRevision == ^uint64(0) || edge.PendingMotionRevision != scope.MotionRevision+1 || after == nil || after.ConnectionId != scope.ConnectionId || after.SelfGuid != p.guid || after.MotionRevision != edge.PendingMotionRevision || after.VisitBound || after.VisitRevision != 0 {
+	payload := packet.Payload
+	plain := len(payload) == 4 && edge.GetPhase() == "pending"
+	passenger := len(payload) == 12 && edge.GetPhase() == "passenger_pending" && binary.LittleEndian.Uint32(payload[4:]) != 0 &&
+		binary.LittleEndian.Uint32(payload[8:]) == p.mapID
+	if !plain && !passenger || !p.present || !p.mapKnown || s.state.visitRevision == 0 || !scopeMatchesSelf(scope, p, s.state.visitRevision) || !worldTransferFromMatches(edge, scope) || edge.Revision == 0 || !edge.TargetMapKnown || edge.TargetMapId != binary.LittleEndian.Uint32(payload) || scope.MotionRevision == ^uint64(0) || edge.PendingMotionRevision != scope.MotionRevision+1 || after == nil || after.ConnectionId != scope.ConnectionId || after.SelfGuid != p.guid || after.MotionRevision != edge.PendingMotionRevision || after.VisitBound || after.VisitRevision != 0 {
 		f.blocked = true
 		f.reason = "supported paired World/Core transfer predecessor unavailable"
 		return f
+	}
+	if passenger {
+		f.passengerEntry = binary.LittleEndian.Uint32(payload[4:])
+		for id, hull := range s.state.gameObjects {
+			if rider := p.passenger; rider != nil && rider.info.TransportPresent && rider.info.Transport.GUID != id {
+				continue
+			}
+			if hull.present && hull.mapKnown && hull.mapID == p.mapID && movingTransport(hull) && hull.fields[objectEntry] == f.passengerEntry {
+				if f.departureHulls == nil {
+					f.departureHulls = make(map[uint64]*observed)
+				}
+				f.departureHulls[id] = hull
+			}
+		}
 	}
 	f.waiting = true
 	f.reason = "matching acknowledged World entry unavailable"
@@ -90,6 +113,16 @@ func (s *Service) invalidateWorldTransferPacketLocked(packet *modv1.WorldPacket)
 	if f.revision == 0 {
 		return
 	}
+	if f.passengerEntry != 0 && f.known {
+		switch packet.Opcode {
+		case opcode.SMSGNewWorld, opcode.SMSGLoginVerifyWorld, opcode.SMSGTransferPending:
+			f.known = false
+			s.blockWorldTransferLocked("new World boundary replaced passenger transfer")
+		default:
+			s.observeReceivingPassengerLocked(packet.TransportScope)
+		}
+		return
+	}
 	if potentialMotionOpcode(packet.Opcode) || packet.TransportScope == nil || f.lastScope == nil || !proto.Equal(packet.TransportScope, f.lastScope) {
 		s.blockWorldTransferLocked("malformed or unsupported transfer continuation motion")
 	}
@@ -103,6 +136,7 @@ func (s *Service) observeWorldTransferLocked(packet *modv1.WorldPacket, current 
 			return
 		}
 		*f = *before
+		s.state.departingHulls = f.departureHulls
 		if revision == ^uint64(0) {
 			f.blocked = true
 			f.reason = "World transfer revision exhausted"
@@ -117,7 +151,13 @@ func (s *Service) observeWorldTransferLocked(packet *modv1.WorldPacket, current 
 	}
 	scope, edge := packet.TransportScope, packet.GetTransportScope().GetWorldTransfer()
 	if packet.Opcode == opcode.SMSGNewWorld || packet.Opcode == opcode.SMSGLoginVerifyWorld {
-		if packet.Opcode != opcode.SMSGNewWorld || !f.waiting || f.blocked || !sameWorldTransferPending(f.core, edge) || !edge.Known || !edge.WorldportAckWritten || edge.WorldportAckUnknown || edge.Revision <= f.core.Revision || edge.FromVisitRevision == ^uint64(0) || edge.ToVisitRevision != edge.FromVisitRevision+1 || edge.ToMapId != edge.TargetMapId || edge.PendingMotionRevision == ^uint64(0) || edge.EntryMotionRevision != edge.PendingMotionRevision+1 || edge.EntryMotionRevision == ^uint64(0) || edge.WorldportAckMotionRevision != edge.EntryMotionRevision+1 || !scopeMatchesSelf(scope, current, next.visitRevision) || scope.ConnectionId != edge.ConnectionId || scope.SelfGuid != f.self || scope.VisitRevision != edge.ToVisitRevision || scope.MapId != edge.ToMapId || scope.MotionRevision != edge.WorldportAckMotionRevision || scope.SplineActive || scope.SplineIdKnown || f.fromVisit == ^uint64(0) || next.visitRevision != f.fromVisit+1 {
+		s.state.departingHulls = nil
+		last := edge.GetPendingMotionRevision()
+		phase := "ack_written"
+		if f.passengerEntry != 0 {
+			last, phase = f.lastScope.GetMotionRevision(), "passenger_ack_written"
+		}
+		if packet.Opcode != opcode.SMSGNewWorld || !f.waiting || f.blocked || !sameWorldTransferPending(f.core, edge) || !edge.Known || edge.Phase != phase || !edge.WorldportAckWritten || edge.WorldportAckUnknown || edge.Revision <= f.core.Revision || edge.FromVisitRevision == ^uint64(0) || edge.ToVisitRevision != edge.FromVisitRevision+1 || edge.ToMapId != edge.TargetMapId || last == ^uint64(0) || edge.EntryMotionRevision != last+1 || edge.EntryMotionRevision == ^uint64(0) || edge.WorldportAckMotionRevision != edge.EntryMotionRevision+1 || !scopeMatchesSelf(scope, current, next.visitRevision) || scope.ConnectionId != edge.ConnectionId || scope.SelfGuid != f.self || scope.VisitRevision != edge.ToVisitRevision || scope.MapId != edge.ToMapId || scope.MotionRevision != edge.WorldportAckMotionRevision || scope.SplineActive || scope.SplineIdKnown || f.fromVisit == ^uint64(0) || next.visitRevision != f.fromVisit+1 {
 			f.known = false
 			s.blockWorldTransferLocked("World entry does not match observed acknowledged Core transfer")
 			return
@@ -127,18 +167,37 @@ func (s *Service) observeWorldTransferLocked(packet *modv1.WorldPacket, current 
 		f.core = cloneWorldTransfer(edge)
 		f.lastScope = cloneMotionScope(scope)
 		f.reason = "new-visit normal taxi continuation facts unavailable"
+		if f.passengerEntry != 0 {
+			f.reason = "receiving passenger and moving transport observation unavailable"
+		}
 		if f.revision != ^uint64(0) {
 			f.revision++
 		}
 		return
 	}
 	if f.waiting {
-		if scope == nil || scope.ConnectionId != f.core.ConnectionId || scope.SelfGuid != f.self || scope.MotionRevision != f.core.PendingMotionRevision || !sameWorldTransferPending(f.core, edge) {
+		f.departureHulls = next.departingHulls
+		if f.passengerEntry != 0 && !f.blocked && (packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject) &&
+			scope != nil && scope.ConnectionId == f.core.ConnectionId && scope.SelfGuid == f.self && !scope.VisitBound && scope.VisitRevision == 0 &&
+			f.lastScope.GetMotionRevision() != ^uint64(0) && scope.MotionRevision == f.lastScope.GetMotionRevision()+1 && proto.Equal(edge, f.core) &&
+			(next.bodyInputBarrier == "" || modcb.BodyUpdateIsOwnerOnly(next.bodyInputBarrier)) {
+			f.lastScope = cloneMotionScope(scope)
+			return
+		}
+		if scope == nil || scope.ConnectionId != f.core.ConnectionId || scope.SelfGuid != f.self || scope.MotionRevision != f.lastScope.GetMotionRevision() || !sameWorldTransferPending(f.core, edge) {
 			s.blockWorldTransferLocked("intervening motion replaced pending World transfer")
 		}
 		return
 	}
 	if !f.known || f.blocked {
+		return
+	}
+	if f.passengerEntry != 0 {
+		if current.receivedTaxiBarrier || f.receivingHull != 0 && current.receivedOwnCreate {
+			s.blockWorldTransferLocked("receiving passenger life, body or control changed")
+			return
+		}
+		s.observeReceivingPassengerLocked(scope)
 		return
 	}
 	// Existing motion proof has already processed this complete packet. Its
@@ -177,6 +236,36 @@ func (s *Service) observeWorldTransferLocked(packet *modv1.WorldPacket, current 
 	}
 }
 
+// The Worldport ACK identifies a transfer. Only later, independently scoped
+// self movement and an actual new-map hull can identify its passenger.
+func (s *Service) observeReceivingPassengerLocked(scope *modv1.TransportScope) {
+	f, p, raw := &s.worldTransfer, &s.state.players[0], &s.state.ownMovement
+	if f.blocked {
+		return
+	}
+	var guid, birth uint64
+	_, _, alive := p.life()
+	if alive && p.present && p.positionKnown && !p.positionInferred && p.movementKnown && p.passenger != nil &&
+		p.passenger.source.visit == f.toVisit && raw.known && raw.self == f.self && raw.visit == f.toVisit && raw.info == p.passenger.info &&
+		raw.info.TransportPresent && sameMotionVisit(raw.scope, f.lastScope) && raw.scope.MotionRevision > f.core.WorldportAckMotionRevision &&
+		scopeMatchesSelf(raw.scope, *p, s.state.visitRevision) {
+		id := raw.info.Transport.GUID
+		hull := s.state.gameObjects[id]
+		if f.departureHulls[id] != nil && hull != nil && hull.present && hull.mapKnown && hull.mapID == p.mapID && movingTransport(hull) &&
+			hull.fields[objectEntry] == f.passengerEntry && hull.transportBirth != 0 {
+			guid, birth = id, hull.transportBirth
+		}
+	}
+	if f.receivingHull != 0 && (guid != f.receivingHull || birth != f.receivingBirth) {
+		s.blockWorldTransferLocked("receiving passenger or moving transport changed")
+	} else if f.receivingHull == 0 && guid != 0 && sameMotionVisit(scope, raw.scope) && scope.MotionRevision >= raw.scope.MotionRevision {
+		f.receivingHull, f.receivingBirth, f.reason = guid, birth, ""
+		if f.revision != ^uint64(0) {
+			f.revision++
+		}
+	}
+}
+
 func normalWorldTransferSpline(t observedTrajectory) bool {
 	return t.known && t.idKnown && t.kind == 0 && !t.stopped && !t.relative && !t.cyclic && t.destinationKnown && t.duration > 0 && t.flags&0x2000 != 0 && t.flags&(unsafeEndpointFlags|0x200|0x800|0x200000|0x800000|0x1000000) == 0
 }
@@ -190,6 +279,9 @@ func worldTransferNewFacts(f *worldTransferObservation, a *worldv1.OwnMotionAuth
 }
 
 func worldTransferPredecessorQualified(f *worldTransferObservation) bool {
+	if f.passengerEntry != 0 {
+		return false
+	}
 	a, op, b, edge := f.predecessor, f.completion, f.completionBinding, f.core
 	if a == nil || !a.Known || a.SelfGuid != f.self || a.VisitRevision != f.fromVisit || op == nil || b == nil || edge == nil || !edge.CompletionReportWritten || op.Retired || op.ArrivalKnown || !op.SplineIdKnown || op.SplineId != edge.FromSplineId || !op.TransportScope.GetSplineActive() || op.Revision != b.Revision || op.SelfGuid != f.self || op.VisitRevision != f.fromVisit || op.SelfGuid != b.SelfGuid || op.VisitRevision != b.VisitRevision || op.AuthorityRevision != b.AuthorityRevision || op.MovementRevision != b.MovementRevision || op.SplineRevision != b.SplineRevision || !proto.Equal(op.TransportScope, b.TransportScope) || !sameMotionSource(op.TransportScope, a.TransportScope) || edge.CompletionReportMotionRevision != op.TransportScope.GetMotionRevision() || edge.CompletionReportMotionRevision > edge.FromMotionRevision {
 		return false
@@ -209,7 +301,12 @@ func (s *Service) worldTransferSnapshotLocked(now time.Time) *worldv1.WorldTrans
 	}
 	r.PredecessorQualified = worldTransferPredecessorQualified(f)
 	r.ContinuationKnown = r.PredecessorQualified && f.qualifiedSource != nil && worldTransferNewFacts(f, a, &s.state)
-	if r.ContinuationKnown {
+	if f.passengerEntry != 0 {
+		r.PassengerTransportEntry = f.passengerEntry
+		if f.known && !f.blocked {
+			r.PassengerTransportGuid = f.receivingHull
+		}
+	} else if r.ContinuationKnown {
 		r.Reason = ""
 	} else if f.known && !f.blocked && !r.PredecessorQualified {
 		r.Reason = "qualified predecessor completion and Core report unavailable"

@@ -12,11 +12,13 @@ import (
 // A transfer edge records adjacent observations on this connection. It does not
 // identify a taxi booking, prove server acceptance of an ACK, or grant movement.
 type worldTransferState struct {
-	revision  uint64
-	exhausted bool
-	waiting   bool
-	eligible  bool
-	entry     *modv1.TransportScope
+	revision         uint64
+	exhausted        bool
+	waiting          bool
+	eligible         bool
+	passenger        bool
+	passengerUpdates uint64
+	entry            *modv1.TransportScope
 }
 
 // Retain only the source tuple, never an older edge nested inside a new edge.
@@ -87,20 +89,24 @@ func (t *transportScopeState) observeTransferBefore(op uint16, body []byte) {
 			FromSplineActive: from.SplineActive,
 		}
 		t.scope.WorldTransfer = e
-		t.transfer.waiting, t.transfer.eligible, t.transfer.entry = true, true, nil
-		if len(body) == 4 {
-			// Held AzerothCore b8c2e189 Player.cpp TeleportTo emits map:u32,
-			// optionally followed by transport-entry:u32 and old-map:u32.
-			// That 12-byte variant has transport-relative NEW_WORLD coordinates;
-			// this first fact contract deliberately certifies only the plain form.
+		t.transfer.waiting, t.transfer.eligible, t.transfer.passenger, t.transfer.entry = true, true, false, nil
+		t.transfer.passengerUpdates = 0
+		// Player::TeleportTo appends the transport template and the player's
+		// current map for passengers. NEW_WORLD then carries deck-local XYZO.
+		// The template does not identify a runtime ship or prove an attachment.
+		switch {
+		case len(body) == 4:
 			e.TargetMapKnown, e.TargetMapId = true, binary.LittleEndian.Uint32(body)
-		} else {
+		case len(body) == 12 && binary.LittleEndian.Uint32(body[4:]) != 0 && binary.LittleEndian.Uint32(body[8:]) == from.MapId:
+			t.transfer.passenger, e.Phase = true, "passenger_pending"
+			e.TargetMapKnown, e.TargetMapId = true, binary.LittleEndian.Uint32(body)
+		default:
 			e.Phase, e.Reason, t.transfer.eligible = "incomplete", "unsupported_transfer_pending_payload", false
 		}
 		if !from.VisitBound || from.VisitRevision == 0 || from.ConnectionId == "" || from.SelfGuid == 0 || t.exhausted {
 			e.Phase, e.Reason, t.transfer.eligible = "incomplete", "transfer_source_unbound", false
 		}
-		if sameTransferSource(t.completionReport, from) {
+		if !t.transfer.passenger && sameTransferSource(t.completionReport, from) {
 			e.CompletionReportWritten, e.CompletionReportMotionRevision = true, t.completionReport.MotionRevision
 		}
 		t.reviseTransfer()
@@ -119,6 +125,15 @@ func (t *transportScopeState) observeTransferBefore(op uint16, body []byte) {
 	if op == opcode.SMSGTransferAborted {
 		t.supersedePendingTransfer("transfer_aborted")
 		return
+	}
+	if t.transfer.waiting && t.transfer.eligible && t.transfer.passenger && (op == opcode.SMSGUpdateObject || op == opcode.SMSGCompressedUpdateObject) {
+		// Removing the rider from the old map can deliver its visibility
+		// updates between Pending and NewWorld. Every exempt revision is
+		// backed by a whole, classified object batch without the mover.
+		if _, foreign := scanControlObjectUpdate(op, body, t.scope.SelfGuid, nil); foreign {
+			t.transfer.passengerUpdates++
+			return
+		}
 	}
 	if op != opcode.SMSGNewWorld && transportMotionBarrier(uint32(op)) && !transportClearlyForeign(op, body, t.scope.SelfGuid) {
 		t.supersedePendingTransfer("intervening_motion_superseded_transfer")
@@ -149,9 +164,15 @@ func (t *transportScopeState) observeTransferAfter(op uint16, body []byte) {
 	} else if t.transfer.eligible && (t.scope.ConnectionId != e.ConnectionId || t.scope.SelfGuid != e.SelfGuid ||
 		t.scope.VisitRevision <= e.FromVisitRevision || !e.TargetMapKnown || mapID != e.TargetMapId) {
 		t.transfer.eligible, e.Phase, e.Reason = false, "incomplete", "new_world_does_not_match_pending"
+	} else if t.transfer.eligible && t.transfer.passenger && (e.EntryMotionRevision <= e.PendingMotionRevision ||
+		e.EntryMotionRevision-e.PendingMotionRevision-1 != t.transfer.passengerUpdates) {
+		t.transfer.eligible, e.Phase, e.Reason = false, "incomplete", "unclassified_passenger_transfer_motion"
 	}
 	if t.transfer.eligible {
 		e.Phase = "entered"
+		if t.transfer.passenger {
+			e.Phase = "passenger_entered"
+		}
 	}
 	t.transfer.entry = transferSource(t.scope)
 	t.reviseTransfer()
@@ -183,6 +204,9 @@ func (t *transportScopeState) worldportAckOutcome(outcome GameplayWriteOutcome, 
 			entry.MotionRevision != math.MaxUint64 && current.MotionRevision == entry.MotionRevision+1 &&
 			!current.SplineIdKnown && !current.SplineActive && current.SplineRevision == entry.SplineRevision {
 			e.Known, e.Phase, e.Reason = true, "ack_written", ""
+			if t.transfer.passenger {
+				e.Phase = "passenger_ack_written"
+			}
 		} else if t.transfer.eligible {
 			e.Known, e.Phase, e.Reason = false, "incomplete", "worldport_ack_scope_superseded"
 		}

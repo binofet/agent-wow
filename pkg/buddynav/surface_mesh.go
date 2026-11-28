@@ -74,6 +74,141 @@ func (s *SurfaceMesh) BoardingEntry(ctx context.Context, from, destination Point
 	return Point{}, errors.New("no connected physical boarding point on this deck")
 }
 
+// SurfaceDepartureSearch retains only the order in which to test edges. It
+// grants no physical authority: the route, timing and exterior are measured
+// again from the current body and ship for every accepted result.
+type SurfaceDepartureSearch struct {
+	mesh         *SurfaceMesh
+	next         int
+	preferred    surfaceExitEdge
+	hasPreferred bool
+}
+
+// DepartureRoute checks a connected deck corridor and a usable exterior at
+// its measured arrival. A canceled search resumes at the following edge when
+// the caller supplies the same search state.
+func (s *SurfaceMesh) DepartureRoute(ctx context.Context, start, outside Point, accepts func(Point, Point, float64) bool, state ...*SurfaceDepartureSearch) ([]Point, error) {
+	if !worldPoint(start) || !worldPoint(outside) || accepts == nil || len(state) > 1 {
+		return nil, errors.New("finite deck and exterior endpoints and a landing check required")
+	}
+	search := &SurfaceDepartureSearch{}
+	if len(state) > 0 && state[0] != nil {
+		search = state[0]
+	}
+	if search.mesh != s {
+		*search = SurfaceDepartureSearch{mesh: s}
+	}
+	check := func(edge surfaceExitEdge) []Point {
+		route, err := s.Route(ctx, start, edge.point)
+		if err != nil || len(route) == 0 {
+			return nil
+		}
+		var length float64
+		for i := 1; i < len(route); i++ {
+			length += distance(route[i-1], route[i])
+		}
+		if !accepts(route[len(route)-1], edge.outward, length) {
+			return nil
+		}
+		return route
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if search.hasPreferred {
+		if route := check(search.preferred); route != nil {
+			return route, nil
+		}
+		search.hasPreferred = false
+	}
+	edges := s.departureEdges(start, outside)
+	for range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		index := search.next % len(edges)
+		search.next = (index + 1) % len(edges)
+		edge := edges[index]
+		if route := check(edge); route != nil {
+			search.preferred, search.hasPreferred = edge, true
+			return route, nil
+		}
+	}
+	return nil, errors.New("no connected deck exit reaches the measured exterior")
+}
+
+type surfaceExitEdge struct{ point, outward Point }
+
+// Interior links already lead to another polygon. At an outer edge we can
+// test its ends, middle, and perpendicular projections of rider and goal.
+func (s *SurfaceMesh) departureEdges(start, outside Point) []surfaceExitEdge {
+	tile := s.mesh.GetTile(0)
+	var edges []surfaceExitEdge
+	seen := make(map[surfaceExitEdge]bool)
+	ref, _, err := s.nearby(start)
+	if err != nil {
+		return nil
+	}
+	first := int(ref - s.mesh.GetPolyRefBase(tile))
+	queue := []int{first}
+	visited := map[int]bool{first: true}
+	for len(queue) > 0 {
+		index := queue[0]
+		queue = queue[1:]
+		poly := &tile.Polys[index]
+		count := int(poly.VertCount)
+		var cx, cy float32
+		for _, v := range poly.Verts[:count] {
+			p := surfacePoint(tile.Verts[3*int(v):])
+			cx += p.X
+			cy += p.Y
+		}
+		cx /= float32(count)
+		cy /= float32(count)
+		for edge := 0; edge < count; edge++ {
+			if link := poly.Neis[edge]; link != 0 {
+				next := int(link) - 1
+				if link&detour.DT_EXT_LINK == 0 && !visited[next] && next < len(tile.Polys) && tile.Polys[next].Flags == 1 {
+					queue = append(queue, next)
+					visited[next] = true
+				}
+				continue
+			}
+			a := surfacePoint(tile.Verts[3*int(poly.Verts[edge]):])
+			b := surfacePoint(tile.Verts[3*int(poly.Verts[(edge+1)%count]):])
+			dx, dy := b.X-a.X, b.Y-a.Y
+			d2 := dx*dx + dy*dy
+			if d2 == 0 {
+				continue
+			}
+			length := float32(math.Sqrt(float64(d2)))
+			n := Point{X: dy / length, Y: -dx / length}
+			if n.X*(cx-a.X)+n.Y*(cy-a.Y) > 0 {
+				n.X = -n.X
+				n.Y = -n.Y
+			}
+			add := func(f float32) {
+				item := surfaceExitEdge{point: Point{a.X + f*dx, a.Y + f*dy, a.Z + f*(b.Z-a.Z)}, outward: n}
+				if !seen[item] {
+					seen[item] = true
+					edges = append(edges, item)
+				}
+			}
+			add(0)
+			add(.5)
+			add(1)
+			for _, p := range [...]Point{start, outside} {
+				add(max(float32(0), min(float32(1), ((p.X-a.X)*dx+(p.Y-a.Y)*dy)/d2)))
+			}
+		}
+	}
+	sort.SliceStable(edges, func(i, j int) bool {
+		a, b := edges[i].point, edges[j].point
+		return distance(start, a) < distance(start, b)
+	})
+	return edges
+}
+
 func LoadSurfaceMesh(ctx context.Context, dataDir string, displayID uint32) (*SurfaceMesh, error) {
 	surface, err := LoadTransportSurface(ctx, dataDir, displayID)
 	if err != nil {

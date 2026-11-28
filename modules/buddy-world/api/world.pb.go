@@ -2103,8 +2103,13 @@ type WorldTransferObservation struct {
 	CurrentUnitFlags               uint32                     `protobuf:"varint,19,opt,name=current_unit_flags,json=currentUnitFlags,proto3" json:"current_unit_flags,omitempty"`
 	ArrivalKnown                   bool                       `protobuf:"varint,20,opt,name=arrival_known,json=arrivalKnown,proto3" json:"arrival_known,omitempty"`
 	BookingCausalityKnown          bool                       `protobuf:"varint,21,opt,name=booking_causality_known,json=bookingCausalityKnown,proto3" json:"booking_causality_known,omitempty"`
-	unknownFields                  protoimpl.UnknownFields
-	sizeCache                      protoimpl.SizeCache
+	// Nonzero template received on this body's twelve-byte TRANSFER_PENDING.
+	PassengerTransportEntry uint32 `protobuf:"varint,22,opt,name=passenger_transport_entry,json=passengerTransportEntry,proto3" json:"passenger_transport_entry,omitempty"`
+	// Current receiving-side self attachment on the same type-15 hull observed
+	// at departure. Neither the pending template nor NEW_WORLD supplies a GUID.
+	PassengerTransportGuid uint64 `protobuf:"varint,23,opt,name=passenger_transport_guid,json=passengerTransportGuid,proto3" json:"passenger_transport_guid,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *WorldTransferObservation) Reset() {
@@ -2282,6 +2287,20 @@ func (x *WorldTransferObservation) GetBookingCausalityKnown() bool {
 		return x.BookingCausalityKnown
 	}
 	return false
+}
+
+func (x *WorldTransferObservation) GetPassengerTransportEntry() uint32 {
+	if x != nil {
+		return x.PassengerTransportEntry
+	}
+	return 0
+}
+
+func (x *WorldTransferObservation) GetPassengerTransportGuid() uint64 {
+	if x != nil {
+		return x.PassengerTransportGuid
+	}
+	return 0
 }
 
 // Explicitly replace one completion slot with its observed adjacent segment.
@@ -6673,7 +6692,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x12retirement_current\x18\x05 \x01(\bR\x11retirementCurrent\x121\n" +
 	"\x14retirement_available\x18\x06 \x01(\bR\x13retirementAvailable\x12[\n" +
 	"\x11transfer_adoption\x18\a \x01(\v2..warcraftbuddy.world.v1.SplineTransferAdoptionR\x10transferAdoption\x12:\n" +
-	"\x19transfer_adoption_current\x18\b \x01(\bR\x17transferAdoptionCurrent\"\x95\t\n" +
+	"\x19transfer_adoption_current\x18\b \x01(\bR\x17transferAdoptionCurrent\"\x8b\n" +
+	"\n" +
 	"\x18WorldTransferObservation\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12\x14\n" +
 	"\x05known\x18\x02 \x01(\bR\x05known\x12\x16\n" +
@@ -6696,7 +6716,9 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x18current_unit_flags_known\x18\x12 \x01(\bR\x15currentUnitFlagsKnown\x12,\n" +
 	"\x12current_unit_flags\x18\x13 \x01(\rR\x10currentUnitFlags\x12#\n" +
 	"\rarrival_known\x18\x14 \x01(\bR\farrivalKnown\x126\n" +
-	"\x17booking_causality_known\x18\x15 \x01(\bR\x15bookingCausalityKnown\"\xf2\x03\n" +
+	"\x17booking_causality_known\x18\x15 \x01(\bR\x15bookingCausalityKnown\x12:\n" +
+	"\x19passenger_transport_entry\x18\x16 \x01(\rR\x17passengerTransportEntry\x128\n" +
+	"\x18passenger_transport_guid\x18\x17 \x01(\x04R\x16passengerTransportGuid\"\xf2\x03\n" +
 	"\x1aAdoptSplineTransferRequest\x12\x1b\n" +
 	"\tself_guid\x18\x01 \x01(\x04R\bselfGuid\x12%\n" +
 	"\x0evisit_revision\x18\x02 \x01(\x04R\rvisitRevision\x12+\n" +

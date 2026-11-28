@@ -695,6 +695,9 @@ func (s *Service) snapshot(ctx context.Context, creatureGUID ...uint64) (*worldv
 		return nil, err
 	}
 	s.observeDungeonWorld(out)
+	if s.priorPassengerMovingLocked() {
+		s.reconcileSurfaceMotionLocked(out)
+	}
 	if s.state.Following && s.navDataDir != "" {
 		s.swimTrail.observe(out, s.selfGUID)
 		s.rememberFollowDestinationLocked(out)

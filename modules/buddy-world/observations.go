@@ -47,6 +47,9 @@ type observations struct {
 	unreflectedUnits      map[uint64]bool
 	items                 map[uint64]*observed
 	gameObjects           map[uint64]*observed
+	// During a passenger worldport the old map is no longer visible. Keep
+	// its candidate vessels private to the transfer decoder until NEW_WORLD.
+	departingHulls        map[uint64]*observed
 	groundEffects         map[uint64]*observed
 	groundEffectsOverflow bool
 	corpses               map[uint64]*observed
@@ -86,6 +89,7 @@ func (s observations) clone() observations {
 	s.nearbyPlayers = maps.Clone(s.nearbyPlayers)
 	s.items = maps.Clone(s.items)
 	s.gameObjects = maps.Clone(s.gameObjects)
+	s.departingHulls = maps.Clone(s.departingHulls)
 	s.groundEffects = maps.Clone(s.groundEffects)
 	s.corpses = maps.Clone(s.corpses)
 	s.edited = make(map[uint64]bool)
@@ -125,6 +129,7 @@ func (s *observations) target(guid uint64) *observed {
 }
 func (s *observations) remove(guid uint64, now time.Time) {
 	if movingTransportGUID(guid) {
+		delete(s.departingHulls, guid)
 		s.clearPassengersOf(guid)
 	}
 	if p := player(&s.players, guid); p != nil {

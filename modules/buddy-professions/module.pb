@@ -80,7 +80,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-£Ì
+™Í
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"‚
 PlayerState
 guid (Rguid
@@ -312,7 +312,8 @@ unit_flags (R	unitFlags.
 retirement_current (RretirementCurrent1
 retirement_available (RretirementAvailable[
 transfer_adoption (2..warcraftbuddy.world.v1.SplineTransferAdoptionRtransferAdoption:
-transfer_adoption_current (RtransferAdoptionCurrent"•	
+transfer_adoption_current (RtransferAdoptionCurrent"‹
+
 WorldTransferObservation
 revision (Rrevision
 known (Rknown
@@ -335,7 +336,9 @@ unit_flags (R	unitFlags.
 current_unit_flags_known (RcurrentUnitFlagsKnown,
 current_unit_flags (RcurrentUnitFlags#
 arrival_known (RarrivalKnown6
-booking_causality_known (RbookingCausalityKnown"ò
+booking_causality_known (RbookingCausalityKnown:
+passenger_transport_entry (RpassengerTransportEntry8
+passenger_transport_guid (RpassengerTransportGuid"ò
 AdoptSplineTransferRequest
 	self_guid (RselfGuid%
 visit_revision (RvisitRevision+
