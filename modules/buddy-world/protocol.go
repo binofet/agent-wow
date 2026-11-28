@@ -1,12 +1,9 @@
 package buddyworld
 
 import (
-	"bytes"
-	"compress/zlib"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"math/bits"
 	"time"
@@ -241,21 +238,8 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 	case opcode.SMSGAuraUpdate, opcode.SMSGAuraUpdateAll:
 		return state.observeCreatureAuras(op, payload, now)
 	case opcode.SMSGCompressedUpdateObject:
-		declared := c.u32()
-		if c.err != nil {
-			return true, c.err
-		}
-		if declared > maxPayload || declared < 4 {
-			return true, errBounds
-		}
-		stream := bytes.NewReader(payload[4:])
-		r, err := zlib.NewReader(stream)
+		data, err := movementinfo.ObjectUpdatePayload(payload, true)
 		if err != nil {
-			return true, errCompressed
-		}
-		data, err := io.ReadAll(io.LimitReader(r, int64(declared)+1))
-		closeErr := r.Close()
-		if err != nil || closeErr != nil || len(data) != int(declared) || stream.Len() != 0 {
 			return true, errCompressed
 		}
 		return true, updates(&cursor{b: data}, state, now, op)
@@ -342,7 +326,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		guid := c.guid()
 		c.skip(4)
 		p := state.target(guid)
-		if err := movement(c, p, now, nil, state.nextTransportSource(op)); err != nil {
+		if err := movement(c, p, now, state.nextTransportSource(op)); err != nil {
 			return true, err
 		}
 		if p != nil && p.isSelf {
@@ -426,7 +410,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		// The realm forwards the acknowledging player's MovementInfo to
 		// their peers, followed by sin, cos, horizontal and vertical speeds.
 		p := state.target(c.guid())
-		if err := movement(c, p, now, nil, state.nextTransportSource(op)); err != nil {
+		if err := movement(c, p, now, state.nextTransportSource(op)); err != nil {
 			return true, err
 		}
 		for i := 0; i < 4; i++ {
@@ -463,7 +447,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 	if movementOpcode(op) {
 		guid := c.guid()
 		p := state.target(guid)
-		if err := movement(c, p, now, nil, state.nextTransportSource(op)); err != nil {
+		if err := movement(c, p, now, state.nextTransportSource(op)); err != nil {
 			return true, err
 		}
 		if err := c.done(); err != nil {
@@ -521,7 +505,7 @@ func movementOpcode(op uint32) bool {
 	return false
 }
 
-func movement(c *cursor, p *observed, now time.Time, received *movementinfo.Info, source transportSource) error {
+func movement(c *cursor, p *observed, now time.Time, source transportSource) error {
 	if c.err != nil {
 		return c.err
 	}
@@ -531,9 +515,10 @@ func movement(c *cursor, p *observed, now time.Time, received *movementinfo.Info
 		return errShort
 	}
 	c.skip(consumed)
-	if received != nil {
-		*received = info
-	}
+	return applyPlayerMovement(p, info, c.b[start:start+consumed], now, source)
+}
+
+func applyPlayerMovement(p *observed, info movementinfo.Info, wire []byte, now time.Time, source transportSource) error {
 	hadPassenger := p != nil && p.passenger != nil
 	if err := position(p, info.X, info.Y, info.Z, info.Orientation, now); err != nil {
 		return err
@@ -555,8 +540,8 @@ func movement(c *cursor, p *observed, now time.Time, received *movementinfo.Info
 			p.receivedMovement = true
 			p.receivedMovementInfo = info
 			clear(p.receivedMovementWire[:])
-			copy(p.receivedMovementWire[:], c.b[start:start+consumed])
-			p.receivedMovementWireLen = uint8(consumed)
+			copy(p.receivedMovementWire[:], wire)
+			p.receivedMovementWireLen = uint8(len(wire))
 		}
 	}
 	return nil
@@ -764,6 +749,9 @@ func updates(c *cursor, state *observations, now time.Time, op uint32) error {
 			}
 			if newGameObject {
 				if gameObjectGUID(guid) || movingTransport(p) {
+					if movingTransportGUID(guid) {
+						p.transportBirth = source.revision
+					}
 					state.putGameObject(p)
 				} else {
 					delete(state.gameObjects, guid)
@@ -804,23 +792,24 @@ func updates(c *cursor, state *observations, now time.Time, op uint32) error {
 }
 
 func movementUpdate(c *cursor, p *observed, now time.Time, owner *observations, source transportSource) error {
-	flags := c.u16()
-	if flags&^uint16(0x3ff) != 0 {
-		return errLayout
+	if c.err != nil {
+		return c.err
 	}
-	if p != nil && movingTransportGUID(p.guid) && flags&(0x20|0x80) != 0 {
+	m, n, err := movementinfo.DecodeObjectMovementPrefix(c.b[c.off:])
+	if err != nil {
+		return err
+	}
+	c.skip(n)
+	flags := m.Flags
+	if p != nil && movingTransportGUID(p.guid) && (flags&(0x20|0x80) != 0 || flags&0x10 != 0 && m.LowGUID != uint32(p.guid)) {
 		return errLayout
 	}
 	if owner != nil && (flags&0x20 == 0 || p == nil || !p.present || !p.mapKnown) {
 		owner.blockBody(modcb.BodyUpdateOwnerMovement)
 	}
-	absoluteHullPose := false
 	if flags&0x20 != 0 {
-		if len(c.b)-c.off < 4 {
-			return errShort
-		}
-		var info movementinfo.Info
-		if err := movement(c, p, now, &info, source); err != nil {
+		info := m.Living
+		if err := applyPlayerMovement(p, info, m.LivingWire, now, source); err != nil {
 			return err
 		}
 		if owner != nil {
@@ -837,67 +826,24 @@ func movementUpdate(c *cursor, p *observed, now time.Time, owner *observations, 
 				}
 			}
 		}
-		speeds := [9]float32{}
-		for i := range speeds {
-			speeds[i] = c.f32()
-			if !validFloat(speeds[i]) || speeds[i] < 0 {
-				return errFloat
+		if p != nil {
+			p.walkSpeed, p.runSpeed, p.speedsKnown = m.Speeds[0], m.Speeds[1], true
+			if info.Flags&0x08000000 != 0 {
+				recordCreateSpline(p, m.Spline, now)
 			}
 		}
-		if p != nil {
-			p.walkSpeed, p.runSpeed = speeds[0], speeds[1]
-			p.speedsKnown = true
-		}
-		if info.Flags&0x08000000 != 0 {
-			if err := splineCreate(c, p, now); err != nil {
-				return err
-			}
-		}
-	} else if flags&0x100 != 0 {
-		absoluteHullPose = c.guid() == 0
-		x, y, z := c.f32(), c.f32(), c.f32()
-		c.skip(12)
-		o := c.f32()
-		c.skip(4)
-		if err := position(p, x, y, z, o, now); err != nil {
+	} else if flags&(0x100|0x40) != 0 {
+		v := m.Position
+		if err := position(p, v[0], v[1], v[2], v[3], now); err != nil {
 			return err
 		}
-	} else if flags&0x40 != 0 {
-		absoluteHullPose = true
-		if err := position(p, c.f32(), c.f32(), c.f32(), c.f32(), now); err != nil {
-			return err
-		}
-		if p != nil {
-			// UPDATEFLAG_STATIONARY_POSITION carries absolute stationary XYZ.
+		if p != nil && flags&0x100 == 0 {
 			p.stationaryPosition = true
 		}
 	}
-	if flags&0x8 != 0 {
-		c.skip(4)
-	}
-	if flags&0x10 != 0 {
-		low := c.u32()
-		if p != nil && movingTransportGUID(p.guid) && low != uint32(p.guid) {
-			return errLayout
-		}
-	}
-	if flags&0x4 != 0 {
-		c.guid()
-	}
-	var progress uint32
-	if flags&0x2 != 0 {
-		progress = c.u32()
-	}
-	if flags&0x80 != 0 {
-		c.skip(8)
-	}
-	var rotation uint64
-	if flags&0x200 != 0 {
-		rotation = c.u64()
-	}
 	if p != nil && movingTransportGUID(p.guid) {
-		h := &receivedHull{source: source, at: now, flags: flags, progress: progress, rotation: rotation}
-		if absoluteHullPose {
+		h := &receivedHull{source: source, at: now, flags: flags, progress: m.Progress, rotation: m.Rotation}
+		if m.AbsolutePosition {
 			h.positionRevision = p.positionRevision
 		}
 		p.transport = h
@@ -905,64 +851,17 @@ func movementUpdate(c *cursor, p *observed, now time.Time, owner *observations, 
 	return c.err
 }
 
-func splineCreate(c *cursor, p *observed, now time.Time) error {
-	t := observedTrajectory{known: true, at: now}
-	t.flags = c.u32()
-	t.cyclic = t.flags&0x80000 != 0
-	if t.flags&0x20000 != 0 {
-		if angle := c.f32(); !validFloat(angle) {
-			return errFloat
-		}
-	} else if t.flags&0x10000 != 0 {
-		c.u64()
-	} else if t.flags&0x8000 != 0 {
-		if _, err := point(c); err != nil {
-			return err
-		}
+func recordCreateSpline(p *observed, m movementinfo.ObjectSpline, now time.Time) {
+	t := observedTrajectory{known: true, at: now, flags: m.Flags, cyclic: m.Flags&0x80000 != 0, elapsed: m.Elapsed,
+		duration: m.Duration, id: m.ID, idKnown: true, destination: m.Destination, relative: p.movementFlags&0x200 != 0}
+	t.destinationKnown = m.Nodes > 0 && t.duration > 0 && !t.cyclic && t.flags&unsafeEndpointFlags == 0 && m.Mode <= 1
+	if p.isSelf && t.relative && p.receivedMovement && p.receivedMovementInfo.TransportPresent {
+		t.transportKnown, t.transport, t.seat = true, p.receivedMovementInfo.Transport.GUID, p.receivedMovementInfo.Transport.Seat
 	}
-	t.elapsed = c.u32()
-	t.duration = c.u32()
-	t.id = c.u32()
-	t.idKnown = true
-	for i := 0; i < 3; i++ {
-		if f := c.f32(); !validFloat(f) {
-			return errFloat
-		}
+	p.trajectory = t
+	if p.isSelf {
+		p.receivedSpline, p.receivedSplineHeader = true, t
 	}
-	c.u32()
-	nodes := c.u32()
-	if c.err != nil {
-		return c.err
-	}
-	if nodes > maxBlocks || uint64(nodes)*12 > uint64(len(c.b)-c.off) {
-		return errBounds
-	}
-	for i := uint32(0); i < nodes; i++ {
-		if _, err := point(c); err != nil {
-			return err
-		}
-	}
-	mode := c.u8()
-	destination, err := point(c)
-	if err != nil {
-		return err
-	}
-	t.destination = destination
-	t.destinationKnown = nodes > 0 && t.duration > 0 && !t.cyclic && t.flags&unsafeEndpointFlags == 0 && mode <= 1
-	if p != nil {
-		t.relative = p.movementFlags&0x200 != 0
-		if p.isSelf && t.relative && p.receivedMovement && p.receivedMovementInfo.TransportPresent {
-			t.transportKnown = true
-			t.transport = p.receivedMovementInfo.Transport.GUID
-			t.seat = p.receivedMovementInfo.Transport.Seat
-		}
-		p.trajectory = t
-		if p.isSelf {
-			p.receivedSpline = true
-			p.receivedSplineHeader = t
-		}
-	}
-	return c.err
 }
 
 // Preserve the first physical cause. A later correction of the selected body

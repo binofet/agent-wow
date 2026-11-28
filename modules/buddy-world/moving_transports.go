@@ -77,7 +77,10 @@ func (p *observed) transportSnapshot(now time.Time) *worldv1.MovingTransportFact
 	if !movingTransport(p) || !p.present || !p.mapKnown {
 		return nil
 	}
-	r := &worldv1.MovingTransportFacts{}
+	r := &worldv1.MovingTransportFacts{ObjectRevision: p.transportBirth}
+	if q := p.shipQuery; q != nil {
+		r.TemplateQueryPhase, r.Template = q.write, q.snapshot(p, now)
+	}
 	if p.known[0x08] {
 		display := p.fields[0x08]
 		r.DisplayId = &display

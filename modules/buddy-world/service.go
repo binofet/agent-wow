@@ -37,6 +37,8 @@ type observed struct {
 	passenger                                                    *receivedPassenger
 	transport                                                    *receivedHull
 	transportFraction                                            *receivedPathFraction
+	transportBirth                                               uint64
+	shipQuery                                                    *shipTemplateQuery
 	// Only fields up to PLAYER_FLAGS are needed, regardless of nearby population.
 	fields                      [playerFlags + 1]uint32
 	known                       [playerFlags + 1]bool
@@ -98,6 +100,7 @@ type Service struct {
 	lastError                    string
 	combat                       combatJournal
 	session                      modv1.SessionClient
+	shipQueries                  map[uint32]*shipTemplateQuery
 	motion                       ownMotionAuthority
 	completion                   splineCompletionState
 	worldTransfer                worldTransferObservation
@@ -229,6 +232,10 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 	}
 	objectUpdate := packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject
 	s.lastOpcode = packet.Opcode
+	if packet.Opcode == opcode.SMSGGameobjectQueryResponse {
+		s.observeShipTemplateLocked(packet, s.now())
+		return &emptypb.Empty{}, nil
+	}
 	if isPartyLocationOpcode(packet.Opcode) {
 		scope, current := packet.TransportScope, s.motion.scope
 		// Only a location-relevant group packet advances the physical source.

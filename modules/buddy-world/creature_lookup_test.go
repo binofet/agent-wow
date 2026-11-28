@@ -230,8 +230,12 @@ func TestRequestedCreatureDescriptorUsesExistingSnapshotAlias(t *testing.T) {
 		t.Fatal("missing buddy-world descriptor")
 	}
 	method, ok := module.RPC("snapshot")
-	if !ok || method.Path() != "/warcraftbuddy.world.v1.BuddyWorld/Snapshot" || len(module.Manifest().RPC) != 6 {
+	if !ok || method.Path() != "/warcraftbuddy.world.v1.BuddyWorld/Snapshot" || len(module.Manifest().RPC) != 7 {
 		t.Fatal("snapshot/discovery observation aliases changed")
+	}
+	ship, ok := module.RPC("query_moving_transport_template")
+	if !ok || ship.Descriptor().Input().FullName() != "warcraftbuddy.world.v1.QueryMovingTransportTemplateRequest" || ship.Descriptor().Output().FullName() != "warcraftbuddy.world.v1.QueryMovingTransportTemplateResponse" {
+		t.Fatal("moving transport template query descriptor missing")
 	}
 	clientMovement, ok := module.RPC("observe_client_movement")
 	if !ok || clientMovement.Path() != "/warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement" || clientMovement.Descriptor().Input().FullName() != "warcraftbuddy.world.v1.ClientMovementRequest" {

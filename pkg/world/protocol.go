@@ -16,9 +16,12 @@ func (e *engine) handlePacket(p packet) (bool, error) {
 		return false, e.knockbackOrder(body, p.receivedAt)
 	}
 	e.observeTransportScope(op, body)
-	switch op {
-	case opcode.SMSGLoginVerifyWorld, opcode.SMSGTransferPending, opcode.SMSGNewWorld, opcode.MSGMoveTeleportAck:
-		e.movement.observed(op, body, e.s.state.Character.GUID, e.timestamp())
+	if e.s != nil {
+		var clock uint32
+		if op == opcode.SMSGLoginVerifyWorld || op == opcode.SMSGNewWorld || op == opcode.MSGMoveTeleportAck {
+			clock = e.timestamp()
+		}
+		e.movement.observed(op, body, e.s.state.Character.GUID, clock)
 	}
 	switch op {
 	case opcode.SMSGLoginVerifyWorld:
