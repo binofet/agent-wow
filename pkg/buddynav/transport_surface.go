@@ -44,9 +44,12 @@ func PassengerTransform(world, local Point, worldYaw, localYaw float32) (Surface
 	if !worldPoint(world) || !worldPoint(local) || !finite(worldYaw) || !finite(localYaw) {
 		return SurfaceTransform{}, errors.New("complete finite passenger frame required")
 	}
-	t := SurfaceTransform{Yaw: float32(math.Remainder(float64(worldYaw-localYaw), 2*math.Pi)), Scale: 1}
+	t := SurfaceTransform{Yaw: float32(math.Remainder(float64(worldYaw)-float64(localYaw), 2*math.Pi)), Scale: 1}
 	offset := t.World(local)
 	t.Origin = floorSub(world, offset)
+	if !t.Valid() {
+		return SurfaceTransform{}, errors.New("passenger frame has no finite world hull transform")
+	}
 	return t, nil
 }
 
@@ -178,6 +181,9 @@ func (s *TransportSurface) Height(ctx context.Context, local Point, above, below
 }
 
 func (s *TransportSurface) Clear(ctx context.Context, from, to Point) (bool, error) {
+	if !worldPoint(from) || !worldPoint(to) {
+		return false, errors.New("finite local collision endpoints required")
+	}
 	delta := floorSub(to, from)
 	reach := float32(math.Sqrt(float64(floorDot(delta, delta))))
 	if reach == 0 {

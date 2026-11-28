@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 
@@ -49,6 +50,10 @@ func generate() error {
 	if err != nil {
 		return fmt.Errorf("Recast surface generation: %w", err)
 	}
+	meta := buddynav.SurfaceMeshMetadata{PolyRefBits: 64, BodyRadius: settings[0], BodyHeight: settings[1], BodyClimb: settings[2], CellSize: settings[4], CellHeight: settings[5]}
+	if err := buddynav.ValidateSurfaceTile(data, meta); err != nil {
+		return fmt.Errorf("Recast output: %w", err)
+	}
 	sum := sha256.Sum256(data)
 	metadata, err := json.Marshal(buddynav.SurfaceMeshMetadata{Version: 1, DisplayID: uint32(*display),
 		Model: surface.ModelName, ModelSHA: surface.ModelSHA, MeshSHA: hex.EncodeToString(sum[:]),
@@ -61,14 +66,30 @@ func generate() error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	committed := false
+	defer func() {
+		file.Close()
+		if !committed {
+			os.Remove(*output)
+		}
+	}()
 	var encoded bytes.Buffer
 	encoded.WriteString("AWSURF1\x00")
 	binary.Write(&encoded, binary.LittleEndian, uint32(len(metadata)))
 	encoded.Write(metadata)
 	encoded.Write(data)
-	_, err = file.Write(encoded.Bytes())
-	return err
+	n, err := file.Write(encoded.Bytes())
+	if err == nil && n != encoded.Len() {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func main() {

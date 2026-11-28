@@ -92,6 +92,9 @@ func readSurfaceMesh(data []byte, surface *TransportSurface) (result *SurfaceMes
 	if binary.LittleEndian.Uint32(tile) != uint32(detour.DT_NAVMESH_MAGIC) || binary.LittleEndian.Uint32(tile[4:]) != 7 {
 		return nil, errors.New("moving surface requires a Detour7 tile")
 	}
+	if err := ValidateSurfaceTile(tile, meta); err != nil {
+		return nil, err
+	}
 	polygons := int(binary.LittleEndian.Uint32(tile[24:]))
 	if polygons < 1 || polygons > 65535 {
 		return nil, errors.New("moving surface polygon count is invalid")
@@ -137,6 +140,14 @@ func (s *SurfaceMesh) Route(ctx context.Context, start, destination Point) ([]Po
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	actualStart, err := s.endpoint(ctx, start)
+	if err != nil {
+		return nil, err
+	}
+	actualEnd, err := s.endpoint(ctx, destination)
+	if err != nil {
+		return nil, err
+	}
 	first, from, err := s.nearby(start)
 	if err != nil {
 		return nil, err
@@ -154,13 +165,96 @@ func (s *SurfaceMesh) Route(ctx context.Context, start, destination Point) ([]Po
 	points := make([]float32, (count+2)*3)
 	flags := make([]detour.DtStraightPathFlags, count+2)
 	var written int
-	status = s.query.FindStraightPath(surfaceNav(from), surfaceNav(to), polygons, count, points, flags, nil, &written, len(flags), detour.DT_STRAIGHTPATH_ALL_CROSSINGS)
+	refs := make([]detour.DtPolyRef, count+2)
+	status = s.query.FindStraightPath(surfaceNav(from), surfaceNav(to), polygons, count, points, flags, refs, &written, len(flags), detour.DT_STRAIGHTPATH_ALL_CROSSINGS)
 	if status != detour.DT_SUCCESS || written == 0 || flags[written-1]&detour.DT_STRAIGHTPATH_END == 0 {
 		return nil, errors.New("moving-surface funnel is incomplete")
 	}
-	path := make([]Point, written)
-	for i := range path {
-		path[i] = surfacePoint(points[3*i:])
+	path := []Point{actualStart}
+	if err := s.appendPhysicalSegment(ctx, &path, from, 0); err != nil {
+		return nil, err
+	}
+	for i := 0; i < written-1; i++ {
+		if err := s.appendPhysicalSegment(ctx, &path, surfacePoint(points[3*(i+1):]), refs[i]); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.appendPhysicalSegment(ctx, &path, actualEnd, 0); err != nil {
+		return nil, err
 	}
 	return path, ctx.Err()
+}
+
+func (s *SurfaceMesh) endpoint(ctx context.Context, point Point) (Point, error) {
+	if !worldPoint(point) {
+		return Point{}, errors.New("finite local surface endpoint required")
+	}
+	h, supported, err := s.surface.Height(ctx, point, .5, .5)
+	if err != nil {
+		return Point{}, err
+	}
+	if !supported {
+		return Point{}, errors.New("requested local endpoint has no actual hull support")
+	}
+	point.Z = h
+	return point, nil
+}
+
+func (s *SurfaceMesh) appendPhysicalSegment(ctx context.Context, path *[]Point, end Point, ref detour.DtPolyRef) error {
+	start := (*path)[len(*path)-1]
+	steps := max(1, int(math.Ceil(distance(start, end)/.25)))
+	for j := 1; j <= steps; j++ {
+		fraction := float32(j) / float32(steps)
+		point := Point{start.X + fraction*(end.X-start.X), start.Y + fraction*(end.Y-start.Y), start.Z + fraction*(end.Z-start.Z)}
+		if ref != 0 {
+			var height float32
+			if status := s.query.GetPolyHeight(ref, surfaceNav(point), &height); detour.DtStatusFailed(status) {
+				return errors.New("moving corridor detail height unavailable")
+			}
+			point.Z = height
+		}
+		actual, err := s.endpoint(ctx, point)
+		if err != nil {
+			return err
+		}
+		prior := (*path)[len(*path)-1]
+		if math.Abs(float64(actual.Z-prior.Z)) > float64(s.Metadata.BodyClimb) {
+			return errors.New("moving corridor exceeds the body's physical step")
+		}
+		bearing := math.Atan2(float64(actual.Y-prior.Y), float64(actual.X-prior.X))
+		if err := clearBodyMotionSegment(prior, actual, bearing, func(a, b Point) (bool, error) { return s.surface.Clear(ctx, a, b) }); err != nil {
+			return err
+		}
+		*path = append(*path, actual)
+	}
+	return ctx.Err()
+}
+
+// ValidateSurfaceTile binds the native Detour64 layout and encoded body to
+// the generator manifest before Detour allocates or follows any offsets.
+func ValidateSurfaceTile(tile []byte, meta SurfaceMeshMetadata) error {
+	if len(tile) < 100 || binary.LittleEndian.Uint32(tile) != uint32(detour.DT_NAVMESH_MAGIC) || binary.LittleEndian.Uint32(tile[4:]) != 7 {
+		return errors.New("invalid Detour surface tile header")
+	}
+	u32 := func(at int) uint64 { return uint64(binary.LittleEndian.Uint32(tile[at:])) }
+	polys, vertices, links, details, detailVertices, detailTris, bounds := u32(24), u32(28), u32(32), u32(36), u32(40), u32(44), u32(48)
+	length := uint64(100) + vertices*12 + polys*32 + links*16 + details*12 + detailVertices*12 + detailTris*4 + bounds*16
+	if polys == 0 || polys > 65535 || vertices < 3 || vertices > 65535 || details != polys ||
+		u32(52) != 0 || u32(56) != polys || length != uint64(len(tile)) || meta.PolyRefBits != 64 {
+		return errors.New("surface tile is not the complete expected Detour64 mesh")
+	}
+	for at, want := range map[int]float32{60: meta.BodyHeight, 64: meta.BodyRadius, 68: meta.BodyClimb, 96: 1 / meta.CellSize} {
+		got := math.Float32frombits(binary.LittleEndian.Uint32(tile[at:]))
+		if !finite(got) || !finite(want) || math.Abs(float64(got-want)) > .0001 {
+			return errors.New("surface tile body or cell dimensions differ from its manifest")
+		}
+	}
+	for axis := 0; axis < 3; axis++ {
+		lo := math.Float32frombits(binary.LittleEndian.Uint32(tile[72+axis*4:]))
+		hi := math.Float32frombits(binary.LittleEndian.Uint32(tile[84+axis*4:]))
+		if !finite(lo) || !finite(hi) || lo >= hi {
+			return errors.New("surface tile has invalid model bounds")
+		}
+	}
+	return nil
 }
