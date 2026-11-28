@@ -397,6 +397,7 @@ func (e *engine) observeTransportScope(op uint16, body []byte) {
 		e.transport.advance(&e.transport.scope.MotionRevision)
 	}
 	objectUpdate := op == opcode.SMSGUpdateObject || op == opcode.SMSGCompressedUpdateObject
+	e.s.observeRouteHullPacket(op, body, e.transport.scope)
 	if objectUpdate {
 		e.s.mu.Lock()
 		e.s.bodyUpdates.pending = e.transport.scope.GetMotionRevision()

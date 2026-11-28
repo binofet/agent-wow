@@ -17,6 +17,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/modules/runner"
 	"github.com/agent-wow/agent-wow/pkg/modules/session"
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
@@ -152,6 +153,22 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 		if marked && (!route || module != actionsModule || modcb.IncomingMovementAttempt(ctx) == "" || ctx.Err() != nil || !buddynav.RouteBodyFrame(opcode, payload, scope.SelfGuid)) {
 			return modcb.PacketNotDispatchedError("invalid scoped route body frame")
 		}
+		guid, birth, packets, validHull, hasHull := modcb.IncomingRouteHull(ctx)
+		if hasHull || marked {
+			body, ok := movementinfo.OwnFrame(payload, scope.SelfGuid)
+			if hasHull {
+				m.mu.Lock()
+				fromWorld := m.instances["buddy-world"] != nil && packets <= m.worldPackets && m.worldPackets != math.MaxUint64
+				m.mu.Unlock()
+				_, policy := modcb.IncomingPolicySpell(ctx)
+				if !route || policy || !validHull || !fromWorld || !ok || body.TransportPresent && body.Transport.GUID != guid {
+					return modcb.PacketNotDispatchedError("route requires its selected observed hull")
+				}
+				ctx = modsession.WithRouteHull(ctx, modcb.RouteHull{GUID: guid, Birth: birth, Packets: packets})
+			} else if ok && body.TransportPresent {
+				return modcb.PacketNotDispatchedError("passenger route requires its selected observed hull")
+			}
+		}
 		if token, supplied := modcb.IncomingPolicySpell(ctx); supplied {
 			if handled, err := m.writePolicyFlightpath(ctx, token, sessionID, module, opcode, payload, scope); handled {
 				return err
@@ -188,6 +205,9 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 
 func (m *Manager) modulePacketWriter(sessionID, module string) func(context.Context, uint32, []byte) error {
 	return func(ctx context.Context, opcode uint32, payload []byte) error {
+		if _, _, _, _, supplied := modcb.IncomingRouteHull(ctx); supplied {
+			return modcb.PacketNotDispatchedError("moving surface route requires its physical body scope")
+		}
 		if _, _, supplied := modcb.IncomingFlightpathWorldPackets(ctx); supplied {
 			return modcb.PacketNotDispatchedError("flightmaster observation requires its physical STOP scope")
 		}

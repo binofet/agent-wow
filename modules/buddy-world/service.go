@@ -38,6 +38,7 @@ type observed struct {
 	transport                                                    *receivedHull
 	transportFraction                                            *receivedPathFraction
 	transportBirth                                               uint64
+	routeHullPackets                                             uint64
 	shipQuery                                                    *shipTemplateQuery
 	// Only fields up to PLAYER_FLAGS are needed, regardless of nearby population.
 	fields                      [playerFlags + 1]uint32
@@ -233,6 +234,10 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		return &emptypb.Empty{}, nil
 	}
 	objectUpdate := packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject
+	subject, keyed := movementinfo.HullPacketSubject(packet.Opcode, packet.Payload)
+	if objectUpdate || keyed && movingTransportGUID(subject) {
+		defer s.publishRouteHulls(ctx, s.state.gameObjects)
+	}
 	s.lastOpcode = packet.Opcode
 	if packet.Opcode == opcode.SMSGGameobjectQueryResponse {
 		s.observeShipTemplateLocked(packet, s.now())

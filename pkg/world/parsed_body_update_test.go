@@ -100,6 +100,7 @@ func (c *bodyContinuitySession) observe(op uint16, wire []byte) (string, *modv1.
 	}
 	result := modcb.BodyUpdateResult(tr.md.Get(modcb.BodyInputUpdateTrailer), tr.md.Get(modcb.BodyInputBarrierTrailer))
 	if op == opcode.SMSGUpdateObject || op == opcode.SMSGCompressedUpdateObject {
+		c.e.s.recordRouteHulls(p.TransportScope, tr.md.Get(modcb.RouteHullTrailer))
 		positions := modcb.ObservedOwnerPositions(result, tr.md.Get(modcb.OwnerPositionTrailer))
 		c.e.s.recordParsedBodyUpdate(p.TransportScope, modcb.BodyUpdateDetail(result, tr.md.Get(modcb.BodyInputFieldTrailer)), positions...)
 	}

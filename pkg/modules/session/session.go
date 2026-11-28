@@ -24,6 +24,7 @@ type Session struct {
 	OwnMovementAttempt   func(string) *modv1.WorldPacket
 	BodyInputReport      func(context.Context, string) (*modv1.WorldPacket, string)
 	ParsedBodyUpdate     func(*modv1.TransportScope, string, ...movementinfo.FollowPosition)
+	ParsedRouteHulls     func(*modv1.TransportScope, []string)
 	ParsedOwnPose        func(*modv1.TransportScope, []byte)
 	ParsedTaxiBodyOrigin func(*modv1.TransportScope, []byte)
 	KnockbackReport      func(*modv1.WorldPacket, bool) *modv1.WorldPacket

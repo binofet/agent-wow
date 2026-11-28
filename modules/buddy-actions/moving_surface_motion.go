@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"math/bits"
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
@@ -789,68 +790,75 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 		}
 	}
 	ship := info.Transport.GUID
-	if op != opcode.MSGMoveStop {
+	if in != nil {
+		// The sampled exit still relies on its particular hull through first
+		// contact and the final STOP, even after clearing ONTRANSPORT.
+		ship = in.goal.TransportGuid
+	} else if op != opcode.MSGMoveStop {
 		ship = g.TransportGuid
 	}
-	if ship != 0 {
-		a, b := movingHull(w, ship), movingHull(latest, ship)
-		if a == nil || b == nil || a.MovingTransport.ObjectRevision == 0 || a.MovingTransport.ObjectRevision != b.MovingTransport.ObjectRevision ||
-			a.MovingTransport.PositionRevision != b.MovingTransport.PositionRevision || a.MovingTransport.MovementRevision != b.MovingTransport.MovementRevision ||
-			a.MovingTransport.PathFractionRevision != b.MovingTransport.PathFractionRevision {
-			return modcb.PacketNotDispatchedError("observed hull changed before write")
-		}
-		nowTransform, nowProgress, e := s.surfacePoseLocked(ctx, latest, b)
-		if e != nil {
-			return modcb.PacketNotDispatchedError("current hull transform unavailable")
-		}
-		path := s.surfaceFollow.paths[ship]
-		if info.TransportPresent && (info.Transport.Time > nowProgress || path.CrossesTransfer(uint64(info.Transport.Time), uint64(nowProgress))) {
-			return modcb.PacketNotDispatchedError("passenger clock crosses an unobserved hull transfer")
-		}
-		if op == opcode.MSGMoveStop || op == opcode.MSGMoveSetFacing {
-			local := surfaceLocalPoint(info)
-			q := nowTransform.World(local)
-			info.X, info.Y, info.Z = q.X, q.Y, q.Z
+	if !buddynav.IsMovingTransportGUID(ship) || info.TransportPresent && info.Transport.GUID != ship {
+		return modcb.PacketNotDispatchedError("surface frame requires its selected moving ship")
+	}
+	a, b := movingHull(w, ship), movingHull(latest, ship)
+	if a == nil || b == nil || a.MovingTransport.ObjectRevision == 0 || a.MovingTransport.ObjectRevision != b.MovingTransport.ObjectRevision ||
+		in != nil && in.objectRevision != b.MovingTransport.ObjectRevision ||
+		a.MovingTransport.PositionRevision != b.MovingTransport.PositionRevision || a.MovingTransport.MovementRevision != b.MovingTransport.MovementRevision ||
+		a.MovingTransport.PathFractionRevision != b.MovingTransport.PathFractionRevision {
+		return modcb.PacketNotDispatchedError("observed hull changed before write")
+	}
+	hullRevision := b.MovingTransport.ObjectRevision
+	nowTransform, nowProgress, e := s.surfacePoseLocked(ctx, latest, b)
+	if e != nil {
+		return modcb.PacketNotDispatchedError("current hull transform unavailable")
+	}
+	path := s.surfaceFollow.paths[ship]
+	if info.TransportPresent && (info.Transport.Time > nowProgress || path.CrossesTransfer(uint64(info.Transport.Time), uint64(nowProgress))) {
+		return modcb.PacketNotDispatchedError("passenger clock crosses an unobserved hull transfer")
+	}
+	if info.TransportPresent && (op == opcode.MSGMoveStop || op == opcode.MSGMoveSetFacing) {
+		local := surfaceLocalPoint(info)
+		q := nowTransform.World(local)
+		info.X, info.Y, info.Z = q.X, q.Y, q.Z
+		info.Orientation = float32(math.Remainder(float64(info.Transport.Orientation+nowTransform.Yaw), 2*math.Pi))
+		info.Transport.Time = nowProgress
+	}
+	if in != nil && s.surfaceFollow.planIndex == 0 && info.TransportPresent && op != opcode.MSGMoveStop && info.Transport.Time != nowProgress {
+		// Deck routing is local and survives a hull translation. A jump
+		// is a world trajectory: a ship can move during the first route
+		// search, so remeasure that complete departure at the fresh pose.
+		sf := &s.surfaceFollow
+		start := nowTransform.World(surfaceLocalPoint(info))
+		if in.goal.SurfaceMode == "leave" && !in.localRoute && !sf.plan[0].Settling {
+			bearing := surfaceBearing(start, surfaceOwnerPoint(latest))
+			mesh, e := s.surfaceMeshLocked(ctx, b)
+			if e != nil {
+				return modcb.PacketNotDispatchedError("current departure hull unavailable")
+			}
+			flight, e := s.measureSurfaceCrossing(ctx, latest, g, mesh, nowTransform, nowProgress, start, surfaceOwnerPoint(latest), sf.planSpeed, sf.planJump)
+			if e != nil {
+				return modcb.PacketNotDispatchedError("current departure: " + e.Error())
+			}
+			sf.plan, sf.planTransform, sf.planBearing = flight, nowTransform, bearing
+			info.Orientation = float32(math.Remainder(bearing, 2*math.Pi))
+			if info.JumpPresent {
+				info.Jump.SinAngle, info.Jump.CosAngle = float32(math.Sin(bearing)), float32(math.Cos(bearing))
+			}
+		} else {
 			info.Orientation = float32(math.Remainder(float64(info.Transport.Orientation+nowTransform.Yaw), 2*math.Pi))
-			info.Transport.Time = nowProgress
 		}
-		if in != nil && s.surfaceFollow.planIndex == 0 && info.TransportPresent && op != opcode.MSGMoveStop && info.Transport.Time != nowProgress {
-			// Deck routing is local and survives a hull translation. A jump
-			// is a world trajectory: a ship can move during the first route
-			// search, so remeasure that complete departure at the fresh pose.
-			sf := &s.surfaceFollow
-			start := nowTransform.World(surfaceLocalPoint(info))
-			if in.goal.SurfaceMode == "leave" && !in.localRoute && !sf.plan[0].Settling {
-				bearing := surfaceBearing(start, surfaceOwnerPoint(latest))
-				mesh, e := s.surfaceMeshLocked(ctx, b)
-				if e != nil {
-					return modcb.PacketNotDispatchedError("current departure hull unavailable")
-				}
-				flight, e := s.measureSurfaceCrossing(ctx, latest, g, mesh, nowTransform, nowProgress, start, surfaceOwnerPoint(latest), sf.planSpeed, sf.planJump)
-				if e != nil {
-					return modcb.PacketNotDispatchedError("current departure: " + e.Error())
-				}
-				sf.plan, sf.planTransform, sf.planBearing = flight, nowTransform, bearing
-				info.Orientation = float32(math.Remainder(bearing, 2*math.Pi))
-				if info.JumpPresent {
-					info.Jump.SinAngle, info.Jump.CosAngle = float32(math.Sin(bearing)), float32(math.Cos(bearing))
-				}
-			} else {
-				info.Orientation = float32(math.Remainder(float64(info.Transport.Orientation+nowTransform.Yaw), 2*math.Pi))
-			}
-			info.X, info.Y, info.Z = start.X, start.Y, start.Z
-			setPassengerFrame(&info, ship, nowTransform, nowProgress)
-			in.lastTransform, in.progress, in.firstProgress = nowTransform, nowProgress, nowProgress
+		info.X, info.Y, info.Z = start.X, start.Y, start.Z
+		setPassengerFrame(&info, ship, nowTransform, nowProgress)
+		in.lastTransform, in.progress, in.firstProgress = nowTransform, nowProgress, nowProgress
+	}
+	if op != opcode.MSGMoveStop && !committed && g != nil && g.SurfaceMode == "board" {
+		remaining := time.Millisecond
+		if in != nil && len(s.surfaceFollow.plan) > 0 {
+			end := s.surfaceFollow.plan[len(s.surfaceFollow.plan)-1].At
+			remaining = max(remaining, s.surfaceFollow.planAt.Add(end).Sub(s.now()))
 		}
-		if op != opcode.MSGMoveStop && !committed && g != nil && g.SurfaceMode == "board" {
-			remaining := time.Millisecond
-			if in != nil && len(s.surfaceFollow.plan) > 0 {
-				end := s.surfaceFollow.plan[len(s.surfaceFollow.plan)-1].At
-				remaining = max(remaining, s.surfaceFollow.planAt.Add(end).Sub(s.now()))
-			}
-			if !dockInput(path, nowProgress, remaining) {
-				return modcb.PacketNotDispatchedError("boarding no longer fits the same dock dwell")
-			}
+		if !dockInput(path, nowProgress, remaining) {
+			return modcb.PacketNotDispatchedError("boarding no longer fits the same dock dwell")
 		}
 	}
 	prior, scope, err := s.surfaceMotionSourceLocked(ctx, latest)
@@ -882,8 +890,14 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 	if err != nil {
 		return modcb.PacketNotDispatchedError("surface movement attempt identity unavailable")
 	}
+	worldPackets, carry := bits.Add64(latest.ObservedPackets, latest.IgnoredPackets, 0)
+	worldPackets, carryMalformed := bits.Add64(worldPackets, latest.MalformedPackets, 0)
+	if carry != 0 || carryMalformed != 0 || worldPackets == 0 || worldPackets == math.MaxUint64 {
+		return modcb.PacketNotDispatchedError("surface World packet sequence unavailable")
+	}
 	wctx := context.WithValue(ctx, surfaceOwnPacketKey{}, true)
 	wctx = modcb.WithMovementAttempt(modcb.WithRouteBodyInput(wctx, false), attempt)
+	wctx = modcb.WithRouteHull(wctx, ship, hullRevision, worldPackets)
 	err = s.sendPacketLocked(wctx, op, payload, scope)
 	if err != nil && modcb.PacketWasNotDispatched(err) {
 		return err

@@ -7,7 +7,35 @@ import (
 	"errors"
 	"io"
 	"math"
+
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
+
+// MovingTransportGUID identifies a build-12340 Mo_Transport global counter.
+func MovingTransportGUID(guid uint64) bool { return guid>>32 == 0x1fc00000 && uint32(guid) != 0 }
+
+// HullPacketSubject identifies standalone packets that can withdraw a ship
+// or change its pose. Zero means the subject could not be identified.
+// Object batches are classified by the complete World parser.
+func HullPacketSubject(op uint32, body []byte) (uint64, bool) {
+	if op == opcode.SMSGDestroyObject {
+		if len(body) < 8 {
+			return 0, true
+		}
+		return binary.LittleEndian.Uint64(body), true
+	}
+	if !OrdinaryFollowMovement(op) && op != opcode.MSGMoveJump && op != opcode.MSGMoveFallLand &&
+		op != opcode.MSGMoveTeleport && op != opcode.MSGMoveTeleportAck && op != opcode.SMSGMoveKnockBack &&
+		op != opcode.MSGMoveKnockBack && op != opcode.SMSGMonsterMove && op != opcode.SMSGMonsterMoveTransport {
+		return 0, false
+	}
+	c := reader{b: body}
+	guid := c.guid()
+	if c.short {
+		return 0, true
+	}
+	return guid, true
+}
 
 var errObjectUpdate = errors.New("invalid object movement update")
 

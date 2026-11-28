@@ -10,6 +10,7 @@ import (
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/status"
 )
@@ -63,6 +64,20 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	var requested *modv1.TransportScope
 	if len(scopes) != 0 {
 		requested = scopes[0]
+	}
+	if modsession.IsRouteBodyInput(ctx) && requested != nil {
+		if _, bound := modsession.RouteHull(ctx); !bound {
+			if i, ok := movementinfo.OwnFrame(body, requested.SelfGuid); ok && i.TransportPresent {
+				// In-process route callers also bind an attached frame before
+				// draining the socket. Authenticated module callers supply the
+				// earlier witness from their own final World read.
+				h, ok := e.s.currentRouteHull(i.Transport.GUID, requested)
+				if !ok {
+					return "", false, modcb.PacketNotDispatchedError("passenger route lacks its observed hull")
+				}
+				ctx = modsession.WithRouteHull(ctx, h)
+			}
+		}
 	}
 	if e.needsPhysicalDrain(op, requested) {
 		proofDeadline := time.Now().Add(bodyUpdateWait)

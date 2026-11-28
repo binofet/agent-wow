@@ -130,10 +130,15 @@ func (m *Manager) packetWorker(name string, inst *instance) {
 					m.session.MeasuredKnockback(packet, []byte(rows[0]))
 				}
 			}
-			if name == "buddy-world" && (packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject) && m.session.ParsedBodyUpdate != nil {
-				class := modcb.BodyUpdateResult(trailers.Get(modcb.BodyInputUpdateTrailer), trailers.Get(modcb.BodyInputBarrierTrailer))
-				positions := modcb.ObservedOwnerPositions(class, trailers.Get(modcb.OwnerPositionTrailer))
-				m.session.ParsedBodyUpdate(packet.TransportScope, modcb.BodyUpdateDetail(class, trailers.Get(modcb.BodyInputFieldTrailer)), positions...)
+			if name == "buddy-world" && (packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject) {
+				if m.session.ParsedRouteHulls != nil {
+					m.session.ParsedRouteHulls(packet.TransportScope, trailers.Get(modcb.RouteHullTrailer))
+				}
+				if m.session.ParsedBodyUpdate != nil {
+					class := modcb.BodyUpdateResult(trailers.Get(modcb.BodyInputUpdateTrailer), trailers.Get(modcb.BodyInputBarrierTrailer))
+					positions := modcb.ObservedOwnerPositions(class, trailers.Get(modcb.OwnerPositionTrailer))
+					m.session.ParsedBodyUpdate(packet.TransportScope, modcb.BodyUpdateDetail(class, trailers.Get(modcb.BodyInputFieldTrailer)), positions...)
+				}
 			}
 			m.recordSpellEffect(name, trailers)
 			m.mu.Lock()

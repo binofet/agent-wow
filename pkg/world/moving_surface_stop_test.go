@@ -94,6 +94,7 @@ func TestPassengerSocketStopRequiresGroundContact(t *testing.T) {
 			jump := movementinfo.Info{Flags: 0x1201, X: 7, Y: 8, Z: 9, Time: 1000, TransportPresent: true,
 				Transport:   movementinfo.Transport{GUID: 0x1fc00000f0000001, X: 1, Y: 2, Z: 3, Time: 4000, Seat: -1},
 				JumpPresent: true, Jump: movementinfo.Jump{Velocity: buddynav.BodyJumpVelocity, CosAngle: 1, XYSpeed: 7}}
+			c.observe(opcode.SMSGUpdateObject, routeHullCreate(jump.Transport.GUID))
 			if err := write(opcode.MSGMoveJump, jump); err != nil {
 				t.Fatal(err)
 			}

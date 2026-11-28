@@ -3,6 +3,7 @@ package modsession
 import (
 	"context"
 
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 )
 
@@ -78,6 +79,17 @@ func WithRouteBodyInput(ctx context.Context, followsOwner bool) context.Context 
 func IsRouteBodyInput(ctx context.Context) bool {
 	route, _ := ctx.Value(routeBodyInputKey{}).(bool)
 	return route
+}
+
+type routeHullKey struct{}
+
+func WithRouteHull(ctx context.Context, h modcb.RouteHull) context.Context {
+	return context.WithValue(ctx, routeHullKey{}, h)
+}
+
+func RouteHull(ctx context.Context) (modcb.RouteHull, bool) {
+	h, ok := ctx.Value(routeHullKey{}).(modcb.RouteHull)
+	return h, ok
 }
 
 type settledBodySourceKey struct{}

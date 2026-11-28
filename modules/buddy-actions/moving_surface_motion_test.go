@@ -49,6 +49,12 @@ func (f *surfaceTestSession) SendPacket(ctx context.Context, r *modv1.SendPacket
 	in := metadata.NewIncomingContext(ctx, md)
 	id := modcb.IncomingMovementAttempt(in)
 	followsOwner, ok, supplied := modcb.IncomingRouteBodyInput(in)
+	ship, birth, seen, valid, marked := modcb.IncomingRouteHull(in)
+	hull := movingHull(f.world, surfaceTestShip)
+	if !valid || !marked || ship != surfaceTestShip || birth != hull.GetMovingTransport().GetObjectRevision() ||
+		seen != f.world.ObservedPackets+f.world.IgnoredPackets+f.world.MalformedPackets {
+		f.t.Fatalf("missing final World hull or packet sequence on opcode %d: %x, %d, %d", r.Opcode, ship, birth, seen)
+	}
 	if !ok || !supplied || followsOwner || !modcb.ValidMovementAttempt(id) || f.attempts[id] ||
 		!proto.Equal(r.TransportScope, f.portalCoreScope) || !buddynav.RouteBodyFrame(r.Opcode, r.Payload, f.world.Self.Guid) {
 		f.t.Fatalf("invalid ordinary surface frame or scope: opcode=%d attempt=%q marker=%v/%v/%v scope=%+v", r.Opcode, id, followsOwner, ok, supplied, r.TransportScope)
@@ -93,6 +99,7 @@ func newSurfaceTestRig(t *testing.T, progress uint32, own, owner buddynav.Point,
 	s.SetNavigationDataDir(dir)
 	s.encounterVisit.mapID = sample.MapID
 	f.world.Owner.MapId, f.world.Self.MapId = sample.MapID, sample.MapID
+	f.world.ObservedPackets, f.world.IgnoredPackets, f.world.MalformedPackets = 11, 2, 1
 	seedSyntheticPortalWorldScope(f, 9)
 	r := &surfaceTestRig{surfaceTestSession: &surfaceTestSession{fakeSession: f, t: t, now: s.now, attempts: map[string]bool{}}, s: s, ctx: ctx, request: g, tr: tr, progress: progress, advance: advance}
 	s.session = r.surfaceTestSession
@@ -392,5 +399,32 @@ func TestSurfaceFollowRemeasuresMovingLaunchAndFencesStoppedHull(t *testing.T) {
 	toggle(t, r.s, false)
 	if len(r.packets) != 1 || countPackets(r.fakeSession, opcode.MSGMoveStop) != 0 {
 		t.Fatal("passenger STOP used a vanished hull", len(r.packets))
+	}
+}
+
+func TestSurfaceFollowUsesFinalObservedHullAndPacketSequence(t *testing.T) {
+	for _, tc := range []struct {
+		name                         string
+		observed, ignored, malformed uint64
+		writes                       int
+	}{
+		{"new World snapshot", 17, 6, 2, 1},
+		{"missing sequence", 0, 0, 0, 0},
+		{"saturated", math.MaxUint64 - 9, 8, 1, 0},
+		{"overflow in ignored", math.MaxUint64 - 1, 3, 0, 0},
+		{"overflow in malformed", math.MaxUint64 - 1, 0, 3, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newSurfaceTestRig(t, 10000, surfaceTestDeck, surfaceTestBow, true, true)
+			r.set("ride")
+			r.onClock = func() {
+				r.onClock = nil
+				r.world.ObservedPackets, r.world.IgnoredPackets, r.world.MalformedPackets = tc.observed, tc.ignored, tc.malformed
+			}
+			r.tick(0)
+			if len(r.packets) != tc.writes || r.s.state.MotionUnconfirmed {
+				t.Fatalf("got %d writes, uncertain=%t: %s", len(r.packets), r.s.state.MotionUnconfirmed, r.s.state.NavReason)
+			}
+		})
 	}
 }

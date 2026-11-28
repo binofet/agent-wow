@@ -49,6 +49,7 @@ type Session struct {
 	ownMovementReportSnapshot  *modv1.WorldPacket
 	ownMovementAttemptSnapshot string
 	bodyUpdates                parsedBodyUpdates
+	routeHulls                 routeHullState
 	knockbackReports           knockbackReports
 	knockbackReady             chan struct{}
 	parsedOwnPose              *modv1.WorldPacket
@@ -135,7 +136,7 @@ func enter(ctx context.Context, conn *worldconn.Conn, realm Realm, character Cha
 	stopStartup := context.AfterFunc(lifetime, endStartup)
 	err = s.modules.Start(startup, modsession.Session{Identity: modsession.Identity{CharacterGUID: character.GUID, CharacterName: character.Name, RealmID: realm.ID, RealmName: realm.Name}, SendPacket: s.SendPacket, Clock: s.Clock,
 		SendScopedPacket: s.SendScopedPacket, TransportScope: s.TransportScope, OwnMovementReport: s.OwnMovementReport, OwnMovementAttempt: s.OwnMovementAttempt, BodyInputReport: s.bodyInputReport, ParsedBodyUpdate: s.recordParsedBodyUpdate,
-		ParsedOwnPose: s.recordOwnPose, ParsedTaxiBodyOrigin: s.recordTaxiBodyOrigin,
+		ParsedOwnPose: s.recordOwnPose, ParsedTaxiBodyOrigin: s.recordTaxiBodyOrigin, ParsedRouteHulls: s.recordRouteHulls,
 		KnockbackReport: s.readKnockback, MeasuredKnockback: s.acceptKnockbackContact})
 	endStartup()
 	stopStartup()

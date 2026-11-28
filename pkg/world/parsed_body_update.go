@@ -149,6 +149,9 @@ func (s *Session) bodyProofLocked(ctx context.Context, before, current *modv1.Tr
 		!proto.Equal(s.transportScopeSnapshot, current) || before.MotionRevision > current.MotionRevision {
 		return "body_or_visit_changed", false
 	}
+	if _, watched := modsession.RouteHull(ctx); watched && s.routeHulls.pending != s.routeHulls.parsed {
+		return modcb.BodyUpdateMissing, true
+	}
 	if before.MotionRevision == current.MotionRevision {
 		return "", false
 	}

@@ -18,6 +18,7 @@ func TestIndependentPhysicalPassengerStop(t *testing.T) {
 			c.observe(opcode.SMSGLoginVerifyWorld, positionBody(0, 7, 8, 9, 0))
 			c.observe(opcode.SMSGUpdateObject, bodyPlayerCreate(99, 7, 8, 9, 0))
 			f := movementinfo.Info{Flags: 0x201, Time: 900, X: 7, Y: 8, Z: 9, TransportPresent: true, Transport: movementinfo.Transport{GUID: 0x1fc0000000000123, X: 1, Y: 2, Z: 1, Time: 500, Seat: -1}}
+			c.observe(opcode.SMSGUpdateObject, routeHullCreate(f.Transport.GUID))
 			ctx := sctx.WithRouteBodyInput(context.Background(), false)
 			op := uint32(opcode.MSGMoveStartForward)
 			if key == "airborne-with-no-landing" {

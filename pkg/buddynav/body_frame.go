@@ -57,7 +57,7 @@ func RouteBodyFrame(op uint32, payload []byte, self uint64) bool {
 // IsMovingTransportGUID recognizes the build-12340 moving transport's global
 // object counter. These GUIDs have no template-entry bits.
 func IsMovingTransportGUID(guid uint64) bool {
-	return guid>>32 == 0x1fc00000 && uint32(guid) != 0
+	return movementinfo.MovingTransportGUID(guid)
 }
 
 // TransportBodyFrame checks that a passenger frame names one moving transport and preserves

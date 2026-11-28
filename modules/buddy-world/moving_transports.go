@@ -12,7 +12,7 @@ import (
 // Build 12340 Mo_Transport uses a global counter. Its template entry comes
 // from OBJECT_FIELD_ENTRY and its type from GAMEOBJECT_BYTES_1.
 func movingTransportGUID(guid uint64) bool {
-	return guid>>32 == 0x1fc00000 && uint32(guid) != 0
+	return movementinfo.MovingTransportGUID(guid)
 }
 
 // Unit::BuildMovementPacket names the actual transport or the vehicle base.

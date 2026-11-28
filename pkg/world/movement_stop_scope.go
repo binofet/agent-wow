@@ -57,6 +57,14 @@ func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []by
 		requested = e.transport.scope
 	}
 	route := modsession.IsRouteBodyInput(ctx)
+	if selected, bound := modsession.RouteHull(ctx); bound {
+		observed, ok := e.s.currentRouteHull(selected.GUID, requested)
+		frame, complete := movementinfo.OwnFrame(body, requested.GetSelfGuid())
+		if !route || !qualified || !ok || !complete || !selected.Valid() || selected.Birth != observed.Birth ||
+			selected.Packets < observed.Packets || frame.TransportPresent && frame.Transport.GUID != selected.GUID {
+			return modcb.PacketNotDispatchedError("selected moving hull changed or left the current visit")
+		}
+	}
 	if route {
 		if !qualified || !buddynav.RouteBodyFrame(op, body, requested.SelfGuid) {
 			return modcb.PacketNotDispatchedError("invalid normal route body frame")
