@@ -73,7 +73,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	if len(scopes) != 0 {
 		requested = scopes[0]
 	}
-	if requested != nil || op == opcode.CMSGMoveSplineDone || e.taxiBody.active() && voluntaryTaxiBodyFrame(op) {
+	if e.needsPhysicalDrain(op, requested) {
 		proofDeadline := time.Now().Add(bodyUpdateWait)
 		for {
 			if !e.scopedWriteAvailable(ctx) {
@@ -251,11 +251,12 @@ func (e *engine) loop(packets <-chan packet) error {
 				r.reply <- status.FromContextError(err).Err()
 				continue
 			}
-			if (r.transportScope != nil || r.op == opcode.CMSGMoveSplineDone) && (e.phase != InWorld || e.logout != nil || e.finalPackets != nil) {
+			guarded := e.needsPhysicalDrain(r.op, r.transportScope)
+			if guarded && (e.phase != InWorld || e.logout != nil || e.finalPackets != nil) {
 				r.reply <- modcb.PacketNotDispatchedError("scoped gameplay write requires the current live world session")
 				continue
 			}
-			if r.transportScope != nil || r.op == opcode.CMSGMoveSplineDone {
+			if guarded {
 				e.beforeScopedWrite = drain
 			}
 			outcome, anyBytes, err := e.writeContext(r.ctx, r.op, r.body, r.transportScope)

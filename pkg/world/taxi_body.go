@@ -21,6 +21,10 @@ type taxiBodyGuard struct {
 
 func (g taxiBodyGuard) active() bool { return g.pending || g.boarded }
 
+func (e *engine) needsPhysicalDrain(op uint32, requested *modv1.TransportScope) bool {
+	return requested != nil || op == opcode.CMSGMoveSplineDone || e.taxiBody.active() && voluntaryTaxiBodyFrame(op)
+}
+
 func voluntaryTaxiBodyFrame(op uint32) bool {
 	return movementinfo.OrdinaryFollowMovement(op) || op == opcode.MSGMoveJump || op == opcode.MSGMoveFallLand
 }

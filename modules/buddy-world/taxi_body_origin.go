@@ -34,6 +34,18 @@ func (s *Service) observeTaxiBodyOrigin(ctx context.Context, packet *modv1.World
 	if b.source == nil {
 		return
 	}
+	if op := s.completion.operation; op != nil && sameMotionSource(op.TransportScope, b.source) &&
+		(op.Pending || op.TransportWritten || op.TransportUnknown || op.Retired) {
+		// The explicit completion path owns its actual following MovementInfo.
+		// Never replace that image with the proposed natural endpoint, including
+		// during unresolved transport or multi-map retirement.
+		b.clear, b.origin, b.revision = 0, 0, 0
+		if !op.Retired || s.completion.retirementBlocked || !received.positionKnown || received.positionInferred ||
+			!sameMotionSource(op.RetirementScope, scope) || !next.ownMovement.known || !m.unitFlagsKnown || m.unitFlags&movementflags.UnsafeUnitFlags != 0 {
+			return
+		}
+		b.origin, b.revision = op.RetirementScope.MotionRevision, p.positionRevision
+	}
 	if !sameMotionVisit(b.source, scope) || received.receivedOwnCreate || received.receivedSpline && !sameMotionSource(b.source, scope) {
 		*b = taxiBodyObservation{}
 		return
@@ -47,7 +59,7 @@ func (s *Service) observeTaxiBodyOrigin(ctx context.Context, packet *modv1.World
 			m.unitFlagsKnown && m.unitFlags&movementflags.UnsafeUnitFlags == 0 && i.AllFinite() && movementflags.GroundCompatible(i.Flags, uint32(i.ExtraFlags)) && i.Flags&0xff == 0 && i.FallTime == 0 {
 			b.origin, b.revision = scope.MotionRevision, p.positionRevision
 		}
-	} else if b.clear == 0 {
+	} else if b.clear == 0 && b.origin == 0 {
 		if f.source == nil || !sameMotionSource(b.source, f.source) {
 			*b = taxiBodyObservation{}
 			return
