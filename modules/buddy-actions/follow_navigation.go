@@ -8,6 +8,7 @@ import (
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
@@ -27,6 +28,7 @@ type followNavigation struct {
 	arrivalKnown                        bool
 	ownerArrival                        bool
 	ownerVisit, ownerFollowRevision     uint64
+	staticFloor                         bool
 	intermediateLeg                     bool
 	legVisit                            uint64
 	legOwner                            position
@@ -44,6 +46,20 @@ func formationDestinationUnavailable(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "sample is outside ground polygon") || strings.Contains(err.Error(), "no nearby ground polygon") || strings.Contains(err.Error(), "polygon is not ground-only")
+}
+
+func missingFormationEndpoint(err error) bool {
+	if err == nil {
+		return false
+	}
+	for _, endpoint := range []string{"start", "destination"} {
+		prefix := "find navigation path: " + endpoint + ": "
+		if strings.HasSuffix(err.Error(), prefix+"sample is outside ground polygon") ||
+			strings.HasSuffix(err.Error(), prefix+"no nearby ground polygon") {
+			return true
+		}
+	}
+	return false
 }
 
 // A blocked personal slot can use a nearby pocket only after that pocket's
@@ -363,6 +379,24 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		}
 		intermediate := false
 		legVisit := uint64(0)
+		staticFloor := false
+		if len(ownerFallback) == 1 && missingFormationEndpoint(err) && s.lastWorld.GetVisitRevision() != 0 &&
+			s.safeFollowPlayers(s.lastWorld, s.selfGUID, true) == "" && !s.lastWorld.Owner.PositionInferred &&
+			playerPosition(s.lastWorld.Owner) == ownerFallback[0] {
+			// Geometry only: the observed owner, receiving visit, next body revision
+			// and current movement writer are checked again on the ordinary leg below.
+			points, staticErr := buddynav.PlanStaticWalkContext(planCtx, s.navDataDir, s.posMap, surfacePoint(s.pos), surfacePoint(target))
+			if staticErr != nil {
+				err = errors.Join(err, staticErr)
+			} else {
+				path = make([]position, len(points))
+				for i, p := range points {
+					path[i] = position{x: p.X, y: p.Y, z: p.Z}
+				}
+				arrival, arrivalStop, ownerArrival = path[len(path)-1], stopDistance, false
+				legVisit, staticFloor, err = s.lastWorld.GetVisitRevision(), true, nil
+			}
+		}
 		if err != nil && len(ownerFallback) == 1 && followRouteLengthExceeded(err) &&
 			finite(ownerFallback[0]) && distance(s.pos, ownerFallback[0]) <= 200 && s.planLegPath != nil && planCtx.Err() == nil &&
 			s.lastWorld.GetVisitRevision() != 0 && s.safeFollowPlayers(s.lastWorld, s.selfGUID, true) == "" {
@@ -396,6 +430,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		f.index, f.target, f.expected, f.selfRevision, f.mapID = 0, target, s.pos, s.positionRevision, s.posMap
 		f.arrival, f.arrivalStop, f.arrivalKnown = arrival, arrivalStop, true
 		f.ownerArrival = ownerArrival
+		f.staticFloor = staticFloor
 		f.ownerVisit, f.ownerFollowRevision = 0, 0
 		if ownerArrival && s.lastWorld.GetOwner() != nil && playerPosition(s.lastWorld.Owner) == arrival {
 			f.ownerVisit, f.ownerFollowRevision = s.lastWorld.GetVisitRevision(), s.followRevision
@@ -409,6 +444,9 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		validCached = true
 		s.state.NavAvailable = true
 		s.state.NavReason = "client_ground_navmesh"
+		if staticFloor {
+			s.state.NavReason = "client_measured_static_floor"
+		}
 		f.lastError = ""
 	}
 	if !validCached || f.index >= len(f.path) {
@@ -428,7 +466,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		// The existing movement writer refreshes World after its clock RPC.
 		// Bind that final boundary too: planning is not follow authority and an
 		// owner's changed pose must not continue an old winding-route leg.
-		visit, revision, sid, guid := f.legVisit, s.followRevision, s.sessionID, s.selfGUID
+		visit, revision, sid, guid, staticFloor := f.legVisit, s.followRevision, s.sessionID, s.selfGUID, f.staticFloor
 		owner, speed := f.legOwner, observedRunSpeed(s.lastWorld.GetSelf())
 		previous, _ := ctx.Value(movementPrewriteGuardKey{}).(movementPrewriteGuard)
 		ctx = context.WithValue(ctx, movementPrewriteGuardKey{}, movementPrewriteGuard(func(call context.Context, w *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool) {
@@ -441,6 +479,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			}
 			allowed := !s.closed && !s.independent && s.sessionID == sid && s.selfGUID == guid && s.followRevision == revision &&
 				(s.state.Following || s.followGoalExecuting != nil && s.currentFollowFormationGoalLocked(*s.followGoalExecuting, w)) &&
+				(!staticFloor || !w.GetOwner().GetPositionInferred()) &&
 				w.GetVisitRevision() == visit && s.safeFollowPlayers(w, guid, true) == "" && speed != 0 && observedRunSpeed(w.GetSelf()) == speed && !s.state.MotionUnconfirmed &&
 				distance(playerPosition(w.GetOwner()), owner) <= 1.5 && !s.state.CastPending && s.state.InteractionOwner == "" && !s.recovery.state.Active
 			if !allowed {
