@@ -10,6 +10,7 @@ import (
 )
 
 const routeHullKey = "agentwow-route-hull-bin"
+const surfaceBodySelectionKey = "agentwow-surface-body-selection-bin"
 const RouteHullTrailer = "agentwow-observed-route-hull-bin"
 
 type RouteHullRider struct{ Player, Ship uint64 }
@@ -85,4 +86,22 @@ func IncomingRouteHull(ctx context.Context) (guid, birth, packets uint64, valid,
 	}
 	h, ok := ReadRouteHull(rows[0])
 	return h.GUID, h.Birth, h.Packets, ok, true
+}
+
+// The authenticated MoveBody callback keeps its policy visit and sequence.
+// These are independent of the physical transport's connection and visit.
+func WithSurfaceBodySelection(ctx context.Context, visit, sequence uint64) context.Context {
+	var b [16]byte
+	binary.LittleEndian.PutUint64(b[:], visit)
+	binary.LittleEndian.PutUint64(b[8:], sequence)
+	return metadata.AppendToOutgoingContext(ctx, surfaceBodySelectionKey, string(b[:]))
+}
+
+func IncomingSurfaceBodySelection(ctx context.Context) (visit, sequence uint64, supplied bool) {
+	rows := metadata.ValueFromIncomingContext(ctx, surfaceBodySelectionKey)
+	if len(rows) != 1 || len(rows[0]) != 16 {
+		return 0, 0, len(rows) != 0
+	}
+	b := []byte(rows[0])
+	return binary.LittleEndian.Uint64(b), binary.LittleEndian.Uint64(b[8:]), true
 }

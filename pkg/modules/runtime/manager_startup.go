@@ -128,6 +128,11 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 	return m.Err()
 }
 
+func (m *Manager) currentRouteSessionLocked(sessionID string, self uint64) bool {
+	return m.ctx.Err() == nil && !m.closing && !m.preparing && !m.prepared && m.err == nil &&
+		filepath.Base(m.dir) == sessionID && m.session.Identity.CharacterGUID == self
+}
+
 func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(context.Context, uint32, []byte, *modv1.TransportScope) error {
 	return func(ctx context.Context, opcode uint32, payload []byte, scope *modv1.TransportScope) error {
 		if scope == nil || m.session.SendScopedPacket == nil {
@@ -158,10 +163,9 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 			body, ok := movementinfo.OwnFrame(payload, scope.SelfGuid)
 			if hasHull {
 				m.mu.Lock()
-				fromWorld := m.instances["buddy-world"] != nil && packets <= m.worldPackets && m.worldPackets != math.MaxUint64
+				fromWorld := m.currentRouteSessionLocked(sessionID, scope.SelfGuid) && m.instances["buddy-world"] != nil && packets <= m.worldPackets && m.worldPackets != math.MaxUint64
 				m.mu.Unlock()
-				_, policy := modcb.IncomingPolicySpell(ctx)
-				if !route || policy || !validHull || !fromWorld || !ok || body.TransportPresent && body.Transport.GUID != guid {
+				if !route || followsOwner || !validHull || !fromWorld || !ok || body.TransportPresent && body.Transport.GUID != guid {
 					return modcb.PacketNotDispatchedError("route requires its selected observed hull")
 				}
 				ctx = modsession.WithRouteHull(ctx, modcb.RouteHull{GUID: guid, Birth: birth, Packets: packets})
@@ -169,7 +173,18 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 				return modcb.PacketNotDispatchedError("passenger route requires its selected observed hull")
 			}
 		}
+		if _, _, bound := modcb.IncomingSurfaceBodySelection(ctx); bound {
+			if _, policy := modcb.IncomingPolicySpell(ctx); !policy || !hasHull {
+				return modcb.PacketNotDispatchedError("selected body requires its Lua dispatch and physical hull")
+			}
+		}
 		if token, supplied := modcb.IncomingPolicySpell(ctx); supplied {
+			if hasHull {
+				if handled, err := m.writePolicyScopedMovement(ctx, token, sessionID, module, opcode, payload, scope); handled {
+					return err
+				}
+				return modcb.PacketNotDispatchedError("hull frame is outside the selected body operation")
+			}
 			if handled, err := m.writePolicyFlightpath(ctx, token, sessionID, module, opcode, payload, scope); handled {
 				return err
 			}
@@ -187,8 +202,7 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 		}
 		if marked {
 			m.mu.Lock()
-			current := m.ctx.Err() == nil && !m.closing && !m.preparing && !m.prepared && m.err == nil &&
-				filepath.Base(m.dir) == sessionID && scope.SelfGuid == m.session.Identity.CharacterGUID
+			current := m.currentRouteSessionLocked(sessionID, scope.SelfGuid)
 			m.mu.Unlock()
 			if !current || !routeScopeBound(scope) {
 				return modcb.PacketNotDispatchedError("native route body or visit unavailable")
@@ -205,6 +219,9 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 
 func (m *Manager) modulePacketWriter(sessionID, module string) func(context.Context, uint32, []byte) error {
 	return func(ctx context.Context, opcode uint32, payload []byte) error {
+		if _, _, selected := modcb.IncomingSurfaceBodySelection(ctx); selected {
+			return modcb.PacketNotDispatchedError("selected surface input requires its physical hull scope")
+		}
 		if _, _, _, _, supplied := modcb.IncomingRouteHull(ctx); supplied {
 			return modcb.PacketNotDispatchedError("moving surface route requires its physical body scope")
 		}

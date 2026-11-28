@@ -16,18 +16,22 @@ func (m *movementControl) objectUpdate(op uint16, body []byte, self uint64) {
 	if m.info == nil {
 		return
 	}
+	m.info, _ = scanControlObjectUpdate(op, body, self, m.info)
+}
+
+// The same complete record walk identifies a pending passenger transfer's
+// visibility updates. Its second result excludes every record for the mover.
+func scanControlObjectUpdate(op uint16, body []byte, self uint64, current []byte) ([]byte, bool) {
 	data, err := movementinfo.ObjectUpdatePayload(body, op == opcode.SMSGCompressedUpdateObject)
 	if err != nil {
-		m.info = nil
-		return
+		return nil, false
 	}
 	c := teleportCursor{body: data}
 	count := c.u32()
 	if count > 4096 {
-		m.info = nil
-		return
+		return nil, false
 	}
-	current := m.info
+	foreign := true
 	for range count {
 		kind := c.take(1)
 		if kind == nil {
@@ -39,6 +43,9 @@ func (m *movementControl) objectUpdate(op uint16, body []byte, self uint64) {
 			if guid == 0 {
 				c.bad = true
 				break
+			}
+			if guid == self {
+				foreign = false
 			}
 			if kind[0] >= 2 {
 				t := c.take(1)
@@ -61,8 +68,7 @@ func (m *movementControl) objectUpdate(op uint16, body []byte, self uint64) {
 					raw := movement.LivingWire
 					if !plainMovementInfo(current) || !plainMovementInfo(raw) || movement.Living.Flags&0x1ff != 0 ||
 						!bytes.Equal(raw[:6], current[:6]) || !bytes.Equal(raw[10:], current[10:]) {
-						m.info = nil
-						return
+						return nil, false
 					}
 				}
 			}
@@ -89,8 +95,11 @@ func (m *movementControl) objectUpdate(op uint16, body []byte, self uint64) {
 					c.bad = true
 					break
 				}
-				if guid == self && kind[0] == 4 {
-					current = nil
+				if guid == self {
+					foreign = false
+					if kind[0] == 4 {
+						current = nil
+					}
 				}
 			}
 		default:
@@ -101,7 +110,7 @@ func (m *movementControl) objectUpdate(op uint16, body []byte, self uint64) {
 		}
 	}
 	if !c.complete() {
-		current = nil
+		return nil, false
 	}
-	m.info = current
+	return current, foreign
 }

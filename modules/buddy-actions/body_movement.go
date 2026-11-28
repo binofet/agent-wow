@@ -63,11 +63,17 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		return nil, status.Error(codes.FailedPrecondition, "current connected and available own body required")
 	}
 	w, err := s.snapshot(ctx)
+	passenger := w.GetSelf().GetMovementFlagsKnown() && w.GetSelf().GetMovementFlags() == passengerFlag &&
+		w.GetSelf().GetExtraMovementFlags() == 0 && r.Landing != "follow_water"
+	compatible := movementflags.GroundCompatible
+	if passenger {
+		compatible = func(f, x uint32) bool { return f == passengerFlag && x == 0 }
+	}
 	if err != nil || s.paidTaxiBodyHeld(w) || !s.matchesCurrentEncounterVisitLocked(w) || r.VisitId != s.encounterVisit.revision || !s.admitsPolicyEncounterLocked(ctx, w) ||
-		safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) || s.clientControlLost || s.clientControlRestoring || s.state.MotionUnconfirmed ||
+		safeSelfMovement(w, s.selfGUID, compatible) != "" || !s.refreshPositionLocked(w) || s.clientControlLost || s.clientControlRestoring || s.state.MotionUnconfirmed ||
 		s.state.CastPending || s.state.Traveling || r.IdleToken == "" && s.state.InteractionOwner != "" ||
 		r.IdleToken != "" && !s.bodyIdleLeaseCurrentLocked(r, s.now()) || s.recovery.state.Active ||
-		!w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) ||
+		!w.Self.MovementFlagsKnown || !compatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) ||
 		r.Jump && w.Self.MovementFlags&0x20000000 != 0 || r.Landing != "" && w.Self.MovementFlags&movementflags.PassiveModifiers != 0 {
 		return nil, status.Error(codes.FailedPrecondition, "current controllable ground body and its Lua writer required")
 	}
@@ -113,7 +119,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	view := &actionsv1.BodyMovementState{SequenceId: r.SequenceId, VisitId: r.VisitId, Phase: "checking_local_physics"}
 	s.state.BodyMovement = view
 	var motion *idleMotionScope
-	if r.IdleToken != "" || r.Landing != "" {
+	if !passenger && (r.IdleToken != "" || r.Landing != "") {
 		ctx = modcb.ForwardPolicySpell(ctx)
 		motion, err = s.newBodyMotionScopeLocked(ctx, r.IdleToken, w, false, r.Landing)
 		if err != nil {
@@ -148,6 +154,16 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 			}
 		}
 	}()
+	extendLanding := func(duration time.Duration) {
+		if r.Landing != "" && s.hostEncounterKey != "" && s.hostEncounterEpoch == ownerEpoch && s.hostEncounterVisit == r.VisitId && s.hostEncounterUntil.Equal(reservedUntil) {
+			reservedUntil = s.now().Add(duration + encounterLeaseDuration)
+			s.hostEncounterUntil = reservedUntil
+		}
+	}
+	if passenger {
+		s.moveSurfaceBodyLocked(ctx, r, w, speed, view, extendLanding)
+		return s.stateLocked(), nil
+	}
 	dataDir := s.navDataDir
 	trail := s.swimTrail
 	if r.Landing == "follow_water" && trail.visit == r.VisitId {
@@ -221,10 +237,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		view.Phase, view.Detail = "body_scope_not_dispatched", "remaining RPC deadline cannot cover the measured landing"
 		return s.stateLocked(), nil
 	}
-	if r.Landing != "" && s.hostEncounterKey != "" && s.hostEncounterEpoch == ownerEpoch && s.hostEncounterVisit == r.VisitId && s.hostEncounterUntil.Equal(reservedUntil) {
-		reservedUntil = s.now().Add(points[len(points)-1].At + encounterLeaseDuration)
-		s.hostEncounterUntil = reservedUntil
-	}
+	extendLanding(points[len(points)-1].At)
 	check := func(landingStarted, ownFalling, ownSwimming bool) (*worldv1.SnapshotResponse, bool) {
 		compatible := func(flags, extra uint32) bool {
 			if r.Landing != "" && extra == 0 && (ownFalling && (flags == 0x1000 || flags == 0x1001) ||

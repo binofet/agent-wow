@@ -268,6 +268,11 @@ func TestEncounterMovementAlternatingApproachKeepsActualStallEvidence(t *testing
 			self := obs["players"].(map[string]any)["5"].(map[string]any)
 			self["positionRevision"], self["moving"] = "1", false
 			nav := map[string]any{"bodyMovementSupported": true, "following": true, "goalKnown": true, "goalX": float64(20)}
+			if idle {
+				nav["ownerGuid"], nav["followRevision"] = "3", "0"
+				obs["party"] = map[string]any{"group": map[string]any{"known": true,
+					"members": []any{map[string]any{"guid": "3", "online": true}}}}
+			}
 			view := map[string]any{"targetGuid": "99", "visitId": "1"}
 			obs["navigation"], obs["targetMovement"] = nav, view
 			probes, recheck := 0, false
@@ -320,6 +325,68 @@ func TestEncounterMovementAlternatingApproachKeepsActualStallEvidence(t *testing
 			if probes != 3 || recheck || self["positionRevision"] != "1" || self["x"] != float64(0) {
 				t.Fatal("alternating non-progress statuses never reached step/side/hop recovery", probes, self)
 			}
+		})
+	}
+}
+
+func TestEncounterIdleRecoveryRequiresObservedOnlineOwner(t *testing.T) {
+	for _, recovery := range []string{"fresh_sighting", "online_roster", "unconfirmed_motion"} {
+		t.Run(recovery, func(t *testing.T) {
+			vm := movementPolicy(t)
+			obs := movementObservation()
+			delete(obs, "activeMeleeTargetGuid")
+			self := obs["players"].(map[string]any)["5"].(map[string]any)
+			self["positionRevision"], self["moving"] = "1", false
+			nav := map[string]any{"ownerGuid": "3", "followRevision": "1", "following": true,
+				"bodyMovementSupported": true, "goalKnown": true, "goalX": 20, "phase": "follow_navigation_unavailable"}
+			obs["navigation"] = nav
+			sequence := 0
+			checkProbe := func(reason string, want bool) {
+				t.Helper()
+				for range 6 {
+					sequence++
+					id := strconv.Itoa(sequence)
+					decision, err := vm.Decide(context.Background(), map[string]any{"idle": true, "obs": obs, "sequence": id})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if decision.Output["action"] == nil {
+						continue
+					}
+					action, ok := decision.Output["action"].(map[string]any)
+					if !want || !ok || action["capability"] != "move_body" || action["sessionId"] != "move" ||
+						action["selfGuid"] != "5" || action["visitId"] != "1" || action["observationSequence"] != id || action["sequenceId"] != id {
+						t.Fatalf("%s: unexpected recovery action %v", reason, decision.Output["action"])
+					}
+					return
+				}
+				if want {
+					t.Fatalf("%s: six stationary route refusals produced no body probe", reason)
+				}
+			}
+
+			checkProbe("configured owner without an online observation", false)
+			owner := map[string]any{"guid": "3", "present": true, "mapKnown": true, "mapId": 0, "positionKnown": true,
+				"positionRevision": "8", "positionInferred": true, "x": 20, "y": 0, "z": 0}
+			nav["followOwner"] = owner
+			checkProbe("inferred position alone", false)
+			member := map[string]any{"guid": "3", "online": false}
+			party := map[string]any{"group": map[string]any{"known": true, "members": []any{member}}}
+			obs["party"] = party
+			owner["positionRevision"], owner["positionInferred"] = "9", false
+			checkProbe("offline roster while the native lease is active", false)
+			delete(obs, "party")
+			checkProbe("same previously discounted owner sighting", false)
+
+			nav["following"] = false
+			if recovery == "fresh_sighting" {
+				owner["positionRevision"] = "10"
+			} else {
+				delete(nav, "followOwner")
+				member["online"], obs["party"] = true, party
+			}
+			nav["motionUnconfirmed"] = recovery == "unconfirmed_motion"
+			checkProbe(recovery, recovery != "unconfirmed_motion")
 		})
 	}
 }

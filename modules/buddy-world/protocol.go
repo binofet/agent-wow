@@ -569,6 +569,18 @@ func updates(c *cursor, state *observations, now time.Time, op uint32) error {
 				state.blockBodyRecord(guid, typ)
 			}
 			p := state.target(guid)
+			if vessel := state.departingHulls[guid]; vessel != nil {
+				switch typ {
+				case 2, 3:
+					delete(state.departingHulls, guid)
+				case 0:
+					// Apply VALUES to a detached copy of the actual old hull.
+					// The unbound body cannot see or steer using this row.
+					copy := *vessel
+					p = &copy
+					state.departingHulls[guid] = p
+				}
+			}
 			var priorShipEntry uint32
 			if p != nil && movingTransportGUID(guid) {
 				priorShipEntry = p.fields[objectEntry]
@@ -724,6 +736,7 @@ func updates(c *cursor, state *observations, now time.Time, op uint32) error {
 					p.cast = observedCreatureCast{}
 				}
 				if typ == 0 && priorShipEntry != 0 && (!movingTransport(p) || p.fields[objectEntry] != priorShipEntry) {
+					delete(state.departingHulls, guid)
 					state.clearPassengersOf(guid)
 					delete(state.gameObjects, guid)
 				}

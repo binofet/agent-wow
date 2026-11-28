@@ -6,9 +6,8 @@ local M = {}
 -- movement ownership, not the legacy Follow toggle. Every goal remains finite.
 M.follow_owner_by_default = true
 local formation_memory, formation_identity
-local function follow_requested(nav)
-    return nav.following == true or nav.following == false and M.follow_owner_by_default == true
-end
+local follow_goal
+local follow_requested
 local function portal_revision(value)
     if type(value)~="string" or #value==0 or #value>20 or byte_at(value,1)==48 or
        #value==20 and value>"18446744073709551615" then return false end
@@ -22,6 +21,78 @@ local function portal_uint32(value)
     return type(value)=="number" and value>=0 and value<=4294967295 and value%1==0
 end
 local function portal_binding_revision(value) return value=="0" or portal_revision(value) end
+
+-- A companion's desired destination survives an expired legacy movement lease,
+-- a missing sighting, and a new map. These are policy facts, never permission to
+-- reuse an old movement packet or claim the target is currently visible.
+local function owner_sighting(obs,owner,target)
+    if type(owner)~="table" or owner.guid~=target or owner.present~=true or owner.positionInferred==true or
+       owner.positionEstimated==true or not portal_revision(owner.positionRevision) then return end
+    return {sessionId=obs.sessionId,visitId=obs.visitId,positionRevision=owner.positionRevision}
+end
+local function same_sighting(a,b)
+    return a and b and a.sessionId==b.sessionId and a.visitId==b.visitId and a.positionRevision==b.positionRevision
+end
+local function owner_online(obs,nav,target)
+    local sighting=owner_sighting(obs,nav.followOwner,target)
+    local group=obs.party and obs.party.group
+    if type(group)=="table" and group.known==true then
+        for _,member in ipairs(group.members or {}) do
+            if member.guid==target then return member.online==true,sighting end
+        end
+    end
+    if sighting and not same_sighting(sighting,follow_goal and follow_goal.offlineSighting) then return true,sighting end
+end
+function M.follow_goal(obs)
+    local nav=obs.navigation or {}
+    if not portal_revision(obs.selfGuid) then return nil end
+    if follow_goal and follow_goal.selfGuid~=obs.selfGuid then follow_goal=nil end
+    if M.follow_owner_by_default~=true or nav.independent==true then
+        if follow_goal then
+            follow_goal.active=false
+            follow_goal.phase=nav.independent==true and "independent" or "policy_disabled"
+        end
+        return follow_goal
+    end
+    local target=nav.ownerGuid
+    if not portal_revision(target) then target=(nav.followOwner or {}).guid end
+    if not portal_revision(target) or target==obs.selfGuid or type(obs.sessionId)~="string" or not portal_revision(obs.selfGuid) then return nil end
+    if not follow_goal or follow_goal.targetGuid~=target then
+        follow_goal={kind="follow",selfGuid=obs.selfGuid,targetGuid=target}
+    end
+    local goal=follow_goal
+    local online,sighting=owner_online(obs,nav,target)
+    goal.onlineKnown,goal.ownerOnline=online~=nil,online
+    if online~=nil then
+        goal.lastKnownOnline=online
+        if online then goal.offlineSighting=nil
+        else
+            local last=goal.lastSeen
+            goal.offlineSighting=sighting or last and
+                {sessionId=last.sessionId,visitId=last.visitId,positionRevision=last.positionRevision}
+        end
+    end
+    goal.active=goal.lastKnownOnline~=false
+    local owner=nav.followOwner
+    if type(owner)=="table" and owner.guid==target and owner.present==true and owner.positionKnown==true and
+       owner.mapKnown==true and owner.positionInferred~=true and owner.positionEstimated~=true and online~=false and
+       portal_revision(owner.positionRevision) then
+        goal.lastSeen={mapId=owner.mapId or 0,x=owner.x or 0,y=owner.y or 0,z=owner.z or 0,
+            positionRevision=owner.positionRevision,sessionId=obs.sessionId,visitId=obs.visitId}
+    end
+    if goal.lastKnownOnline==false then goal.phase="owner_offline"
+    elseif type(owner)~="table" or owner.present~=true then goal.phase="reacquiring_owner"
+    elseif owner.mapKnown~=true or owner.mapId~=obs.mapId then goal.phase="catching_up"
+    else goal.phase="owner_visible" end
+    goal.navigationPhase=nav.phase
+    return goal
+end
+follow_requested=function(nav,obs)
+    local goal=M.follow_goal(obs)
+    if nav.independent==true then return false end
+    if M.follow_owner_by_default~=true then return nav.following==true end
+    return goal~=nil and goal.active==true
+end
 
 local function surface_follow_goal(obs,sequence,owner)
     local nav=obs.navigation or {}
@@ -73,7 +144,7 @@ end
 function M.portal_catchup(frame, obs, sequence)
     local nav=obs.navigation or {}
     local portal,self=nav.portal,(obs.players or {})[obs.selfGuid]
-    local following=follow_requested(nav)
+    local following=follow_requested(nav,obs)
     if not encounter_formation or not following or nav.groundNavigationConfigured~=true or
        type(portal)~="table" or type(portal.catchingUp)~="boolean" or portal.notified~=false or portal.ownerAbsent~=true or
        not portal_revision(portal.witnessRevision) or not portal_binding_revision(portal.followRevision) or
@@ -116,7 +187,7 @@ end
 function M.follow_formation(frame, obs, sequence)
     local nav = obs.navigation or {}
     local owner, self = nav.followOwner, (obs.players or {})[obs.selfGuid]
-    local following = follow_requested(nav)
+    local following = follow_requested(nav,obs)
     if not following then formation_memory, formation_identity = nil, nil end
     if following then
         local surface,active=surface_follow_goal(obs,sequence,owner)
@@ -151,7 +222,7 @@ function M.follow_mount(obs,sequence)
     proposed_mount=nil
     local nav=obs.navigation or {}
     local fact=nav.groundMount
-    if not follow_requested(nav) or type(fact)~="table" or fact.ready~=true or fact.attemptedForOwnerState==true or
+    if not follow_requested(nav,obs) or type(fact)~="table" or fact.ready~=true or fact.attemptedForOwnerState==true or
        not portal_revision(nav.ownerGuid) or not portal_binding_revision(nav.followRevision) or
        not portal_revision(fact.ownerMountRevision) or not obs.spellbookKnown then return end
     for _,p in pairs(obs.players or {}) do
@@ -192,12 +263,17 @@ end
 
 local water_probe
 function M.export_state()
-    return {memory=formation_memory,identity=formation_identity,waterProbe=water_probe,mountPreparation=mount_preparation}
+    return {memory=formation_memory,identity=formation_identity,waterProbe=water_probe,mountPreparation=mount_preparation,followGoal=follow_goal}
 end
 function M.import_state(saved)
     if type(saved) ~= "table" then return false end
     if saved.mountPreparation~=nil and type(saved.mountPreparation)~="string" then return false end
+    local goal=saved.followGoal
+    if goal~=nil and (type(goal)~="table" or goal.kind~="follow" or not portal_revision(goal.targetGuid) or
+       not portal_revision(goal.selfGuid) or
+       goal.lastKnownOnline~=nil and type(goal.lastKnownOnline)~="boolean") then return false end
     formation_memory, formation_identity, water_probe, mount_preparation = saved.memory, saved.identity, saved.waterProbe, saved.mountPreparation
+    follow_goal=goal
     return true
 end
 
@@ -211,6 +287,7 @@ local recovery
 -- encounter target queue or invents a successful cast.
 local invalid_target, checked_target, failed_action
 function M.on_event(event)
+    if event.kind=="encounter_observation" and type(event.value)=="table" then M.follow_goal(event.value) end
     local receipt = event.receipt
     if not receipt then return true end
     local payload = receipt.payload or {}
@@ -416,7 +493,8 @@ end
 function M.idle_recovery(obs,sequence)
     local nav = obs.navigation or {}
     local self = (obs.players or {})[obs.selfGuid]
-    if nav.following ~= true or not self then return {} end
+    if not follow_requested(nav,obs) or not self or
+       M.follow_owner_by_default==true and follow_goal.lastKnownOnline~=true then return {} end
     local epoch=obs.sessionId..":"..obs.selfGuid..":"..obs.visitId..":"..(nav.followRevision or "0")..":"..(self.positionRevision or "0")
     if water_probe and water_probe.epoch==epoch and water_probe.uncertain then return {} end
     if nav.goalKnown~=true then return {} end

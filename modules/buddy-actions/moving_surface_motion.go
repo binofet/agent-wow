@@ -15,17 +15,28 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type surfaceMotionSource struct {
 	goal                                 *actionsv1.FollowFormationRequest
+	body                                 *surfaceBodyInput
+	ship                                 uint64
 	rawRevision, objectRevision          uint64
 	progress, firstProgress, clientClock uint32
 	hostEpoch                            uint64
 	lastTransform                        buddynav.SurfaceTransform
 	ownerPoint                           buddynav.Point
+	departureOffset                      float64
 	localRoute, airborne, released       bool
+}
+
+func (in *surfaceMotionSource) shipGUID() uint64 {
+	if in.ship != 0 {
+		return in.ship
+	}
+	return in.goal.GetTransportGuid()
 }
 
 func surfaceInfoPoint(i movementinfo.Info) buddynav.Point {
@@ -66,7 +77,7 @@ func (s *Service) surfaceGoalCurrentLocked(w *worldv1.SnapshotResponse, g *actio
 }
 
 func (s *Service) continuesDetachedSurfaceLocked(w *worldv1.SnapshotResponse, in *surfaceMotionSource) bool {
-	return s.surfaceFollow.goal == nil && s.surfaceFollow.planDetached && in.hostEpoch == s.hostEncounterEpoch &&
+	return in.goal != nil && s.surfaceFollow.goal == nil && s.surfaceFollow.planDetached && in.hostEpoch == s.hostEncounterEpoch &&
 		s.followRevision == in.goal.FollowRevision && s.currentFollowFormationGoalLocked(s.followGoal, w) && s.followGoal.owner == in.goal.OwnerGuid
 }
 
@@ -135,7 +146,34 @@ func (s *Service) receivedSurfaceSource(w *worldv1.SnapshotResponse, scope *modv
 		(position{i.X, i.Y, i.Z, i.Orientation}) != playerPosition(w.Self) {
 		return movementinfo.Info{}, false
 	}
+	t := raw.Info.GetTransport()
+	if i.TransportPresent != (t != nil) || t != nil && (t.Guid != i.Transport.GUID ||
+		t.X != i.Transport.X || t.Y != i.Transport.Y || t.Z != i.Transport.Z || t.Orientation != i.Transport.Orientation ||
+		t.Time != i.Transport.Time || t.Seat != int32(i.Transport.Seat) || t.Time2Known != i.Transport.Time2Present ||
+		t.Time2Known && t.Time2 != i.Transport.Time2) {
+		return movementinfo.Info{}, false
+	}
 	return i, true
+}
+
+// A map boundary ends the old steering request, including committed samples
+// in the old coordinate system. Keep the original packet, attempt, and
+// delivery status. A new map's movement needs its own policy lease and goal.
+func (s *Service) retireSurfaceGoalLocked() {
+	sf := &s.surfaceFollow
+	if sf.goal == nil && sf.planSource == nil && sf.body == nil {
+		return
+	}
+	sf.goal, sf.plan, sf.planSource = nil, nil, nil
+	sf.jumpRequired = false
+	sf.exitSearch = buddynav.SurfaceDepartureSearch{}
+	sf.phase = "surface_waiting_for_receiving_body"
+}
+
+func (s *Service) priorPassengerMovingLocked() bool {
+	b := s.surfaceFollow.body
+	return b != nil && b.info.TransportPresent && (s.state.Moving || s.state.MotionUnconfirmed) &&
+		(!s.encounterVisit.bound || b.visit != s.encounterVisit.revision)
 }
 
 // Only an independently received stopped body resolves physical custody.
@@ -143,9 +181,14 @@ func (s *Service) receivedSurfaceSource(w *worldv1.SnapshotResponse, scope *modv
 func (s *Service) reconcileSurfaceMotionLocked(w *worldv1.SnapshotResponse) bool {
 	sf := &s.surfaceFollow
 	b := sf.body
-	if !s.state.MotionUnconfirmed || b == nil || !b.uncertain || b.packet == nil ||
+	if b == nil || b.packet == nil ||
 		!s.matchesCurrentEncounterVisitLocked(w) || w.GetSelf().GetGuid() != s.selfGUID ||
 		!w.Self.GetPositionKnown() || !w.Self.GetAliveKnown() || !w.Self.GetAlive() {
+		return false
+	}
+	uncertain := b.uncertain && s.state.MotionUnconfirmed
+	previousVisit := !b.uncertain && !s.state.MotionUnconfirmed && s.priorPassengerMovingLocked()
+	if !uncertain && !previousVisit {
 		return false
 	}
 	scope := portalObservedWorldScope(w, s.selfGUID)
@@ -159,8 +202,19 @@ func (s *Service) reconcileSurfaceMotionLocked(w *worldv1.SnapshotResponse) bool
 		if w.Self.PositionRevision <= b.rawPositionRevision || !samePortalCoreVisit(old, current) || current.MotionRevision <= old.MotionRevision {
 			return false
 		}
-	} else if w.VisitRevision <= b.visit || samePortalCoreVisit(old, current) {
+	} else if w.VisitRevision <= b.visit || old.GetConnectionId() == "" || old.ConnectionId != current.GetConnectionId() ||
+		old.SelfGuid != s.selfGUID || !old.VisitBound || current.GetVisitRevision() <= old.VisitRevision {
 		return false
+	}
+	if b.visit != w.VisitRevision && b.info.TransportPresent && i.TransportPresent {
+		frame, known := receivedPassenger(w.Self, w.VisitRevision)
+		hull := movingHull(w, i.Transport.GUID)
+		if !known || i.Transport.GUID != b.info.Transport.GUID || frame.Info.Time != i.Time ||
+			frame.Info.Flags != i.Flags || (position{frame.Info.X, frame.Info.Y, frame.Info.Z, frame.Info.Orientation}) != playerPosition(w.Self) ||
+			!proto.Equal(frame.Info, w.SelfMovementFacts.Info) || hull == nil || hull.MovingTransport.ObjectRevision == 0 ||
+			frame.Revision < hull.MovingTransport.ObjectRevision {
+			return false
+		}
 	}
 	s.pos, s.posKnown, s.positionRevision = playerPosition(w.Self), true, w.Self.PositionRevision
 	s.observePositionLocked(w.Self)
@@ -286,8 +340,14 @@ func checkSurfaceDeparture(ctx context.Context, m *buddynav.TransportSurface, pa
 
 func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.SnapshotResponse, now time.Time) bool {
 	sf := &s.surfaceFollow
+	if s.priorPassengerMovingLocked() && !s.reconcileSurfaceMotionLocked(w) {
+		return s.surfaceHold("surface_waiting_for_receiving_body", nil)
+	}
 	g := sf.goal
 	in := sf.planSource
+	if in != nil && in.body != nil {
+		return true // Its synchronous MoveBody call owns every frame and the STOP.
+	}
 	if g == nil && in == nil {
 		return false
 	}
@@ -298,7 +358,7 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 		return s.surfaceHold("surface_body_source_changed", nil)
 	}
 	current := s.surfaceGoalCurrentLocked(w, g)
-	sameInput := current && (!active || g.SurfaceMode == in.goal.SurfaceMode && g.TransportGuid == in.goal.TransportGuid && g.OwnerGuid == in.goal.OwnerGuid && in.hostEpoch == s.hostEncounterEpoch)
+	sameInput := current && (!active || in.goal != nil && g.SurfaceMode == in.goal.SurfaceMode && g.TransportGuid == in.goal.TransportGuid && g.OwnerGuid == in.goal.OwnerGuid && in.hostEpoch == s.hostEncounterEpoch)
 	if sameInput && active && surfaceDistance(in.ownerPoint, surfaceOwnerPoint(w)) > g.StopDistance {
 		sameInput = false
 	}
@@ -405,6 +465,8 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 		return s.surfaceHold("surface_deck_support_unknown", nil)
 	}
 	localRoute := g.SurfaceMode == "ride"
+	var points []buddynav.BodyMotionSample
+	var departureOffset float64
 	if g.SurfaceMode == "board" {
 		entry, e := mesh.BoardingEntry(ctx, localStart, localEnd)
 		if e != nil {
@@ -412,18 +474,65 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 		}
 		target = transform.World(entry)
 	} else if g.SurfaceMode == "leave" {
-		entry, e := mesh.BoardingEntry(ctx, localEnd, localStart)
-		if e != nil {
-			return s.surfaceHold("surface_exit_route_unavailable", e)
+		// A checked jump from the current deck position can clear the side
+		// before the closest projected deck point, especially as the ferry
+		// turns. The full moving-hull sweep must reach exterior contact.
+		if g.Jump {
+			points, _ = s.measureSurfaceCrossing(ctx, w, g, mesh, transform, progress, start, target, speed, true)
 		}
-		if surfaceDistance(entry, localStart) > .45 {
-			localEnd, localRoute = entry, true
+		if len(points) == 0 && g.Jump && w.Owner.GetPassengerMovement().GetInfo().GetFlags()&swimMovementFlag != 0 {
+			var outward buddynav.Point
+			// Leave time for a fresh World read and the scoped socket writer.
+			search, cancel := context.WithTimeout(ctx, actionsTickBudget/2)
+			route, e := mesh.DepartureRoute(search, localStart, localEnd, func(deck, normal buddynav.Point, length float64) bool {
+				approach := time.Duration(length / speed * float64(time.Second))
+				at := uint64(progress) + uint64(approach/time.Millisecond)
+				if at > math.MaxUint32 || path.CrossesTransfer(uint64(progress), at) {
+					return false
+				}
+				pose, e := path.Sample(at)
+				if e != nil || pose.MapID != w.Self.MapId {
+					return false
+				}
+				launch := transform
+				if !dockInput(path, progress, approach) {
+					launch = buddynav.SurfaceTransform{Origin: pose.Position, Yaw: pose.Yaw, Scale: transform.Scale}
+				}
+				rows, _ := s.checkSurfaceExit(search, w, g, mesh, launch, uint32(at), launch.World(deck), target, normal, speed)
+				if len(rows) == 0 {
+					return false
+				}
+				outward = normal
+				return true
+			}, &sf.exitSearch)
+			cancel()
+			if errors.Is(e, context.DeadlineExceeded) && ctx.Err() == nil {
+				return s.surfaceHold("surface_searching_for_exit", nil)
+			}
+			if e != nil {
+				return s.surfaceHold("surface_exit_route_unavailable", e)
+			}
+			if surfaceDistance(localStart, route[len(route)-1]) <= .45 {
+				points, departureOffset = s.checkSurfaceExit(ctx, w, g, mesh, transform, progress, start, target, outward, speed)
+			}
+			if len(points) == 0 {
+				points = deckInput(route, transform, speed, 0)
+				localRoute = true
+			}
+		}
+		if len(points) == 0 {
+			entry, e := mesh.BoardingEntry(ctx, localEnd, localStart)
+			if e != nil {
+				return s.surfaceHold("surface_exit_route_unavailable", e)
+			}
+			if surfaceDistance(entry, localStart) > .45 {
+				localEnd, localRoute = entry, true
+			}
 		}
 	}
-	var points []buddynav.BodyMotionSample
-	bearing := surfaceBearing(start, target)
+	bearing := surfaceBearing(start, target) + departureOffset
 	jump := g.Jump && !localRoute
-	if localRoute {
+	if localRoute && len(points) == 0 {
 		route, e := mesh.Route(ctx, localStart, localEnd)
 		if e != nil {
 			return s.surfaceHold("surface_deck_route_unavailable", e)
@@ -433,7 +542,7 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 			stop = g.StopDistance
 		}
 		points = deckInput(route, transform, speed, stop)
-	} else {
+	} else if len(points) == 0 {
 		proof := func(hop bool) ([]buddynav.BodyMotionSample, error) {
 			return s.measureSurfaceCrossing(ctx, w, g, mesh, transform, progress, start, target, speed, hop)
 		}
@@ -458,9 +567,45 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 	sf.planTransform, sf.planWasAttached, sf.planDetached = transform, own.TransportPresent, false
 	sf.planBearing, sf.planSpeed, sf.planJump = bearing, speed, jump
 	sf.planSource = &surfaceMotionSource{goal: g, rawRevision: w.Self.PositionRevision, objectRevision: hull.MovingTransport.ObjectRevision,
-		progress: progress, firstProgress: progress, hostEpoch: s.hostEncounterEpoch, lastTransform: transform, localRoute: localRoute, ownerPoint: ownerPoint}
+		progress: progress, firstProgress: progress, hostEpoch: s.hostEncounterEpoch, lastTransform: transform, localRoute: localRoute, ownerPoint: ownerPoint, departureOffset: departureOffset}
 	sf.jumpRequired = false
 	return s.advanceSurfaceInputLocked(ctx, w, mesh, transform, progress, own, s.now())
+}
+
+// An observed swimmer may be at an angle to the opening. Try the bearing
+// toward that swimmer, through the opening, or between them. An angled jump
+// must reach actual water closer to that same current owner.
+func (s *Service) checkSurfaceExit(ctx context.Context, w *worldv1.SnapshotResponse, g *actionsv1.FollowFormationRequest, mesh *buddynav.SurfaceMesh, tr buddynav.SurfaceTransform, progress uint32, start, owner, normal buddynav.Point, speed float64) ([]buddynav.BodyMotionSample, float64) {
+	toward := surfaceBearing(start, owner)
+	angle := math.Remainder(math.Atan2(float64(normal.Y), float64(normal.X))+float64(tr.Yaw)-toward, 2*math.Pi)
+	for _, offset := range [...]float64{0, angle / 2, angle} {
+		if offset != 0 && (w.Owner.GetPassengerMovement().GetInfo().GetFlags()&swimMovementFlag == 0 || math.Abs(offset) >= math.Pi/2) {
+			continue
+		}
+		rows, err := s.measureSurfaceExitHeading(ctx, w, g, mesh, tr, progress, start, owner, offset, speed, true)
+		if err == nil {
+			return rows, offset
+		}
+	}
+	return nil, 0
+}
+
+func (s *Service) measureSurfaceExitHeading(ctx context.Context, w *worldv1.SnapshotResponse, g *actionsv1.FollowFormationRequest, mesh *buddynav.SurfaceMesh, tr buddynav.SurfaceTransform, progress uint32, start, owner buddynav.Point, offset, speed float64, hop bool) ([]buddynav.BodyMotionSample, error) {
+	target := owner
+	if offset != 0 {
+		bearing := surfaceBearing(start, owner) + offset
+		rangeXY := math.Hypot(float64(owner.X-start.X), float64(owner.Y-start.Y))
+		target.X = start.X + float32(rangeXY*math.Cos(bearing))
+		target.Y = start.Y + float32(rangeXY*math.Sin(bearing))
+	}
+	rows, err := s.measureSurfaceCrossing(ctx, w, g, mesh, tr, progress, start, target, speed, hop)
+	if err == nil && offset != 0 {
+		last := rows[len(rows)-1]
+		if w.Owner.GetPassengerMovement().GetInfo().GetFlags()&swimMovementFlag == 0 || !last.Swimming || surfaceDistance(last.Point, owner) >= surfaceDistance(start, owner) {
+			return nil, errors.New("angled exit has no closer water contact toward this swimmer")
+		}
+	}
+	return rows, err
 }
 
 // A single ordinary forward input is at most half a second. Once gravity
@@ -542,7 +687,7 @@ func surfaceRecontact(ctx context.Context, m *buddynav.TransportSurface, a, b bu
 func (s *Service) advanceSurfaceInputLocked(ctx context.Context, w *worldv1.SnapshotResponse, mesh *buddynav.SurfaceMesh, tr buddynav.SurfaceTransform, progress uint32, own movementinfo.Info, now time.Time) bool {
 	sf := &s.surfaceFollow
 	in := sf.planSource
-	p := sf.paths[in.goal.TransportGuid]
+	p := sf.paths[in.shipGUID()]
 	// Real received progress is a uint32. A counter reset or jump cannot join
 	// a prior movement frame even if the same model exists in the new map.
 	if progress < in.progress || p.CrossesTransfer(uint64(in.progress), uint64(progress)) {
@@ -556,7 +701,7 @@ func (s *Service) advanceSurfaceInputLocked(ctx context.Context, w *worldv1.Snap
 		// since our last actual frame. A later own observation can rebase it.
 		return s.surfaceHold("surface_waiting_for_current_body", nil)
 	}
-	if in.goal.SurfaceMode == "board" && !dockInput(p, progress, max(0, sf.planAt.Add(sf.plan[len(sf.plan)-1].At).Sub(now))) {
+	if in.goal.GetSurfaceMode() == "board" && !dockInput(p, progress, max(0, sf.planAt.Add(sf.plan[len(sf.plan)-1].At).Sub(now))) {
 		if in.airborne {
 			in.released = true
 		} else {
@@ -720,11 +865,11 @@ func (s *Service) advanceSurfaceInputLocked(ctx context.Context, w *worldv1.Snap
 			if in.localRoute && !foot {
 				return s.surfaceHold("surface_deck_support_changed", nil)
 			}
-			attach = foot && (sf.planWasAttached || in.goal.SurfaceMode == "board")
+			attach = foot && (sf.planWasAttached || in.goal.GetSurfaceMode() == "board")
 		}
 	}
 	if attach {
-		setPassengerFrame(&info, in.goal.TransportGuid, tr, progress)
+		setPassengerFrame(&info, in.shipGUID(), tr, progress)
 	}
 	if err := s.writeSurfaceInfoLocked(ctx, w, info, code); err != nil {
 		return s.surfaceWriteFailure(err)
@@ -781,7 +926,14 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 	if in != nil {
 		g = in.goal
 	}
-	if op != opcode.MSGMoveStop {
+	if in != nil && in.body != nil {
+		if !s.explicitSurfaceCurrentLocked(ctx, latest, in) {
+			return modcb.PacketNotDispatchedError("selected passenger body or lease changed before write")
+		}
+		if in.released && info.Flags&1 != 0 && op != opcode.MSGMoveStop {
+			return modcb.PacketNotDispatchedError("voluntary passenger input was released before write")
+		}
+	} else if op != opcode.MSGMoveStop {
 		if !s.surfaceOwnMotionAllowed(latest) || s.state.InteractionOwner != "" || s.movementOwner.owner != "" ||
 			!committed && !s.surfaceGoalCurrentLocked(latest, g) {
 			return modcb.PacketNotDispatchedError("surface follow authority changed before write")
@@ -798,7 +950,7 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 	if in != nil {
 		// The sampled exit still relies on its particular hull through first
 		// contact and the final STOP, even after clearing ONTRANSPORT.
-		ship = in.goal.TransportGuid
+		ship = in.shipGUID()
 	} else if op != opcode.MSGMoveStop {
 		ship = g.TransportGuid
 	}
@@ -834,13 +986,28 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 		// search, so remeasure that complete departure at the fresh pose.
 		sf := &s.surfaceFollow
 		start := nowTransform.World(surfaceLocalPoint(info))
-		if in.goal.SurfaceMode == "leave" && !in.localRoute && !sf.plan[0].Settling {
-			bearing := surfaceBearing(start, surfaceOwnerPoint(latest))
+		if in.body != nil && !in.localRoute && !sf.plan[0].Settling {
+			mesh, e := s.surfaceMeshLocked(ctx, b)
+			if e != nil {
+				return modcb.PacketNotDispatchedError("current selected passenger model unavailable")
+			}
+			bearing := float64(nowTransform.Yaw) + in.body.localBearing
+			flight, local, e := s.planExplicitSurface(ctx, latest, in.body.request, mesh, path, nowTransform, nowProgress, start, bearing, sf.planSpeed)
+			if e != nil || local {
+				return modcb.PacketNotDispatchedError("current selected passenger trajectory changed")
+			}
+			sf.plan, sf.planTransform, sf.planBearing = flight, nowTransform, bearing
+			info.Orientation = float32(math.Remainder(bearing, 2*math.Pi))
+			if info.JumpPresent {
+				info.Jump.SinAngle, info.Jump.CosAngle = float32(math.Sin(bearing)), float32(math.Cos(bearing))
+			}
+		} else if in.goal.GetSurfaceMode() == "leave" && !in.localRoute && !sf.plan[0].Settling {
+			bearing := surfaceBearing(start, surfaceOwnerPoint(latest)) + in.departureOffset
 			mesh, e := s.surfaceMeshLocked(ctx, b)
 			if e != nil {
 				return modcb.PacketNotDispatchedError("current departure hull unavailable")
 			}
-			flight, e := s.measureSurfaceCrossing(ctx, latest, g, mesh, nowTransform, nowProgress, start, surfaceOwnerPoint(latest), sf.planSpeed, sf.planJump)
+			flight, e := s.measureSurfaceExitHeading(ctx, latest, g, mesh, nowTransform, nowProgress, start, surfaceOwnerPoint(latest), in.departureOffset, sf.planSpeed, sf.planJump)
 			if e != nil {
 				return modcb.PacketNotDispatchedError("current departure: " + e.Error())
 			}
@@ -901,6 +1068,10 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 		return modcb.PacketNotDispatchedError("surface World packet sequence unavailable")
 	}
 	wctx := context.WithValue(ctx, surfaceOwnPacketKey{}, true)
+	if in != nil && in.body != nil {
+		r := in.body.request
+		wctx = modcb.WithSurfaceBodySelection(modcb.ForwardPolicySpell(wctx), r.VisitId, r.SequenceId)
+	}
 	wctx = modcb.WithMovementAttempt(modcb.WithRouteBodyInput(wctx, false), attempt)
 	wctx = modcb.WithRouteHull(wctx, ship, hullRevision, worldPackets)
 	err = s.sendPacketLocked(wctx, op, payload, scope)
@@ -908,6 +1079,9 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 		return err
 	}
 	if err == nil {
+		if in != nil && in.body != nil {
+			in.body.view.TransportWritten = true
+		}
 		err = s.recordSurfaceFrameLocked(ctx, latest, op, payload, attempt)
 	}
 	if err != nil {
@@ -928,12 +1102,28 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 	s.swimming = info.Flags&swimMovementFlag != 0
 	s.state.Moving = info.Flags&1 != 0 || info.JumpPresent
 	s.publishClientMovementLocked(ctx, latest, s.pos, true)
+	if in != nil && in.body != nil {
+		view := in.body.view
+		view.PositionEstimated = true
+		view.X, view.Y, view.Z = info.X, info.Y, info.Z
+	}
 	return nil
 }
 
 func (s *Service) stopSurfaceLocked(ctx context.Context) (bool, bool) {
 	sf := &s.surfaceFollow
 	b := sf.body
+	if in := sf.planSource; in != nil && in.body != nil && ctx.Value(explicitSurfaceInputKey{}) != in.body {
+		in.released = true
+		return true, false
+	}
+	if s.priorPassengerMovingLocked() {
+		if !s.encounterVisit.bound {
+			return true, false
+		}
+		w, err := s.readWorldSnapshot(ctx)
+		return true, err == nil && s.reconcileSurfaceMotionLocked(w)
+	}
 	if b != nil && b.uncertain {
 		if s.state.MotionUnconfirmed {
 			return true, false

@@ -333,8 +333,8 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		op.movement.phase = state.BodyMovement.Phase
 		op.movement.detail = state.BodyMovement.Detail
 	}
-	if op.movement != nil && (op.movement.idleBound || op.movement.landing || op.capability == "movement_points_step") {
-		op.movement.unknown = op.movement.unknown || state.MotionUnconfirmed || (op.movement.landing || op.capability == "movement_points_step") && err != nil && (op.attempted || op.written)
+	if op.movement != nil && (op.movement.surface != nil || op.movement.idleBound || op.movement.landing || op.capability == "movement_points_step") {
+		op.movement.unknown = op.movement.unknown || state.MotionUnconfirmed || (op.movement.surface != nil || op.movement.landing || op.capability == "movement_points_step") && err != nil && (op.attempted || op.written)
 	}
 	if err == nil && op.capability == "release_interaction" && state.InteractionOwner == "" {
 		// The exact lease is released. A STOP write/returned metadata is not a
@@ -365,7 +365,7 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	case op.attempted:
 		return behavior.ActionUnknown, policyDispatchError(op.payload("transport_unconfirmed_no_retry", false, false, false), err)
 	}
-	if err == nil && op.movement != nil && op.movement.body && (op.movement.phase == "local_physics_refused" || (op.movement.idleBound || op.movement.landing) && op.movement.phase == "body_scope_not_dispatched") {
+	if err == nil && op.movement != nil && op.movement.body && (op.movement.phase == "local_physics_refused" || op.movement.phase == "body_scope_not_dispatched") {
 		// The binding measured and refused the input before any packet write.
 		// This is a known non-dispatch, not an ambiguous transport outcome.
 		return behavior.ActionNotDispatched, op.payload(op.movement.phase, false, false, false)

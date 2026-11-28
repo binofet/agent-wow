@@ -303,6 +303,11 @@ message WorldTransferObservation {
   uint32 current_unit_flags = 19;
   bool arrival_known = 20;
   bool booking_causality_known = 21;
+  // Nonzero template received on this body's twelve-byte TRANSFER_PENDING.
+  uint32 passenger_transport_entry = 22;
+  // Current receiving-side self attachment on the same type-15 hull observed
+  // at departure. Neither the pending template nor NEW_WORLD supplies a GUID.
+  uint64 passenger_transport_guid = 23;
 }
 
 // Explicitly replace one completion slot with its observed adjacent segment.

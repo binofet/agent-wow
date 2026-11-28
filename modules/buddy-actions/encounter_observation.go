@@ -32,6 +32,7 @@ func (s *Service) observeEncounterVisitLocked(op uint32, payload []byte) {
 	switch op {
 	case opcode.SMSGTransferPending:
 		if len(payload) >= 4 {
+			s.retireSurfaceGoalLocked()
 			s.portalGoal = portalCatchupGoal{}
 			s.encounterVisit.bound = false
 			s.navigationGoalKnown = false
@@ -40,6 +41,7 @@ func (s *Service) observeEncounterVisitLocked(op uint32, payload []byte) {
 		if !validEncounterWorldEntry(payload) {
 			return
 		}
+		s.retireSurfaceGoalLocked()
 		s.formation.Reset()
 		s.followGoal = followFormationGoal{}
 		s.portalGoal = portalCatchupGoal{}

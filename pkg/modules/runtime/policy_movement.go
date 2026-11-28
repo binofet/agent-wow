@@ -36,6 +36,8 @@ type policyMovement struct {
 	idleBound    bool
 	unknown      bool
 	sequence     uint64
+	durationMs   uint32
+	surface      *policySurfaceInput
 	phase        string
 	detail       string
 }
@@ -99,7 +101,7 @@ func (p *SessionPolicy) resolveBodyMovement(action map[string]any) (PolicyDispat
 		values["idle_token"] = protoreflect.ValueOfString(token)
 	}
 	op := &policySpell{vm: p.vm, capability: "move_body", encounterVisit: visitID,
-		movement: &policyMovement{self: selfID, body: true, jump: jump, landing: landing, followsOwner: action["landing"] == "follow_water", sequence: sequenceID}}
+		movement: &policyMovement{self: selfID, body: true, jump: jump, landing: landing, followsOwner: action["landing"] == "follow_water", sequence: sequenceID, durationMs: uint32(duration)}}
 	_, op.movement.idleBound = action["idleToken"]
 	dispatch, err := p.preparePolicyDispatch("move_body", values, op)
 	if err == nil {
@@ -174,10 +176,10 @@ func (m *Manager) invokePolicyMovement(ctx context.Context, inst *instance, md m
 	outcome, payload := m.invokePolicySpell(ctx, inst, md, req, op)
 	m.policySpells.mu.Lock()
 	delete(m.policySpells.active, op.token)
-	if (op.movement.landing || op.capability == "movement_points_step") && outcome == behavior.ActionUnknown {
+	if (op.movement.surface != nil || op.movement.landing || op.capability == "movement_points_step") && outcome == behavior.ActionUnknown {
 		op.movement.unknown = true
 	}
-	if (op.movement.idleBound || op.movement.landing || op.capability == "release_interaction" || op.capability == "movement_points_step") && op.movement.unknown {
+	if (op.movement.surface != nil || op.movement.idleBound || op.movement.landing || op.capability == "release_interaction" || op.capability == "movement_points_step") && op.movement.unknown {
 		payload["reconciliationRequired"] = true
 		if op.capability == "movement_points_step" {
 			payload["motion_unconfirmed"] = true
@@ -202,16 +204,20 @@ func (m *Manager) writePolicyScopedMovement(ctx context.Context, token, sessionI
 	registry.mu.Lock()
 	follows, route, _ := modcb.IncomingRouteBodyInput(ctx)
 	op := registry.active[token]
-	if route && (follows || op == nil || op.capability != "travel_to" || op.movement == nil || !op.movement.idleBound) {
+	hull, birth, packets, validHull, hasHull := modcb.IncomingRouteHull(ctx)
+	visit, sequence, selection := modcb.IncomingSurfaceBodySelection(ctx)
+	surface := route && !follows && hasHull && validHull && selection && visit != 0 && sequence != 0 && op != nil && op.capability == "move_body" && op.encounterVisit == visit && op.movement != nil && op.movement.sequence == sequence && op.movement.body && !op.movement.followsOwner
+	if (hasHull || selection) && !surface || op != nil && op.movement != nil && op.movement.surface != nil && !surface ||
+		route && !surface && (follows || op == nil || op.capability != "travel_to" || op.movement == nil || !op.movement.idleBound) {
 		registry.mu.Unlock()
 		return true, modcb.PacketNotDispatchedError("route frame is outside the active travel dispatch")
 	}
-	if op == nil || op.movement == nil || !op.movement.idleBound && !op.movement.landing && !(op.capability == "release_interaction" && op.movement.stop) {
+	if op == nil || op.movement == nil || !surface && !op.movement.idleBound && !op.movement.landing && !(op.capability == "release_interaction" && op.movement.stop) {
 		registry.mu.Unlock()
 		return false, nil
 	}
 	movement := op.movement
-	allowed := (movement.idleBound || movement.landing) && op.capability == "move_body" && movement.body || movement.idleBound && op.capability == "travel_to" && !movement.body ||
+	allowed := surface || (movement.idleBound || movement.landing) && op.capability == "move_body" && movement.body || movement.idleBound && op.capability == "travel_to" && !movement.body ||
 		op.capability == "release_interaction" && movement.stop
 	attempt := modcb.IncomingMovementAttempt(ctx)
 	if !op.admitted || !allowed || (movement.landing || route) && attempt == "" ||
@@ -220,6 +226,19 @@ func (m *Manager) writePolicyScopedMovement(ctx context.Context, token, sessionI
 		(!route && !op.matchesMovementPacket(code, payload) || route && !routeScopeBound(scope)) || ctx.Err() != nil || m.session.SendScopedPacket == nil {
 		registry.mu.Unlock()
 		return true, modcb.PacketNotDispatchedError("scoped callback is outside the exact idle movement dispatch")
+	}
+	var next policySurfaceInput
+	if surface {
+		var valid bool
+		next, valid = op.nextSurfaceInput(code, payload, scope, hull, birth, packets, attempt)
+		if !valid {
+			registry.mu.Unlock()
+			return true, modcb.PacketNotDispatchedError("frame is outside the selected passenger body input")
+		}
+		if movement.surface == nil {
+			movement.surface = &policySurfaceInput{}
+		}
+		movement.surface.writing = true
 	}
 	op.attempted = true
 	origin := op.origin
@@ -236,6 +255,17 @@ func (m *Manager) writePolicyScopedMovement(ctx context.Context, token, sessionI
 	registry.mu.Unlock()
 	err := m.session.SendScopedPacket(modsession.WithWriteOrigin(ctx, origin), code, append([]byte(nil), payload...), proto.Clone(scope).(*modv1.TransportScope))
 	registry.mu.Lock()
+	if surface {
+		if err == nil {
+			next.attempts[attempt] = struct{}{}
+			*movement.surface = next
+		} else {
+			movement.surface.writing = false
+			if !movement.surface.started && modcb.PacketWasNotDispatched(err) {
+				movement.surface = nil
+			}
+		}
+	}
 	movement.unknown = movement.unknown || err != nil && !modcb.PacketWasNotDispatched(err)
 	if err == nil && movement.landing && (code == opcode.MSGMoveHeartbeat || code == opcode.MSGMoveJump) {
 		offset := 1 + bits.OnesCount8(payload[0])
@@ -262,6 +292,9 @@ func (op *policySpell) movementPayload(phase string, written bool) map[string]an
 }
 
 func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
+	if op.movement != nil && op.movement.surface != nil {
+		return false
+	}
 	if op.capability == "release_interaction" {
 		return op.matchesInteractionStop(code, body)
 	}
@@ -349,4 +382,86 @@ func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 		}
 	}
 	return true
+}
+
+type policySurfaceInput struct {
+	connection                                  string
+	visit, hull, birth, packets                 uint64
+	mapID, start, last                          uint32
+	started, airborne, landed, stopped, writing bool
+	attached, swimming                          bool
+	fallAge                                     uint32
+	attempts                                    map[string]struct{}
+}
+
+// A surface callback belongs to exactly one already admitted finite Lua
+// input. Core independently verifies the source bytes, hull lifetime and STOP.
+func (op *policySpell) nextSurfaceInput(code uint32, payload []byte, scope *modv1.TransportScope, hull, birth, packets uint64, attempt string) (policySurfaceInput, bool) {
+	move := op.movement
+	in := policySurfaceInput{}
+	if move.surface != nil {
+		in = *move.surface
+	}
+	info, ok := movementinfo.OwnFrame(payload, move.self)
+	_, reused := in.attempts[attempt]
+	if !ok || !buddynav.RouteBodyFrame(code, payload, move.self) || !modcb.ValidMovementAttempt(attempt) || in.writing || in.stopped || reused {
+		return in, false
+	}
+	if !in.started {
+		if op.attempted || op.written || info.FallTime != 0 || !info.TransportPresent || info.Transport.GUID != hull || move.jump && code != opcode.MSGMoveJump || !move.jump && code != opcode.MSGMoveStartForward {
+			return in, false
+		}
+		in = policySurfaceInput{connection: scope.ConnectionId, visit: scope.VisitRevision, mapID: scope.MapId, hull: hull, birth: birth, start: info.Time, started: true, attempts: make(map[string]struct{})}
+	} else {
+		if in.connection != scope.ConnectionId || in.visit != scope.VisitRevision || in.mapID != scope.MapId || in.hull != hull || in.birth != birth || packets < in.packets || int32(info.Time-in.last) < 0 {
+			return in, false
+		}
+		switch code {
+		case opcode.MSGMoveHeartbeat:
+			if in.landed || info.Time == in.last || !info.TransportPresent && !info.JumpPresent || in.airborne && !info.JumpPresent {
+				return in, false
+			}
+			if !info.JumpPresent && info.Time-in.start > move.durationMs {
+				return in, false
+			}
+		case opcode.MSGMoveStartSwim, opcode.MSGMoveFallLand:
+			if in.landed || !in.airborne || code == opcode.MSGMoveStartSwim && !move.landing {
+				return in, false
+			}
+			in.landed = true
+		case opcode.MSGMoveStop:
+			if in.airborne || info.TransportPresent != in.attached || (info.Flags&movementinfo.SwimmingFlag != 0) != in.swimming || !info.TransportPresent && !in.landed {
+				return in, false
+			}
+			in.stopped = true
+		default:
+			return in, false
+		}
+	}
+	if info.JumpPresent {
+		if !move.jump && (!move.landing || info.Jump.Velocity != 0) || move.jump && math.Abs(float64(info.Jump.Velocity)-buddynav.BodyJumpVelocity) > .0001 {
+			return in, false
+		}
+		if in.airborne && info.FallTime < in.fallAge || !move.landing && time.Duration(info.FallTime)*time.Millisecond > buddynav.BodyMotionHorizon {
+			return in, false
+		}
+	}
+	// A selected finite action cannot keep an otherwise plausible series of
+	// zero-age airborne reports alive beyond the physical world envelope.
+	if info.JumpPresent || in.landed && code != opcode.MSGMoveStop {
+		flight := time.Duration(info.Time-in.start) * time.Millisecond
+		if !move.jump {
+			flight = max(0, flight-time.Duration(move.durationMs)*time.Millisecond)
+		}
+		if !move.landing && flight > buddynav.BodyMotionHorizon || !buddynav.BodyFlightInRange(flight, 0, float64(info.Jump.Velocity)) {
+			return in, false
+		}
+	}
+	in.airborne = info.JumpPresent
+	in.attached = info.TransportPresent
+	in.swimming = info.Flags&movementinfo.SwimmingFlag != 0
+	in.fallAge = info.FallTime
+	in.packets = packets
+	in.last = info.Time
+	return in, true
 }
