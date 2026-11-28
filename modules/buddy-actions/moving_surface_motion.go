@@ -56,10 +56,12 @@ func (s *Service) surfaceGoalCurrentLocked(w *worldv1.SnapshotResponse, g *actio
 	if g == nil || !ok || !s.hostEncounterActiveLocked() || sf.hostEpoch != s.hostEncounterEpoch || !s.now().Before(sf.until) ||
 		s.closed || s.independent || s.sessionID != g.SessionId || s.selfGUID != g.SelfGuid || s.followRevision != g.FollowRevision ||
 		!s.matchesCurrentEncounterVisitLocked(w) || g.VisitId != w.VisitRevision || g.OwnerGuid != o.GetGuid() || o.GetMapId() != w.GetSelf().GetMapId() ||
-		!o.GetMapKnown() || !o.GetPositionKnown() || g.OwnerPassengerRevision != passenger.Revision || o.PositionRevision != g.OwnerPositionRevision {
+		!o.GetMapKnown() || !o.GetPositionKnown() {
 		return false
 	}
 	ownerShip := passenger.Info.GetTransport().GetGuid()
+	// The setter admits an exact received frame. A later heartbeat refreshes
+	// that same owner's pose; it does not revoke the finite follow intent.
 	return g.SurfaceMode == "leave" && ownerShip == 0 || (g.SurfaceMode == "board" || g.SurfaceMode == "ride") && ownerShip == g.TransportGuid
 }
 
@@ -297,7 +299,7 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 	}
 	current := s.surfaceGoalCurrentLocked(w, g)
 	sameInput := current && (!active || g.SurfaceMode == in.goal.SurfaceMode && g.TransportGuid == in.goal.TransportGuid && g.OwnerGuid == in.goal.OwnerGuid && in.hostEpoch == s.hostEncounterEpoch)
-	if sameInput && active && g.OwnerPassengerRevision != in.goal.OwnerPassengerRevision && surfaceDistance(in.ownerPoint, surfaceOwnerPoint(w)) > g.StopDistance {
+	if sameInput && active && surfaceDistance(in.ownerPoint, surfaceOwnerPoint(w)) > g.StopDistance {
 		sameInput = false
 	}
 	if !sameInput {
@@ -783,6 +785,9 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 		if !s.surfaceOwnMotionAllowed(latest) || s.state.InteractionOwner != "" || s.movementOwner.owner != "" ||
 			!committed && !s.surfaceGoalCurrentLocked(latest, g) {
 			return modcb.PacketNotDispatchedError("surface follow authority changed before write")
+		}
+		if !committed && in != nil && surfaceDistance(in.ownerPoint, surfaceOwnerPoint(latest)) > g.StopDistance {
+			return modcb.PacketNotDispatchedError("surface owner moved beyond the current input before write")
 		}
 		if committed && info.Flags&1 != 0 && !s.surfaceGoalCurrentLocked(latest, s.surfaceFollow.goal) && !s.continuesDetachedSurfaceLocked(latest, in) {
 			in.released = true

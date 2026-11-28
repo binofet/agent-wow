@@ -12,6 +12,10 @@ import (
 )
 
 func TestIndependentPostCreateFractionCanDisprovePredictedShipWhenNobodyIsAttached(t *testing.T) {
+	dir := os.Getenv("BUDDY_NAV_POOL_TEST_DATA_DIR")
+	if dir == "" {
+		t.Skip("set BUDDY_NAV_POOL_TEST_DATA_DIR for copied ferry clock/scalar evidence")
+	}
 	for _, row := range []struct {
 		name        string
 		observed    uint32
@@ -21,10 +25,6 @@ func TestIndependentPostCreateFractionCanDisprovePredictedShipWhenNobodyIsAttach
 		t.Run(row.name, func(t *testing.T) {
 			const first = uint32(10000)
 			s, f, _ := portalEntryRig(t)
-			dir := os.Getenv("BUDDY_NAV_POOL_TEST_DATA_DIR")
-			if dir == "" {
-				t.Fatal("needs declared assets")
-			}
 			s.SetNavigationDataDir(dir)
 			p, err := buddynav.LoadTransportPath(context.Background(), dir, 292, 30, 3)
 			if err != nil {
