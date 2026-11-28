@@ -370,6 +370,9 @@ func (e *engine) publishTransportScope() {
 		e.s.bodyUpdates.signal()
 	}
 	e.s.transportScopeSnapshot = e.transport.snapshot()
+	if e.s.ownMovementReportSnapshot != e.ownMovementReport {
+		e.s.bodyUpdates.ownHarmless, e.s.bodyUpdates.lastObject = 0, 0
+	}
 	e.s.ownMovementReportSnapshot = e.ownMovementReport
 	e.s.ownMovementAttemptSnapshot = e.ownMovementAttempt
 	e.s.mu.Unlock()
@@ -425,7 +428,7 @@ func (e *engine) observeTransportScope(op uint16, body []byte) {
 				reason = "own_restricted_stand_state"
 			}
 		}
-		e.s.recordParsedBodyUpdate(e.transport.scope, reason, positions...)
+		e.s.recordBodyUpdate(e.transport.scope, reason, false, positions...)
 	}
 }
 
