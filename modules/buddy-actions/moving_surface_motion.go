@@ -165,7 +165,6 @@ func (s *Service) retireSurfaceGoalLocked() {
 		return
 	}
 	sf.goal, sf.plan, sf.planSource = nil, nil, nil
-	sf.jumpRequired = false
 	sf.exitSearch = buddynav.SurfaceDepartureSearch{}
 	sf.phase = "surface_waiting_for_receiving_body"
 }
@@ -242,7 +241,7 @@ func dockInput(path *buddynav.TransportPath, progress uint32, duration time.Dura
 	end := start + uint64((duration+time.Millisecond-1)/time.Millisecond)
 	a, ea := path.Sample(start)
 	b, eb := path.Sample(end)
-	return ea == nil && eb == nil && a.Stopped && b.Stopped && a.MapID == b.MapID && a.Position == b.Position && !a.Transfer && !path.CrossesTransfer(start, end)
+	return end <= math.MaxUint32 && ea == nil && eb == nil && a.Stopped && b.Stopped && a.MapID == b.MapID && a.Position == b.Position && !a.Transfer && !path.CrossesTransfer(start, end)
 }
 
 func hullFoot(ctx context.Context, model *buddynav.TransportSurface, q buddynav.Point) (bool, error) {
@@ -440,7 +439,8 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 	if err != nil {
 		return s.surfaceHold("surface_support_unavailable", err)
 	}
-	if g.SurfaceMode == "board" && !dockInput(path, progress, time.Millisecond) {
+	dockWalk := surfaceDockWalk(g)
+	if dockWalk && !dockInput(path, progress, time.Millisecond) {
 		return s.surfaceHold("surface_waiting_for_dock", nil)
 	}
 	if g.SurfaceMode == "board" && floor {
@@ -450,7 +450,6 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 			if err := s.writeSurfaceInfoLocked(ctx, w, info, opcode.MSGMoveSetFacing); err != nil {
 				return s.surfaceWriteFailure(err)
 			}
-			sf.jumpRequired = false
 			return s.surfaceHold("surface_contact_written", nil)
 		}
 	}
@@ -467,20 +466,21 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 	localRoute := g.SurfaceMode == "ride"
 	var points []buddynav.BodyMotionSample
 	var departureOffset float64
-	if g.SurfaceMode == "board" {
-		entry, e := mesh.BoardingEntry(ctx, localStart, localEnd)
-		if e != nil {
-			return s.surfaceHold("surface_boarding_route_unavailable", e)
+	bearing := surfaceBearing(start, target)
+	if dockWalk {
+		points, bearing, localRoute, err = s.planSurfaceDockWalk(ctx, w, g, mesh, transform, progress, start, target, speed)
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return s.surfaceHold("surface_searching_for_dock_walk", err)
 		}
-		target = transform.World(entry)
+		if err != nil {
+			return s.surfaceHold("surface_dock_walk_unavailable", err)
+		}
 	} else if g.SurfaceMode == "leave" {
 		// A checked jump from the current deck position can clear the side
 		// before the closest projected deck point, especially as the ferry
 		// turns. The full moving-hull sweep must reach exterior contact.
-		if g.Jump {
-			points, _ = s.measureSurfaceCrossing(ctx, w, g, mesh, transform, progress, start, target, speed, true)
-		}
-		if len(points) == 0 && g.Jump && w.Owner.GetPassengerMovement().GetInfo().GetFlags()&swimMovementFlag != 0 {
+		points, _ = s.measureSurfaceCrossing(ctx, w, g, mesh, transform, progress, start, target, speed, true)
+		if len(points) == 0 && w.Owner.GetPassengerMovement().GetInfo().GetFlags()&swimMovementFlag != 0 {
 			var outward buddynav.Point
 			// Leave time for a fresh World read and the scoped socket writer.
 			search, cancel := context.WithTimeout(ctx, actionsTickBudget/2)
@@ -530,8 +530,8 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 			}
 		}
 	}
-	bearing := surfaceBearing(start, target) + departureOffset
-	jump := g.Jump && !localRoute
+	bearing += departureOffset
+	jump := g.Jump && !localRoute && !dockWalk
 	if localRoute && len(points) == 0 {
 		route, e := mesh.Route(ctx, localStart, localEnd)
 		if e != nil {
@@ -543,24 +543,15 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 		}
 		points = deckInput(route, transform, speed, stop)
 	} else if len(points) == 0 {
-		proof := func(hop bool) ([]buddynav.BodyMotionSample, error) {
-			return s.measureSurfaceCrossing(ctx, w, g, mesh, transform, progress, start, target, speed, hop)
-		}
-		points, err = proof(jump)
+		points, err = s.measureSurfaceCrossing(ctx, w, g, mesh, transform, progress, start, target, speed, jump)
 		if err != nil {
-			if !jump {
-				if _, hop := proof(true); hop == nil {
-					sf.jumpRequired = true
-					return s.surfaceHold("surface_jump_required", nil)
-				}
-			}
 			return s.surfaceHold("surface_body_path_unavailable", err)
 		}
 	}
 	if len(points) < 2 {
 		return s.surfaceHold("surface_route_exhausted", nil)
 	}
-	if g.SurfaceMode == "board" && !dockInput(path, progress, points[len(points)-1].At) {
+	if dockWalk && !dockInput(path, progress, points[len(points)-1].At) {
 		return s.surfaceHold("surface_waiting_for_dock", nil)
 	}
 	sf.plan, sf.planAt, sf.planIndex = points, s.now(), 0
@@ -568,7 +559,6 @@ func (s *Service) surfaceFollowTickLocked(ctx context.Context, w *worldv1.Snapsh
 	sf.planBearing, sf.planSpeed, sf.planJump = bearing, speed, jump
 	sf.planSource = &surfaceMotionSource{goal: g, rawRevision: w.Self.PositionRevision, objectRevision: hull.MovingTransport.ObjectRevision,
 		progress: progress, firstProgress: progress, hostEpoch: s.hostEncounterEpoch, lastTransform: transform, localRoute: localRoute, ownerPoint: ownerPoint, departureOffset: departureOffset}
-	sf.jumpRequired = false
 	return s.advanceSurfaceInputLocked(ctx, w, mesh, transform, progress, own, s.now())
 }
 
@@ -701,11 +691,13 @@ func (s *Service) advanceSurfaceInputLocked(ctx context.Context, w *worldv1.Snap
 		// since our last actual frame. A later own observation can rebase it.
 		return s.surfaceHold("surface_waiting_for_current_body", nil)
 	}
-	if in.goal.GetSurfaceMode() == "board" && !dockInput(p, progress, max(0, sf.planAt.Add(sf.plan[len(sf.plan)-1].At).Sub(now))) {
+	if surfaceDockWalk(in.goal) && !sf.dockWalkCurrent(p, tr, progress, now) {
 		if in.airborne {
 			in.released = true
 		} else {
-			_, _ = s.stopSurfaceLocked(ctx)
+			if _, stopped := s.stopSurfaceLocked(ctx); stopped {
+				sf.plan, sf.planSource = nil, nil
+			}
 			return s.surfaceHold("surface_dock_dwell_changed", nil)
 		}
 	}
@@ -970,6 +962,9 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 		return modcb.PacketNotDispatchedError("current hull transform unavailable")
 	}
 	path := s.surfaceFollow.paths[ship]
+	if op != opcode.MSGMoveStop && !committed && surfaceDockWalk(g) && !s.surfaceFollow.dockWalkCurrent(path, nowTransform, nowProgress, s.now()) {
+		return modcb.PacketNotDispatchedError("dock walk no longer fits its measured dwell")
+	}
 	if info.TransportPresent && (info.Transport.Time > nowProgress || path.CrossesTransfer(uint64(info.Transport.Time), uint64(nowProgress))) {
 		return modcb.PacketNotDispatchedError("passenger clock crosses an unobserved hull transfer")
 	}
@@ -1001,7 +996,7 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 			if info.JumpPresent {
 				info.Jump.SinAngle, info.Jump.CosAngle = float32(math.Sin(bearing)), float32(math.Cos(bearing))
 			}
-		} else if in.goal.GetSurfaceMode() == "leave" && !in.localRoute && !sf.plan[0].Settling {
+		} else if in.goal.GetSurfaceMode() == "leave" && !surfaceDockWalk(in.goal) && !in.localRoute && !sf.plan[0].Settling {
 			bearing := surfaceBearing(start, surfaceOwnerPoint(latest)) + in.departureOffset
 			mesh, e := s.surfaceMeshLocked(ctx, b)
 			if e != nil {
@@ -1022,16 +1017,6 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 		info.X, info.Y, info.Z = start.X, start.Y, start.Z
 		setPassengerFrame(&info, ship, nowTransform, nowProgress)
 		in.lastTransform, in.progress, in.firstProgress = nowTransform, nowProgress, nowProgress
-	}
-	if op != opcode.MSGMoveStop && !committed && g != nil && g.SurfaceMode == "board" {
-		remaining := time.Millisecond
-		if in != nil && len(s.surfaceFollow.plan) > 0 {
-			end := s.surfaceFollow.plan[len(s.surfaceFollow.plan)-1].At
-			remaining = max(remaining, s.surfaceFollow.planAt.Add(end).Sub(s.now()))
-		}
-		if !dockInput(path, nowProgress, remaining) {
-			return modcb.PacketNotDispatchedError("boarding no longer fits the same dock dwell")
-		}
 	}
 	prior, scope, err := s.surfaceMotionSourceLocked(ctx, latest)
 	if err != nil {

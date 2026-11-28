@@ -298,7 +298,6 @@ func TestSurfaceFollowDockApproachAndMovingDeparture(t *testing.T) {
 				}
 				return
 			}
-			r.request.Jump = r.s.surfaceFollow.jumpRequired
 			r.set("board")
 		}
 		t.Fatal("no deck contact after actual dock approach", len(r.packets), r.s.state.Reason, r.s.state.NavReason, r.s.pos)
