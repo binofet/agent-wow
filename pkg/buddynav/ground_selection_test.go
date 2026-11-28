@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/o0olele/detour-go/detour"
@@ -62,6 +63,42 @@ func groundSelectionFixture(t *testing.T, copies int) (*planner, Point, detour.D
 		t.Fatal(st)
 	}
 	return p, start, primary
+}
+
+func TestGroundAccessUsesConnectedMeshAndPhysicalEndpoints(t *testing.T) {
+	dir := os.Getenv("BUDDY_NAV_SURFACE_TEST_DATA_DIR")
+	if dir == "" {
+		t.Skip("set BUDDY_NAV_SURFACE_TEST_DATA_DIR for the copied dock geometry")
+	}
+	start := Point{-3925.4214, -621.6484, 5.1416316}
+	otherEdge := Point{-3921.0068, -617.12384, 5.1705594}
+	inside := Point{-3897.7754, -606.0532, 5.288626}
+	for _, tc := range []struct {
+		name    string
+		a, b    Point
+		refusal string
+	}{
+		{"both endpoints outside", start, otherEdge, ""},
+		{"one shared polygon vertex", Point{-3922.8474, -625.0641, 5.0096607}, Point{-3922.829, -625.74976, 4.9919868}, ""},
+		{"walk off the corridor to the target", inside, start, ""},
+		{"blocked connection", Point{-3922.5977, -625.57, 4.9921136}, inside, "physical start connector: body probe corridor intersects static collision"},
+		{"wrong start height", Point{inside.X, inside.Y, inside.Z + 1}, start, "body is not on the corridor's starting floor"},
+		{"outside endpoint budget", Point{-3923.1172, -626.35974, 4.683033}, inside, "ground access at start"},
+		{"disconnected polygons", Point{-3920.7515, -629.3521, 4.863879}, inside, "navigation polygon path is partial, exhausted, or unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, err := PlanMapWithGroundAccessContext(context.Background(), dir, 0, tc.a, tc.b)
+			if tc.refusal != "" {
+				if len(path) != 0 || err == nil || !strings.Contains(err.Error(), tc.refusal) {
+					t.Fatalf("unexpected path %d or refusal %v", len(path), err)
+				}
+				return
+			}
+			if err != nil || len(path) < 3 || distance(path[0], tc.a) > .025 || distance(path[len(path)-1], tc.b) > .025 {
+				t.Fatalf("physical endpoints did not join the corridor: %v %v", path, err)
+			}
+		})
+	}
 }
 
 func TestGroundSelectionRejectsNearestEdgeAndUsesActualContainingPolygon(t *testing.T) {

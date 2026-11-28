@@ -16,13 +16,6 @@ func PlanStaticWalkContext(ctx context.Context, dataDir string, mapID uint32, st
 	if err != nil {
 		return nil, err
 	}
-	// The existing body probe samples each 50 ms. For a spatial route, use
-	// one sample per foot radius (0.25 yd). The movement writer owns speed.
-	const samplePace = .25 / .05
-	horizontal := horizontalDistance(start, dest)
-	if horizontal < .01 || math.Ceil(horizontal/.25)+1 > MaxPoints {
-		return nil, errors.New("static walk exceeds the local foot sample range")
-	}
 	dir, err := mapDataDirectory(dataDir)
 	if err != nil {
 		return nil, err
@@ -36,6 +29,17 @@ func PlanStaticWalkContext(ctx context.Context, dataDir string, mapID uint32, st
 	p, err := cachedMapPlanner(ctx, dir, w)
 	if err != nil {
 		return nil, err
+	}
+	return p.staticWalk(ctx, start, dest)
+}
+
+func (p *planner) staticWalk(ctx context.Context, start, dest Point) ([]Point, error) {
+	// The existing body probe samples each 50 ms. For a spatial route, use
+	// one sample per foot radius (0.25 yd). The movement writer owns speed.
+	const samplePace = .25 / .05
+	horizontal := horizontalDistance(start, dest)
+	if horizontal < .01 || math.Ceil(horizontal/.25)+1 > MaxPoints {
+		return nil, errors.New("static walk exceeds the local foot sample range")
 	}
 	floor := func(q Point, above, below float32) (float32, bool, error) {
 		return p.floors.heightContext(ctx, q, q.Z, above, above+below)
