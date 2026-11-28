@@ -189,6 +189,14 @@ func (s *Service) approachDockOpening(ctx context.Context, w *worldv1.SnapshotRe
 	return step, surfaceBearing(shore, target), nil
 }
 
+// Once a finite step passes an edge, the current body may already lie along
+// its outward course. Measure the remaining walk from that actual body before
+// asking it to walk back to the edge. The floor is checked separately.
+func onDockExitCourse(body, edge, shore buddynav.Point) bool {
+	edge.Z, shore.Z = body.Z, body.Z
+	return segmentDistance(surfacePosition(edge, 0), surfacePosition(shore, 0), surfacePosition(body, 0)) <= .45
+}
+
 // Search the connected hull boundary in either direction. A nearby polygon
 // alone says nothing about whether the dock meets the deck at that point.
 func (s *Service) planSurfaceDockWalk(ctx context.Context, w *worldv1.SnapshotResponse, g *actionsv1.FollowFormationRequest,
@@ -215,53 +223,47 @@ func (s *Service) planSurfaceDockWalk(ctx context.Context, w *worldv1.SnapshotRe
 	var heading float64
 	var crossingFromBody bool
 	route, err := mesh.DepartureRoute(search, deckStart, tr.Local(shore), func(edge, normal buddynav.Point, length float64) bool {
-		from, to := tr.World(edge), shore
-		at := progress
+		lip := tr.World(edge)
+		var e error
 		if board {
-			from, to = shore, from
-		} else {
-			approach := time.Duration(length / speed * float64(time.Second))
-			if !dockInput(s.surfaceFollow.paths[g.TransportGuid], progress, approach) {
-				if firstFailure == nil {
-					firstFailure = errors.New("deck walk exceeds the dock dwell")
-				}
-				return false
+			input, e = s.measureDockWalk(search, w, g, mesh, tr, progress, shore, lip, speed)
+			heading = surfaceBearing(shore, lip)
+			if e != nil {
+				input, heading, e = s.approachDockOpening(search, w, g, mesh, tr, progress, shore, lip, normal, speed)
 			}
-			at += uint32(approach / time.Millisecond)
-		}
-		crossingFromBody = board
-		if !board && surfaceDistance(start, from) <= .45 {
-			if rows, e := s.measureDockWalk(search, w, g, mesh, tr, progress, start, to, speed); e == nil {
-				input, heading, crossingFromBody = rows, surfaceBearing(start, to), true
+			if e == nil {
+				crossingFromBody = true
 				return true
 			}
-		}
-		rows, e := s.measureDockWalk(search, w, g, mesh, tr, at, from, to, speed)
-		bearing := surfaceBearing(from, to)
-		if board && e != nil {
-			rows, bearing, e = s.approachDockOpening(search, w, g, mesh, tr, progress, shore, to, normal, speed)
-		}
-		if !board && e != nil {
-			to = tr.World(buddynav.Point{X: edge.X + normal.X*float32(speed*.5), Y: edge.Y + normal.Y*float32(speed*.5), Z: edge.Z})
-			rows, e = s.measureDockWalk(search, w, g, mesh, tr, at, from, to, speed)
-			bearing = surfaceBearing(from, to)
-		}
-		if !board && e == nil && surfaceDistance(start, from) <= .45 {
-			bodyRows, bodyErr := s.measureDockWalk(search, w, g, mesh, tr, progress, start, to, speed)
-			if bodyErr == nil {
-				rows, bearing, crossingFromBody = bodyRows, surfaceBearing(start, to), true
-			} else if length <= .01 {
-				e = bodyErr
+		} else {
+			approach := time.Duration(length / speed * float64(time.Second))
+			at := progress + uint32(approach/time.Millisecond)
+			reachable := length > .01 && dockInput(s.surfaceFollow.paths[g.TransportGuid], progress, approach)
+			outward := tr.World(buddynav.Point{X: edge.X + normal.X*float32(speed*.5), Y: edge.Y + normal.Y*float32(speed*.5), Z: edge.Z})
+			for _, toward := range [...]buddynav.Point{shore, outward} {
+				if onDockExitCourse(start, lip, toward) {
+					input, e = s.measureDockWalk(search, w, g, mesh, tr, progress, start, toward, speed)
+					if e == nil {
+						heading, crossingFromBody = surfaceBearing(start, toward), true
+						return true
+					}
+				}
+				if reachable {
+					_, e = s.measureDockWalk(search, w, g, mesh, tr, at, lip, toward, speed)
+					if e == nil {
+						crossingFromBody = false
+						return true
+					}
+				}
+			}
+			if e == nil {
+				e = errors.New("deck walk exceeds the dock dwell")
 			}
 		}
-		if e != nil {
-			if firstFailure == nil {
-				firstFailure = e
-			}
-			return false
+		if firstFailure == nil {
+			firstFailure = e
 		}
-		input, heading = rows, bearing
-		return true
+		return false
 	}, &s.surfaceFollow.exitSearch)
 	if err != nil {
 		if firstFailure != nil {
