@@ -165,6 +165,9 @@ func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(contex
 			return m.writePolicyInstanceEntryScoped(ctx, token, sessionID, module, opcode, payload, scope)
 		}
 		origin := modsession.WriteOrigin{SessionID: sessionID, Module: module, Writer: "module"}
+		if module == actionsModule {
+			origin.MovementAttempt = modcb.IncomingMovementAttempt(ctx)
+		}
 		if marked {
 			m.mu.Lock()
 			current := m.ctx.Err() == nil && !m.closing && !m.preparing && !m.prepared && m.err == nil &&

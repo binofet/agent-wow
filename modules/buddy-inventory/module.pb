@@ -915,7 +915,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-êÔ
+óÚ
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -1820,7 +1820,7 @@ sequenceId
 x (Rx
 y (Ry
 z (Rz
-detail	 (	Rdetail"Ç
+detail	 (	Rdetail"ß
 FollowFormationRequest
 
 session_id (	R	sessionId
@@ -1839,7 +1839,12 @@ owner_guid (R	ownerGuid6
 ready (Rready
 hold (Rhold'
 follow_revision (RfollowRevision
-phase (	Rphase"Å	
+phase (	Rphase!
+surface_mode (	RsurfaceMode%
+transport_guid (RtransportGuid8
+owner_passenger_revision (RownerPassengerRevision
+jump (Rjump" 
+
 NavigationObservation6
 body_movement_supported (RbodyMovementSupported
 	following (R	following
@@ -1867,7 +1872,22 @@ goal_known (R	goalKnown
 movement_points (2-.warcraftbuddy.actions.v1.MovementPointsStateRmovementPoints4
 body_landing_supported (RbodyLandingSupportedS
 ground_mount (20.warcraftbuddy.actions.v1.FollowMountObservationRgroundMount 
-independent (Rindependent"7
+independent (RindependentY
+moving_surface (22.warcraftbuddy.actions.v1.MovingSurfaceObservationRmovingSurface"“
+MovingSurfaceObservation
+	supported (R	supportedB
+self (2..warcraftbuddy.world.v1.PassengerMovementFactsRselfD
+owner (2..warcraftbuddy.world.v1.PassengerMovementFactsRownerG
+
+transports (2'.warcraftbuddy.world.v1.GameObjectStateR
+transports2
+self_attachment_known (RselfAttachmentKnown.
+self_transport_guid (RselfTransportGuid
+phase (	Rphase#
+jump_required (RjumpRequired(
+self_write_known	 (RselfWriteKnown=
+self_written_transport_guid
+ (RselfWrittenTransportGuid"7
 PortalPoint
 x (Rx
 y (Ry

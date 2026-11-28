@@ -177,6 +177,7 @@ type Service struct {
 	portalGoalRevision                   uint64
 	portalWitnessRevision                uint64
 	swimFollow                           swimFollowRoute
+	surfaceFollow                        movingSurfaceFollow
 	swimTrail                            swimTrail
 	lastSeenFollow                       followObservation
 	planSwimPath                         func(context.Context, string, uint32, buddynav.Point, buddynav.Point) ([]buddynav.SwimPoint, error)
@@ -687,7 +688,7 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) snapshot(ctx context.Context, creatureGUID ...uint64) (*worldv1.SnapshotResponse, error) {
-	out, err := s.readWorldSnapshot(ctx, creatureGUID...)
+	out, err := s.readMovementWorldSnapshotLocked(ctx, creatureGUID...)
 	if err != nil {
 		s.observeDungeonWorld(nil)
 		return nil, err
@@ -893,7 +894,23 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 		}
 		motion.lastOpcode, motion.lastPayload = op, append([]byte(nil), payload...)
 	}
+	surfaceAttempt := ""
+	_, surfaceOwned := ctx.Value(surfaceOwnPacketKey{}).(bool)
+	if !surfaceOwned && s.surfaceFollow.body != nil && (idleMotionOpcode(op) || op == opcode.MSGMoveStartSwim || op == opcode.MSGMoveStopSwim) {
+		surfaceAttempt = modcb.OutgoingMovementAttempt(sendCtx)
+		if surfaceAttempt == "" {
+			var err error
+			surfaceAttempt, err = newMovementAttemptID()
+			if err != nil {
+				return modcb.PacketNotDispatchedError("own movement attempt unavailable")
+			}
+			sendCtx = modcb.WithMovementAttempt(sendCtx, surfaceAttempt)
+		}
+	}
 	if _, err := s.session.SendPacket(sendCtx, request); err != nil {
+		if surfaceAttempt != "" && !modcb.PacketWasNotDispatched(err) {
+			s.surfaceFollow.body.uncertain = true
+		}
 		f := s.destinationFlight
 		if motion != nil && motion.destination != nil && !motion.selfOnly && f != nil && !f.airborne && !f.release && modcb.RouteOwnerChangeBeforeWrite(err) {
 			f.release = true
@@ -910,6 +927,12 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 	}
 
 	s.state.TransportWrites++
+	if surfaceAttempt != "" {
+		if err := s.recordSurfaceFrameLocked(ctx, s.lastWorld, op, payload, surfaceAttempt); err != nil {
+			s.state.MotionUnconfirmed = true
+			return err
+		}
+	}
 	if motion != nil {
 		if err := s.idleMotionAfterWriteLocked(ctx, motion, op, payload); err != nil {
 			s.lastTransportError = err
@@ -1204,6 +1227,9 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 }
 
 func (s *Service) stopLocked(ctx context.Context) bool {
+	if handled, stopped := s.stopSurfaceLocked(ctx); handled {
+		return stopped
+	}
 	if s.bodyMoving {
 		// The finite input already owns its landing and terminal STOP. A
 		// competing request has not written anything and cannot make it unknown.
@@ -1286,6 +1312,10 @@ func (s *Service) runTick(ctx context.Context) time.Duration {
 	call, cancel := context.WithTimeout(ctx, actionsTickBudget)
 	defer cancel()
 	s.tickLocked(context.WithValue(call, followRunParentKey{}, ctx))
+	if len(s.surfaceFollow.plan) > 0 && s.surfaceFollow.planIndex > 0 && s.surfaceFollow.planIndex < len(s.surfaceFollow.plan) &&
+		s.state.Moving && !s.state.MotionUnconfirmed {
+		return max(time.Millisecond, s.surfaceFollow.planAt.Add(s.surfaceFollow.plan[s.surfaceFollow.planIndex].At).Sub(s.now()))
+	}
 	if s.followNav.checkpointAt.IsZero() || len(s.followNav.path) == 0 || !s.state.Moving || s.state.MotionUnconfirmed {
 		return 0
 	}
@@ -1412,10 +1442,13 @@ func (s *Service) tickLocked(ctx context.Context) {
 	}
 	if s.state.MotionUnconfirmed {
 		// A new authoritative stationary pose can settle an ambiguous stop.
-		if world, err := s.snapshot(ctx); err == nil && safeSelfMovement(world, s.selfGUID, swimFollowCompatible) == "" {
-			s.refreshPositionLocked(world)
-			if s.state.MotionUnconfirmed {
-				s.reconcileOrdinaryMovementLocked(ctx, world)
+		if world, err := s.snapshot(ctx); err == nil {
+			s.reconcileSurfaceMotionLocked(world)
+			if safeSelfMovement(world, s.selfGUID, swimFollowCompatible) == "" {
+				s.refreshPositionLocked(world)
+				if s.state.MotionUnconfirmed {
+					s.reconcileOrdinaryMovementLocked(ctx, world)
+				}
 			}
 		}
 	}
@@ -1481,6 +1514,10 @@ func (s *Service) tickLocked(ctx context.Context) {
 		s.stopLocked(ctx)
 		s.lastStep = now
 		s.state.Reason = "finite_movement_owner_active"
+		return
+	}
+	if s.surfaceFollowTickLocked(ctx, snapshot, now) {
+		formationUsed = true
 		return
 	}
 	if s.followDungeonPortalLocked(ctx, snapshot, now) {

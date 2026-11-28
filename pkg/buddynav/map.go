@@ -187,6 +187,7 @@ func (w mapWindow) meshTiles() []string {
 type mapPlannerKey struct {
 	directory string
 	window    mapWindow
+	bodyOnly  bool
 }
 
 var currentMapPlanners = struct {
@@ -261,7 +262,13 @@ func mapDataDirectory(root string) (string, error) {
 // verified .mmap header is installed static client map metadata; a caller's
 // numeric map ID alone cannot create a map or choose an arbitrary asset path.
 func cachedMapPlanner(ctx context.Context, dir string, w mapWindow) (*planner, error) {
-	key := mapPlannerKey{directory: dir, window: w}
+	return cachedMapPlannerMode(ctx, dir, w, false)
+}
+
+// A physical body input needs terrain, water and collision. It does not need
+// a ground polygon under a moving deck or a swimmer in open water.
+func cachedMapPlannerMode(ctx context.Context, dir string, w mapWindow, bodyOnly bool) (*planner, error) {
+	key := mapPlannerKey{directory: dir, window: w, bodyOnly: bodyOnly}
 	if p := currentMapPlanners.items[key]; p != nil {
 		for i, k := range currentMapPlanners.order {
 			if k == key {
@@ -272,13 +279,18 @@ func cachedMapPlanner(ctx context.Context, dir string, w mapWindow) (*planner, e
 		currentMapPlanners.order = append(currentMapPlanners.order, key)
 		return p, nil
 	}
-	mesh, err := loadMeshTiles(ctx, filepath.Join(dir, "mmaps"), w.mapID, w.meshTiles(), maxMapMeshBytes)
-	if err != nil {
-		return nil, fmt.Errorf("map %d installed navigation metadata/tiles unavailable: %w", w.mapID, err)
-	}
-	query := detour.DtAllocNavMeshQuery()
-	if st := query.Init(mesh, 4096); detour.DtStatusFailed(st) {
-		return nil, errors.New("initialize navigation query failed")
+	var mesh *detour.DtNavMesh
+	var query *detour.DtNavMeshQuery
+	if !bodyOnly {
+		var err error
+		mesh, err = loadMeshTiles(ctx, filepath.Join(dir, "mmaps"), w.mapID, w.meshTiles(), maxMapMeshBytes)
+		if err != nil {
+			return nil, fmt.Errorf("map %d installed navigation metadata/tiles unavailable: %w", w.mapID, err)
+		}
+		query = detour.DtAllocNavMeshQuery()
+		if st := query.Init(mesh, 4096); detour.DtStatusFailed(st) {
+			return nil, errors.New("initialize navigation query failed")
+		}
 	}
 	filter := detour.DtAllocDtQueryFilter()
 	filter.SetIncludeFlags(1 | 8)

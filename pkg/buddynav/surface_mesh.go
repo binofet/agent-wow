@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"sort"
 	"strconv"
 
 	"github.com/o0olele/detour-go/detour"
@@ -40,6 +41,37 @@ type SurfaceMesh struct {
 	query    *detour.DtNavMeshQuery
 	filter   *detour.DtQueryFilter
 	polygons int
+}
+
+func (s *SurfaceMesh) Collision() *TransportSurface { return s.surface }
+
+// BoardingEntry finds the closest point on a connected deck component. It
+// proves no dock crossing; the caller measures that separate body input
+// against the combined terrain and actual hull before sending it.
+func (s *SurfaceMesh) BoardingEntry(ctx context.Context, from, destination Point) (Point, error) {
+	if !worldPoint(from) || !worldPoint(destination) {
+		return Point{}, errors.New("finite local boarding endpoints required")
+	}
+	tile := s.mesh.GetTile(0)
+	base := s.mesh.GetPolyRefBase(tile)
+	var candidates []Point
+	for i := 0; i < int(tile.Header.PolyCount); i++ {
+		var closest [3]float32
+		if status := s.query.ClosestPointOnPoly(base|detour.DtPolyRef(i), surfaceNav(from), closest[:], nil); !detour.DtStatusFailed(status) {
+			candidates = append(candidates, surfacePoint(closest[:]))
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return distance(from, candidates[i]) < distance(from, candidates[j]) })
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return Point{}, err
+		}
+		path, err := s.Route(ctx, candidate, destination)
+		if err == nil && len(path) > 0 {
+			return path[0], nil
+		}
+	}
+	return Point{}, errors.New("no connected physical boarding point on this deck")
 }
 
 func LoadSurfaceMesh(ctx context.Context, dataDir string, displayID uint32) (*SurfaceMesh, error) {
@@ -208,8 +240,18 @@ func (s *SurfaceMesh) appendPhysicalSegment(ctx context.Context, path *[]Point, 
 		point := Point{start.X + fraction*(end.X-start.X), start.Y + fraction*(end.Y-start.Y), start.Z + fraction*(end.Z-start.Z)}
 		if ref != 0 {
 			var height float32
-			if status := s.query.GetPolyHeight(ref, surfaceNav(point), &height); detour.DtStatusFailed(status) {
-				return errors.New("moving corridor detail height unavailable")
+			q := [3]float32{point.X, point.Z, -point.Y}
+			if status := s.query.GetPolyHeight(ref, q[:], &height); detour.DtStatusFailed(status) {
+				// Reuse the static planner's same-polygon numerical treatment.
+				// Only the height query moves at most 1cm; the physical point
+				// retains its original XY and still passes hull contact/collision.
+				detail := planner{mesh: s.mesh, query: s.query}
+				if err := detail.insetRayPoint(ref, &q); err != nil {
+					return err
+				}
+				if status := s.query.GetPolyHeight(ref, q[:], &height); detour.DtStatusFailed(status) {
+					return errors.New("moving corridor detail height unavailable")
+				}
 			}
 			point.Z = height
 		}
