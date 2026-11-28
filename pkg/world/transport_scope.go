@@ -392,6 +392,7 @@ func (e *engine) observeTransportScope(op uint16, body []byte) {
 	}
 	ownerChange = ownerChange || self != 0 && self != buddyidentity.CompanionOwnerGUID && partyChange
 	e.transport.observe(op, body)
+	e.taxiBody.observe(op, body)
 	if ownerChange {
 		e.transport.advance(&e.transport.scope.MotionRevision)
 	}

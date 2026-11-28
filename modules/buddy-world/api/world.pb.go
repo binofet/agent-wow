@@ -1343,8 +1343,11 @@ type OwnMotionAuthority struct {
 	// Advertised endpoint of the positively matched spline, for choosing a
 	// destination flightmaster when the passenger has no later movement image.
 	NaturalTaxiEndpoint *NaturalTaxiEndpoint `protobuf:"bytes,18,opt,name=natural_taxi_endpoint,json=naturalTaxiEndpoint,proto3" json:"natural_taxi_endpoint,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Original receive revision allowing a new physical frame at Self.X/Y/Z.
+	// Self.position_inferred distinguishes a completed spline from a realm pose.
+	TaxiBodyOriginMotionRevision uint64 `protobuf:"varint,19,opt,name=taxi_body_origin_motion_revision,json=taxiBodyOriginMotionRevision,proto3" json:"taxi_body_origin_motion_revision,omitempty"`
+	unknownFields                protoimpl.UnknownFields
+	sizeCache                    protoimpl.SizeCache
 }
 
 func (x *OwnMotionAuthority) Reset() {
@@ -1501,6 +1504,13 @@ func (x *OwnMotionAuthority) GetNaturalTaxiEndpoint() *NaturalTaxiEndpoint {
 		return x.NaturalTaxiEndpoint
 	}
 	return nil
+}
+
+func (x *OwnMotionAuthority) GetTaxiBodyOriginMotionRevision() uint64 {
+	if x != nil {
+		return x.TaxiBodyOriginMotionRevision
+	}
+	return 0
 }
 
 type NaturalTaxiEndpoint struct {
@@ -6588,7 +6598,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\astopped\x18\x13 \x01(\bR\astopped\x12\x16\n" +
 	"\x06cyclic\x18\x14 \x01(\bR\x06cyclic\x12\x1b\n" +
 	"\tmap_known\x18\x15 \x01(\bR\bmapKnown\x12\x15\n" +
-	"\x06map_id\x18\x16 \x01(\rR\x05mapId\"\xee\x06\n" +
+	"\x06map_id\x18\x16 \x01(\rR\x05mapId\"\xb6\a\n" +
 	"\x12OwnMotionAuthority\x12\x14\n" +
 	"\x05known\x18\x01 \x01(\bR\x05known\x12\x1b\n" +
 	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12%\n" +
@@ -6609,7 +6619,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x1aunit_flags_motion_revision\x18\x0f \x01(\x04R\x17unitFlagsMotionRevision\x12A\n" +
 	"\x1dnatural_taxi_landing_revision\x18\x10 \x01(\x04R\x1anaturalTaxiLandingRevision\x125\n" +
 	"\x17taxi_on_motion_revision\x18\x11 \x01(\x04R\x14taxiOnMotionRevision\x12_\n" +
-	"\x15natural_taxi_endpoint\x18\x12 \x01(\v2+.warcraftbuddy.world.v1.NaturalTaxiEndpointR\x13naturalTaxiEndpoint\"?\n" +
+	"\x15natural_taxi_endpoint\x18\x12 \x01(\v2+.warcraftbuddy.world.v1.NaturalTaxiEndpointR\x13naturalTaxiEndpoint\x12F\n" +
+	" taxi_body_origin_motion_revision\x18\x13 \x01(\x04R\x1ctaxiBodyOriginMotionRevision\"?\n" +
 	"\x13NaturalTaxiEndpoint\x12\f\n" +
 	"\x01x\x18\x01 \x01(\x02R\x01x\x12\f\n" +
 	"\x01y\x18\x02 \x01(\x02R\x01y\x12\f\n" +

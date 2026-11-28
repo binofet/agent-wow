@@ -35,6 +35,7 @@ type engine struct {
 	pings                 map[uint32]time.Time
 	movement              movementControl
 	transport             transportScopeState
+	taxiBody              taxiBodyGuard
 	writeSerial           uint64
 	beforeScopedWrite     func() error
 	ownMovementReport     *modv1.WorldPacket
@@ -72,7 +73,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	if len(scopes) != 0 {
 		requested = scopes[0]
 	}
-	if requested != nil || op == opcode.CMSGMoveSplineDone {
+	if e.needsPhysicalDrain(op, requested) {
 		proofDeadline := time.Now().Add(bodyUpdateWait)
 		for {
 			if !e.scopedWriteAvailable(ctx) {
@@ -117,6 +118,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 		return "", false, err
 	}
 	e.writeSerial++
+	e.taxiBody.entering(op, e.transport.scope)
 	if op == opcode.CMSGTaxiqueryavailablenodes {
 		e.transport.taxiMenu = naturalTaxiMenu{}
 	}
@@ -128,6 +130,9 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 		e.bodyWrittenAt = time.Now()
 	}
 	if err != nil {
+		if e.taxiBody.active() && voluntaryTaxiBodyFrame(op) {
+			e.taxiBody.uncertainOrigin = e.transport.scope.GetMotionRevision()
+		}
 		if outboundTransportMotion(op) && e.transport.scope.GetSplineActive() {
 			e.transport.taxiMenu = naturalTaxiMenu{}
 			e.transport.uncertainTaxiMotion = e.transport.snapshot()
@@ -147,6 +152,9 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	}
 	e.movement.sent(op, body, e.s.state.Character.GUID)
 	e.transport.sent(op)
+	if voluntaryTaxiBodyFrame(op) && e.taxiBody.active() {
+		e.taxiBody = taxiBodyGuard{}
+	}
 	e.retainOwnMovementReport(ctx, op, body)
 	if ownMovementReportOpcode(op) {
 		origin := modsession.WriteOriginFromContext(ctx)
@@ -249,11 +257,12 @@ func (e *engine) loop(packets <-chan packet) error {
 				r.reply <- status.FromContextError(err).Err()
 				continue
 			}
-			if (r.transportScope != nil || r.op == opcode.CMSGMoveSplineDone) && (e.phase != InWorld || e.logout != nil || e.finalPackets != nil) {
+			guarded := e.needsPhysicalDrain(r.op, r.transportScope)
+			if guarded && (e.phase != InWorld || e.logout != nil || e.finalPackets != nil) {
 				r.reply <- modcb.PacketNotDispatchedError("scoped gameplay write requires the current live world session")
 				continue
 			}
-			if r.transportScope != nil || r.op == opcode.CMSGMoveSplineDone {
+			if guarded {
 				e.beforeScopedWrite = drain
 			}
 			outcome, anyBytes, err := e.writeContext(r.ctx, r.op, r.body, r.transportScope)

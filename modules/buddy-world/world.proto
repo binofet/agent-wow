@@ -205,6 +205,9 @@ message OwnMotionAuthority {
   // Advertised endpoint of the positively matched spline, for choosing a
   // destination flightmaster when the passenger has no later movement image.
   NaturalTaxiEndpoint natural_taxi_endpoint = 18;
+  // Original receive revision allowing a new physical frame at Self.X/Y/Z.
+  // Self.position_inferred distinguishes a completed spline from a realm pose.
+  uint64 taxi_body_origin_motion_revision = 19;
 }
 
 message NaturalTaxiEndpoint {

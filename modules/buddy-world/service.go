@@ -102,6 +102,7 @@ type Service struct {
 	session                      modv1.SessionClient
 	shipQueries                  map[uint32]*shipTemplateQuery
 	motion                       ownMotionAuthority
+	taxiBody                     taxiBodyObservation
 	completion                   splineCompletionState
 	worldTransfer                worldTransferObservation
 	knockback                    *modv1.WorldPacket
@@ -201,6 +202,7 @@ func (s *Service) Snapshot(ctx context.Context, request *worldv1.SnapshotRequest
 	r.SelfMovementFacts = s.state.ownMovement.snapshot(now)
 	r.SelfSplineFacts = s.state.ownSpline.snapshot(now)
 	r.SelfMotionAuthority = s.motionSnapshotLocked(now)
+	r.SelfMotionAuthority.TaxiBodyOriginMotionRevision = s.taxiBodyOriginRevision(&s.state.players[0], s.motion.scope)
 	r.SplineCompletion = s.completionSnapshotLocked()
 	r.WorldTransfer = s.worldTransferSnapshotLocked(now)
 	if owner := s.state.players[1]; owner.guid != 0 {
@@ -291,6 +293,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		s.observeKnockbackLocked(ctx, packet, current, &next)
 		next.commitOwnMovementFacts(old, packet.Opcode, observedAt, packet.TransportScope)
 		s.observeMotionLocked(packet, old, current, &next, observedAt)
+		s.observeTaxiBodyOrigin(ctx, packet, current, &next, observedAt)
 		if !current.present || !current.mapKnown || !current.positionKnown || old.positionRevision != current.positionRevision || old.mapKnown != current.mapKnown || old.mapID != current.mapID {
 			next.discovery = clientDiscoveryAnchor{}
 		}

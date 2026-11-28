@@ -47,6 +47,7 @@ type sessionAPI interface {
 }
 
 type Service struct {
+	taxiBodyReleased *actionsv1.FlightpathActivationOperation
 	summoning        summoningState
 	ordinaryMovement *ordinaryMovementAttempt
 	movementPoints   movementPointInput
@@ -963,6 +964,10 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	var w *worldv1.SnapshotResponse
 	var snapshotErr error
 	w, snapshotErr = s.snapshot(ctx)
+	if s.paidTaxiBodyHeld(w) {
+		s.state.Reason = "waiting_for_post_taxi_body_position"
+		return false
+	}
 	if !moving && op == opcode.MSGMoveStop {
 		if cleanup, ok := ctx.Value(lootApproachCleanupKey{}).(*lootApproachCleanup); ok && !cleanup.current(s, w, snapshotErr != nil) {
 			s.state.Reason = "loot_approach_cleanup_owner_changed"
@@ -1213,6 +1218,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		return false
 	}
 	s.pos = p
+	s.releasePaidTaxiBody(w)
 	s.swimming = isSwimming
 	s.state.Moving = moving
 	s.posEstimated = true
@@ -1591,6 +1597,9 @@ func (s *Service) tickLocked(ctx context.Context) {
 		// separate Follow intent has never been enabled.
 		s.stopLocked(ctx)
 		s.lastStep = now
+		return
+	}
+	if s.settleFollowTaxiBody(ctx, snapshot, ownedFollow) {
 		return
 	}
 	if ownedFollow {

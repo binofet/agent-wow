@@ -120,6 +120,11 @@ func (m *Manager) packetWorker(name string, inst *instance) {
 					m.session.ParsedOwnPose(packet.TransportScope, []byte(rows[0]))
 				}
 			}
+			if name == "buddy-world" && m.session.ParsedTaxiBodyOrigin != nil {
+				if rows := trailers.Get(modcb.TaxiBodyOriginTrailer); len(rows) == 1 && len(rows[0]) == modcb.TaxiBodyOriginSize {
+					m.session.ParsedTaxiBodyOrigin(packet.TransportScope, []byte(rows[0]))
+				}
+			}
 			if name == actionsModule && packet.Opcode == opcode.SMSGMoveKnockBack && m.session.MeasuredKnockback != nil {
 				if rows := trailers.Get(modcb.KnockbackContactTrailer); len(rows) == 1 && len(rows[0]) <= 128 {
 					m.session.MeasuredKnockback(packet, []byte(rows[0]))
