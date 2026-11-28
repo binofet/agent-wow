@@ -1,74 +1,81 @@
 package world
 
 import (
+	"math"
+
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
-// Object batches publish their complete authoritative hull set from World.
-// A standalone removal can arrive while an earlier batch is still queued.
-// Keep that removal until the next ordered batch includes it.
+// World and the physical reader count the same ordered hull inputs within
+// the visit. Foreign rider heartbeats do not advance self's motion revision.
 type routeHullState struct {
 	pending, parsed uint64
 	scope           *modv1.TransportScope
 	visible         map[uint64]modcb.RouteHull
-	removed         map[uint64]bool
+	riders          map[uint64]uint64
+	pendingAll      bool
+	pendingShips    map[uint64]bool
 }
 
 func (s *Session) observeRouteHullPacket(op uint16, wire []byte, scope *modv1.TransportScope) {
-	var guid uint64
 	switch op {
-	case opcode.SMSGUpdateObject, opcode.SMSGCompressedUpdateObject:
+	case opcode.SMSGLoginVerifyWorld, opcode.SMSGNewWorld, opcode.SMSGTransferPending:
 		s.mu.Lock()
-		s.routeHulls.pending = scope.GetMotionRevision()
-		s.routeHulls.removed = nil
+		s.routeHulls = routeHullState{}
 		s.mu.Unlock()
 		return
-	case opcode.SMSGLoginVerifyWorld, opcode.SMSGNewWorld, opcode.SMSGTransferPending:
-	default:
-		var relevant bool
-		guid, relevant = movementinfo.HullPacketSubject(uint32(op), wire)
-		if !relevant {
-			return
-		}
-		if op == opcode.SMSGDestroyObject && guid == scope.GetSelfGuid() {
-			guid = 0
-		}
 	}
-	if guid != 0 && !movementinfo.MovingTransportGUID(guid) {
+	subject, relevant := movementinfo.RouteHullSubject(uint32(op), wire)
+	if !relevant {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h := &s.routeHulls
-	if guid == 0 {
-		*h = routeHullState{}
-	} else {
-		delete(h.visible, guid)
-		if h.pending != h.parsed {
-			// World retains at most 128 GameObjects in one visit. A burst of
-			// more unclassified removals withdraws the pending image entirely.
-			if len(h.removed) >= 128 {
-				*h = routeHullState{}
-				return
+	if h.pending < math.MaxUint64 {
+		h.pending++
+	}
+	if subject == 0 || op == opcode.SMSGDestroyObject && subject == scope.GetSelfGuid() {
+		h.pendingAll = true
+	}
+	if h.pendingAll || len(h.visible) == 0 {
+		return
+	}
+	// A stand-alone rider can leave their old ship and join the new one in
+	// one frame. The last known image of an unrelated ship stays usable.
+	var boarding uint64
+	if !movementinfo.MovingTransportGUID(subject) {
+		boarding = movementinfo.IncomingPassengerHull(uint32(op), wire)
+	}
+	for _, guid := range [...]uint64{subject, h.riders[subject], boarding} {
+		if _, visible := h.visible[guid]; visible {
+			if h.pendingShips == nil {
+				h.pendingShips = make(map[uint64]bool)
 			}
-			if h.removed == nil {
-				h.removed = make(map[uint64]bool)
-			}
-			h.removed[guid] = true
+			h.pendingShips[guid] = true
 		}
 	}
+}
+
+func (h *routeHullState) waitingFor(guid uint64) bool {
+	return h.pending != h.parsed && (h.pendingAll || h.pendingShips[guid])
 }
 
 func (s *Session) recordRouteHulls(scope *modv1.TransportScope, rows []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h := &s.routeHulls
-	if h.pending == 0 || scope.GetMotionRevision() != h.pending || h.parsed == h.pending || !sameBodyScope(scope, s.transportScopeSnapshot) {
+	if len(rows) == 0 || h.parsed == h.pending || !sameBodyScope(scope, s.transportScopeSnapshot) {
 		return
 	}
+	seq, riders, ok := modcb.ReadRouteHullHeader(rows[0])
+	if !ok || seq != h.pending {
+		return
+	}
+	rows = rows[1:]
 	var visible map[uint64]modcb.RouteHull
 	if len(rows) > 0 && len(rows) <= 128 {
 		visible = make(map[uint64]modcb.RouteHull, len(rows))
@@ -81,10 +88,8 @@ func (s *Session) recordRouteHulls(scope *modv1.TransportScope, rows []string) {
 			visible[r.GUID] = r
 		}
 	}
-	for guid := range h.removed {
-		delete(visible, guid)
-	}
-	h.visible, h.removed, h.scope, h.parsed = visible, nil, cloneTransportScope(scope), h.pending
+	h.visible, h.riders, h.scope, h.parsed = visible, riders, cloneTransportScope(scope), seq
+	h.pendingAll, h.pendingShips = false, nil
 	s.bodyUpdates.signal()
 }
 
@@ -93,5 +98,5 @@ func (s *Session) currentRouteHull(guid uint64, scope *modv1.TransportScope) (mo
 	defer s.mu.RUnlock()
 	h := &s.routeHulls
 	r, present := h.visible[guid]
-	return r, present && h.pending == h.parsed && sameBodyScope(h.scope, scope)
+	return r, present && !h.waitingFor(guid) && sameBodyScope(h.scope, scope)
 }

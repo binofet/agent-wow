@@ -12,6 +12,41 @@ import (
 const routeHullKey = "agentwow-route-hull-bin"
 const RouteHullTrailer = "agentwow-observed-route-hull-bin"
 
+type RouteHullRider struct{ Player, Ship uint64 }
+
+// This header precedes World's hull images. It ties the complete result to
+// the physical input order even when a foreign rider's packet leaves the
+// controlled character's independent motion revision unchanged.
+func RouteHullHeader(sequence uint64, riders []RouteHullRider) string {
+	b := binary.LittleEndian.AppendUint64(nil, sequence)
+	for _, r := range riders {
+		b = binary.LittleEndian.AppendUint64(b, r.Player)
+		b = binary.LittleEndian.AppendUint64(b, r.Ship)
+	}
+	return string(b)
+}
+
+func ReadRouteHullHeader(wire string) (uint64, map[uint64]uint64, bool) {
+	// World retains self, owner and up to 64 public nearby players.
+	if len(wire) < 8 || (len(wire)-8)%16 != 0 || len(wire) > 8+66*16 {
+		return 0, nil, false
+	}
+	b := []byte(wire)
+	seq := binary.LittleEndian.Uint64(b)
+	var riders map[uint64]uint64
+	if len(b) > 8 {
+		riders = make(map[uint64]uint64, (len(b)-8)/16)
+	}
+	for b = b[8:]; len(b) > 0; b = b[16:] {
+		player, ship := binary.LittleEndian.Uint64(b), binary.LittleEndian.Uint64(b[8:])
+		if player>>48 != 0 || uint32(player) == 0 || !movementinfo.MovingTransportGUID(ship) || riders[player] != 0 {
+			return 0, nil, false
+		}
+		riders[player] = ship
+	}
+	return seq, riders, seq != 0 && seq != math.MaxUint64
+}
+
 // RouteHull binds a selected moving GameObject lifetime to the World read
 // that chose it. In a World trailer, Packets is the last hull-changing read.
 type RouteHull struct {

@@ -9,8 +9,10 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc"
 )
 
 // The normal CREATE2 movement header includes the stationary world pose,
@@ -31,6 +33,134 @@ func routeHullCreate(guid uint64) []byte {
 		b = le.AppendUint32(b, field)
 	}
 	return b
+}
+
+func TestRouteHullPassengerCheckpointAtPhysicalWrite(t *testing.T) {
+	const ship uint64 = 0x1fc0000000000034
+	const rider = 23
+	pair := func(t *testing.T, ship uint64, clock uint32) []byte {
+		t.Helper()
+		i := movementinfo.Info{X: 41, Y: 8, Z: 9, Time: clock}
+		if ship != 0 {
+			i.Flags, i.TransportPresent = 0x200, true
+			i.Transport = movementinfo.Transport{GUID: ship, X: 1, Time: clock, Seat: -1}
+		}
+		wire, err := movementinfo.MoverFrame(rider, i)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return wire
+	}
+	for _, tc := range []struct {
+		name      string
+		from, to  uint64
+		op        uint16
+		queued    bool
+		wantWrite bool
+	}{
+		{"standalone board", 0, ship, opcode.MSGMoveHeartbeat, false, false},
+		{"later same-ship clock", ship, ship, opcode.MSGMoveHeartbeat, false, false},
+		{"detach", ship, 0, opcode.MSGMoveHeartbeat, false, false},
+		{"change to other ship", ship, ship + 1, opcode.MSGMoveHeartbeat, false, false},
+		{"change from other ship", ship + 1, ship, opcode.MSGMoveHeartbeat, false, false},
+		{"other ship clock", ship + 1, ship + 1, opcode.MSGMoveHeartbeat, false, true},
+		{"rider disappears", ship, 0, opcode.SMSGDestroyObject, false, false},
+		{"unrelated player disappears", ship + 1, 0, opcode.SMSGDestroyObject, false, true},
+		{"rider reported dead", ship, 0, opcode.SMSGCompressedUpdateObject, false, false},
+		{"queued departure", ship, 0, opcode.MSGMoveHeartbeat, true, false},
+		{"queued board", 0, ship, opcode.MSGMoveHeartbeat, true, false},
+		{"queued motion on other ship", ship + 1, ship + 1, opcode.MSGMoveHeartbeat, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, conn := newBodyContinuitySession(t)
+			c.observe(opcode.SMSGLoginVerifyWorld, positionBody(0, 7, 8, 9, 0))
+			c.observe(opcode.SMSGUpdateObject, bodyPlayerCreate(99, 7, 8, 9, 0))
+			for _, guid := range []uint64{ship, ship + 1} {
+				c.observe(opcode.SMSGUpdateObject, routeHullCreate(guid))
+			}
+			c.observe(opcode.SMSGUpdateObject, bodyPlayerCreate(rider, 8, 8, 9, 0))
+			if tc.from != 0 {
+				c.observe(opcode.MSGMoveHeartbeat, pair(t, tc.from, 4000))
+			}
+			scope := c.e.transport.snapshot()
+			witness, ok := c.e.s.currentRouteHull(ship, scope)
+			if !ok {
+				t.Fatal("missing original ship")
+			}
+			ctx := modsession.WithRouteHull(modsession.WithRouteBodyInput(context.Background(), false), witness)
+			wire := pair(t, tc.to, 5200)
+			switch tc.op {
+			case opcode.SMSGDestroyObject:
+				wire = append(binary.LittleEndian.AppendUint64(nil, rider), 0)
+			case opcode.SMSGCompressedUpdateObject:
+				wire = compressedBodyUpdates(t, bodyValuesBlock(rider, 0x18, 0))
+			}
+			c.e.beforeScopedWrite = func() error {
+				c.e.beforeScopedWrite = nil
+				if tc.queued {
+					c.e.observeTransportScope(tc.op, wire)
+				} else {
+					c.observe(tc.op, wire)
+				}
+				return nil
+			}
+			contact, err := movementinfo.MoverFrame(99, movementinfo.Info{Flags: movementinfo.SwimmingFlag | 1, X: 7, Y: 8, Z: 9, PitchPresent: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = c.e.writeContext(ctx, opcode.MSGMoveStartSwim, contact, scope)
+			if tc.wantWrite {
+				if err != nil || conn.writes != 1 {
+					t.Fatalf("unaffected ship lost: writes=%d err=%v", conn.writes, err)
+				}
+			} else if !modcb.PacketWasNotDispatched(err) || conn.writes != 0 {
+				t.Fatalf("superseded ship admitted: writes=%d err=%v", conn.writes, err)
+			}
+		})
+	}
+}
+
+func TestRouteHullPassengerRepliesFollowReceiveOrder(t *testing.T) {
+	const ship uint64 = 0x1fc0000000000034
+	c, _ := newBodyContinuitySession(t)
+	c.observe(opcode.SMSGLoginVerifyWorld, positionBody(0, 7, 8, 9, 0))
+	c.observe(opcode.SMSGUpdateObject, bodyPlayerCreate(99, 7, 8, 9, 0))
+	c.observe(opcode.SMSGUpdateObject, routeHullCreate(ship))
+	c.observe(opcode.SMSGUpdateObject, bodyPlayerCreate(23, 7, 8, 9, 0))
+	scope := c.e.transport.snapshot()
+	original, ok := c.e.s.currentRouteHull(ship, scope)
+	if !ok {
+		t.Fatal("missing original hull")
+	}
+	receive := func(clock uint32) []string {
+		info := movementinfo.Info{Flags: 0x200, Time: clock, X: 7, Y: 8, Z: 9, TransportPresent: true,
+			Transport: movementinfo.Transport{GUID: ship, Time: clock, Seat: -1}}
+		wire, err := movementinfo.MoverFrame(23, info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.e.observeTransportScope(opcode.MSGMoveHeartbeat, wire)
+		tr := &bodyUpdateTrailer{}
+		p := &modv1.WorldPacket{Opcode: opcode.MSGMoveHeartbeat, Payload: wire, TransportScope: c.e.transport.snapshot()}
+		if _, err := c.w.OnPacket(grpc.NewContextWithServerTransportStream(context.Background(), tr), p); err != nil {
+			t.Fatal(err)
+		}
+		return tr.md.Get(modcb.RouteHullTrailer)
+	}
+	older, newest := receive(4000), receive(5200)
+	if scope.MotionRevision != c.e.transport.scope.MotionRevision {
+		t.Fatal("foreign heartbeat should preserve the controlled body's motion")
+	}
+	c.e.s.recordRouteHulls(scope, older)
+	if _, ok := c.e.s.currentRouteHull(ship, scope); ok {
+		t.Fatal("older parser acknowledgment supplied the later passenger frame")
+	}
+	c.e.s.recordRouteHulls(scope, newest)
+	c.e.s.recordRouteHulls(scope, older)
+	current, ok := c.e.s.currentRouteHull(ship, scope)
+	if !ok || current.Birth != original.Birth || current.Packets <= original.Packets {
+		t.Fatal("fresh source on the same ship was not recovered", original, current)
+	}
 }
 
 func TestRouteHullParsedSourceAtPhysicalWrite(t *testing.T) {

@@ -37,6 +37,38 @@ func HullPacketSubject(op uint32, body []byte) (uint64, bool) {
 	return guid, true
 }
 
+// RouteHullSubject identifies the ordered inputs which can change a visible
+// ship or a player's paired world/deck checkpoint. A batch or an unreadable
+// subject can affect any ship.
+func RouteHullSubject(op uint32, body []byte) (uint64, bool) {
+	if op == opcode.SMSGUpdateObject || op == opcode.SMSGCompressedUpdateObject {
+		return 0, true
+	}
+	subject, relevant := HullPacketSubject(op, body)
+	return subject, relevant && (subject == 0 || MovingTransportGUID(subject) || subject>>48 == 0 && uint32(subject) != 0)
+}
+
+// IncomingPassengerHull reads the possible new transport on a standalone
+// player packet. The physical reader also retains their previous ship.
+func IncomingPassengerHull(op uint32, body []byte) uint64 {
+	if op == opcode.SMSGDestroyObject || op == opcode.SMSGMoveKnockBack || op == opcode.SMSGMonsterMove || op == opcode.SMSGMonsterMoveTransport {
+		return 0
+	}
+	c := reader{b: body}
+	c.guid()
+	if op == opcode.MSGMoveTeleportAck {
+		c.u32()
+	}
+	if !c.short {
+		// A prefix is enough to withhold a potential ship. Only World's
+		// complete decoder can establish or restore a passenger checkpoint.
+		if i, _, err := DecodePrefix(body[c.off:]); err == nil && i.TransportPresent && MovingTransportGUID(i.Transport.GUID) {
+			return i.Transport.GUID
+		}
+	}
+	return 0
+}
+
 var errObjectUpdate = errors.New("invalid object movement update")
 
 // ObjectUpdatePayload unwraps one complete UPDATE_OBJECT payload. World and

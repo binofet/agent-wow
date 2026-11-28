@@ -102,6 +102,8 @@ type Service struct {
 	combat                       combatJournal
 	session                      modv1.SessionClient
 	shipQueries                  map[uint32]*shipTemplateQuery
+	routeHullSequence            uint64
+	routeRiders                  map[uint64]routeRider
 	motion                       ownMotionAuthority
 	taxiBody                     taxiBodyObservation
 	completion                   splineCompletionState
@@ -129,6 +131,14 @@ func age(now, observed time.Time) uint64 {
 	return uint64(now.Sub(observed) / time.Millisecond)
 }
 
+func (p *observed) life() (healthKnown, aliveKnown, alive bool) {
+	healthKnown = p.known[unitHealth] && p.known[unitMaxHealth] && p.fields[unitMaxHealth] > 0 && p.fields[unitHealth] <= p.fields[unitMaxHealth]
+	// Ghosts can have positive health. Public player flags must also be known.
+	aliveKnown = healthKnown && p.known[playerFlags]
+	alive = aliveKnown && p.fields[unitHealth] > 0 && p.fields[playerFlags]&0x10 == 0 && p.fields[unitDynamicFlags]&0x20 == 0
+	return
+}
+
 func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 	r := &worldv1.PlayerState{
 		Guid: p.guid, Present: p.present, MapKnown: p.mapKnown, MapId: p.mapID,
@@ -145,7 +155,7 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 		SpeedsKnown: p.speedsKnown, WalkSpeed: p.walkSpeed, RunSpeed: p.runSpeed,
 		AuraStateKnown: p.known[0x3d], AuraState: p.fields[0x3d],
 	}
-	r.HealthKnown = p.known[unitHealth] && p.known[unitMaxHealth] && r.MaxHealth > 0 && r.Health <= r.MaxHealth
+	r.HealthKnown, r.AliveKnown, r.Alive = p.life()
 	r.PowerType = p.fields[unitBytes0] >> 24
 	r.ClassId = (p.fields[unitBytes0] >> 8) & 0xff
 	r.ClassKnown = p.known[unitBytes0] && r.ClassId > 0 && r.ClassId <= 11 && r.ClassId != 10
@@ -164,9 +174,6 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 		r.Power, r.MaxPower = p.fields[unitPower1+i], p.fields[unitMaxPower1+i]
 		r.PowerKnown = p.known[unitPower1+i] && p.known[unitMaxPower1+i] && r.Power <= r.MaxPower
 	}
-	// Ghosts can have positive health. Public player flags must also be known.
-	r.AliveKnown = r.HealthKnown && p.known[playerFlags]
-	r.Alive = r.AliveKnown && r.Health > 0 && r.PlayerFlags&0x10 == 0 && r.DynamicFlags&0x20 == 0
 	if !p.present && p.mapKnown && !p.positionKnown {
 		// The last local XYZ belongs to the previous map. A remote party
 		// zone supplies no coordinates on this player's new map.
@@ -234,8 +241,14 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		return &emptypb.Empty{}, nil
 	}
 	objectUpdate := packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject
-	subject, keyed := movementinfo.HullPacketSubject(packet.Opcode, packet.Payload)
-	if objectUpdate || keyed && movingTransportGUID(subject) {
+	switch packet.Opcode {
+	case opcode.SMSGLoginVerifyWorld, opcode.SMSGNewWorld, opcode.SMSGTransferPending:
+		s.routeHullSequence, s.routeRiders = 0, nil
+	}
+	if _, relevant := movementinfo.RouteHullSubject(packet.Opcode, packet.Payload); relevant {
+		if s.routeHullSequence < math.MaxUint64 {
+			s.routeHullSequence++
+		}
 		defer s.publishRouteHulls(ctx, s.state.gameObjects)
 	}
 	s.lastOpcode = packet.Opcode
