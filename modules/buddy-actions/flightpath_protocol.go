@@ -3,10 +3,11 @@ package buddyactions
 import (
 	"encoding/binary"
 	"fmt"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 )
 
 const (
-	flightpathMaskWords = 14
+	flightpathMaskWords = modcb.FlightpathMaskWords
 	flightpathNodeLimit = flightpathMaskWords * 32
 )
 
@@ -29,17 +30,9 @@ func decodeFlightpathStatus(payload []byte) (npc uint64, known bool, err error) 
 }
 
 func decodeFlightpathMenu(payload []byte) (npc uint64, source uint32, knownNodes []uint32, err error) {
-	const menuBytes = 4 + 8 + 4 + flightpathMaskWords*4
-	if len(payload) != menuBytes {
-		return 0, 0, nil, fmt.Errorf("taxi menu requires exactly %d bytes, got %d", menuBytes, len(payload))
-	}
-	if binary.LittleEndian.Uint32(payload) != 1 {
-		return 0, 0, nil, fmt.Errorf("taxi menu requires the show tag")
-	}
-	npc = binary.LittleEndian.Uint64(payload[4:])
-	source = binary.LittleEndian.Uint32(payload[12:])
-	if npc == 0 || source == 0 || source > flightpathNodeLimit {
-		return 0, 0, nil, fmt.Errorf("taxi menu requires a nonzero GUID and source node 1..%d", flightpathNodeLimit)
+	npc, source, err = modcb.FlightpathMenuHeader(payload)
+	if err != nil {
+		return 0, 0, nil, err
 	}
 	knownNodes = make([]uint32, 0)
 	for word := 0; word < flightpathMaskWords; word++ {

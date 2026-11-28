@@ -19,6 +19,7 @@ import (
 // This separate monotonic slot retains one exact activation attempt. Expiry,
 // policy edits and visit changes never clear an uncertain or accepted flight.
 type flightpathActivationTracker struct {
+	naturalMenuToken   string
 	revision           uint64
 	request            *actionsv1.FlightpathActivationRequest
 	operation          *actionsv1.FlightpathActivationOperation

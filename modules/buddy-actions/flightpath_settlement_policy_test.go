@@ -64,7 +64,7 @@ func (p *settlementPolicyFixture) step() map[string]any {
 func (p *settlementPolicyFixture) refresh() {
 	p.f.t.Helper()
 	if p.w != nil {
-		view, err := p.w.Snapshot(context.Background(), nil)
+		view, err := p.w.Snapshot(context.Background(), &worldv1.SnapshotRequest{CreatureGuid: p.destinationNPC})
 		if err != nil {
 			p.f.t.Fatal(err)
 		}
@@ -245,6 +245,10 @@ func (p *settlementPolicyFixture) worldPacket(op uint32, body []byte) {
 }
 
 func (p *settlementPolicyFixture) qualifySpline() {
+	p.qualifySplineAt(1, 0)
+}
+
+func (p *settlementPolicyFixture) qualifySplineAt(masterOffset, selfReach float32) {
 	t := p.f.t
 	t.Helper()
 	catalog, err := taxireference.Default()
@@ -269,7 +273,7 @@ func (p *settlementPolicyFixture) qualifySpline() {
 	for _, speed := range []float32{2.5, 7, 4.5, 4.7, 2.5, 7, 4.5, 3.14, 3.14} {
 		b = settlementPolicyFloats(b, speed)
 	}
-	b = append(b, settlementPolicyValues(map[int]uint32{0x17: 1 | (5 << 8), 0x18: 50, 0x20: 100, 0x36: 5, 0x3b: 0x100000, 0x492: 12345})...)
+	b = append(b, settlementPolicyValues(map[int]uint32{0x17: 1 | (5 << 8), 0x18: 50, 0x20: 100, 0x36: 5, 0x3b: 0x100000, 0x42: math.Float32bits(selfReach), 0x492: 12345})...)
 	p.worldPacket(opcode.SMSGUpdateObject, b)
 	// The destination flightmaster is independently observed in this synthetic
 	// packet; the static reference supplies only fixture coordinates.
@@ -277,8 +281,8 @@ func (p *settlementPolicyFixture) qualifySpline() {
 	b = append(b, 3)
 	b = append(b, settlementPolicyGUID(p.destinationNPC)...)
 	b = append(b, 3, 0x40, 0)
-	b = settlementPolicyFloats(b, float32(node.X)+1, float32(node.Y), float32(node.Z), 0)
-	b = append(b, settlementPolicyValues(map[int]uint32{3: 0x124, 0x18: 100, 0x20: 100, 0x52: 0x2000})...)
+	b = settlementPolicyFloats(b, float32(node.X)+masterOffset, float32(node.Y), float32(node.Z), 0)
+	b = append(b, settlementPolicyValues(map[int]uint32{3: uint32(p.destinationNPC >> 24 & 0xffffff), 0x18: 100, 0x20: 100, 0x52: 0x2000})...)
 	p.worldPacket(opcode.SMSGUpdateObject, b)
 	b = []byte{1, 1, 0}
 	b = settlementPolicyFloats(b, 0, 0, 0)
@@ -289,7 +293,7 @@ func (p *settlementPolicyFixture) qualifySpline() {
 	b = binary.LittleEndian.AppendUint32(b, 2)
 	b = settlementPolicyFloats(b, 0, 0, 0, float32(node.X), float32(node.Y), float32(node.Z))
 	p.scope.SplineIdKnown, p.scope.SplineActive = true, true
-	p.scope.SplineRevision = 41
+	p.scope.SplineRevision++
 	p.scope.SplineSourceRevision = p.scope.MotionRevision + 1
 	p.scope.SplineSourceOpcode = opcode.SMSGMonsterMove
 	p.worldPacket(opcode.SMSGMonsterMove, b)
@@ -328,7 +332,17 @@ func (p *settlementPolicyFixture) ground() {
 
 func (p *settlementPolicyFixture) arriveMenu(source uint32) {
 	p.f.t.Helper()
-	flightpathSettlementPacket(p.f.t, p.f.base.x, opcode.SMSGShowtaxinodes, flightpathMenuPayload(p.destinationNPC, source, 2, 4, 12), cloneFlightpathScope(p.scope))
+	scope := cloneFlightpathScope(p.scope)
+	// This fixture supplies the response to the preceding captured physical
+	// request. Separate Core tests exercise the actual read/write clock fence.
+	packets := p.f.base.x.f.packets
+	if len(packets) > 0 {
+		last := packets[len(packets)-1]
+		if last.Opcode == opcode.CMSGTaxiqueryavailablenodes {
+			scope.TaxiArrivalQueryRevision = last.TransportScope.GetTaxiArrivalQueryRevision()
+		}
+	}
+	flightpathSettlementPacket(p.f.t, p.f.base.x, opcode.SMSGShowtaxinodes, flightpathMenuPayload(p.destinationNPC, source, 2, 4, 12, source), scope)
 	p.refresh()
 }
 

@@ -87,7 +87,10 @@ func (s *Service) flightpathRetiredWorldReasonLocked(activation, completion uint
 
 func (s *Service) flightpathArrivalReplyScopeLocked(op *actionsv1.FlightpathOperation, scope *modv1.TransportScope) bool {
 	if op == nil || op.Mode != "arrival" || !s.flightpathAcceptedCurrentLocked(op.ActivationRevision) ||
-		op.CompletionRevision == 0 || (!op.TransportWritten && !op.TransportUnknown) {
+		(op.CompletionRevision == 0) == (op.NaturalLandingRevision == 0) || (!op.TransportWritten && !op.TransportUnknown) {
+		return false
+	}
+	if op.NaturalLandingRevision != 0 && scope.GetTaxiArrivalQueryRevision() != op.Revision {
 		return false
 	}
 	return sameFlightpathSource(scope, op.TransportScope) && scope.MotionRevision >= op.TransportScope.MotionRevision &&
@@ -99,7 +102,7 @@ func (s *Service) flightpathArrivalReplyScopeLocked(op *actionsv1.FlightpathOper
 // It sends no packet and preserves every delivery/reply/history field.
 func (s *Service) SettleFlightpath(ctx context.Context, request *actionsv1.SettleFlightpathRequest) (*actionsv1.FlightpathObservationResponse, error) {
 	if request == nil || request.SessionId == "" || len(request.SessionId) > 128 || request.SelfGuid == 0 || request.VisitId == 0 ||
-		request.ActivationRevision == 0 || request.MenuRevision == 0 || request.CompletionRevision == 0 ||
+		request.ActivationRevision == 0 || request.MenuRevision == 0 || (request.CompletionRevision == 0) == (request.NaturalLandingRevision == 0) ||
 		request.AuthorityRevision == 0 || request.MovementRevision == 0 || request.UnitFlagsRevision == 0 || request.TransportScope == nil {
 		return nil, status.Error(codes.InvalidArgument, "exact booking menu completion body and current World evidence binding required")
 	}
@@ -117,7 +120,7 @@ func (s *Service) SettleFlightpath(ctx context.Context, request *actionsv1.Settl
 	if !s.flightpathAcceptedCurrentLocked(r.ActivationRevision) || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID ||
 		r.VisitId != s.encounterVisit.revision || !s.flightpathOperationCurrentLocked(menu) || query == nil || menu.Pending || !menu.MenuKnown ||
 		menu.Mode != "arrival" || menu.Phase != "menu_observed" || menu.Revision != r.MenuRevision || s.flightpath.revision != r.MenuRevision ||
-		menu.ActivationRevision != r.ActivationRevision || menu.CompletionRevision != r.CompletionRevision ||
+		menu.ActivationRevision != r.ActivationRevision || menu.CompletionRevision != r.CompletionRevision || menu.NaturalLandingRevision != r.NaturalLandingRevision ||
 		menu.SourceNode != a.DestinationNode || !s.flightpathArrivalReplyScopeLocked(menu, s.flightpath.arrivalReplyScope) {
 		return nil, status.Error(codes.FailedPrecondition, "current matching activation-bound destination menu is required")
 	}
@@ -130,11 +133,26 @@ func (s *Service) SettleFlightpath(ctx context.Context, request *actionsv1.Settl
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
-	if reason := safeQuestCharacter(w, r.SelfGuid); reason != "" {
-		return nil, status.Error(codes.FailedPrecondition, "current actual ground body is required")
-	}
-	if reason := s.flightpathRetiredWorldReasonLocked(r.ActivationRevision, r.CompletionRevision, w); reason != "" {
-		return nil, status.Error(codes.FailedPrecondition, reason)
+	if r.NaturalLandingRevision != 0 {
+		if !s.naturalTaxiLandingLocked(r.ActivationRevision, r.NaturalLandingRevision, w) {
+			return nil, status.Error(codes.FailedPrecondition, "current natural taxi landing is required")
+		}
+		// The actual menu proves realm proximity. A changed or vanished
+		// recipient cannot lend the same historical menu to a new interaction.
+		npc := w.GetRequestedCreature()
+		if npc.GetGuid() != menu.NpcGuid || !npc.GetStationaryPositionKnown() || !npc.GetAlive() || !npc.GetPresent() ||
+			!npc.MapKnown || npc.MapId != w.Self.MapId || !npc.PositionKnown || npc.NpcFlags&0x2000 == 0 ||
+			!npc.UnitFlagsKnown || npc.UnitFlags&0x80000 != 0 || npc.PositionRevision == 0 || npc.PositionRevision != s.flightpath.naturalNpcRevision ||
+			!(distance(naturalTaxiReference(w), position{x: npc.X, y: npc.Y, z: npc.Z}) <= naturalTaxiInteractionRange(w, npc)) {
+			return nil, status.Error(codes.FailedPrecondition, "natural landing flightmaster changed after menu")
+		}
+	} else {
+		if reason := safeQuestCharacter(w, r.SelfGuid); reason != "" {
+			return nil, status.Error(codes.FailedPrecondition, "current actual ground body is required")
+		}
+		if reason := s.flightpathRetiredWorldReasonLocked(r.ActivationRevision, r.CompletionRevision, w); reason != "" {
+			return nil, status.Error(codes.FailedPrecondition, reason)
+		}
 	}
 	if w.SelfMotionAuthority.Revision != r.AuthorityRevision || w.SelfMovementFacts.Revision != r.MovementRevision ||
 		w.SelfMotionAuthority.UnitFlagsRevision != r.UnitFlagsRevision || !proto.Equal(w.SelfMotionAuthority.TransportScope, r.TransportScope) ||
@@ -149,6 +167,11 @@ func (s *Service) SettleFlightpath(ctx context.Context, request *actionsv1.Settl
 		return nil, status.Error(codes.Aborted, "flightpath booking or menu changed during settlement")
 	}
 	a.Pending, a.Phase, a.ArrivalKnown = false, "observed_arrival", true
+	if r.NaturalLandingRevision != 0 {
+		a.ArrivalEvidence = "server_taxi_clear_and_destination_menu"
+	} else {
+		a.ArrivalEvidence = "retired_completion_and_destination_menu"
+	}
 	s.flightpath.certifiedArrivalMenuRevision = menu.Revision
 	f.settlementRequest = r
 	f.settlementResult = s.flightpathObservationLocked()

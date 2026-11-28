@@ -61,12 +61,13 @@ func safeQuestCharacterFlags(w *worldv1.SnapshotResponse, selfGUID uint64, compa
 	if !p.MovementFlagsKnown || !compatible(p.MovementFlags, p.ExtraMovementFlags) {
 		return "character_ordinary_ground_movement_unknown"
 	}
-	const unsafe = uint32(0x1 | 0x4 | 0x00040000 | 0x00080000 | 0x00100000 | 0x00400000 | 0x00800000 | 0x01000000 | 0x02000000 | 0x08000000)
-	if !p.UnitFlagsKnown || unitFlags&unsafe != 0 {
+	if !p.UnitFlagsKnown || unitFlags&unsafeQuestUnitFlags != 0 {
 		return "character_unsafe_or_in_combat"
 	}
 	return ""
 }
+
+const unsafeQuestUnitFlags = uint32(0x1 | 0x4 | 0x00040000 | 0x00080000 | 0x00100000 | 0x00400000 | 0x00800000 | 0x01000000 | 0x02000000 | 0x08000000)
 
 // ApproachQuest performs a finite nearby ground approach under the existing
 // quest lease. It selects no coordinates, never follows a moving NPC, and stops

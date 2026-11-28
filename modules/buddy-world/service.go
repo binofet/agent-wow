@@ -63,6 +63,7 @@ type observed struct {
 	receivedSpline              bool
 	receivedSplineHeader        observedTrajectory
 	receivedUnitFlags           bool
+	receivedTaxiBarrier         bool
 	receivedOwnCreate           bool
 	receivedMotionInvalid       bool
 	receivedPosition            bool

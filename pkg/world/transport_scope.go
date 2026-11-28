@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/agent-wow/agent-wow/pkg/buddyidentity"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
@@ -20,6 +21,8 @@ import (
 // General barriers are deliberately conservative; only World can qualify its
 // complete parser's current spline against the separately retained source.
 type transportScopeState struct {
+	taxiMenu                           naturalTaxiMenu
+	uncertainTaxiMotion                *modv1.TransportScope
 	summon                             pendingSummon
 	selectionAttempted, selectionKnown bool
 	selectedGUID                       uint64
@@ -244,16 +247,7 @@ func (t *transportScopeState) sent(op uint32) {
 		}
 		return
 	}
-	name := opcode.WorldName(op)
-	affectsMotion := transportMotionBarrier(op) || strings.HasPrefix(name, "CMSG_MOVE_") || strings.HasPrefix(name, "CMSG_FORCE_")
-	switch op {
-	case opcode.CMSGSetActiveMover, opcode.CMSGSetVehicleRecIDAck, opcode.CMSGDismissControlledVehicle,
-		opcode.CMSGRequestVehicleExit, opcode.CMSGRequestVehiclePrevSeat, opcode.CMSGRequestVehicleNextSeat,
-		opcode.CMSGRequestVehicleSwitchSeat, opcode.CMSGChangeSeatsOnControlledVehicle, opcode.CMSGPlayerVehicleEnter,
-		opcode.CMSGActivatetaxi, opcode.CMSGActivatetaxiexpress:
-		affectsMotion = true
-	}
-	if t.scope == nil || !affectsMotion {
+	if t.scope == nil || !outboundTransportMotion(op) {
 		return
 	}
 	t.advance(&t.scope.MotionRevision)
@@ -263,6 +257,18 @@ func (t *transportScopeState) sent(op uint32) {
 	if op != opcode.MSGMoveWorldportAck {
 		t.supersedePendingTransfer("outbound_motion_superseded_transfer")
 	}
+}
+
+func outboundTransportMotion(op uint32) bool {
+	switch op {
+	case opcode.CMSGSetActiveMover, opcode.CMSGSetVehicleRecIDAck, opcode.CMSGDismissControlledVehicle,
+		opcode.CMSGRequestVehicleExit, opcode.CMSGRequestVehiclePrevSeat, opcode.CMSGRequestVehicleNextSeat,
+		opcode.CMSGRequestVehicleSwitchSeat, opcode.CMSGChangeSeatsOnControlledVehicle, opcode.CMSGPlayerVehicleEnter,
+		opcode.CMSGActivatetaxi, opcode.CMSGActivatetaxiexpress:
+		return true
+	}
+	name := opcode.WorldName(op)
+	return transportMotionBarrier(op) || strings.HasPrefix(name, "CMSG_MOVE_") || strings.HasPrefix(name, "CMSG_FORCE_")
 }
 
 // reserve is called only on the owner loop, immediately before transport.
@@ -421,11 +427,12 @@ func (e *engine) observeTransportScope(op uint16, body []byte) {
 	}
 }
 
-func (e *engine) publishObserved(op uint16, body []byte) error {
+func (e *engine) publishObserved(op uint16, body []byte, received time.Time) error {
 	if observed, ok := e.s.modules.(interface {
 		PublishObserved(uint16, []byte, *modv1.TransportScope) error
 	}); ok {
 		scope := e.transport.snapshot()
+		e.transport.taxiMenu.markReply(op, body, scope, received)
 		if op == opcode.SMSGSummonRequest && scope != nil && e.transport.summon.caster != 0 {
 			scope.SummonOfferSequence = e.transport.summon.sequence
 		}

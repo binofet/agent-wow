@@ -18,6 +18,9 @@ import (
 // Legacy unscoped STOP remains available through its existing path.
 func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []byte, requested *modv1.TransportScope, prior *modv1.WorldPacket) error {
 	if requested != nil && modcb.FlightpathGroundPacket(op, body) {
+		if requested.TaxiArrivalQueryRevision != 0 {
+			return e.reserveNaturalTaxiMenu(ctx, op, requested)
+		}
 		// The socket owner has drained ready packets. Its latest known STOP
 		// and the complete World observation must both still be current here.
 		stop := e.ownMovementReport

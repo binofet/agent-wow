@@ -1244,6 +1244,9 @@ message FlightpathQueryRequest {
   uint64 activation_revision = 8;
   uint64 completion_revision = 9;
   FlightmasterTarget opportunity = 10;
+  // For arrival only: exact received taxi-off revision, mutually exclusive
+  // with a retired client completion.
+  uint64 natural_landing_revision = 11;
 }
 message FlightpathOperation {
   uint64 revision = 1;
@@ -1270,6 +1273,7 @@ message FlightpathOperation {
   uint64 activation_revision = 19;
   uint64 completion_revision = 20;
   agentwow.module.v1.TransportScope transport_scope = 21;
+  uint64 natural_landing_revision = 22;
 }
 message FlightpathObservationResponse {
   string session_id = 1;
@@ -1342,6 +1346,8 @@ message FlightpathActivationOperation {
   // Current segment may advance; all original acceptance/departure fields stay
   // unchanged. A transfer witness is neither booking causality nor arrival.
   FlightpathCurrentSegment current_segment = 25;
+  // Evidence recorded by settlement without altering a completion receipt.
+  string arrival_evidence = 26;
 }
 
 message FlightpathCurrentSegment {
@@ -1387,6 +1393,7 @@ message SettleFlightpathRequest {
   uint64 movement_revision = 8;
   uint64 unit_flags_revision = 9;
   agentwow.module.v1.TransportScope transport_scope = 10;
+  uint64 natural_landing_revision = 11;
 }
 
 message FlightpathReferenceRequest { uint32 node_id = 1; }

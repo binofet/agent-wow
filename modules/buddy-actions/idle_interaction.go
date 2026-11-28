@@ -79,12 +79,13 @@ func (s *Service) AcquireIdleInteraction(ctx context.Context, request *actionsv1
 	if r.Owner == "exploration" {
 		flags = s.groundTravelUnitFlags(w.Self)
 	}
-	if reason := safeQuestCharacterFlags(w, r.SelfGuid, movementflags.GroundCompatible, flags); reason != "" {
+	natural := r.Owner == "exploration" && s.naturalTaxiLandingLocked(s.flightpathActivation.revision, w.GetSelfMotionAuthority().GetNaturalTaxiLandingRevision(), w)
+	if reason := safeQuestCharacterFlags(w, r.SelfGuid, movementflags.GroundCompatible, flags); reason != "" && !natural {
 		return nil, status.Error(codes.FailedPrecondition, reason)
 	}
 	self := w.Self
-	if !self.HealthKnown || self.Health == 0 || self.MaxHealth == 0 || self.Health > self.MaxHealth || self.PositionRevision == 0 ||
-		self.MovementFlags&0xff != 0 || !channelstate.Idle(self) {
+	if !self.HealthKnown || self.Health == 0 || self.MaxHealth == 0 || self.Health > self.MaxHealth ||
+		!natural && (self.PositionRevision == 0 || self.MovementFlags&0xff != 0) || !channelstate.Idle(self) {
 		return nil, status.Error(codes.FailedPrecondition, "known stationary living unchanneled body required")
 	}
 	now := s.now()
@@ -95,7 +96,7 @@ func (s *Service) AcquireIdleInteraction(ctx context.Context, request *actionsv1
 	if reason := s.idleInteractionGuardLocked(r, now); reason != "" {
 		return nil, status.Error(codes.FailedPrecondition, reason)
 	}
-	if s.flightpathActivation.operation.GetPending() {
+	if s.flightpathActivation.operation.GetPending() && !natural {
 		// An accepted booking stays pending until actual arrival settlement.
 		// Only the parent may obtain new current-visit custody after a qualified
 		// actual ground state; this path never carries or clears an old token.
@@ -115,7 +116,13 @@ func (s *Service) AcquireIdleInteraction(ctx context.Context, request *actionsv1
 	s.state.InteractionOwner = r.Owner
 	s.idleInteraction = idleInteractionBinding{sessionID: r.SessionId, selfGUID: r.SelfGuid, visit: r.VisitId, token: token}
 	s.lastStep = now
-	return s.idleInteractionLeaseLocked(w, now), nil
+	result := s.idleInteractionLeaseLocked(w, now)
+	if natural {
+		// Possession of this finite token conveys no destination coordinates.
+		s.flightpathActivation.naturalMenuToken = token
+		result.State.Position = nil
+	}
+	return result, nil
 }
 
 func (s *Service) idleInteractionGuardLocked(r *actionsv1.IdleInteractionRequest, now time.Time) string {

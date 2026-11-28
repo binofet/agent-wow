@@ -117,11 +117,21 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 		return "", false, err
 	}
 	e.writeSerial++
+	if op == opcode.CMSGTaxiqueryavailablenodes {
+		e.transport.taxiMenu = naturalTaxiMenu{}
+	}
 	anyBytes, err := e.s.conn.WritePacket(op, body)
+	if err == nil && op == opcode.CMSGTaxiqueryavailablenodes && requested.GetTaxiArrivalQueryRevision() != 0 {
+		e.transport.taxiMenu = naturalTaxiMenu{requested: cloneTransportScope(requested), npc: binary.LittleEndian.Uint64(body), writtenAt: time.Now()}
+	}
 	if err == nil && (ownMovementReportOpcode(op) || op == opcode.CMSGMoveKnockBackAck) {
 		e.bodyWrittenAt = time.Now()
 	}
 	if err != nil {
+		if outboundTransportMotion(op) && e.transport.scope.GetSplineActive() {
+			e.transport.taxiMenu = naturalTaxiMenu{}
+			e.transport.uncertainTaxiMotion = e.transport.snapshot()
+		}
 		if ownMovementReportOpcode(op) || op == opcode.CMSGMoveKnockBackAck {
 			e.lastWrittenPose = writtenPose{}
 			e.s.mu.Lock()
@@ -346,7 +356,7 @@ func (e *engine) processIncoming(p packet) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("world packet 0x%03x: %w", p.opcode, err)
 	}
-	if err := e.publishObserved(p.opcode, p.body); err != nil {
+	if err := e.publishObserved(p.opcode, p.body, p.receivedAt); err != nil {
 		return false, err
 	}
 	if complete {
