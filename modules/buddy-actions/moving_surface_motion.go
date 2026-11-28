@@ -962,7 +962,8 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 		return modcb.PacketNotDispatchedError("current hull transform unavailable")
 	}
 	path := s.surfaceFollow.paths[ship]
-	if op != opcode.MSGMoveStop && !committed && surfaceDockWalk(g) && !s.surfaceFollow.dockWalkCurrent(path, nowTransform, nowProgress, s.now()) {
+	dockWalk := surfaceDockWalk(g) || in != nil && in.body != nil && in.body.dockWalk
+	if op != opcode.MSGMoveStop && !committed && dockWalk && !s.surfaceFollow.dockWalkCurrent(path, nowTransform, nowProgress, s.now()) {
 		return modcb.PacketNotDispatchedError("dock walk no longer fits its measured dwell")
 	}
 	if info.TransportPresent && (info.Transport.Time > nowProgress || path.CrossesTransfer(uint64(info.Transport.Time), uint64(nowProgress))) {
@@ -990,6 +991,10 @@ func (s *Service) writeSurfaceInfoLocked(ctx context.Context, w *worldv1.Snapsho
 			flight, local, e := s.planExplicitSurface(ctx, latest, in.body.request, mesh, path, nowTransform, nowProgress, start, bearing, sf.planSpeed)
 			if e != nil || local {
 				return modcb.PacketNotDispatchedError("current selected passenger trajectory changed")
+			}
+			nowLast := flight[len(flight)-1]
+			if in.body.dockWalk != (!in.body.request.Jump && nowLast.FallTime == 0 && !nowLast.Swimming) {
+				return modcb.PacketNotDispatchedError("current selected passenger contact mode changed")
 			}
 			sf.plan, sf.planTransform, sf.planBearing = flight, nowTransform, bearing
 			info.Orientation = float32(math.Remainder(bearing, 2*math.Pi))
