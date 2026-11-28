@@ -66,6 +66,25 @@ func TestMenethilWalksBetweenDockAndDeck(t *testing.T) {
 						t.Fatal("wrong ship", body.info)
 					}
 					t.Logf("%s in %d written movement frames, terminal XYZ=(%.3f,%.3f,%.3f)", mode, len(r.packets), body.info.X, body.info.Y, body.info.Z)
+					if !boarding {
+						// The realm's last own frame is still aboard. A normal
+						// formation input starts from the actually written quay STOP.
+						before := len(r.packets)
+						r.s.session = r.fakeSession
+						r.s.planMapPath = planMapNavigation
+						r.set("")
+						for range 5 {
+							r.tick(100 * time.Millisecond)
+							if len(r.packets) > before {
+								break
+							}
+						}
+						if len(r.packets) <= before || r.packets[before].Opcode != opcode.MSGMoveStartForward ||
+							r.frame(before).TransportPresent || r.world.Self.MovementFlags != passengerFlag ||
+							surfaceDistance(surfaceInfoPoint(r.frame(before)), surfaceInfoPoint(body.info)) > .025 {
+							t.Fatalf("no ordinary ground follow start from the quay: frames=%d reason=%s nav=%s", len(r.packets)-before, r.s.state.Reason, r.s.state.NavReason)
+						}
+					}
 					return
 				}
 				if r.s.surfaceObservationLocked(r.ctx, r.world).GetJumpRequired() {

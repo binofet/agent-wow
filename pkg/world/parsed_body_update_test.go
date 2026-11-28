@@ -93,20 +93,25 @@ func (c *bodyContinuitySession) observe(op uint16, wire []byte) (string, *modv1.
 	c.t.Helper()
 	c.e.observeTransportScope(op, wire)
 	p := &modv1.WorldPacket{Opcode: uint32(op), Payload: wire, TransportScope: c.e.transport.snapshot()}
+	return c.deliver(p), p
+}
+
+func (c *bodyContinuitySession) deliver(p *modv1.WorldPacket) string {
+	c.t.Helper()
 	tr := &bodyUpdateTrailer{}
 	ctx := grpc.NewContextWithServerTransportStream(context.Background(), tr)
 	if _, err := c.w.OnPacket(ctx, p); err != nil {
 		c.t.Fatal(err)
 	}
 	result := modcb.BodyUpdateResult(tr.md.Get(modcb.BodyInputUpdateTrailer), tr.md.Get(modcb.BodyInputBarrierTrailer))
-	if _, relevant := movementinfo.RouteHullSubject(uint32(op), wire); relevant {
+	if _, relevant := movementinfo.RouteHullSubject(p.Opcode, p.Payload); relevant {
 		c.e.s.recordRouteHulls(p.TransportScope, tr.md.Get(modcb.RouteHullTrailer))
 	}
-	if op == opcode.SMSGUpdateObject || op == opcode.SMSGCompressedUpdateObject {
+	if p.Opcode == opcode.SMSGUpdateObject || p.Opcode == opcode.SMSGCompressedUpdateObject {
 		positions := modcb.ObservedOwnerPositions(result, tr.md.Get(modcb.OwnerPositionTrailer))
 		c.e.s.recordParsedBodyUpdate(p.TransportScope, modcb.BodyUpdateDetail(result, tr.md.Get(modcb.BodyInputFieldTrailer)), positions...)
 	}
-	return result, p
+	return result
 }
 
 func TestFollowTakeoffChecksAllObservedOwnerPositionsAtTheSocket(t *testing.T) {
@@ -259,6 +264,58 @@ func (c *bodyContinuitySession) InvokeModule(ctx context.Context, r *modv1.Invok
 	}
 	packed, err := anypb.New(response)
 	return &modv1.InvokeModuleResponse{Result: packed}, err
+}
+
+func TestOwnDockStopSurvivesOnlyClassifiedInterleavedOwnerTraffic(t *testing.T) {
+	for _, ownDeath := range []bool{false, true} {
+		t.Run(fmt.Sprintf("own_death_%t", ownDeath), func(t *testing.T) {
+			c, conn := newBodyContinuitySession(t)
+			c.observe(opcode.SMSGLoginVerifyWorld, positionBody(0, 1, 2, 3, .5))
+			c.observe(opcode.SMSGUpdateObject, bodyPlayerCreate(99, 1, 2, 3, .5))
+			id := strings.Repeat("a", 64)
+			ctx := modsession.WithWriteOrigin(context.Background(), modsession.WriteOrigin{MovementAttempt: id})
+			stop, err := movementinfo.MoverFrame(99, movementinfo.Info{Time: 250, X: 1, Y: 2, Z: 3, Orientation: .5})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := c.e.writeContext(ctx, opcode.MSGMoveStop, stop); err != nil {
+				t.Fatal(err)
+			}
+			original := c.e.s.OwnMovementAttempt(id)
+			if original == nil {
+				t.Fatal("initial physical STOP unavailable")
+			}
+
+			update := compressedBodyUpdates(t, bodyValuesBlock(42, 0x18, 80))
+			if ownDeath {
+				update = compressedBodyUpdates(t, bodyValuesBlock(99, 0x18, 0), bodyValuesBlock(99, 0x18, 100))
+			}
+			c.e.observeTransportScope(opcode.SMSGCompressedUpdateObject, update)
+			p := &modv1.WorldPacket{Opcode: opcode.SMSGCompressedUpdateObject, Payload: update, TransportScope: c.e.transport.snapshot()}
+			owner, err := movementinfo.MoverFrame(3, movementinfo.Info{Time: 400, Flags: 1, X: 10, Y: 2, Z: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.e.observeTransportScope(opcode.MSGMoveHeartbeat, owner)
+			self := modsession.WithSelfBodyInput(context.Background())
+			if report, _ := c.e.s.bodyInputReport(self, id); report != nil {
+				t.Fatal("unparsed object update qualified an old STOP")
+			}
+			c.deliver(p)
+			c.deliver(&modv1.WorldPacket{Opcode: opcode.MSGMoveHeartbeat, Payload: owner, TransportScope: c.e.transport.snapshot()})
+			report, reason := c.e.s.bodyInputReport(self, id)
+			if ownDeath {
+				if report != nil {
+					t.Fatal("own death and restore qualified a stale detached STOP")
+				}
+			} else if !proto.Equal(report, original) {
+				t.Fatalf("settled dock STOP lost after parsed bystander update and owner heartbeat: %s", reason)
+			}
+			if conn.writes != 1 {
+				t.Fatal("reading the STOP wrote another movement frame", conn.writes)
+			}
+		})
+	}
 }
 
 func TestParsedWorldUpdateRetainsOnlyExactQualifiedPhysicalSource(t *testing.T) {
