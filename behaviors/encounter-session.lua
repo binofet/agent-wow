@@ -1132,6 +1132,10 @@ local function decide(frame)
     if spell_invocation then spell_invocation.commit(out.action) end
     if warrior then warrior.commit(out.action) end
     if auto_equipment then auto_equipment.commit(out.action) end
+    if commands and commands.body_input then
+        commands.body_input(frame,current,out,task_view and (task_view.task or task_view.hold) or
+            spell_invocation and spell_invocation.pending() or flightpoint and flightpoint.active() or out.corpseLoot and out.corpseLoot.corpseGuid)
+    end
     return out
 end
 

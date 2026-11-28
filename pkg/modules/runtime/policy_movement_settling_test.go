@@ -3,13 +3,16 @@ package modrt
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	moddisc "github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -18,6 +21,61 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
+
+func TestOwnedWalkCommandUsesTypedBodyOnce(t *testing.T) {
+	ctx := context.Background()
+	m, native, cb := friendlyEncounterManager(t)
+	cb.world.ObservedPackets = 4
+	book := binary.LittleEndian.AppendUint32([]byte{0, 1, 0}, 585)
+	native.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.SMSGInitialSpells, Payload: append(book, 0, 0, 0, 0)})
+	source := followFallbackBundle(t)
+	host, err := m.StartPolicy(ctx, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(host.close)
+	step := func() (map[string]any, *behavior.ActionReceipt) {
+		t.Helper()
+		current, seq := observeFriendlyEncounter(t, m, host)
+		out, receipt, err := host.Step(current, map[string]any{"kind": "encounter", "observationSequence": seq}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out, receipt
+	}
+	send := func(value string) {
+		t.Helper()
+		_, err := m.InvokeJSON(ctx, "session.send_event", json.RawMessage(`{"sessionId":"friendly-encounter","characterGuid":"22","kind":"command","value":`+value+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	const walk = `{"task":"move_body","id":"one-step","selfGuid":"22","visitId":"1","bearingRadians":-0.4,"durationMs":180,"jump":false}`
+	step()
+	send(strings.Replace(walk, `"jump":false`, `"jump":true`, 1))
+	send(strings.Replace(walk, `"visitId":"1"`, `"visitId":"3"`, 1))
+	if _, r := step(); r != nil {
+		t.Fatal("unbound or jumping request entered", r)
+	}
+	send(walk)
+	out, r := step()
+	a, _ := out["action"].(map[string]any)
+	// This actual native body has no received run speed. Its precise refusal
+	// proves the request reached the own-body writer without claiming motion.
+	if a["bearingRadians"] != -.4 || a["durationMs"] != float64(180) || a["jump"] != false || out["followFormation"] != nil ||
+		r == nil || r.Outcome != behavior.ActionNotDispatched || r.Payload["self_guid"] != "22" || r.Payload["visit_id"] != "1" ||
+		r.Payload["policy_request_id"] != "move_body:one-step" || r.Payload["sequence_id"] != a["observationSequence"] ||
+		r.Payload["grpc_message"] != "observed normal movement speed required" || len(cb.writes) != 0 {
+		t.Fatal(out, r)
+	}
+	if _, err = host.Reload(ctx, source+"\n-- same body, updated source\n", host.vm.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	send(walk)
+	if _, r = step(); r != nil {
+		t.Fatal("duplicate command reissued after reload", r)
+	}
+}
 
 func policySettlingPacket(guid uint64) []byte {
 	p := policyMovementPacket(guid)
