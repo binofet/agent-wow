@@ -102,6 +102,13 @@ func TestSelectedPassengerPolicyCallback(t *testing.T) {
 				if e := x.m.moduleScopedPacketWriter(friendlyEncounterSession, "buddy-chat")(mark(1, 17, 4, 1), first, out, scope); !modcb.PacketWasNotDispatched(e) {
 					t.Fatal("wrong caller", e)
 				}
+				x.m.mu.Lock()
+				x.m.preparing = true
+				x.m.mu.Unlock()
+				deny(mark(1, 17, 4, 7), first, out, scope)
+				x.m.mu.Lock()
+				x.m.preparing = false
+				x.m.mu.Unlock()
 				if e := writer(mark(1, 17, 4, 1), first, out, scope); e != nil {
 					t.Fatal("authorized initial selected frame", e)
 				}
@@ -113,6 +120,13 @@ func TestSelectedPassengerPolicyCallback(t *testing.T) {
 				}
 				beat := frame(22, passenger)
 				deny(mark(1, 17, 5, 2), opcode.MSGMoveHeartbeat, beat, scope)
+				x.m.mu.Lock()
+				x.m.session.Identity.CharacterGUID = 23
+				x.m.mu.Unlock()
+				deny(mark(1, 17, 4, 8), opcode.MSGMoveHeartbeat, beat, scope)
+				x.m.mu.Lock()
+				x.m.session.Identity.CharacterGUID = 22
+				x.m.mu.Unlock()
 				later := proto.Clone(scope).(*modv1.TransportScope)
 				later.VisitRevision++
 				deny(mark(1, 17, 4, 2), opcode.MSGMoveHeartbeat, beat, later)
