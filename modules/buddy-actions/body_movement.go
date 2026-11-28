@@ -63,7 +63,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		return nil, status.Error(codes.FailedPrecondition, "current connected and available own body required")
 	}
 	w, err := s.snapshot(ctx)
-	if err != nil || !s.matchesCurrentEncounterVisitLocked(w) || r.VisitId != s.encounterVisit.revision || !s.admitsPolicyEncounterLocked(ctx, w) ||
+	if err != nil || s.paidTaxiBodyHeld(w) || !s.matchesCurrentEncounterVisitLocked(w) || r.VisitId != s.encounterVisit.revision || !s.admitsPolicyEncounterLocked(ctx, w) ||
 		safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) || s.clientControlLost || s.clientControlRestoring || s.state.MotionUnconfirmed ||
 		s.state.CastPending || s.state.Traveling || r.IdleToken == "" && s.state.InteractionOwner != "" ||
 		r.IdleToken != "" && !s.bodyIdleLeaseCurrentLocked(r, s.now()) || s.recovery.state.Active ||
@@ -360,7 +360,7 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 				stopGrounded()
 				return false
 			}
-			if motion != nil && motion.writes == 0 && modcb.PacketWasNotDispatched(sendErr) {
+			if !view.TransportWritten && (motion == nil || motion.writes == 0) && modcb.PacketWasNotDispatched(sendErr) {
 				view.Phase, view.Detail = "body_scope_not_dispatched", boundedPolicyDiagnostic(sendErr.Error(), 240)
 				return false
 			}
@@ -374,6 +374,7 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 			return false
 		}
 		view.TransportWritten, view.PositionEstimated = true, true
+		s.releasePaidTaxiBody(w)
 		if code == opcode.MSGMoveStartForward && points[len(points)-1].Swimming {
 			landingStarted = true
 		}

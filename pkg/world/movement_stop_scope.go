@@ -17,6 +17,9 @@ import (
 // the owner loop writes it. World/Actions queues can lag a same-map entry.
 // Legacy unscoped STOP remains available through its existing path.
 func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []byte, requested *modv1.TransportScope, prior *modv1.WorldPacket) error {
+	if e.taxiBody.active() && voluntaryTaxiBodyFrame(op) && !e.taxiBodyFrameCurrent(body) {
+		return modcb.PacketNotDispatchedError("ordinary movement requires the current post-taxi body origin")
+	}
 	if requested != nil && modcb.FlightpathGroundPacket(op, body) {
 		if requested.TaxiArrivalQueryRevision != 0 {
 			return e.reserveNaturalTaxiMenu(ctx, op, requested)

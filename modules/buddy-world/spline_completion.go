@@ -126,6 +126,7 @@ func (s *Service) invalidateMalformedMotionLocked(packet *modv1.WorldPacket) {
 	if potentialMotionOpcode(packet.Opcode) || packet.GetTransportScope().GetMotionRevision() != s.motion.scope.GetMotionRevision() {
 		s.motion.naturalTaxi = naturalTaxiFlight{}
 		s.blockSplineRetirementLocked()
+		s.taxiBody.origin = 0
 		s.invalidateMotionLocked("malformed potential motion packet", true)
 	}
 }
@@ -134,6 +135,7 @@ func (s *Service) observeUnsupportedMotionLocked(packet *modv1.WorldPacket) {
 	if potentialMotionOpcode(packet.Opcode) || packet.GetTransportScope().GetMotionRevision() != s.motion.scope.GetMotionRevision() {
 		s.motion.naturalTaxi = naturalTaxiFlight{}
 		s.blockSplineRetirementLocked()
+		s.taxiBody.origin = 0
 		s.invalidateMotionLocked("unsupported motion barrier", true)
 	}
 }

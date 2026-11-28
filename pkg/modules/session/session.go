@@ -20,11 +20,12 @@ type Session struct {
 	TransportScope   func() *modv1.TransportScope
 	// OwnMovementReport returns the exact known written normal-movement packet
 	// only while its original scope remains current. It is not a server pose.
-	OwnMovementReport  func() *modv1.WorldPacket
-	OwnMovementAttempt func(string) *modv1.WorldPacket
-	BodyInputReport    func(context.Context, string) (*modv1.WorldPacket, string)
-	ParsedBodyUpdate   func(*modv1.TransportScope, string, ...movementinfo.FollowPosition)
-	ParsedOwnPose      func(*modv1.TransportScope, []byte)
-	KnockbackReport    func(*modv1.WorldPacket, bool) *modv1.WorldPacket
-	MeasuredKnockback  func(*modv1.WorldPacket, []byte)
+	OwnMovementReport    func() *modv1.WorldPacket
+	OwnMovementAttempt   func(string) *modv1.WorldPacket
+	BodyInputReport      func(context.Context, string) (*modv1.WorldPacket, string)
+	ParsedBodyUpdate     func(*modv1.TransportScope, string, ...movementinfo.FollowPosition)
+	ParsedOwnPose        func(*modv1.TransportScope, []byte)
+	ParsedTaxiBodyOrigin func(*modv1.TransportScope, []byte)
+	KnockbackReport      func(*modv1.WorldPacket, bool) *modv1.WorldPacket
+	MeasuredKnockback    func(*modv1.WorldPacket, []byte)
 }

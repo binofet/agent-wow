@@ -1,6 +1,9 @@
 package buddyworld
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // MovementPacketBuilder::{WriteMonsterMove,WriteStopMovement,WriteCreate} and
 // MoveSplineInit::{Launch,Stop} define these public 3.3.5a packet layouts.
@@ -14,6 +17,8 @@ type observedTrajectory struct {
 	duration, elapsed, flags                           uint32
 	at                                                 time.Time
 	destination                                        [3]float32
+	endBearing                                         float32
+	endBearingKnown                                    bool
 	transport                                          uint64
 	transportKnown                                     bool
 	seat                                               int8
@@ -114,11 +119,18 @@ func monsterMove(c *cursor, p *observed, transport bool, now time.Time) error {
 			if uint64(nodes)*12 > uint64(len(c.b)-c.off) {
 				return errShort
 			}
+			previous := start
 			for i := uint32(0); i < nodes; i++ {
 				t.destination, err = point(c)
 				if err != nil {
 					return err
 				}
+				dx, dy := t.destination[0]-previous[0], t.destination[1]-previous[1]
+				if dx != 0 || dy != 0 {
+					t.endBearing = float32(math.Atan2(float64(dy), float64(dx)))
+					t.endBearingKnown = true
+				}
+				previous = t.destination
 			}
 		} else {
 			t.destination, err = point(c)
