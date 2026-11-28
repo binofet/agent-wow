@@ -195,6 +195,7 @@ func (s *Service) Snapshot(ctx context.Context, request *worldv1.SnapshotRequest
 	r.SelfMovementFacts = s.state.ownMovement.snapshot(now)
 	r.SelfSplineFacts = s.state.ownSpline.snapshot(now)
 	r.SelfMotionAuthority = s.motionSnapshotLocked(now)
+	r.SelfMotionAuthority.TaxiBodyOriginMotionRevision = s.taxiBodyOriginRevision(&s.state.players[0], s.motion.scope)
 	r.SplineCompletion = s.completionSnapshotLocked()
 	r.WorldTransfer = s.worldTransferSnapshotLocked(now)
 	if owner := s.state.players[1]; owner.guid != 0 {

@@ -80,7 +80,7 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-Ÿº
+çº
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -230,7 +230,7 @@ elapsed_ms (R	elapsedMs+
 stopped (Rstopped
 cyclic (Rcyclic
 	map_known (RmapKnown
-map_id (RmapId"î
+map_id (RmapId"¶
 OwnMotionAuthority
 known (Rknown
 	self_guid (RselfGuid%
@@ -251,7 +251,8 @@ unit_flags (R	unitFlags.
 unit_flags_motion_revision (RunitFlagsMotionRevisionA
 natural_taxi_landing_revision (RnaturalTaxiLandingRevision5
 taxi_on_motion_revision (RtaxiOnMotionRevision_
-natural_taxi_endpoint (2+.warcraftbuddy.world.v1.NaturalTaxiEndpointRnaturalTaxiEndpoint"?
+natural_taxi_endpoint (2+.warcraftbuddy.world.v1.NaturalTaxiEndpointRnaturalTaxiEndpointF
+ taxi_body_origin_motion_revision (RtaxiBodyOriginMotionRevision"?
 NaturalTaxiEndpoint
 x (Rx
 y (Ry

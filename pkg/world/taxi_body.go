@@ -17,6 +17,7 @@ import (
 type taxiBodyGuard struct {
 	pending, boarded bool
 	booking          *modv1.TransportScope
+	uncertainOrigin  uint64
 }
 
 func (g taxiBodyGuard) active() bool { return g.pending || g.boarded }
@@ -29,15 +30,11 @@ func voluntaryTaxiBodyFrame(op uint32) bool {
 	return movementinfo.OrdinaryFollowMovement(op) || op == opcode.MSGMoveJump || op == opcode.MSGMoveFallLand
 }
 
-func (g *taxiBodyGuard) sent(op uint32, scope *modv1.TransportScope) {
+func (g *taxiBodyGuard) entering(op uint32, scope *modv1.TransportScope) {
 	switch op {
 	case opcode.CMSGActivatetaxi, opcode.CMSGActivatetaxiexpress:
 		g.pending = true
 		g.booking = cloneTransportScope(scope)
-	default:
-		if voluntaryTaxiBodyFrame(op) && g.active() {
-			*g = taxiBodyGuard{}
-		}
 	}
 }
 
@@ -81,6 +78,7 @@ func (e *engine) taxiBodyFrameCurrent(payload []byte) bool {
 	r := e.s.taxiBodyOrigin
 	return r != nil && proto.Equal(r.TransportScope, current) && len(r.Payload) == modcb.TaxiBodyOriginSize &&
 		binary.LittleEndian.Uint64(r.Payload) > g.booking.MotionRevision &&
+		binary.LittleEndian.Uint64(r.Payload) > g.uncertainOrigin &&
 		math.Float32frombits(binary.LittleEndian.Uint32(r.Payload[8:])) == i.X &&
 		math.Float32frombits(binary.LittleEndian.Uint32(r.Payload[12:])) == i.Y &&
 		math.Float32frombits(binary.LittleEndian.Uint32(r.Payload[16:])) == i.Z

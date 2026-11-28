@@ -70,3 +70,42 @@ func TestPaidTaxiFencesFollowAndLogoutDeparturePoseAtSocket(t *testing.T) {
 		})
 	}
 }
+
+func TestPaidTaxiAmbiguousGroundStartRequiresNewActualOrigin(t *testing.T) {
+	c := &scopeWriteConn{}
+	e := scopedBodyEngine(t, c)
+	fare := binary.LittleEndian.AppendUint64(nil, flightmasterTestGUID)
+	fare = binary.LittleEndian.AppendUint32(fare, 6)
+	fare = binary.LittleEndian.AppendUint32(fare, 8)
+	if err := e.write(opcode.CMSGActivatetaxi, fare); err != nil {
+		t.Fatal(err)
+	}
+	e.observeTransportScope(opcode.SMSGActivatetaxireply, []byte{0, 0, 0, 0})
+	e.observeTransportScope(opcode.SMSGMonsterMove, scopeSpline(e.transport.scope.SelfGuid, 41, false, 30))
+	body := ownReportPacket(t, 0)
+	i, _ := movementinfo.OwnFrame(body, e.transport.scope.SelfGuid)
+	makeOrigin := func(rev uint64) []byte {
+		p := binary.LittleEndian.AppendUint64(nil, rev)
+		for _, n := range []float32{i.X, i.Y, i.Z} {
+			p = binary.LittleEndian.AppendUint32(p, math.Float32bits(n))
+		}
+		return p
+	}
+	rev := e.transport.scope.MotionRevision
+	e.s.recordTaxiBodyOrigin(e.transport.snapshot(), makeOrigin(rev))
+	c.fail = true
+	if _, _, err := e.writeContext(context.Background(), opcode.MSGMoveStop, body); err == nil || modcb.PacketWasNotDispatched(err) {
+		t.Fatal("fixture failed to enter transport")
+	}
+	c.fail = false
+	e.observeTransportScope(opcode.SMSGUpdateObject, nil)
+	e.s.recordTaxiBodyOrigin(e.transport.snapshot(), makeOrigin(rev))
+	if err := e.write(opcode.MSGMoveStop, body); !modcb.PacketWasNotDispatched(err) {
+		t.Fatal("old receipt replayed after bystander traffic", err)
+	}
+	e.observeTransportScope(opcode.MSGMoveHeartbeat, body)
+	e.s.recordTaxiBodyOrigin(e.transport.snapshot(), makeOrigin(e.transport.scope.MotionRevision))
+	if err := e.write(opcode.MSGMoveSetFacing, body); err != nil {
+		t.Fatal("new own observation refused", err)
+	}
+}

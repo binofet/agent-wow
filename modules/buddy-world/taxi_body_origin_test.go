@@ -10,7 +10,7 @@ import (
 )
 
 func TestPaidTaxiBodyUsesMatureOwnSplineThenYieldsToNewReceivedPose(t *testing.T) {
-	for _, event := range []string{"mature", "early clear", "expired alone", "foreign clear", "damaged batch", "after clear correction", "new own spline", "same map reentry"} {
+	for _, event := range []string{"mature", "early clear", "expired alone", "foreign clear", "damaged batch", "after clear correction", "new own spline", "same map reentry", "different in-flight coordinate"} {
 		t.Run(event, func(t *testing.T) {
 			x := newCompletionRig(t)
 			raw := movementinfo.Info{X: -10, Y: -20, Z: 5, Orientation: 1}
@@ -18,9 +18,15 @@ func TestPaidTaxiBodyUsesMatureOwnSplineThenYieldsToNewReceivedPose(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
+			x.deliver(t, opcode.MSGMoveHeartbeat, ownMovementMessage(1, wire))
+			x.start(t, completionFlyingHeader(11, 14), 19)
+			if event == "different in-flight coordinate" {
+				raw.X = 2
+				wire, _ = movementinfo.Encode(raw)
+			}
 			during := x.deliver(t, opcode.MSGMoveHeartbeat, ownMovementMessage(1, wire))
-			if during.Self.PositionKnown || !during.SelfMovementFacts.Known || during.SelfMovementFacts.Info.X != raw.X {
-				t.Fatal("departing raw leaked into physical position", during.Self, during.SelfMovementFacts)
+			if during.SelfMotionAuthority.TaxiBodyOriginMotionRevision != 0 || !during.SelfMovementFacts.Known || during.SelfMovementFacts.Info.X != raw.X {
+				t.Fatal("departing raw supplied a movement origin", during.Self, during.SelfMovementFacts)
 			}
 			if event != "early clear" {
 				x.now = x.now.Add(time.Second)
@@ -29,7 +35,7 @@ func TestPaidTaxiBodyUsesMatureOwnSplineThenYieldsToNewReceivedPose(t *testing.T
 				x.deliver(t, opcode.SMSGUpdateObject, []byte{1})
 			}
 			if event == "new own spline" {
-				x.start(t, completionFlyingHeader(4, 16), 18)
+				x.start(t, completionFlyingHeader(4, 16), 20)
 			}
 			if event == "same map reentry" {
 				x.deliver(t, opcode.SMSGNewWorld, login())

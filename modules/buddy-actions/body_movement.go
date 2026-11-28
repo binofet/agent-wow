@@ -360,7 +360,7 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 				stopGrounded()
 				return false
 			}
-			if motion != nil && motion.writes == 0 && modcb.PacketWasNotDispatched(sendErr) {
+			if !view.TransportWritten && (motion == nil || motion.writes == 0) && modcb.PacketWasNotDispatched(sendErr) {
 				view.Phase, view.Detail = "body_scope_not_dispatched", boundedPolicyDiagnostic(sendErr.Error(), 240)
 				return false
 			}

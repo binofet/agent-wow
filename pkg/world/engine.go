@@ -118,6 +118,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 		return "", false, err
 	}
 	e.writeSerial++
+	e.taxiBody.entering(op, e.transport.scope)
 	if op == opcode.CMSGTaxiqueryavailablenodes {
 		e.transport.taxiMenu = naturalTaxiMenu{}
 	}
@@ -129,6 +130,9 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 		e.bodyWrittenAt = time.Now()
 	}
 	if err != nil {
+		if e.taxiBody.active() && voluntaryTaxiBodyFrame(op) {
+			e.taxiBody.uncertainOrigin = e.transport.scope.GetMotionRevision()
+		}
 		if outboundTransportMotion(op) && e.transport.scope.GetSplineActive() {
 			e.transport.taxiMenu = naturalTaxiMenu{}
 			e.transport.uncertainTaxiMotion = e.transport.snapshot()
@@ -148,7 +152,9 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	}
 	e.movement.sent(op, body, e.s.state.Character.GUID)
 	e.transport.sent(op)
-	e.taxiBody.sent(op, e.transport.scope)
+	if voluntaryTaxiBodyFrame(op) && e.taxiBody.active() {
+		e.taxiBody = taxiBodyGuard{}
+	}
 	e.retainOwnMovementReport(ctx, op, body)
 	if ownMovementReportOpcode(op) {
 		origin := modsession.WriteOriginFromContext(ctx)

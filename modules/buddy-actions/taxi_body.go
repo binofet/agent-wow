@@ -8,7 +8,6 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
-	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
 // A late cleanup is a movement write too. Keep the former position out of
@@ -23,26 +22,18 @@ func (s *Service) paidTaxiBodyHeld(w *worldv1.SnapshotResponse) bool {
 		return true
 	}
 	p, authority := w.Self, w.SelfMotionAuthority
-	if !p.PositionKnown || !p.MovementFlagsKnown || !p.AliveKnown || !p.Alive || !p.MapKnown || !p.UnitFlagsKnown ||
-		p.UnitFlags&movementflags.UnsafeUnitFlags != 0 || !finite(playerPosition(p)) || authority == nil || !authority.UnitFlagsKnown ||
-		authority.UnitFlags != p.UnitFlags || !sameFlightpathVisit(a.AcceptanceScope, authority.TransportScope) {
-		return true
-	}
-	h, scope := w.SelfSplineFacts, authority.TransportScope
-	if authority.NaturalTaxiLandingRevision != 0 && scope.SplineActive && h.GetKnown() && h.GetSelfGuid() == s.selfGUID &&
-		h.VisitRevision == w.VisitRevision && h.MapKnown && h.MapId == p.MapId && h.IdKnown && h.SplineId == scope.SplineId &&
-		h.SourceOpcode == opcode.SMSGMonsterMove && h.Revision == authority.SplineRevision && scope.SplineSourceRevision > a.AcceptanceScope.MotionRevision {
-		if p.PositionInferred {
-			return !h.DestinationKnown || p.X != h.DestinationX || p.Y != h.DestinationY || p.Z != h.DestinationZ
+	origin, scope := authority.GetTaxiBodyOriginMotionRevision(), authority.GetTransportScope()
+	from := a.AcceptanceScope
+	if seg := a.CurrentSegment; seg != nil {
+		if !s.flightpathSegmentCurrentLocked() {
+			return true
 		}
+		from = seg.SourceScope
 	}
-	raw := w.SelfMovementFacts
-	r := raw.GetTransportScope()
-	// Current raw coordinates must be a newer own observation than the
-	// actual in-flight source and the clear. Retained departure bytes fail.
-	return p.PositionInferred || raw.GetInfo() == nil || !raw.GetKnown() || raw.GetSelfGuid() != s.selfGUID || raw.GetVisitRevision() != w.VisitRevision ||
-		!sameFlightpathVisit(r, scope) || r.MotionRevision <= scope.SplineSourceRevision || r.MotionRevision < authority.UnitFlagsMotionRevision ||
-		authority.UnitFlagsMotionRevision <= a.AcceptanceScope.MotionRevision || raw.Info.X != p.X || raw.Info.Y != p.Y || raw.Info.Z != p.Z
+	return origin == 0 || !p.PositionKnown || !p.AliveKnown || !p.Alive || !p.MapKnown || !p.MovementFlagsKnown || !p.UnitFlagsKnown ||
+		p.UnitFlags&movementflags.UnsafeUnitFlags != 0 || !finite(playerPosition(p)) || scope.GetSelfGuid() != a.SelfGuid ||
+		!sameFlightpathVisit(from, scope) || origin <= from.MotionRevision || origin > scope.MotionRevision
+
 }
 
 func (s *Service) releasePaidTaxiBody(w *worldv1.SnapshotResponse) {
