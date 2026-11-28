@@ -37,6 +37,7 @@ local prior_intent
 local prior_requested_spell
 local shot_proposal
 local task_support_action
+local optional_buff_action, idle_recovery_action
 -- Existing interactions yield to observed needs chosen here, never a native
 -- emergency controller. Loot closes its actual window through corpse-loot.
 local interaction_tuning = {yield_for_healing=true, yield_for_engagement=true}
@@ -463,6 +464,7 @@ local function decide_encounter(frame)
     policy_observation=nil
     task_view=nil
     task_support_action=nil
+    optional_buff_action,idle_recovery_action=nil,nil
     local out = {queue={}, protected={}, phase="waiting_for_encounter_observation"}
     local obs = observation
     if not obs or obs.sessionId ~= frame.session_id or not guid(obs.selfGuid) or not current_visit(obs) then return out end
@@ -818,19 +820,27 @@ local function decide_encounter(frame)
             end
         end
     end
-    local buff = not out.action and not out.focusGuid and buffs and buffs.choose(obs,frame)
+    local nav=obs.navigation or {}
+    local following=nav.following==true and nav.independent~=true
+    if movement and movement.follow_owner_by_default==true and movement.follow_goal then
+        local goal=movement.follow_goal(obs)
+        if goal then following=goal.active==true end
+    end
+    local buff = not out.action and not out.focusGuid and buffs and buffs.choose(obs,frame,following)
     if buff then
         local needs=buff.targetGuid~=obs.selfGuid and (buff.needsApproach or
-            (obs.navigation or {}).following~=true and movement and movement.needs_position(buff.targetGuid))
+            not following and movement and movement.needs_position(buff.targetGuid))
         if needs then out.action=position_for(buff.targetGuid,buff.spellId) end
         if not needs or out.rangedSpellPosition then
             buff.observationSequence=state.sequence
             out.action=buff
         end
+        optional_buff_action=out.action
         return out
     end
     if not out.action and not out.focusGuid and movement and movement.idle_recovery and not (task_view and task_view.hold) then
         out.action = movement.idle_recovery(obs, state.sequence).action
+        idle_recovery_action=out.action
     end
     return out
 end
@@ -858,13 +868,18 @@ end
 local function decide_policy(frame)
     local out = decide_encounter(frame)
     if out.encounterOwnership and movement and policy_observation and
-       not out.focusGuid and not (task_view and task_view.hold) and #frame.pending == 0 and not out.action then
+       not out.focusGuid and not (task_view and task_view.hold) and #frame.pending == 0 and
+       (not out.action or out.action==optional_buff_action) then
         if movement.portal_catchup then
             out.portalCatchup = movement.portal_catchup(frame, policy_observation, state.sequence)
         end
         if not out.portalCatchup and movement.follow_formation then
             out.followFormation = movement.follow_formation(frame, policy_observation, state.sequence)
         end
+        -- A settled formation can be refreshed alongside an in-range buff.
+        local formation=out.followFormation
+        if optional_buff_action and (out.portalCatchup or formation and
+           (not formation.hold or formation.phase=="formation_reaction_delay")) then out.action=nil end
     end
     if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,policy_observation or observation or {},out.action) then out.action=nil end
     if consumables and (policy_observation or observation) then
@@ -1091,7 +1106,8 @@ local function decide(frame)
     end
     if (not flightpoint or not flightpoint.active()) and out.encounterOwnership and movement and movement.follow_mount and current and current_visit(current) and
        current.sessionId==frame.session_id and frame.input.observationSequence==state.sequence and
-       state.settledAt~=state.sequence and #frame.pending==0 and not out.action and not out.focusGuid and
+       state.settledAt~=state.sequence and #frame.pending==0 and
+       (not out.action or out.action==optional_buff_action or out.action==idle_recovery_action) and not out.focusGuid and
        not (task_view and task_view.hold) and not (out.consumable and out.consumable.hold) then
         local riding=movement.follow_mount(current,state.sequence)
         if riding then out.action=riding;out.followFormation=nil;out.portalCatchup=nil end

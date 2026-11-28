@@ -36,7 +36,7 @@ func mountEncounterStep(t *testing.T, m *Manager, p *SessionPolicy) (*behavior.A
 }
 
 func TestCompanionFollowsOwnersGroundMountAndDismount(t *testing.T) {
-	for _, ambiguous := range []string{"", "mount", "dismount", "default_formation"} {
+	for _, ambiguous := range []string{"", "mount", "dismount", "default_formation", "swimming_owner"} {
 		m, native, cb := friendlyEncounterManager(t)
 		me := cb.world.Self
 		me.RunSpeed = 7
@@ -47,7 +47,7 @@ func TestCompanionFollowsOwnersGroundMountAndDismount(t *testing.T) {
 		owner.RunSpeed = 14
 		cb.world.Owner = owner
 		runtimeControlBook(t, native, 458, 23238, 32235, 60424)
-		if ambiguous != "default_formation" {
+		if ambiguous != "default_formation" && ambiguous != "swimming_owner" {
 			if _, err := native.Follow(context.Background(), &actionsv1.ToggleRequest{Enabled: true}); err != nil {
 				t.Fatal(err)
 			}
@@ -117,6 +117,13 @@ func TestCompanionFollowsOwnersGroundMountAndDismount(t *testing.T) {
 		}
 		owner.UnitFlags = 0
 		owner.RunSpeed = 7
+		if ambiguous == "swimming_owner" {
+			owner.MovementFlags = 0x00200001
+			mountEncounterStep(t, m, p)
+			if len(cb.writes) != 1 {
+				t.Fatal("owner's swimming flag and mounted-bit clear cannot prove aura removal", cb.writes)
+			}
+		}
 		groundMountAura(native, 3, 0)
 		for i := 0; i < 3 && len(cb.writes) == 1; i++ {
 			receipt, out = mountEncounterStep(t, m, p)

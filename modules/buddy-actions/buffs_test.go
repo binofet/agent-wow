@@ -11,10 +11,13 @@ import (
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -163,8 +166,32 @@ func TestBuffNativeTickNeverChoosesOrRetries(t *testing.T) {
 		}
 	}
 }
+func TestBuffAcceptsObservedPassengerAndMountedAlly(t *testing.T) {
+	for _, tc := range []struct {
+		name                                   string
+		class, spell, movementFlags, unitFlags uint32
+	}{{"Fortitude on passenger", 5, 2791, 0x200, 8}, {"Arcane Intellect on mounted ally", 8, 10156, 0, 0x08000008}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f, _ := buffRig(t, tc.class, tc.spell)
+			f.world.Self.Level, f.world.Self.UnitFlags = 45, 8
+			ally := proto.Clone(f.world.Owner).(*worldv1.PlayerState)
+			ally.Guid, ally.MovementFlags, ally.UnitFlags = 8, tc.movementFlags, tc.unitFlags
+			f.world.NearbyPlayers = []*worldv1.PlayerState{ally}
+			f.party.Group.Members = append(f.party.Group.Members, &partyv1.Member{Guid: 8, Online: true})
+			castBuff(t, s, 8, tc.spell)
+			if casts := buffCasts(f); len(casts) != 1 || !bytes.Equal(casts[0].Payload, spellPacket(s.castCount, tc.spell, 8)) || s.state.BuffsConfirmed != 0 {
+				t.Fatal("expected one attempted cast on the observed ally, pending the realm's effect", casts, s.buffOp)
+			}
+			confirmBuff(t, s, false)
+			if s.state.BuffsConfirmed != 1 || !s.buffOp.view.AuraConfirmed {
+				t.Fatal("matching spell GO and aura failed to confirm the buff", s.buffOp)
+			}
+		})
+	}
+}
+
 func TestBuffExactAdmissionRejectsChangedBodyTargetAndResources(t *testing.T) {
-	for _, name := range []string{"session", "body", "unlearned", "dead", "range", "enemy", "self_only", "mana", "silenced", "fear", "channel", "channel_object", "channel_spell_unknown", "channel_object_unknown", "interaction", "gcd"} {
+	for _, name := range []string{"session", "body", "unlearned", "dead", "absent", "inferred", "other_map", "range", "enemy", "self_only", "mana", "silenced", "fear", "channel", "channel_object", "channel_spell_unknown", "channel_object_unknown", "interaction", "gcd"} {
 		t.Run(name, func(t *testing.T) {
 			s, f, _ := buffRig(t, 5, 1243, 588)
 			r := &actionsv1.CastBuffRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: ownerGUID, SpellId: 1243}
@@ -177,6 +204,12 @@ func TestBuffExactAdmissionRejectsChangedBodyTargetAndResources(t *testing.T) {
 				r.SpellId = 1244
 			case "dead":
 				f.world.Owner.Alive = false
+			case "absent":
+				f.world.Owner.Present = false
+			case "inferred":
+				f.world.Owner.PositionInferred = true
+			case "other_map":
+				f.world.Owner.MapId++
 			case "range":
 				f.world.Owner.X = 60
 			case "enemy":

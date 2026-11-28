@@ -252,6 +252,100 @@ func TestLuaWaterBreathingRefreshRetryAndSameSessionTuning(t *testing.T) {
 		t.Fatal("policy repair required reconnect or lost retry", a)
 	}
 }
+func TestEncounterOptionalBuffYieldsToDefaultTravelAndMount(t *testing.T) {
+	formation, err := os.ReadFile("../../behaviors/follow-formation.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := newFallbackPolicyTest(t, "local encounter_formation=(function()\n"+string(formation)+"\nend)()\n")
+	obs := positionedHealObservation()
+	obs.Healing = nil
+	self, owner := obs.Players[fallbackGUID(fallbackSelf)], obs.Players["3"]
+	for _, player := range obs.Players {
+		player.HealthKnown, player.Health, player.MaxHealth = true, 100, 100
+		player.PowerKnown, player.Power, player.MaxPower = true, 100, 100
+		player.CombatKnown, player.MovementKnown, player.PositionKnown = true, true, true
+		player.PositionRevision = 205
+	}
+	owner.X, owner.Y, owner.Z = self.X+25, self.Y, self.Z
+	obs.Navigation = &actionsv1.NavigationObservation{OwnerGuid: 3, FollowOwner: owner, FollowFormationSupported: true, GroundNavigationConfigured: true}
+	buff := &actionsv1.EncounterSpell{Known: true, Ready: true, Available: true, MetadataKnown: true, Capability: "buff", FamilyId: 1243, Rank: 4, TargetRule: "ally", MaxRange: 30}
+	obs.Spells = map[string]*actionsv1.EncounterSpell{
+		"2791": buff, "23229": {Known: true, Available: true, GroundMountSpeedPercent: 100},
+	}
+	obs.Support = &actionsv1.EncounterSupport{AuraSpells: map[uint32]*actionsv1.EncounterSpell{2791: buff}}
+	for _, id := range []uint64{fallbackSelf, 3} {
+		obs.Support.PlayerAuras = append(obs.Support.PlayerAuras, &actionsv1.PlayerAuras{TargetGuid: id, Auras: []*actionsv1.ObservedAura{{SpellId: 2791, Positive: true}}})
+	}
+	next := func() behavior.Decision { return p.decide(observeRanged(t, p, obs, false)) }
+	first := next().Output
+	goal, _ := first["followFormation"].(map[string]any)
+	if goal["ownerGuid"] != "3" || first["action"] != nil {
+		t.Fatalf("default formation must make progress while a buff is available: %v", first["action"])
+	}
+	self.X, self.Y, self.Z = float32(goal["x"].(float64)), float32(goal["y"].(float64)), float32(goal["z"].(float64))
+	self.PositionRevision++
+	obs.Navigation.GroundMount = &actionsv1.FollowMountObservation{Ready: true, OwnerMounted: proto.Bool(true), OwnerGroundSpell: 458, SelfMounted: proto.Bool(false), OwnerMountRevision: 1}
+	action, _ := next().Output["action"].(map[string]any)
+	if action["capability"] != "cast_spell" || action["spellId"] != float64(23229) || action["followMount"] == nil {
+		t.Fatal("genuinely ready mount lost to optional buff", action)
+	}
+	obs.Navigation.GroundMount = nil
+	decision := next()
+	action, _ = decision.Output["action"].(map[string]any)
+	if action["capability"] != "buff" || action["targetGuid"] != "8" {
+		t.Fatal("settled in-range companion buff unavailable", action)
+	}
+	id, err := p.host.ReserveAction(decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{
+		SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionNotDispatched,
+		Payload: map[string]any{"capability": "buff", "target_guid": "8", "spell_id": 2791, "phase": "admission_rejected", "grpc_status": "FailedPrecondition", "grpc_message": "current living observed friendly target required"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs.WorldObservationRevision++
+	action, _ = next().Output["action"].(map[string]any)
+	if action["capability"] == "buff" {
+		t.Fatal("unchanged refused recipient was immediately retried", action)
+	}
+	obs.Players["8"].PositionRevision++
+	action, _ = next().Output["action"].(map[string]any)
+	if action["capability"] != "buff" || action["targetGuid"] != "8" {
+		t.Fatal("fresh observed recipient could not be considered", action)
+	}
+}
+
+func TestLuaBuffDefiniteRecipientRefusalExpiresInPlace(t *testing.T) {
+	host, obs := newBuffPolicy(t, buffsPolicySource(t)), buffPolicyObservation()
+	installBuffAura(obs, "4", 1244, 600000, false)
+	decision, err := host.Decide(context.Background(), obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := host.ReserveAction(decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{
+		SessionID: "buffs-lua", ActionID: id, Outcome: behavior.ActionNotDispatched,
+		Payload: map[string]any{"capability": "buff", "target_guid": "3", "spell_id": 1244, "phase": "admission_rejected", "grpc_status": "FailedPrecondition", "grpc_message": "current living observed friendly target required"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := decideBuff(t, host, obs); a != nil {
+		t.Fatal("immediate retry", a)
+	}
+	obs["clock"].(map[string]any)["monotonicMs"] = float64(5000)
+	if a := decideBuff(t, host, obs); a["targetGuid"] != "3" || a["spellId"] != float64(1244) {
+		t.Fatal("stationary recipient remained excluded at the ordinary retry deadline", a)
+	}
+}
+
 func TestEncounterBuffPolicyYieldsToHealingAndApproachesSelectedAlly(t *testing.T) {
 	p := newFallbackPolicyTest(t, "")
 	obs := positionedHealObservation()
