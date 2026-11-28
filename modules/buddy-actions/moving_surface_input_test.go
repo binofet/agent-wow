@@ -66,6 +66,39 @@ func explicitDeckFixture(t *testing.T, clock uint32, local buddynav.Point, beari
 	return r, req, ctx
 }
 
+func TestSelectedMountedPassengerMoveBody(t *testing.T) {
+	for _, loseMount := range []bool{false, true} {
+		r, req, ctx := explicitDeckFixture(t, 30000, surfaceTestDeck, .25, false)
+		mountForTravel(t, r.s, r.world.Self, 23161)
+		req.DurationMs = 100
+		checked := false
+		r.onClock = func() {
+			checked = true
+			if loseMount {
+				delete(r.s.buffAuras, r.s.selfGUID)
+			}
+		}
+		out, err := r.s.MoveBody(ctx, req)
+		if err != nil || !checked {
+			t.Fatal("mounted passenger did not reach physical packet boundary", err, out.GetBodyMovement())
+		}
+		if loseMount {
+			if len(r.packets) != 0 || out.GetBodyMovement().GetTransportWritten() {
+				t.Fatal("lost passenger mount still issued input", len(r.packets))
+			}
+			continue
+		}
+		if out.GetBodyMovement().GetPhase() != "body_input_written" || out.MotionUnconfirmed ||
+			len(r.packets) < 3 || r.packets[len(r.packets)-1].Opcode != opcode.MSGMoveStop {
+			t.Fatal("mounted passenger input did not settle", out.GetBodyMovement(), len(r.packets))
+		}
+		first, last := r.frame(0), r.frame(len(r.packets)-1)
+		if last.Transport.GUID != r.ship || math.Abs(surfaceDistance(surfaceLocalPoint(first), surfaceLocalPoint(last))-1.4) > .08 {
+			t.Fatal("wrong mounted local stride", first, last)
+		}
+	}
+}
+
 func TestSelectedPassengerMoveBodyWithoutOwner(t *testing.T) {
 	for _, test := range []struct {
 		name    string

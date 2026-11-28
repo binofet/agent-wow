@@ -88,14 +88,7 @@ func (s *Service) surfaceOwnMotionAllowed(w *worldv1.SnapshotResponse) bool {
 		s.closed || s.clientControlLost || s.clientControlRestoring || s.state.CastPending || s.state.MotionUnconfirmed {
 		return false
 	}
-	flags := p.UnitFlags
-	if flags&movementflags.Mounted != 0 {
-		if id, _ := s.groundMountAuraLocked(p.Guid); id == 0 {
-			return false
-		}
-		flags &^= movementflags.Mounted
-	}
-	return flags&movementflags.UnsafeUnitFlags == 0
+	return s.bodyInputPaceLocked(p).unitFlags(p)&movementflags.UnsafeUnitFlags == 0
 }
 
 // The first frame uses an actual complete own packet or the physical STOP
