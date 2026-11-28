@@ -30,6 +30,15 @@ func IncomingMovementAttempt(ctx context.Context) string {
 	return v[0]
 }
 
+func OutgoingMovementAttempt(ctx context.Context) string {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	values := md.Get(movementAttemptKey)
+	if len(values) != 1 || !ValidMovementAttempt(values[0]) {
+		return ""
+	}
+	return values[0]
+}
+
 const routeBodyKey = "agentwow-route-body-input"
 const followPositionKey = "agentwow-route-follow-position-bin"
 

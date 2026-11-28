@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"time"
 
 	"github.com/o0olele/detour-go/detour"
@@ -209,6 +210,21 @@ func (p *planner) deepWaterBetween(ctx context.Context, q Point, top, bottom flo
 	}
 	if !p.floors.window.contains(q) {
 		return 0, false, errors.New("water landing leaves the verified map window")
+	}
+	// A deck's body query deliberately needs no ground corridor. Water
+	// contact still needs the installed liquid polygons, loaded only when
+	// the physical sweep actually reaches a possible liquid layer.
+	if p.query == nil {
+		w := p.floors.window
+		mesh, err := loadMeshTiles(ctx, filepath.Join(filepath.Dir(p.floors.dir), "mmaps"), p.mapID, w.meshTiles(), maxMapMeshBytes)
+		if err != nil {
+			return 0, false, fmt.Errorf("water contact navigation unavailable: %w", err)
+		}
+		query := detour.DtAllocNavMeshQuery()
+		if st := query.Init(mesh, 4096); detour.DtStatusFailed(st) {
+			return 0, false, errors.New("initialize water contact query failed")
+		}
+		p.mesh, p.query = mesh, query
 	}
 	mid := q
 	mid.Z = (top + bottom) / 2

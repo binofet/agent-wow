@@ -8,6 +8,7 @@ import (
 
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -130,10 +131,17 @@ func (m *Manager) packetWorker(name string, inst *instance) {
 					m.session.MeasuredKnockback(packet, []byte(rows[0]))
 				}
 			}
-			if name == "buddy-world" && (packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject) && m.session.ParsedBodyUpdate != nil {
-				class := modcb.BodyUpdateResult(trailers.Get(modcb.BodyInputUpdateTrailer), trailers.Get(modcb.BodyInputBarrierTrailer))
-				positions := modcb.ObservedOwnerPositions(class, trailers.Get(modcb.OwnerPositionTrailer))
-				m.session.ParsedBodyUpdate(packet.TransportScope, modcb.BodyUpdateDetail(class, trailers.Get(modcb.BodyInputFieldTrailer)), positions...)
+			if name == "buddy-world" && m.session.ParsedRouteHulls != nil {
+				if _, relevant := movementinfo.RouteHullSubject(packet.Opcode, packet.Payload); relevant {
+					m.session.ParsedRouteHulls(packet.TransportScope, trailers.Get(modcb.RouteHullTrailer))
+				}
+			}
+			if name == "buddy-world" && (packet.Opcode == opcode.SMSGUpdateObject || packet.Opcode == opcode.SMSGCompressedUpdateObject) {
+				if m.session.ParsedBodyUpdate != nil {
+					class := modcb.BodyUpdateResult(trailers.Get(modcb.BodyInputUpdateTrailer), trailers.Get(modcb.BodyInputBarrierTrailer))
+					positions := modcb.ObservedOwnerPositions(class, trailers.Get(modcb.OwnerPositionTrailer))
+					m.session.ParsedBodyUpdate(packet.TransportScope, modcb.BodyUpdateDetail(class, trailers.Get(modcb.BodyInputFieldTrailer)), positions...)
+				}
 			}
 			m.recordSpellEffect(name, trailers)
 			m.mu.Lock()

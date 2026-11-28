@@ -195,7 +195,7 @@ func (s *Service) newBodyMotionScopeLocked(ctx context.Context, token string, w 
 	} else if status.Code(err) != codes.FailedPrecondition || needPose {
 		return nil, modcb.PacketNotDispatchedError("idle motion current prior report unavailable: " + status.Convert(err).Message())
 	}
-	fresh, err := s.readWorldSnapshot(ctx)
+	fresh, err := s.readMovementWorldSnapshotLocked(ctx)
 	now := s.now()
 	if err != nil || ctx.Err() != nil || !s.idleMotionCurrentLocked(b, fresh, now) {
 		return nil, modcb.PacketNotDispatchedError("idle motion custody or parsed body changed")
@@ -217,7 +217,7 @@ func (s *Service) idleMotionBeforeWriteLocked(ctx context.Context, b *idleMotion
 		return nil, modcb.PacketNotDispatchedError("idle motion packet is not a full own movement image")
 	}
 	target, _ := ctx.Value(flightmasterApproachKey{}).(*actionsv1.FlightmasterTarget)
-	w, err := s.readWorldSnapshot(ctx, target.GetGuid())
+	w, err := s.readMovementWorldSnapshotLocked(ctx, target.GetGuid())
 	now := s.now()
 	if reason := s.idleMotionLocalFailureLocked(b, now); reason != "" {
 		return nil, modcb.PacketNotDispatchedError("idle motion before write: " + reason)
@@ -266,7 +266,7 @@ func (s *Service) idleMotionAfterWriteLocked(ctx context.Context, b *idleMotionS
 		}
 	}
 	b.lastOpcode, b.lastPayload = op, append([]byte(nil), payload...)
-	w, worldErr := s.readWorldSnapshot(ctx)
+	w, worldErr := s.readMovementWorldSnapshotLocked(ctx)
 	// A competing same-wire write may arrive during the World read. Read our
 	// exact receipt last, before publishing a successful terminal STOP.
 	r, err := s.readBodyMotionReport(ctx, b)
@@ -303,7 +303,7 @@ func (s *Service) observeIdleMotionStoppedLocked(ctx context.Context) bool {
 	if b == nil || s.idleInteraction != b.binding || s.sessionID != b.binding.sessionID || s.selfGUID != b.binding.selfGUID || s.interactionToken != b.binding.token || s.state.InteractionOwner != "exploration" {
 		return false
 	}
-	w, err := s.readWorldSnapshot(ctx)
+	w, err := s.readMovementWorldSnapshotLocked(ctx)
 	if err != nil || !s.matchesCurrentEncounterVisitLocked(w) {
 		return false
 	}
@@ -319,7 +319,7 @@ func (s *Service) observeIdleMotionStoppedLocked(ctx context.Context) bool {
 		return true
 	}
 	if b.lastOpcode == opcode.MSGMoveStop && len(b.lastPayload) > 0 {
-		fresh, freshErr := s.readWorldSnapshot(ctx)
+		fresh, freshErr := s.readMovementWorldSnapshotLocked(ctx)
 		r, err := s.readBodyMotionReport(ctx, b)
 		if err == nil && freshErr == nil && ctx.Err() == nil && s.idleInteraction == b.binding && s.interactionToken == b.binding.token &&
 			r.Opcode == opcode.MSGMoveStop && bytes.Equal(r.Payload, b.lastPayload) && samePortalCoreVisit(b.initial, r.TransportScope) &&

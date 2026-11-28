@@ -29,18 +29,22 @@ func (p *SessionPolicy) refreshFollowFormation(ctx context.Context, decision map
 		return err
 	}
 	var value struct {
-		SessionID             string `json:"sessionId"`
-		SelfGUID              string `json:"selfGuid"`
-		VisitID               string `json:"visitId"`
-		OwnerGUID             string `json:"ownerGuid"`
-		FollowRevision        string `json:"followRevision"`
-		OwnerPositionRevision string `json:"ownerPositionRevision"`
-		X, Y, Z               float32
-		Orientation           float32
-		StartDistance         float64 `json:"startDistance"`
-		StopDistance          float64 `json:"stopDistance"`
-		Phase                 string
-		Ready, Hold           bool
+		SessionID              string `json:"sessionId"`
+		SelfGUID               string `json:"selfGuid"`
+		VisitID                string `json:"visitId"`
+		OwnerGUID              string `json:"ownerGuid"`
+		FollowRevision         string `json:"followRevision"`
+		OwnerPositionRevision  string `json:"ownerPositionRevision"`
+		X, Y, Z                float32
+		Orientation            float32
+		StartDistance          float64 `json:"startDistance"`
+		StopDistance           float64 `json:"stopDistance"`
+		Phase                  string
+		Ready, Hold            bool
+		SurfaceMode            string `json:"surfaceMode"`
+		TransportGUID          string `json:"transportGuid"`
+		OwnerPassengerRevision string `json:"ownerPassengerRevision"`
+		Jump                   bool
 	}
 	if err := json.Unmarshal(body, &value); err != nil {
 		return err
@@ -60,6 +64,15 @@ func (p *SessionPolicy) refreshFollowFormation(ctx context.Context, decision map
 	if !a || !b || !c || !d || !e {
 		return status.Error(codes.InvalidArgument, "canonical formation identities and owner revision required")
 	}
+	var surfaceGUID, passengerRevision uint64
+	if value.SurfaceMode != "" {
+		var f, g bool
+		surfaceGUID, f = parse(value.TransportGUID)
+		passengerRevision, g = parse(value.OwnerPassengerRevision)
+		if !f || !g {
+			return status.Error(codes.InvalidArgument, "received transport and passenger revisions required")
+		}
+	}
 	inst, _, err := p.manager.lookup(actionsModule, "set_follow_formation", true)
 	if err != nil {
 		return err
@@ -71,6 +84,7 @@ func (p *SessionPolicy) refreshFollowFormation(ctx context.Context, decision map
 		SessionId: value.SessionID, SelfGuid: self, VisitId: visit, OwnerGuid: owner, OwnerPositionRevision: revision,
 		X: value.X, Y: value.Y, Z: value.Z, Orientation: value.Orientation,
 		Phase: value.Phase, FollowRevision: followRevision, StartDistance: value.StartDistance, StopDistance: value.StopDistance, Ready: value.Ready, Hold: value.Hold,
+		SurfaceMode: value.SurfaceMode, TransportGuid: surfaceGUID, OwnerPassengerRevision: passengerRevision, Jump: value.Jump,
 	})
 	return err
 }

@@ -72,6 +72,7 @@ func nearbyPlayerSnapshot(p observed, now time.Time) *worldv1.PlayerState {
 		PositionKnown: v.PositionKnown, X: v.X, Y: v.Y, Z: v.Z, Orientation: v.Orientation,
 		PositionAgeMs: v.PositionAgeMs, PositionRevision: v.PositionRevision,
 		MovementFlagsKnown: v.MovementFlagsKnown, MovementFlags: v.MovementFlags,
+		PassengerMovement:  v.PassengerMovement,
 		ExtraMovementFlags: v.ExtraMovementFlags, MovementTime: v.MovementTime,
 		HealthKnown: v.HealthKnown, Health: v.Health, MaxHealth: v.MaxHealth,
 		PowerKnown: v.PowerKnown, Power: v.Power, MaxPower: v.MaxPower, PowerType: v.PowerType,

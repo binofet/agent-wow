@@ -1,12 +1,13 @@
 package behavior
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func entryTaskSources(t *testing.T) string {
+func entryTaskSession(t *testing.T, decideBody string) *Session {
 	t.Helper()
 	read := func(name string) string {
 		t.Helper()
@@ -16,13 +17,22 @@ func entryTaskSources(t *testing.T) string {
 		}
 		return string(data)
 	}
-	return "local encounter_instance_entry=(function()\n" + read("instance-entry") +
-		"\nend)()\nlocal tasks=(function()\n" + read("encounter-tasks") + "\nend)()\n"
+	source := "local encounter_instance_entry=(function()\n" + read("instance-entry") +
+		"\nend)()\nlocal tasks=(function()\n" + read("encounter-tasks") + "\nend)()\n" +
+		`return {on_event=tasks.on_event,export_state=tasks.export_state,import_state=tasks.import_state,
+decide=function(frame)
+    local input=frame.input
+` + decideBody + "\nend}"
+	session, err := NewSession(context.Background(), "s", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(session.Close)
+	return session
 }
 
 func TestCanceledEntryWalkAfterIndependentWorldTransfer(t *testing.T) {
-	source := entryTaskSources(t) + `
-return {decide=function(input)
+	session := entryTaskSession(t, `
     local op={capability="travel_to",sessionId="s",selfGuid="1",visitId="9",mapId=0,token="original"}
     local task={id="front",kind="enter_instance",sessionId="s",selfGuid="1",ownerGuid="3",
         visitId="9",mapId=0,destinationMapId=70,allowedTriggerIds={286},stage="travel",serial=0,
@@ -63,13 +73,12 @@ return {decide=function(input)
     return {retired=state.current==nil and v.action==nil and state.last.reason=="canceled" and
         old.destinationVisit==nil and old.notifyId==nil and old.canceledApproach.observedVisit=="10" and
         old.canceledApproach[input.field]==op and old.history[1].id=="prior-receipt" and old.lastLease.token=="original"}
-end}`
+`)
 	for _, field := range []string{"operation", "uncertain"} {
 		for _, scenario := range []string{"arrived", "pending", "source", "stale", "other destination", "other body", "no body", "other token", "other operation", "active", "trigger sent"} {
 			t.Run(field+"/"+scenario, func(t *testing.T) {
-				r := New()
-				load(t, r, source)
-				out, err := r.Evaluate(map[string]any{"field": field, "case": scenario})
+				decision, err := session.Decide(context.Background(), map[string]any{"field": field, "case": scenario})
+				out := decision.Output
 				key := "held"
 				if scenario == "arrived" {
 					key = "retired"
@@ -83,8 +92,7 @@ end}`
 }
 
 func TestCanceledEntryRetiresOnlyItsOwnObsoleteLease(t *testing.T) {
-	source := entryTaskSources(t) + `
-return {decide=function(input)
+	session := entryTaskSession(t, `
     local walk={capability="travel_to",sessionId="s",selfGuid="1",visitId="9",mapId=0,token="original"}
     local task={id="front",kind="enter_instance",sessionId="s",selfGuid="1",ownerGuid="3",visitId="9",
         mapId=0,destinationMapId=70,allowedTriggerIds={286},stage="travel",serial=0,token="original",
@@ -141,7 +149,7 @@ return {decide=function(input)
         lease.token=="original" and lease.visitId=="9" and lease.absentOrReplacedObserved==true and
         (input.anotherVisit and retired.task.canceledApproach.cleanupVisit=="11" or
          lease.releaseRefusal and lease.releaseRefusal.action_id=="24" and lease.releaseRefusal.payload.transport_written==false)}
-end}`
+`)
 	for _, scenario := range []struct {
 		name       string
 		movedAgain bool
@@ -152,9 +160,8 @@ end}`
 		{"written", false, 0}, {"foreign visit", false, 0}, {"foreign body", false, 0},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			r := New()
-			load(t, r, source)
-			out, err := r.Evaluate(map[string]any{"case": scenario.name, "anotherVisit": scenario.movedAgain, "nextMap": scenario.nextMap})
+			decision, err := session.Decide(context.Background(), map[string]any{"case": scenario.name, "anotherVisit": scenario.movedAgain, "nextMap": scenario.nextMap})
+			out := decision.Output
 			if err != nil || out["ok"] != true {
 				t.Fatalf("cleanup: %v, %v", out, err)
 			}

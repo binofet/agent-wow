@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -104,6 +105,122 @@ func TestRootAcknowledgementTransferAndAuthoritativePoseLifecycle(t *testing.T) 
 	m.observed(opcode.MSGMoveTeleportAck, []byte{1, 99}, 99, 7)
 	if m.info != nil {
 		t.Fatal("malformed authoritative correction retained old pose")
+	}
+}
+
+func TestPassengerWorldportAcknowledgesVisitWithoutUsingLocalPoseForRoot(t *testing.T) {
+	trigger, done := make(chan struct{}), make(chan struct{})
+	c := peerConnection(t, func(p *testPeer) {
+		p.login()
+		<-trigger
+		pending := binary.LittleEndian.AppendUint32(nil, 1)
+		pending = binary.LittleEndian.AppendUint32(pending, 87123)
+		pending = binary.LittleEndian.AppendUint32(pending, 0)
+		p.send(opcode.SMSGTransferPending, pending)
+		p.send(opcode.SMSGNewWorld, positionBody(1, 2, -3, 6, .25))
+		p.expect(opcode.MSGMoveWorldportAck)
+		p.send(opcode.SMSGForceMoveRoot, movementOrder(8))
+		p.send(opcode.SMSGTimeSyncReq, []byte{4, 0, 0, 0})
+		p.expect(opcode.CMSGTimeSyncResp)
+		p.send(opcode.MSGMoveTeleportAck, nearTeleportGolden(t))
+		p.expect(opcode.MSGMoveTeleportAck)
+		p.send(opcode.SMSGForceMoveUnroot, movementOrder(9))
+		body := p.expect(opcode.CMSGForceMoveUnrootAck)
+		if x := math.Float32frombits(binary.LittleEndian.Uint32(body[16:])); x != 1 {
+			t.Errorf("later absolute correction failed to supply its own pose: %v", x)
+		}
+		close(done)
+		p.closed()
+	})
+	s, err := enter(context.Background(), c, Realm{}, Character{99, "Passenger"}, nil, quietTimings(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	close(trigger)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("passenger worldport did not finish")
+	}
+}
+
+func TestPassengerWorldportUncertainSequenceKeepsLocalOriginUnusable(t *testing.T) {
+	var unpaired movementControl
+	unpaired.observed(opcode.SMSGLoginVerifyWorld, positionBody(0, 100, 240, 18, .75), 99, 1)
+	unpaired.observed(opcode.SMSGNewWorld, positionBody(1, -1, 2, 6, .5), 99, 2)
+	if unpaired.info != nil {
+		t.Fatal("unpaired NEW_WORLD cannot distinguish world coordinates from deck offsets")
+	}
+	for _, malformed := range []bool{false, true} {
+		var m movementControl
+		m.observed(opcode.SMSGTransferPending, make([]byte, 12), 99, 1)
+		if malformed {
+			m.observed(opcode.SMSGNewWorld, []byte{1}, 99, 2)
+		} else {
+			m.observed(opcode.SMSGTransferPending, []byte{1, 0, 0, 0}, 99, 2)
+		}
+		m.observed(opcode.SMSGNewWorld, positionBody(1, -1, 2, 6, .5), 99, 3)
+		if m.info != nil {
+			t.Fatal("incomplete or overlapping passenger transfer released a local offset")
+		}
+	}
+}
+
+func TestPassengerControlRequiresAnUnchangedGroundSource(t *testing.T) {
+	const self = 99
+	raw, err := movementinfo.Encode(movementinfo.Info{Flags: 0x200, X: 701, Y: 309, Z: 8, Orientation: 1,
+		TransportPresent: true, Transport: movementinfo.Transport{GUID: 0x1fc000000003abcd, X: 2, Y: -3, Z: 6, Seat: -1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name                                          string
+		own, compressed, attached, invalidSpeed, keep bool
+	}{
+		{"own deck", true, false, true, false, false},
+		{"other passenger", false, true, true, false, true},
+		{"same stationary ground", true, true, false, false, true},
+		{"malformed matching ground", true, false, false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var m movementControl
+			m.observed(opcode.SMSGLoginVerifyWorld, positionBody(0, 1, 2, 3, .5), self, 1)
+			guid := byte(88)
+			if tc.own {
+				guid = self
+			}
+			b := bodyPlayerCreate(guid, 1, 2, 3, .5)
+			if tc.invalidSpeed {
+				binary.LittleEndian.PutUint32(b[10+30:], math.Float32bits(float32(math.NaN())))
+			}
+			if tc.attached {
+				b = append(append(append([]byte(nil), b[:10]...), raw...), b[10+30:]...)
+			}
+			op := uint16(opcode.SMSGUpdateObject)
+			if tc.compressed {
+				op = opcode.SMSGCompressedUpdateObject
+				b = compressedBodyUpdates(t, b[4:])
+			}
+			m.observed(op, b, self, 2)
+			if (m.info != nil) != tc.keep {
+				t.Fatalf("retained=%v, expected=%v", m.info != nil, tc.keep)
+			}
+		})
+	}
+	var m movementControl
+	m.observed(opcode.SMSGLoginVerifyWorld, positionBody(0, 1, 2, 3, .5), self, 1)
+	m.observed(opcode.MSGMoveHeartbeat, append([]byte{1, self}, raw...), self, 2)
+	if m.info != nil {
+		t.Fatal("attached self heartbeat retained old ground")
+	}
+	m.observed(opcode.SMSGUpdateObject, bodyPlayerCreate(self, 777, 2, 3, .5), self, 3)
+	if m.info != nil {
+		t.Fatal("object classifier minted a new ground origin")
+	}
+	m.observed(opcode.MSGMoveTeleportAck, nearTeleportGolden(t), self, 4)
+	if !plainMovementInfo(m.info) {
+		t.Fatal("absolute correction failed to restore ground control")
 	}
 }
 

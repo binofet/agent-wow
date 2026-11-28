@@ -80,8 +80,8 @@ visitBound%
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-Á∫
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
+£Ã
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"Ç
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -156,7 +156,8 @@ race_known9 (R	raceKnown
 aura_state_known; (RauraStateKnown
 
 aura_state< (R	auraState+
-position_inferred= (RpositionInferred"◊
+position_inferred= (RpositionInferred]
+passenger_movement> (2..warcraftbuddy.world.v1.PassengerMovementFactsRpassengerMovement"◊
 MovementTransportFacts
 guid (Rguid
 x (Rx
@@ -190,7 +191,13 @@ pitchKnown
 	fall_time (RfallTime=
 jump (2).warcraftbuddy.world.v1.MovementJumpFactsRjump4
 spline_elevation_known (RsplineElevationKnown)
-spline_elevation (RsplineElevation"£
+spline_elevation (RsplineElevation"÷
+PassengerMovementFacts=
+info (2).warcraftbuddy.world.v1.MovementInfoFactsRinfo%
+visit_revision (RvisitRevision
+revision (Rrevision
+age_ms (RageMs#
+source_opcode (RsourceOpcode"£
 OwnMovementFacts
 known (Rknown
 	self_guid (RselfGuid%
@@ -455,7 +462,7 @@ casterGuid
 server_cast_time_ms	 (H RserverCastTimeMsà+
 position_revision
  (RpositionRevisionB
-_server_cast_time_ms"ƒ
+_server_cast_time_ms"ù
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -484,8 +491,62 @@ flagsKnown
 state_known (R
 stateKnown
 state (RstateD
-creator_selected_target_guid (H RcreatorSelectedTargetGuidàB
-_creator_selected_target_guid"
+creator_selected_target_guid (H RcreatorSelectedTargetGuidàW
+moving_transport (2,.warcraftbuddy.world.v1.MovingTransportFactsRmovingTransportB
+_creator_selected_target_guid"’
+MovingTransportFacts"
+
+display_id (H R	displayIdà
+scale (HRscaleà 
+	period_ms (HRperiodMsà-
+path_progress_ms (HRpathProgressMsà,
+packed_rotation (HRpackedRotationà+
+movement_revision (RmovementRevision&
+movement_age_ms (RmovementAgeMs#
+source_opcode (RsourceOpcode+
+position_revision	 (RpositionRevision(
+path_fraction
+ (HRpathFractionà4
+path_fraction_revision (RpathFractionRevision/
+path_fraction_age_ms (RpathFractionAgeMs=
+path_fraction_source_opcode (RpathFractionSourceOpcodeK
+template (2/.warcraftbuddy.world.v1.MovingTransportTemplateRtemplate'
+object_revision (RobjectRevision0
+template_query_phase (	RtemplateQueryPhaseB
+_display_idB
+_scaleB
+
+_period_msB
+_path_progress_msB
+_packed_rotationB
+_path_fraction"«
+MovingTransportTemplate 
+taxi_path_id (R
+taxiPathId
+
+move_speed (R	moveSpeed+
+acceleration_rate (RaccelerationRate
+
+display_id (R	displayId
+entry (Rentry
+guid (Rguid
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision
+revision	 (Rrevision
+age_ms
+ (RageMs"€
+#QueryMovingTransportTemplateRequest
+
+session_id (	R	sessionId
+guid (Rguid
+entry (Rentry
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision'
+object_revision (RobjectRevision"∂
+$QueryMovingTransportTemplateResponse
+phase (	Rphase+
+transport_written (RtransportWrittenK
+template (2/.warcraftbuddy.world.v1.MovingTransportTemplateRtemplate"
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -636,7 +697,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"˛!
+permanent_bonus (RpermanentBonus"‘"
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -709,7 +770,8 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 nearby_creatures_complete@ (RnearbyCreaturesCompleteT
 summoning_objectsA (2'.warcraftbuddy.world.v1.GameObjectStateRsummoningObjects^
 ,requested_creature_stationary_position_knownB (R(requestedCreatureStationaryPositionKnownn
- selected_creature_outside_nearbyC (2%.warcraftbuddy.world.v1.CreatureStateRselectedCreatureOutsideNearby"q
+ selected_creature_outside_nearbyC (2%.warcraftbuddy.world.v1.CreatureStateRselectedCreatureOutsideNearbyT
+moving_transportsD (2'.warcraftbuddy.world.v1.GameObjectStateRmovingTransports"q
 CombatEventsRequest
 
 session_id (	R	sessionId%
@@ -747,9 +809,10 @@ session_id (	R	sessionId
 next_sequence (RnextSequence
 has_more (RhasMore;
 events (2#.warcraftbuddy.world.v1.CombatEventRevents:
-gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2¯
+gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2î
 
-BuddyWorldÑ
+BuddyWorldô
+QueryMovingTransportTemplate;.warcraftbuddy.world.v1.QueryMovingTransportTemplateRequest<.warcraftbuddy.world.v1.QueryMovingTransportTemplateResponseÑ
 RetireSplineCompletion5.warcraftbuddy.world.v1.RetireSplineCompletionRequest3.warcraftbuddy.world.v1.SplineCompletionObservation~
 AdoptSplineTransfer2.warcraftbuddy.world.v1.AdoptSplineTransferRequest3.warcraftbuddy.world.v1.SplineCompletionObservationt
 CompleteSpline-.warcraftbuddy.world.v1.CompleteSplineRequest3.warcraftbuddy.world.v1.SplineCompletionObservationi
@@ -853,7 +916,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-Í‘
+Û⁄
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"Ú
 SpellCastTargets
 mask (Rmask
@@ -1758,7 +1821,7 @@ sequenceId
 x (Rx
 y (Ry
 z (Rz
-detail	 (	Rdetail"«
+detail	 (	Rdetail"ﬂ
 FollowFormationRequest
 
 session_id (	R	sessionId
@@ -1777,7 +1840,12 @@ owner_guid (R	ownerGuid6
 ready (Rready
 hold (Rhold'
 follow_revision (RfollowRevision
-phase (	Rphase"≈	
+phase (	Rphase!
+surface_mode (	RsurfaceMode%
+transport_guid (RtransportGuid8
+owner_passenger_revision (RownerPassengerRevision
+jump (Rjump"†
+
 NavigationObservation6
 body_movement_supported (RbodyMovementSupported
 	following (R	following
@@ -1805,7 +1873,22 @@ goal_known (R	goalKnown
 movement_points (2-.warcraftbuddy.actions.v1.MovementPointsStateRmovementPoints4
 body_landing_supported (RbodyLandingSupportedS
 ground_mount (20.warcraftbuddy.actions.v1.FollowMountObservationRgroundMount 
-independent (Rindependent"7
+independent (RindependentY
+moving_surface (22.warcraftbuddy.actions.v1.MovingSurfaceObservationRmovingSurface"ì
+MovingSurfaceObservation
+	supported (R	supportedB
+self (2..warcraftbuddy.world.v1.PassengerMovementFactsRselfD
+owner (2..warcraftbuddy.world.v1.PassengerMovementFactsRownerG
+
+transports (2'.warcraftbuddy.world.v1.GameObjectStateR
+transports2
+self_attachment_known (RselfAttachmentKnown.
+self_transport_guid (RselfTransportGuid
+phase (	Rphase#
+jump_required (RjumpRequired(
+self_write_known	 (RselfWriteKnown=
+self_written_transport_guid
+ (RselfWrittenTransportGuid"7
 PortalPoint
 x (Rx
 y (Ry

@@ -840,6 +840,12 @@ message FollowFormationRequest {
   bool hold = 13;
   uint64 follow_revision = 14;
   string phase = 15;
+  // The accepted Lua selects a moving-surface leg of the same follow intent.
+  // Empty retains the ordinary ground/water formation contract.
+  string surface_mode = 16; // board, ride, or leave
+  uint64 transport_guid = 17;
+  uint64 owner_passenger_revision = 18;
+  bool jump = 19;
 }
 message NavigationObservation {
   bool body_movement_supported = 1;
@@ -868,6 +874,19 @@ message NavigationObservation {
   FollowMountObservation ground_mount = 23;
   // Independent sessions have no followed owner, even with a default Lua formation.
   bool independent = 24;
+  MovingSurfaceObservation moving_surface = 25;
+}
+message MovingSurfaceObservation {
+  bool supported = 1;
+  warcraftbuddy.world.v1.PassengerMovementFacts self = 2;
+  warcraftbuddy.world.v1.PassengerMovementFacts owner = 3;
+  repeated warcraftbuddy.world.v1.GameObjectState transports = 4;
+  bool self_attachment_known = 5;
+  uint64 self_transport_guid = 6;
+  string phase = 7;
+  bool jump_required = 8;
+  bool self_write_known = 9;
+  uint64 self_written_transport_guid = 10;
 }
 message PortalPoint {
   float x = 1;

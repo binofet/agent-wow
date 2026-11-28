@@ -22,6 +22,51 @@ local function portal_uint32(value)
     return type(value)=="number" and value>=0 and value<=4294967295 and value%1==0
 end
 local function portal_binding_revision(value) return value=="0" or portal_revision(value) end
+
+local function surface_follow_goal(obs,sequence,owner)
+    local nav=obs.navigation or {}
+    local surface=nav.movingSurface
+    if type(surface)~="table" or surface.supported~=true then return nil,false end
+    local passenger=surface.owner
+    local info=type(passenger)=="table" and passenger.info
+    local ownerShip=type(info)=="table" and type(info.transport)=="table" and info.transport.guid or "0"
+    local selfKnown=surface.selfAttachmentKnown==true
+    local selfShip=surface.selfTransportGuid or "0"
+    if surface.selfWriteKnown==true then selfKnown=true;selfShip=surface.selfWrittenTransportGuid or "0" end
+    if ownerShip=="0" and selfShip=="0" then return nil,false end
+    local self=(obs.players or {})[obs.selfGuid]
+    if not selfKnown or type(info)~="table" or not portal_revision(passenger.revision) or
+       passenger.visitRevision~=obs.visitId or not owner or owner.guid~=nav.ownerGuid or
+       owner.present~=true or owner.aliveKnown~=true or owner.alive~=true or owner.positionKnown~=true or
+       owner.mapKnown~=true or owner.mapId~=obs.mapId or owner.movementKnown~=true or
+       type(self)~="table" or self.present~=true or self.aliveKnown~=true or self.alive~=true or
+       self.positionKnown~=true or self.mapKnown~=true or self.mapId~=obs.mapId or self.movementKnown~=true or
+       not portal_revision(owner.positionRevision) or not portal_binding_revision(nav.followRevision) then return nil,true end
+    local mode,ship
+    if ownerShip~="0" and selfShip=="0" then mode,ship="board",ownerShip
+    elseif ownerShip~="0" and ownerShip==selfShip then mode,ship="ride",ownerShip
+    elseif ownerShip=="0" and selfShip~="0" then mode,ship="leave",selfShip end
+    if not mode or not portal_revision(ship) then return nil,true end
+    local hullKnown=false
+    for _,hull in ipairs(surface.transports or {}) do
+        if hull.guid==ship and hull.present==true and hull.mapKnown==true and hull.mapId==obs.mapId and
+           hull.typeKnown==true and hull.gameObjectType==15 and type(hull.movingTransport)=="table" then
+            hullKnown=true;break
+        end
+    end
+    if not hullKnown then return nil,true end
+    -- Ordinary deck travel is a Lua policy choice. Use a measured jump only
+    -- after a failed walking plan, or to follow a departure into open water.
+    local flags=info.flags or 0
+    local ownerWater=math.floor(flags/0x200000)%2==1
+    local ownerFalling=math.floor(flags/0x1000)%2==1
+    return {sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,observationSequence=sequence,
+        ownerGuid=owner.guid,ownerPositionRevision=owner.positionRevision,followRevision=nav.followRevision,
+        x=owner.x or 0,y=owner.y or 0,z=owner.z or 0,orientation=owner.orientation or 0,
+        startDistance=3,stopDistance=2,ready=false,hold=false,
+        surfaceMode=mode,transportGuid=ship,ownerPassengerRevision=passenger.revision,
+        jump=mode=="board" and surface.jumpRequired==true or mode=="leave" and (ownerWater or ownerFalling)},true
+end
 local function portal_age(value)
     if type(value)=="number" or type(value)=="string" then return tonumber(value) end
 end
@@ -73,6 +118,10 @@ function M.follow_formation(frame, obs, sequence)
     local owner, self = nav.followOwner, (obs.players or {})[obs.selfGuid]
     local following = follow_requested(nav)
     if not following then formation_memory, formation_identity = nil, nil end
+    if following then
+        local surface,active=surface_follow_goal(obs,sequence,owner)
+        if active then return surface end
+    end
     if not encounter_formation or nav.followFormationSupported ~= true or not following or
        not owner or not self or owner.present ~= true or owner.aliveKnown ~= true or owner.alive ~= true or
        owner.positionKnown ~= true or owner.mapKnown ~= true or owner.mapId ~= obs.mapId or

@@ -75,18 +75,42 @@ func TestThermapluggPolicySameBodyCASOwnsDutyAndPairChoice(t *testing.T) {
 }
 
 func TestThermapluggRawObservedRoomUsesDefaultRuntime(t *testing.T) {
-	s, f, _ := thermapluggRig(t)
-	f.objects[142211].State = 0
-	for i := uint32(0); i < 32; i++ {
-		creature := proto.Clone(f.world.OwnerTarget).(*worldv1.CreatureState)
-		creature.NpcFlagsKnown, creature.UnitFlags_2Known, creature.FactionTemplateKnown, creature.MovementFlagsKnown = true, true, true, true
-		creature.Entry = 50000 + i // Synthetic unrelated observed creatures.
-		creature.Guid = uint64(0xf130)<<48 | uint64(creature.Entry)<<24 | 1
-		f.world.NearbyCreatures = append(f.world.NearbyCreatures, creature)
+	for _, bossPosition := range []string{"owner_target", "last_nearby"} {
+		t.Run(bossPosition, func(t *testing.T) {
+			s, f, _ := thermapluggRig(t)
+			f.objects[142211].State = 0
+			for i := uint32(0); i < 32; i++ {
+				creature := proto.Clone(f.world.OwnerTarget).(*worldv1.CreatureState)
+				creature.NpcFlagsKnown, creature.UnitFlags_2Known, creature.FactionTemplateKnown, creature.MovementFlagsKnown = true, true, true, true
+				creature.Entry = 50000 + i // Synthetic unrelated observed creatures.
+				creature.Guid = uint64(0xf130)<<48 | uint64(creature.Entry)<<24 | 1
+				f.world.NearbyCreatures = append(f.world.NearbyCreatures, creature)
+			}
+			if bossPosition == "last_nearby" {
+				f.world.NearbyCreatures = append(f.world.NearbyCreatures, f.world.OwnerTarget)
+				f.world.OwnerTarget = nil
+			}
+			s.starterSpells.runtime = nil
+			if !s.thermapluggButtonsTickLocked(context.Background(), f.world) || len(f.packets) != 1 || s.starterSpells.lastError != "" {
+				t.Fatal("ordinary bounded room exceeded the actual default selector contract", s.starterSpells.lastError, f.packets)
+			}
+		})
 	}
-	s.starterSpells.runtime = nil
-	if !s.thermapluggButtonsTickLocked(context.Background(), f.world) || len(f.packets) != 1 || s.starterSpells.lastError != "" {
-		t.Fatal("ordinary bounded room exceeded the actual default selector contract", s.starterSpells.lastError, f.packets)
+}
+
+func TestThermapluggObservedBossRequiresCanonicalUint64Guid(t *testing.T) {
+	s, f, _ := thermapluggRig(t)
+	input := s.thermapluggInput(f.world, false, []any{})
+	boss := input["bosses"].([]any)[0].(map[string]any)
+	for _, tc := range []struct{ guid, want string }{
+		{"1", "observe"}, {"18446744073709551615", "observe"}, {"0", "idle"},
+		{"", "idle"}, {"01", "idle"}, {"1x4", "idle"}, {"18446744073709551616", "idle"},
+	} {
+		boss["guid"] = tc.guid
+		got, err := s.starterSpells.runtime.EvaluateContext(context.Background(), input)
+		if err != nil || got["kind"] != tc.want {
+			t.Errorf("observed GUID %q: got %v, want %s, err %v", tc.guid, got["kind"], tc.want, err)
+		}
 	}
 }
 

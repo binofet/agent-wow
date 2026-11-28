@@ -164,6 +164,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	if state.GetSessionId() == s.sessionID {
 		out.Party, online = s.encounterParty(state)
 	}
+	w = s.surfaceMovementWorldLocked(ctx, w)
 	s.supportSnapshotLocked(w)
 	s.encounterPlayers(w, online, out)
 	out.TargetMovement = s.targetMovementSnapshotLocked()
@@ -176,6 +177,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	}
 	out.Navigation.Portal = s.portalObservationLocked(w)
 	out.Navigation.GroundMount = s.followMountObservationLocked(ctx, w)
+	out.Navigation.MovingSurface = s.surfaceObservationLocked(ctx, w)
 	out.MeleeKnown = s.spellbookKnown && s.state.KnownAutoAttack && s.weaponReady(w.Self)
 	if s.state.AutoAttacking && !s.state.AutoAttackUnconfirmed && s.meleeAcknowledgedVisit == w.VisitRevision {
 		out.ActiveMeleeTargetGuid = s.state.AutoAttackTargetGuid

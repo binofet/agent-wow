@@ -52,6 +52,9 @@ func (s *Service) SetFollowFormation(ctx context.Context, r *actionsv1.FollowFor
 		owner.PositionRevision != r.OwnerPositionRevision || !finite(playerPosition(owner)) {
 		return nil, status.Error(codes.FailedPrecondition, "current living followed owner pose required")
 	}
+	if r.SurfaceMode != "" {
+		return s.setSurfaceFormationLocked(ctx, r, w)
+	}
 	target := position{r.X, r.Y, r.Z, r.Orientation}
 	// This caps a caller's physical destination envelope. The role and
 	// spacing within it come entirely from Lua.
@@ -71,6 +74,7 @@ func (s *Service) SetFollowFormation(ctx context.Context, r *actionsv1.FollowFor
 			return nil, status.Error(codes.InvalidArgument, "known formation phase required")
 		}
 	}
+	s.surfaceFollow.goal = nil
 	s.followGoal = followFormationGoal{sessionID: r.SessionId, self: r.SelfGuid, visit: r.VisitId, owner: r.OwnerGuid,
 		followRevision: r.FollowRevision, hostEpoch: s.hostEncounterEpoch,
 		until: s.now().Add(encounterLeaseDuration), target: formationTarget{

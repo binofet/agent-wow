@@ -10,6 +10,7 @@ import (
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/status"
 )
@@ -53,15 +54,6 @@ func (e *engine) write(op uint32, body []byte) error {
 }
 
 func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scopes ...*modv1.TransportScope) (GameplayWriteOutcome, bool, error) {
-	prior := e.ownMovementReport
-	priorAttempt := e.ownMovementAttempt
-	if ownMovementReportOpcode(op) {
-		// A failed or unsupported new write must not leave the prior report
-		// available as the most recent known own movement during transport.
-		e.ownMovementReport = nil
-		e.ownMovementAttempt = ""
-		e.publishTransportScope()
-	}
 	deadline := time.Now().Add(e.timing.write)
 	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
 		deadline = callerDeadline
@@ -72,6 +64,20 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	var requested *modv1.TransportScope
 	if len(scopes) != 0 {
 		requested = scopes[0]
+	}
+	if modsession.IsRouteBodyInput(ctx) && requested != nil {
+		if _, bound := modsession.RouteHull(ctx); !bound {
+			if i, ok := movementinfo.OwnFrame(body, requested.SelfGuid); ok && i.TransportPresent {
+				// In-process route callers also bind an attached frame before
+				// draining the socket. Authenticated module callers supply the
+				// earlier witness from their own final World read.
+				h, ok := e.s.currentRouteHull(i.Transport.GUID, requested)
+				if !ok {
+					return "", false, modcb.PacketNotDispatchedError("passenger route lacks its observed hull")
+				}
+				ctx = modsession.WithRouteHull(ctx, h)
+			}
+		}
 	}
 	if e.needsPhysicalDrain(op, requested) {
 		proofDeadline := time.Now().Add(bodyUpdateWait)
@@ -106,16 +112,15 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	}
 	// No callback, deadline setter or owner-state transition follows the final
 	// scope comparison and attempt reservation before entering WritePacket.
-	if err := e.reserveGameplayPacket(ctx, op, body, requested, prior); err != nil {
-		// A followed destination was revoked without writing. Expose the
-		// original physical report only while its own body still proves it.
-		if _, bound := modsession.FollowPosition(ctx); bound && modcb.RouteOwnerChangeBeforeWrite(err) &&
-			prior != nil && e.ownMovementReport == nil && e.lastWrittenPose.packet == prior &&
-			e.s.bodyProof(modsession.WithSelfBodyInput(ctx), prior.TransportScope, e.transport.scope) == "" {
-			e.ownMovementReport, e.ownMovementAttempt = prior, priorAttempt
-			e.publishTransportScope()
-		}
+	if err := e.reserveGameplayPacket(ctx, op, body, requested, e.ownMovementReport); err != nil {
 		return "", false, err
+	}
+	if ownMovementReportOpcode(op) {
+		// A prewrite refusal leaves the last physical report at its original
+		// scope. Once a new movement actually enters transport, its outcome
+		// may be unknown and the previous frame must cease to be available.
+		e.ownMovementReport, e.ownMovementAttempt = nil, ""
+		e.publishTransportScope()
 	}
 	e.writeSerial++
 	e.taxiBody.entering(op, e.transport.scope)

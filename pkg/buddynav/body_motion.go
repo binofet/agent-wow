@@ -76,6 +76,33 @@ func PlanKnockbackContext(ctx context.Context, dataDir string, mapID uint32, sta
 }
 
 func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, speed float64, duration time.Duration, jump, allowDrop bool, gravity *bodyFallSource) ([]BodyMotionSample, error) {
+	return planBodyWithSurfaceContext(ctx, dataDir, mapID, start, bearing, speed, duration, jump, allowDrop, gravity, nil)
+}
+
+// MovingSurface supplies actual model collision at a bound world pose. Routes
+// use the separate eroded Recast corridor; the actuator checks each body input
+// against this model, the underlying world and its actual water surfaces.
+type MovingSurface struct {
+	Transform SurfaceTransform
+	Model     *TransportSurface
+}
+
+func PlanSurfaceBodyContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, speed float64, duration time.Duration, jump, allowWater bool, surface MovingSurface) ([]BodyMotionSample, error) {
+	if surface.Model == nil || !surface.Transform.Valid() {
+		return nil, errors.New("received moving model and finite transform required")
+	}
+	return planBodyWithSurfaceContext(ctx, dataDir, mapID, start, bearing, speed, duration, jump, allowWater, nil, &surface)
+}
+
+func PlanSurfaceGravityContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing float64, elapsed time.Duration, initial float64, surface MovingSurface) ([]BodyMotionSample, error) {
+	if surface.Model == nil || !surface.Transform.Valid() || elapsed < 0 || math.IsNaN(initial) || math.IsInf(initial, 0) ||
+		initial != 0 && math.Abs(initial-BodyJumpVelocity) > .0001 {
+		return nil, errors.New("current moving surface and actual fall source required")
+	}
+	return planBodyWithSurfaceContext(ctx, dataDir, mapID, start, bearing, 0, 0, false, true, &bodyFallSource{elapsed: elapsed, initial: initial}, &surface)
+}
+
+func planBodyWithSurfaceContext(ctx context.Context, dataDir string, mapID uint32, start Point, bearing, speed float64, duration time.Duration, jump, allowDrop bool, gravity *bodyFallSource, surface *MovingSurface) ([]BodyMotionSample, error) {
 	if !worldPoint(start) || math.IsNaN(bearing) || math.IsInf(bearing, 0) || gravity == nil && (speed < .1 || speed > 14 || math.IsNaN(speed) ||
 		!jump && (duration < time.Millisecond || duration > 500*time.Millisecond)) {
 		return nil, errors.New("finite current pose, observed speed and bounded body input required")
@@ -102,7 +129,7 @@ func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, st
 	case <-currentMapPlanners.gate:
 	}
 	defer func() { currentMapPlanners.gate <- struct{}{} }()
-	p, err := cachedMapPlanner(ctx, dir, window)
+	p, err := cachedMapPlannerMode(ctx, dir, window, surface != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +146,17 @@ func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, st
 		}
 		if ok && finite(terrain) && terrain >= q.Z-below && terrain <= q.Z+above && (!known || terrain > h) {
 			h, known = terrain, true
+		}
+		if surface != nil {
+			local := surface.Transform.Local(q)
+			height, hit, err := surface.Model.Height(ctx, local, above/surface.Transform.Scale, below/surface.Transform.Scale)
+			if err != nil {
+				return 0, false, err
+			}
+			worldHeight := surface.Transform.Origin.Z + surface.Transform.Scale*height
+			if hit && (!known || worldHeight > h) {
+				h, known = worldHeight, true
+			}
 		}
 		return h, known, nil
 	}
@@ -139,7 +177,11 @@ func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, st
 				return false, nil
 			}
 		}
-		return p.floors.lineOfSight(ctx, a, b)
+		clear, err := p.floors.lineOfSight(ctx, a, b)
+		if err != nil || !clear || surface == nil {
+			return clear, err
+		}
+		return surface.Model.Clear(ctx, surface.Transform.Local(a), surface.Transform.Local(b))
 	}
 	if allowDrop {
 		water := func(q Point, top, bottom float32) (float32, bool, error) {
@@ -160,7 +202,8 @@ func planBodyMotionContext(ctx context.Context, dataDir string, mapID uint32, st
 				}
 				return path, nil
 			}
-			if h, supported, err := feet(start, .025, .025); err != nil || supported && finite(h) {
+			launch := surface != nil && gravity.elapsed == 0 && math.Abs(gravity.initial-BodyJumpVelocity) < .0001
+			if h, supported, err := feet(start, .025, .025); err != nil || supported && finite(h) && !launch {
 				if err != nil {
 					return nil, err
 				}

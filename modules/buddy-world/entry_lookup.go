@@ -20,6 +20,7 @@ func (s *observations) gameObjectSnapshot(p *observed, now time.Time) *worldv1.G
 			v.CreatorSelectedTargetGuid = &selected
 		}
 	}
+	v.MovingTransport = p.transportSnapshot(now)
 	return v
 }
 

@@ -3,6 +3,7 @@ package world
 import (
 	"encoding/binary"
 
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
@@ -10,7 +11,11 @@ import (
 // bounded plain-ground MovementInfo from an actual server pose or a successful
 // own movement write. It never supplies a new destination. Unsupported movement
 // modes invalidate it rather than guessing transport, falling or swimming data.
-type movementControl struct{ info []byte }
+type movementControl struct {
+	info                  []byte
+	transportWorldPending bool
+	worldPending          bool
+}
 
 const plainMovementFlags = uint32(0x1ff | 0x800 | 0x10000000)
 
@@ -24,11 +29,29 @@ func plainMovementInfo(body []byte) bool {
 
 func (m *movementControl) observed(op uint16, body []byte, self uint64, clock uint32) {
 	switch op {
+	case opcode.SMSGUpdateObject, opcode.SMSGCompressedUpdateObject:
+		m.objectUpdate(op, body, self)
+		return
+	case opcode.SMSGMonsterMove, opcode.SMSGMonsterMoveTransport, opcode.SMSGDestroyObject:
+		if !transportClearlyForeign(op, body, self) {
+			m.info = nil
+		}
 	case opcode.SMSGTransferPending:
 		m.info = nil
+		m.worldPending = true
+		// With the ship entry and old map appended, NEW_WORLD gives local
+		// passenger offsets. A malformed pending body also leaves the space unknown.
+		m.transportWorldPending = m.transportWorldPending || len(body) != 4
 	case opcode.SMSGLoginVerifyWorld, opcode.SMSGNewWorld:
 		m.info = nil
 		if _, _, valid := teleportAcknowledgement(opcode.SMSGNewWorld, body, self, clock); !valid {
+			return
+		}
+		// An unpaired NEW_WORLD also permits map acknowledgement, but its
+		// coordinate space is absent. Only a plain pending map supplies it.
+		unqualified := op == opcode.SMSGNewWorld && (!m.worldPending || m.transportWorldPending)
+		m.worldPending, m.transportWorldPending = false, false
+		if unqualified {
 			return
 		}
 		info := make([]byte, 30)
@@ -46,20 +69,32 @@ func (m *movementControl) observed(op uint16, body []byte, self uint64, clock ui
 		if info := body[c.offset:]; plainMovementInfo(info) {
 			m.info = append([]byte(nil), info...)
 		}
+	default:
+		if movementinfo.OrdinaryFollowMovement(uint32(op)) || op == opcode.MSGMoveJump || op == opcode.MSGMoveFallLand || op == opcode.MSGMoveTeleport {
+			m.moverFrame(body, self)
+		}
+	}
+}
+
+func (m *movementControl) moverFrame(body []byte, self uint64) {
+	c := teleportCursor{body: body}
+	guid := c.guid()
+	if c.bad || guid == 0 {
+		m.info = nil
+		return
+	}
+	if guid != self {
+		return
+	}
+	m.info = nil
+	if info := body[c.offset:]; plainMovementInfo(info) {
+		m.info = append([]byte(nil), info...)
 	}
 }
 
 func (m *movementControl) sent(op uint32, body []byte, self uint64) {
-	switch op {
-	case opcode.MSGMoveStartForward, opcode.MSGMoveStop, opcode.MSGMoveHeartbeat:
-		m.info = nil
-		c := teleportCursor{body: body}
-		if c.guid() != self || self == 0 || c.bad {
-			return
-		}
-		if info := body[c.offset:]; plainMovementInfo(info) {
-			m.info = append([]byte(nil), info...)
-		}
+	if movementinfo.OrdinaryFollowMovement(op) || op == opcode.MSGMoveJump || op == opcode.MSGMoveFallLand || op == opcode.CMSGMoveChngTransport {
+		m.moverFrame(body, self)
 	}
 }
 

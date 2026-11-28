@@ -77,6 +77,8 @@ message PlayerState {
   // Legacy own endpoint settlement after control return and spline duration.
   // This pose is inferred, not a newly received server arrival observation.
   bool position_inferred = 61;
+  // Exact received world/local pair, or a received departure after an attachment.
+  PassengerMovementFacts passenger_movement = 62;
 }
 
 // Conditional MovementInfo transport tail, including a signed seat and the
@@ -117,6 +119,14 @@ message MovementInfoFacts {
   MovementJumpFacts jump = 12;
   bool spline_elevation_known = 13;
   float spline_elevation = 14;
+}
+
+message PassengerMovementFacts {
+  MovementInfoFacts info = 1;
+  uint64 visit_revision = 2;
+  uint64 revision = 3;
+  uint64 age_ms = 4;
+  uint32 source_opcode = 5;
 }
 
 // Latest complete own MovementInfo received in the current World visit. This
@@ -473,6 +483,60 @@ message GameObjectState {
   uint32 state = 23;
   // Public UNIT_FIELD_TARGET of the visible creator of this summoning object.
   optional uint64 creator_selected_target_guid = 24;
+  MovingTransportFacts moving_transport = 25;
+}
+
+// Public fields and last received movement block of a moving transport.
+message MovingTransportFacts {
+  optional uint32 display_id = 1;
+  optional float scale = 2;
+  optional uint32 period_ms = 3;
+  optional uint32 path_progress_ms = 4;
+  optional uint64 packed_rotation = 5;
+  uint64 movement_revision = 6;
+  uint64 movement_age_ms = 7;
+  uint32 source_opcode = 8;
+  // Positive when that same block contained the hull's world coordinates.
+  uint64 position_revision = 9;
+  // Upper 16 bits of an explicitly received GAMEOBJECT_DYNAMIC field.
+  optional uint32 path_fraction = 10;
+  uint64 path_fraction_revision = 11;
+  uint64 path_fraction_age_ms = 12;
+  uint32 path_fraction_source_opcode = 13;
+  MovingTransportTemplate template = 14;
+  // Stable across motion and scalar updates for this one received CREATE.
+  uint64 object_revision = 15;
+  string template_query_phase = 16;
+}
+
+// Static type-15 metadata. The wire reply identifies the template entry;
+// the query and current observed object supply the instance binding.
+message MovingTransportTemplate {
+  uint32 taxi_path_id = 1;
+  uint32 move_speed = 2;
+  uint32 acceleration_rate = 3;
+  uint32 display_id = 4;
+  uint32 entry = 5;
+  uint64 guid = 6;
+  uint64 self_guid = 7;
+  uint64 visit_revision = 8;
+  uint64 revision = 9;
+  uint64 age_ms = 10;
+}
+
+message QueryMovingTransportTemplateRequest {
+  string session_id = 1;
+  uint64 guid = 2;
+  uint32 entry = 3;
+  uint64 self_guid = 4;
+  uint64 visit_revision = 5;
+  uint64 object_revision = 6;
+}
+
+message QueryMovingTransportTemplateResponse {
+  string phase = 1;
+  bool transport_written = 2;
+  MovingTransportTemplate template = 3;
 }
 
 // Public, server-observed creature state. No database lookup or invented name.
@@ -763,6 +827,8 @@ message SnapshotResponse {
   // Own selected NPC if it fell outside nearby_creatures and is not owner_target.
   // This extra exact row never implies that the surrounding creature list is complete.
   CreatureState selected_creature_outside_nearby = 67;
+  // Moving-transport GameObjects observed in this visit. Visibility can extend beyond boarding range.
+  repeated GameObjectState moving_transports = 68;
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.
@@ -810,6 +876,7 @@ message CombatEventsResponse {
 }
 
 service BuddyWorld {
+  rpc QueryMovingTransportTemplate(QueryMovingTransportTemplateRequest) returns (QueryMovingTransportTemplateResponse);
   rpc RetireSplineCompletion(RetireSplineCompletionRequest) returns (SplineCompletionObservation);
   rpc AdoptSplineTransfer(AdoptSplineTransferRequest) returns (SplineCompletionObservation);
   rpc CompleteSpline(CompleteSplineRequest) returns (SplineCompletionObservation);

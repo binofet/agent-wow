@@ -2,6 +2,8 @@ package world
 
 import (
 	"context"
+	"strings"
+
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
@@ -10,7 +12,6 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/protobuf/proto"
-	"strings"
 )
 
 // A portal's STOP must still belong to the exact observed source visit when
@@ -56,6 +57,14 @@ func (e *engine) reserveGameplayPacket(ctx context.Context, op uint32, body []by
 		requested = e.transport.scope
 	}
 	route := modsession.IsRouteBodyInput(ctx)
+	if selected, bound := modsession.RouteHull(ctx); bound {
+		observed, ok := e.s.currentRouteHull(selected.GUID, requested)
+		frame, complete := movementinfo.OwnFrame(body, requested.GetSelfGuid())
+		if !route || !qualified || !ok || !complete || !selected.Valid() || selected.Birth != observed.Birth ||
+			selected.Packets < observed.Packets || frame.TransportPresent && frame.Transport.GUID != selected.GUID {
+			return modcb.PacketNotDispatchedError("selected moving hull changed or left the current visit")
+		}
+	}
 	if route {
 		if !qualified || !buddynav.RouteBodyFrame(op, body, requested.SelfGuid) {
 			return modcb.PacketNotDispatchedError("invalid normal route body frame")
@@ -90,7 +99,19 @@ func (t *transportScopeState) reserveMovementStop(payload []byte, requested *mod
 	if err != nil || n != len(payload)-c.offset || !info.AllFinite() || info.Flags&0xff != 0 {
 		return modcb.PacketNotDispatchedError("ground STOP requires a complete finite stationary ground MovementInfo")
 	}
+	// STOP releases input in the current domain. A ship-to-shore or
+	// ship-to-water route must write its actual detached checkpoint first.
+	if route && !info.TransportPresent && prior != nil && (qualifiedEntry || proto.Equal(prior.TransportScope, current)) &&
+		buddynav.TransportBodyFrame(prior.Opcode, prior.Payload, current.SelfGuid) {
+		return modcb.PacketNotDispatchedError("route STOP cannot detach its current passenger body")
+	}
 	if !movementflags.GroundCompatible(info.Flags, uint32(info.ExtraFlags)) {
+		if info.TransportPresent {
+			if !route || !buddynav.TransportBodyFrame(opcode.MSGMoveStop, payload, current.SelfGuid) {
+				return modcb.PacketNotDispatchedError("passenger STOP requires its measured current ship frame")
+			}
+			return reservePassengerStop(info, current, prior, qualifiedEntry)
+		}
 		// A measured landing stops at its actual entry. A native surface route
 		// can also stop at its latest complete swimming checkpoint.
 		if !info.BodyWaterEntry(false) || prior == nil || !qualifiedEntry && !proto.Equal(prior.TransportScope, current) {
@@ -107,5 +128,31 @@ func (t *transportScopeState) reserveMovementStop(payload []byte, requested *mod
 	// A successful STOP advances MotionRevision before its report is published.
 	// An ambiguous transport result closes the owner loop; this is no retry
 	// permission for an unresolved Actions movement operation.
+	return nil
+}
+
+func reservePassengerStop(stop movementinfo.Info, current *modv1.TransportScope, prior *modv1.WorldPacket, qualifiedPrior bool) error {
+	source := prior.GetTransportScope()
+	if !sameBodyScope(source, current) || source.MotionRevision == 0 || source.MotionRevision > current.MotionRevision ||
+		source.MotionRevision < current.MotionRevision && !qualifiedPrior {
+		return modcb.PacketNotDispatchedError("passenger STOP requires its current written body source")
+	}
+	previous, ok := movementinfo.OwnFrame(prior.Payload, current.SelfGuid)
+	if !ok || previous.JumpPresent || !buddynav.TransportBodyFrame(prior.Opcode, prior.Payload, current.SelfGuid) {
+		return modcb.PacketNotDispatchedError("passenger STOP requires a grounded passenger checkpoint")
+	}
+	// Releasing forward preserves the complete local pose even while the hull
+	// moves. Both clocks are uint32 millisecond counters and can wrap.
+	local := stop.Transport
+	local.Time = previous.Transport.Time
+	if local != previous.Transport || int32(stop.Transport.Time-previous.Transport.Time) < 0 || int32(stop.Time-previous.Time) < 0 {
+		return modcb.PacketNotDispatchedError("passenger STOP changed the written local pose or rewound its clock")
+	}
+	// At the same ship clock this local pose has the same rigid transform.
+	// At a later clock the route has measured the hull's new world pose.
+	if stop.Transport.Time == previous.Transport.Time &&
+		(stop.X != previous.X || stop.Y != previous.Y || stop.Z != previous.Z || stop.Orientation != previous.Orientation) {
+		return modcb.PacketNotDispatchedError("passenger STOP changed world pose at the same ship clock")
+	}
 	return nil
 }
