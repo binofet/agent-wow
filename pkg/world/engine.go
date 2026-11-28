@@ -35,6 +35,7 @@ type engine struct {
 	pings                 map[uint32]time.Time
 	movement              movementControl
 	transport             transportScopeState
+	taxiBody              taxiBodyGuard
 	writeSerial           uint64
 	beforeScopedWrite     func() error
 	ownMovementReport     *modv1.WorldPacket
@@ -72,7 +73,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	if len(scopes) != 0 {
 		requested = scopes[0]
 	}
-	if requested != nil || op == opcode.CMSGMoveSplineDone {
+	if requested != nil || op == opcode.CMSGMoveSplineDone || e.taxiBody.active() && voluntaryTaxiBodyFrame(op) {
 		proofDeadline := time.Now().Add(bodyUpdateWait)
 		for {
 			if !e.scopedWriteAvailable(ctx) {
@@ -147,6 +148,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scope
 	}
 	e.movement.sent(op, body, e.s.state.Character.GUID)
 	e.transport.sent(op)
+	e.taxiBody.sent(op, e.transport.scope)
 	e.retainOwnMovementReport(ctx, op, body)
 	if ownMovementReportOpcode(op) {
 		origin := modsession.WriteOriginFromContext(ctx)

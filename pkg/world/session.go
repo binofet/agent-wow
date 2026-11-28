@@ -52,6 +52,7 @@ type Session struct {
 	knockbackReports           knockbackReports
 	knockbackReady             chan struct{}
 	parsedOwnPose              *modv1.WorldPacket
+	taxiBodyOrigin             *modv1.WorldPacket
 }
 
 // Options injects a session-owned module runtime and separate startup budgets.
@@ -134,7 +135,8 @@ func enter(ctx context.Context, conn *worldconn.Conn, realm Realm, character Cha
 	stopStartup := context.AfterFunc(lifetime, endStartup)
 	err = s.modules.Start(startup, modsession.Session{Identity: modsession.Identity{CharacterGUID: character.GUID, CharacterName: character.Name, RealmID: realm.ID, RealmName: realm.Name}, SendPacket: s.SendPacket, Clock: s.Clock,
 		SendScopedPacket: s.SendScopedPacket, TransportScope: s.TransportScope, OwnMovementReport: s.OwnMovementReport, OwnMovementAttempt: s.OwnMovementAttempt, BodyInputReport: s.bodyInputReport, ParsedBodyUpdate: s.recordParsedBodyUpdate,
-		ParsedOwnPose: s.recordOwnPose, KnockbackReport: s.readKnockback, MeasuredKnockback: s.acceptKnockbackContact})
+		ParsedOwnPose: s.recordOwnPose, ParsedTaxiBodyOrigin: s.recordTaxiBodyOrigin,
+		KnockbackReport: s.readKnockback, MeasuredKnockback: s.acceptKnockbackContact})
 	endStartup()
 	stopStartup()
 	close(s.startupDone)

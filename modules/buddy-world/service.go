@@ -96,6 +96,7 @@ type Service struct {
 	combat                       combatJournal
 	session                      modv1.SessionClient
 	motion                       ownMotionAuthority
+	taxiBody                     taxiBodyObservation
 	completion                   splineCompletionState
 	worldTransfer                worldTransferObservation
 	knockback                    *modv1.WorldPacket
@@ -279,6 +280,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		s.observeKnockbackLocked(ctx, packet, current, &next)
 		next.commitOwnMovementFacts(old, packet.Opcode, observedAt, packet.TransportScope)
 		s.observeMotionLocked(packet, old, current, &next, observedAt)
+		s.observeTaxiBodyOrigin(ctx, packet, current, &next, observedAt)
 		if !current.present || !current.mapKnown || !current.positionKnown || old.positionRevision != current.positionRevision || old.mapKnown != current.mapKnown || old.mapID != current.mapID {
 			next.discovery = clientDiscoveryAnchor{}
 		}
