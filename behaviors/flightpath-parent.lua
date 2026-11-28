@@ -165,9 +165,8 @@ function M.decide(state)
         if (a.interactionOwner or "")~="" then return await(context,p,"flight_parent_foreign_custody") end
         p.phase="complete";return {memory=memory,phase="flight_parent_complete",done=true}
     end
-    -- Never renew or carry a lease through flight. A new-visit lease is obtained
-    -- only after the current source has actual retired-ground evidence; native
-    -- admission independently rechecks the complete accepted-booking proof.
+    -- Reacquire custody after the observed landing. Any completion that may
+    -- have reached the realm must retire before the parent can probe arrival.
     if not paid or retired(w) or natural then
         local out=custody(context,p,b,w,a,natural)
         if out then return out end

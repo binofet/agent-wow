@@ -92,6 +92,9 @@ local function source(a,b)
 end
 function M.natural_landing(w,booking)
     local a=w.selfMotionAuthority or {};local s=a.transportScope or {};local accepted=booking.acceptanceScope or {}
+    local completion=(w.splineCompletion or {}).operation
+    if completion and source(completion.transportScope,s) and (completion.pending==true or completion.transportWritten==true or
+       completion.transportUnknown==true or completion.phase~="not_dispatched") then return end
     if booking.currentSegment or booking.activationAccepted~=true or booking.replyKnown~=true or (booking.replyCode or 0)~=0 or
        booking.selfGuid~=(w.self or {}).guid or booking.visitId~=w.visitRevision or a.visitRevision~=w.visitRevision or
        s.connectionId~=accepted.connectionId or not s.connectionId or s.visitRevision~=accepted.visitRevision or
