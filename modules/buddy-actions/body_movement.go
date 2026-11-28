@@ -14,7 +14,6 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
-	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
@@ -238,16 +237,23 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		return s.stateLocked(), nil
 	}
 	extendLanding(points[len(points)-1].At)
-	check := func(landingStarted, ownFalling, ownSwimming bool) (*worldv1.SnapshotResponse, bool) {
+	check := func(landingStarted, ownFalling, ownSwimming bool, lastFrame *movingSurfaceBody) (*worldv1.SnapshotResponse, bool) {
+		fresh, e := s.snapshot(ctx)
 		compatible := func(flags, extra uint32) bool {
 			if r.Landing != "" && extra == 0 && (ownFalling && (flags == 0x1000 || flags == 0x1001) ||
 				ownSwimming && (flags == swimMovementFlag || flags == swimMovementFlag|1)) {
 				return true
 			}
+			if r.Jump && ownFalling && extra == 0 && flags&^movementflags.PassiveModifiers == 0x1001 {
+				// The previous frame of this finite jump may now be the body's
+				// current input even when the realm still shows a passenger.
+				if lastFrame != nil && lastFrame == s.surfaceFollow.body && lastFrame.info.Flags == flags && lastFrame.info.JumpPresent && !lastFrame.info.TransportPresent {
+					_, err := s.currentSurfaceReportLocked(ctx, fresh)
+					return err == nil
+				}
+			}
 			return movementflags.GroundCompatible(flags, extra)
 		}
-
-		fresh, e := s.snapshot(ctx)
 		owner := s.hostEncounterKey == "" || s.trustedEncounterHostLocked(ctx) && s.hostEncounterVisit == r.VisitId && s.hostEncounterEpoch == ownerEpoch
 		leaseCurrent := true
 		if r.IdleToken != "" {
@@ -278,7 +284,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 
 // The same physical writer clocks a finite input or the measured airborne leg
 // of a destination route. Its caller supplies the existing movement authority.
-func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position, points []buddynav.BodyMotionSample, bearing, speed float64, jump, landing bool, passive uint32, view *actionsv1.BodyMovementState, motion *idleMotionScope, check func(bool, bool, bool) (*worldv1.SnapshotResponse, bool)) bool {
+func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position, points []buddynav.BodyMotionSample, bearing, speed float64, jump, landing bool, passive uint32, view *actionsv1.BodyMovementState, motion *idleMotionScope, check func(bool, bool, bool, *movingSurfaceBody) (*worldv1.SnapshotResponse, bool)) bool {
 	settling := points[0].Settling
 	airborne := jump || settling
 	horizontalSpeed, verticalSpeed := speed, float64(buddynav.BodyJumpVelocity)
@@ -291,6 +297,7 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 	var motionClock uint32
 	landingStarted := false
 	ownFalling, ownSwimming := false, false
+	var lastFrame *movingSurfaceBody
 	fallTime := points[0].FallTime
 	if settling && fallTime > 0 && s.destinationFlight != nil {
 		verticalSpeed = destinationGravitySource(s.lastWorld, s.pos).initial
@@ -309,7 +316,7 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 			s.state.MotionUnconfirmed = s.state.MotionUnconfirmed || s.state.Moving
 			return false
 		}
-		if _, ok := check(landingStarted, ownFalling, ownSwimming); !ok {
+		if _, ok := check(landingStarted, ownFalling, ownSwimming, lastFrame); !ok {
 			return false
 		}
 		clock, e := s.session.GetClock(ctx, &emptypb.Empty{})
@@ -318,7 +325,7 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 			s.state.MotionUnconfirmed = s.state.MotionUnconfirmed || s.state.Moving
 			return false
 		}
-		w, current := check(landingStarted, ownFalling, ownSwimming)
+		w, current := check(landingStarted, ownFalling, ownSwimming, lastFrame)
 		if !current {
 			return false
 		}
@@ -362,13 +369,7 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 			}
 			packet = swimMovementPacket(s.selfGUID, stamp, p, 0, flags)
 		}
-		var sendErr error
-		if motion != nil {
-			sendErr = s.sendPacketLocked(ctx, code, packet)
-		} else {
-			_, sendErr = s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: code, Payload: packet})
-		}
-		if sendErr != nil {
+		if sendErr := s.sendPacketLocked(ctx, code, packet); sendErr != nil {
 			if f := s.destinationFlight; f != nil && f.release && !f.airborne && code != opcode.MSGMoveStop && modcb.RouteOwnerChangeBeforeWrite(sendErr) {
 				stopGrounded()
 				return false
@@ -387,6 +388,7 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 			return false
 		}
 		view.TransportWritten, view.PositionEstimated = true, true
+		lastFrame = s.surfaceFollow.body
 		s.releasePaidTaxiBody(w)
 		if code == opcode.MSGMoveStartForward && points[len(points)-1].Swimming {
 			landingStarted = true
@@ -399,9 +401,6 @@ func (s *Service) executeBodyTrajectoryLocked(ctx context.Context, from position
 			motionClock = stamp
 		}
 		view.X, view.Y, view.Z = p.x, p.y, p.z
-		if motion == nil {
-			s.state.TransportWrites++
-		}
 		s.pos, s.posEstimated, s.posAt, s.state.Moving = p, true, s.now(), moving || falling
 		s.swimming = wetWrite
 		s.posRevision++

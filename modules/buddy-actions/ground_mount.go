@@ -184,6 +184,9 @@ func (s *Service) traversalOccupiedForMountLocked() bool {
 		s.flightpathActivation.operation.GetPending() || s.flightpath.operation.GetPending()
 }
 func (s *Service) admitFollowMountLocked(ctx context.Context, w *worldv1.SnapshotResponse, guard *actionsv1.FollowMountGuard, spell uint32, dismount, preparing bool) error {
+	// The physical mount, dismount and preparatory STOP use the same current
+	// own movement evidence as the observation that selected this transition.
+	w = s.surfaceMovementWorldLocked(ctx, w)
 	v := s.followMountObservationLocked(ctx, w)
 	if guard == nil || guard.OwnerGuid != w.GetOwner().GetGuid() || guard.FollowRevision != s.followRevision || guard.OwnerMountRevision == 0 ||
 		guard.OwnerMountRevision != v.OwnerMountRevision || !v.Ready || v.FollowMoving != preparing || v.AttemptedForOwnerState ||

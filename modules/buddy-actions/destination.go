@@ -252,7 +252,7 @@ func (s *Service) destinationFallLocked(ctx context.Context, route *swimFollowRo
 	s.bodyMoving, s.destinationFlight = true, flightState
 	s.state.Reason = "following_destination_fall"
 	defer func() { s.bodyMoving, s.destinationFlight = false, nil; s.lastStep = s.now() }()
-	check := func(started, falling, wet bool) (*worldv1.SnapshotResponse, bool) {
+	check := func(started, falling, wet bool, _ *movingSurfaceBody) (*worldv1.SnapshotResponse, bool) {
 		w, e := s.snapshot(ctx)
 		valid := e == nil && waterMovementAllowed(w) && owner.localCurrent(s, s.now()) && s.matchesCurrentEncounterVisitLocked(w) && w.Self.MapId == mapID && w.Self.PositionRevision == revision && observedRunSpeed(w.Self) == entry.RunSpeed && w.Self.MovementFlags&movementflags.PassiveModifiers == 0
 		compatible := func(f, x uint32) bool {

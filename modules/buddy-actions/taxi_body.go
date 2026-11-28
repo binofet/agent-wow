@@ -96,7 +96,7 @@ func (s *Service) settleFollowTaxiBody(ctx context.Context, w *worldv1.SnapshotR
 	s.bodyMoving = true
 	defer func() { s.bodyMoving = false; s.lastStep = s.now() }()
 	view := new(actionsv1.BodyMovementState)
-	guard := func(_, _, _ bool) (*worldv1.SnapshotResponse, bool) {
+	guard := func(_, _, _ bool, _ *movingSurfaceBody) (*worldv1.SnapshotResponse, bool) {
 		fresh, e := s.snapshot(ctx)
 		ready := e == nil && ctx.Err() == nil && s.flightpathActivation.operation == a && s.matchesCurrentEncounterVisitLocked(fresh) && fresh.VisitRevision == visit &&
 			fresh.Self.PositionRevision == revision && playerPosition(fresh.Self) == from && safeSelfCombat(fresh, s.selfGUID) == "" &&
